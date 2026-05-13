@@ -1,0 +1,546 @@
+/* ============================================================
+ * 华盾AI v6.0 — 全局设计系统 (Design System)
+ * 基于 v6.0 UI/UX 设计规范 — 暗色主题(默认) + 亮色主题
+ * ============================================================
+ * 设计理念：
+ *   - 安全感知(Security-Aware)：传递「安全感」而非「紧张感」
+ *   - Agent-First：对话式交互为一级入口
+ *   - 暗色优先：监控场景多为暗光环境
+ *   - 信息密度可控：平时概览，告警时详情
+ * ============================================================ */
+
+/* ============================================================
+ * CSS 自定义属性 — 设计令牌 (Design Tokens)
+ * ============================================================ */
+:root {
+  /* ── 主色 (Primary Blue) — 专业/安全/信任 ── */
+  --color-primary-50: #F0F7FF;
+  --color-primary-100: #D0E8FF;
+  --color-primary-200: #93C5FD;
+  --color-primary-300: #60A5FA;
+  --color-primary-400: #3B82F6;
+  --color-primary-500: #2563EB;
+  --color-primary-600: #1D4ED8;
+  --color-primary-700: #1E40AF;
+  --color-primary-800: #1E3A8A;
+  --color-primary-900: #0F2A5A;
+  --color-primary: var(--color-primary-500);
+  --color-primary-dark: var(--color-primary-700);
+  --color-primary-light: var(--color-primary-100);
+
+  /* ── AI紫 (Hermes Purple) — 智能/先进/创新 ── */
+  --color-ai-50: #F5F3FF;
+  --color-ai-100: #EDE9FE;
+  --color-ai-200: #C4B5FD;
+  --color-ai-300: #A78BFA;
+  --color-ai-400: #8B5CF6;
+  --color-ai-500: #7C3AED;
+  --color-ai-600: #6D28D9;
+  --color-ai-700: #5B21B6;
+  --color-ai-800: #4C1D95;
+  --color-ai-900: #2E1065;
+  --color-ai: var(--color-ai-500);
+
+  /* ── 功能色 (Functional Colors) ── */
+  --color-success-50: #ECFDF5;
+  --color-success-100: #D1FAE5;
+  --color-success-400: #34D399;
+  --color-success-500: #10B981;
+  --color-success-600: #059669;
+  --color-success: var(--color-success-500);
+  --color-success-light: var(--color-success-100);
+
+  --color-warning-50: #FFFBEB;
+  --color-warning-100: #FEF3C7;
+  --color-warning-400: #FBBF24;
+  --color-warning-500: #F59E0B;
+  --color-warning-600: #D97706;
+  --color-warning: var(--color-warning-500);
+  --color-warning-light: var(--color-warning-100);
+
+  --color-danger-50: #FEF2F2;
+  --color-danger-100: #FEE2E2;
+  --color-danger-400: #F87171;
+  --color-danger-500: #EF4444;
+  --color-danger-600: #DC2626;
+  --color-danger: var(--color-danger-500);
+  --color-danger-light: var(--color-danger-100);
+
+  --color-info-50: #EEF2FF;
+  --color-info-100: #E0E7FF;
+  --color-info-400: #818CF8;
+  --color-info-500: #6366F1;
+  --color-info-600: #4F46E5;
+  --color-info: var(--color-info-500);
+
+  /* ── 告警等级色 (Alarm Severity) ── */
+  --color-severity-critical: #DC2626;
+  --color-severity-high: #EA580C;
+  --color-severity-medium: #F59E0B;
+  --color-severity-low: #22C55E;
+  --color-severity-info: #9CA3AF;
+
+  /* ── 中性色 (Neutral Gray) — 亮色主题 ── */
+  --color-gray-50: #F9FAFB;
+  --color-gray-100: #F3F4F6;
+  --color-gray-200: #E5E7EB;
+  --color-gray-300: #D1D5DB;
+  --color-gray-400: #9CA3AF;
+  --color-gray-500: #6B7280;
+  --color-gray-600: #4B5563;
+  --color-gray-700: #374151;
+  --color-gray-800: #1F2937;
+  --color-gray-900: #111827;
+
+  /* ── 暗色主题中性色 ── */
+  --color-dark-50: #F9FAFB;
+  --color-dark-200: #E5E7EB;
+  --color-dark-400: #9CA3AF;
+  --color-dark-500: #6B7280;
+  --color-dark-600: #4B5563;
+  --color-dark-700: #374151;
+  --color-dark-750: #283040;
+  --color-dark-800: #1F2937;
+  --color-dark-850: #1A1F2E;
+  --color-dark-900: #111827;
+  --color-dark-950: #0A0E17;
+
+  /* ── 应用色（可随主题切换） ── */
+  --app-bg: #F8F9FA;
+  --app-surface: #FFFFFF;
+  --app-surface-hover: #F9FAFB;
+  --app-surface-raised: #FFFFFF;
+  --app-border: #DADCE0;
+  --app-border-light: #E5E7EB;
+  --app-text-primary: #202124;
+  --app-text-secondary: #5F6368;
+  --app-text-disabled: #9CA3AF;
+  --app-text-inverse: #FFFFFF;
+  --app-sidebar-bg: #001529;
+  --app-sidebar-text: #FFFFFFB3;
+  --app-sidebar-active: #1890FF;
+  --app-header-bg: #FFFFFF;
+
+  /* ── 阴影系统 ── */
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.04);
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.06), 0 1px 2px rgba(0, 0, 0, 0.04);
+  --shadow-md: 0 4px 6px rgba(0, 0, 0, 0.06), 0 2px 4px rgba(0, 0, 0, 0.04);
+  --shadow-lg: 0 10px 15px rgba(0, 0, 0, 0.08), 0 4px 6px rgba(0, 0, 0, 0.04);
+  --shadow-xl: 0 20px 25px rgba(0, 0, 0, 0.1), 0 10px 10px rgba(0, 0, 0, 0.04);
+  --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.06);
+  --shadow-card-hover: 0 4px 12px rgba(0, 0, 0, 0.1);
+  --shadow-sidebar: 2px 0 8px rgba(0, 0, 0, 0.08);
+
+  /* ── 圆角系统 ── */
+  --radius-none: 0;
+  --radius-xs: 2px;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 12px;
+  --radius-2xl: 16px;
+  --radius-full: 9999px;
+
+  /* ── 间距系统 (8px 基准) ── */
+  --space-0: 0;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --space-16: 64px;
+
+  /* ── 字体系统 ── */
+  --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
+    'Hiragino Sans GB', 'Microsoft YaHei', 'Helvetica Neue', sans-serif;
+  --font-mono: 'SF Mono', 'Roboto Mono', 'Menlo', 'Consolas', monospace;
+  --font-number: 'Inter', 'Roboto Mono', var(--font-sans);
+
+  /* ── 字号阶梯 ── */
+  --text-xs: 12px;
+  --text-sm: 13px;
+  --text-base: 14px;
+  --text-md: 15px;
+  --text-lg: 16px;
+  --text-xl: 20px;
+  --text-2xl: 24px;
+  --text-3xl: 30px;
+  --text-4xl: 36px;
+  --text-5xl: 48px;
+
+  /* ── 字重 ── */
+  --font-normal: 400;
+  --font-medium: 500;
+  --font-semibold: 600;
+  --font-bold: 700;
+
+  /* ── 行高 ── */
+  --leading-tight: 1.25;
+  --leading-normal: 1.5;
+  --leading-relaxed: 1.625;
+
+  /* ── 过渡动画 ── */
+  --transition-fast: 0.15s ease;
+  --transition-normal: 0.2s ease;
+  --transition-slow: 0.3s ease;
+  --transition-spring: 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+
+  /* ── Z-Index 层级 ── */
+  --z-sidebar: 100;
+  --z-header: 200;
+  --z-dropdown: 300;
+  --z-overlay: 400;
+  --z-modal: 500;
+  --z-toast: 600;
+  --z-tooltip: 700;
+
+  /* ── 布局尺寸 ── */
+  --sidebar-width: 230px;
+  --sidebar-collapsed-width: 64px;
+  --header-height: 56px;
+  --content-max-width: 1440px;
+}
+
+/* ============================================================
+ * 暗色主题 (Dark Theme) — 默认
+ * ============================================================ */
+.dark-theme,
+[data-theme='dark'] {
+  --app-bg: #111827;
+  --app-surface: #1F2937;
+  --app-surface-hover: #283040;
+  --app-surface-raised: #374151;
+  --app-border: #374151;
+  --app-border-light: #1F2937;
+  --app-text-primary: #E8EAED;
+  --app-text-secondary: #9AA0A6;
+  --app-text-disabled: #5F6368;
+  --app-text-inverse: #202124;
+  --app-sidebar-bg: #0F1419;
+  --app-sidebar-text: #9AA0A6;
+  --app-sidebar-active: #3B82F6;
+  --app-header-bg: #1A1D23;
+
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 4px 6px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 10px 15px rgba(0, 0, 0, 0.5);
+  --shadow-xl: 0 20px 25px rgba(0, 0, 0, 0.6);
+  --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.3);
+  --shadow-card-hover: 0 4px 16px rgba(0, 0, 0, 0.5);
+}
+
+/* ============================================================
+ * 全局重置与基础样式
+ * ============================================================ */
+*,
+*::before,
+*::after {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html {
+  font-size: 14px;
+  -webkit-text-size-adjust: 100%;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+body {
+  font-family: var(--font-sans);
+  font-size: var(--text-base);
+  line-height: var(--leading-normal);
+  color: var(--app-text-primary);
+  background-color: var(--app-bg);
+  transition: background-color var(--transition-normal), color var(--transition-normal);
+  overflow: hidden;
+}
+
+/* ── 滚动条 ── */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #c1c1c1;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #a8a8a8;
+}
+
+.dark-theme ::-webkit-scrollbar-thumb {
+  background: #4B5563;
+}
+
+.dark-theme ::-webkit-scrollbar-thumb:hover {
+  background: #6B7280;
+}
+
+/* ── 链接 ── */
+a {
+  color: var(--color-primary);
+  text-decoration: none;
+  transition: color var(--transition-fast);
+}
+
+a:hover {
+  color: var(--color-primary-600);
+}
+
+/* ── 选择文本 ── */
+::selection {
+  background-color: var(--color-primary-100);
+  color: var(--color-primary-900);
+}
+
+.dark-theme ::selection {
+  background-color: var(--color-primary-800);
+  color: var(--color-primary-50);
+}
+
+/* ── 焦点可见 ── */
+:focus-visible {
+  outline: 2px solid var(--color-primary-400);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+/* ============================================================
+ * 工具类 (Utility Classes)
+ * ============================================================ */
+
+/* ── 文字 ── */
+.text-primary { color: var(--app-text-primary); }
+.text-secondary { color: var(--app-text-secondary); }
+.text-disabled { color: var(--app-text-disabled); }
+.text-success { color: var(--color-success); }
+.text-warning { color: var(--color-warning); }
+.text-danger { color: var(--color-danger); }
+.text-info { color: var(--color-info); }
+.text-ai { color: var(--color-ai); }
+
+.text-xs { font-size: var(--text-xs); }
+.text-sm { font-size: var(--text-sm); }
+.text-base { font-size: var(--text-base); }
+.text-lg { font-size: var(--text-lg); }
+.text-xl { font-size: var(--text-xl); }
+.text-2xl { font-size: var(--text-2xl); }
+.text-3xl { font-size: var(--text-3xl); }
+
+.font-mono { font-family: var(--font-mono); }
+.font-number { font-family: var(--font-number); }
+.font-medium { font-weight: var(--font-medium); }
+.font-semibold { font-weight: var(--font-semibold); }
+.font-bold { font-weight: var(--font-bold); }
+
+.text-center { text-align: center; }
+.text-right { text-align: right; }
+
+.truncate {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── 间距 ── */
+.mt-0 { margin-top: var(--space-0); }
+.mt-2 { margin-top: var(--space-2); }
+.mt-3 { margin-top: var(--space-3); }
+.mt-4 { margin-top: var(--space-4); }
+.mt-6 { margin-top: var(--space-6); }
+.mt-8 { margin-top: var(--space-8); }
+.mb-2 { margin-bottom: var(--space-2); }
+.mb-4 { margin-bottom: var(--space-4); }
+.mb-6 { margin-bottom: var(--space-6); }
+.ml-2 { margin-left: var(--space-2); }
+.mr-2 { margin-right: var(--space-2); }
+.p-4 { padding: var(--space-4); }
+.p-6 { padding: var(--space-6); }
+.px-4 { padding-left: var(--space-4); padding-right: var(--space-4); }
+.py-2 { padding-top: var(--space-2); padding-bottom: var(--space-2); }
+.gap-2 { gap: var(--space-2); }
+.gap-4 { gap: var(--space-4); }
+
+/* ── Flex 布局 ── */
+.flex { display: flex; }
+.flex-col { flex-direction: column; }
+.flex-wrap { flex-wrap: wrap; }
+.flex-1 { flex: 1; }
+.items-center { align-items: center; }
+.items-start { align-items: flex-start; }
+.justify-center { justify-content: center; }
+.justify-between { justify-content: space-between; }
+.justify-end { justify-content: flex-end; }
+
+/* ── 显示/隐藏 ── */
+.hidden { display: none; }
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  border: 0;
+}
+
+/* ============================================================
+ * 动画关键帧
+ * ============================================================ */
+@keyframes shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes fadeOut {
+  from { opacity: 1; transform: translateY(0); }
+  to { opacity: 0; transform: translateY(4px); }
+}
+
+@keyframes slideInRight {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
+}
+
+@keyframes slideOutRight {
+  from { transform: translateX(0); }
+  to { transform: translateX(100%); }
+}
+
+@keyframes bellShake {
+  0%, 100% { transform: rotate(0); }
+  10%, 30%, 50%, 70%, 90% { transform: rotate(-5deg); }
+  20%, 40%, 60%, 80% { transform: rotate(5deg); }
+}
+
+@keyframes countUp {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes alertPulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4); }
+  50% { box-shadow: 0 0 0 8px rgba(239, 68, 68, 0); }
+}
+
+/* ============================================================
+ * Element Plus 暗色主题覆盖
+ * ============================================================ */
+.dark-theme .el-card {
+  background-color: var(--app-surface);
+  border-color: var(--app-border);
+  color: var(--app-text-primary);
+}
+
+.dark-theme .el-card__header {
+  border-bottom-color: var(--app-border);
+  color: var(--app-text-primary);
+}
+
+.dark-theme .el-table {
+  --el-table-bg-color: var(--app-surface);
+  --el-table-tr-bg-color: var(--app-surface);
+  --el-table-header-bg-color: var(--app-surface-hover);
+  --el-table-border-color: var(--app-border);
+  --el-table-text-color: var(--app-text-primary);
+  --el-table-header-text-color: var(--app-text-secondary);
+  --el-table-row-hover-bg-color: var(--app-surface-hover);
+}
+
+.dark-theme .el-table--striped .el-table__body tr.el-table__row--striped td {
+  background-color: var(--app-surface-hover);
+}
+
+.dark-theme .el-input__wrapper {
+  background-color: var(--app-surface);
+  box-shadow: 0 0 0 1px var(--app-border) inset;
+}
+
+.dark-theme .el-input__inner {
+  color: var(--app-text-primary);
+}
+
+.dark-theme .el-select .el-input .el-select__caret {
+  color: var(--app-text-secondary);
+}
+
+.dark-theme .el-dialog {
+  background-color: var(--app-surface);
+}
+
+.dark-theme .el-dialog__title {
+  color: var(--app-text-primary);
+}
+
+.dark-theme .el-dialog__headerbtn .el-dialog__close {
+  color: var(--app-text-secondary);
+}
+
+.dark-theme .el-pagination .el-pager li {
+  background-color: var(--app-surface);
+  color: var(--app-text-primary);
+}
+
+.dark-theme .el-pagination .el-pager li:not(.disabled).active {
+  background-color: var(--color-primary);
+}
+
+.dark-theme .el-menu {
+  border-right-color: transparent;
+}
+
+.dark-theme .el-popper.is-dark {
+  background-color: var(--app-surface-raised);
+  border-color: var(--app-border);
+}
+
+/* ============================================================
+ * 响应式断点
+ * ============================================================ */
+@media (max-width: 1280px) {
+  :root {
+    --sidebar-width: 200px;
+  }
+}
+
+@media (max-width: 1024px) {
+  :root {
+    --sidebar-width: 64px;
+  }
+}
+
+@media (max-width: 768px) {
+  :root {
+    --sidebar-width: 0px;
+  }
+}

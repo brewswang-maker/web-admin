@@ -1,15 +1,61 @@
 <!DOCTYPE html>
-<html lang="zh-CN" class="dark">
-  <head>
-    <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/shield-logo.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="description" content="华盾AI智能视频盒子 — Web管理台" />
-    <meta name="theme-color" content="#1A1D23" />
-    <title>华盾AI · 智能视频盒子 v5.1</title>
-  </head>
-  <body>
-    <div id="app"></div>
-    <script type="module" src="/src/main.ts"></script>
-  </body>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>华盾AI - 智能视频盒子管理平台</title>
+
+  <!-- =============================================
+       资源提示策略 v7
+       preconnect → 提前建立连接（DNS+TCP+TLS）
+       仅对生产环境下的真实 API 域名有效
+       ============================================= -->
+
+  <!-- 预连接到 API 网关（生产部署时替换为实际域名） -->
+  <!-- <link rel="preconnect" href="https://api.shield-ai.example.com" crossorigin /> -->
+
+  <!--
+    Vite 在生产构建时会自动注入 <link rel="modulepreload"> 到 HTML 中，
+    用于预加载入口 chunk 及其直接依赖。此处无需手动声明。
+  -->
+
+  <!-- 🆕 内联关键 CSS（首屏渲染的最小样式） -->
+  <style>
+    /* 防止 FOUC：页面根元素在 Vue 挂载前不可见 */
+    #app { display: none; }
+    /* 最小重置，避免元素跳动 */
+    html, body { margin: 0; padding: 0; height: 100%; }
+  </style>
+</head>
+<body>
+  <div id="app"></div>
+
+  <script type="module" src="/src/main.ts"></script>
+
+  <!--
+    🆕 Vite 的 build.target 设为 es2020，现代浏览器覆盖率 >96%
+    无需 nomodule 降级方案，减少构建复杂度
+  -->
+
+  <!--
+    首屏性能标记 (Web Vitals) — 体积 < 200 bytes
+    记录 FCP/LCP 用于生产环境监控
+  -->
+  <script>
+    window.__PERF_MARKS__ = {};
+    try {
+      new PerformanceObserver(function(l) {
+        for (var e of l.getEntries()) {
+          if (e.name === 'first-contentful-paint') window.__PERF_MARKS__.fcp = e.startTime;
+        }
+      }).observe({ type: 'paint', buffered: true });
+
+      new PerformanceObserver(function(l) {
+        var e = l.getEntries();
+        if (e.length) window.__PERF_MARKS__.lcp = e[e.length - 1].startTime;
+      }).observe({ type: 'largest-contentful-paint', buffered: true });
+    } catch(e) {}
+  </script>
+</body>
 </html>
