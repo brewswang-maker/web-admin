@@ -468,7 +468,7 @@ function levelLabel(level: string) {
   return SEVERITY_LABELS[level] || level
 }
 
-function levelTagType(level: string) {
+function levelTagType(level: string): 'primary' | 'success' | 'warning' | 'info' | 'danger' {
   const map: Record<string, string> = { critical: 'danger', high: 'warning', medium: 'warning', low: 'success' }
   return map[level] || 'info'
 }
@@ -478,7 +478,7 @@ function statusLabel(status: string) {
   return map[status] || status
 }
 
-function statusTagType(status: string) {
+function statusTagType(status: string): 'primary' | 'success' | 'warning' | 'info' | 'danger' {
   const map: Record<string, string> = { unhandled: 'danger', handling: 'warning', handled: 'success', confirmed: 'success', false_alarm: 'warning', ignored: 'info' }
   return map[status] || 'info'
 }
@@ -520,7 +520,7 @@ async function handleConfirm(row: any) {
     try {
       await handleAlarmApi(row.id, 'confirm')
       row.status = 'handled'
-      row.handledBy = useAuthStore().user?.displayName || '当前用户'
+      row.handledBy = useAuthStore().user?.name || '当前用户'
       ElMessage.success('已确认')
     } catch (err) {
       ElMessage.error('操作失败')
@@ -538,7 +538,7 @@ async function handleFalse(row: any) {
     try {
       await handleAlarmApi(row.id, 'false_alarm')
       row.status = 'false_alarm'
-      row.handledBy = useAuthStore().user?.displayName || '当前用户'
+      row.handledBy = useAuthStore().user?.name || '当前用户'
       ElMessage.success('已标记为误报')
     } catch (err) {
       ElMessage.error('操作失败')
@@ -578,7 +578,7 @@ async function handleBatchConfirm() {
         if (alarm.status === 'unhandled') {
           await handleAlarmApi(alarm.id, 'confirm')
           alarm.status = 'handled'
-          alarm.handledBy = useAuthStore().user?.displayName || '当前用户'
+          alarm.handledBy = useAuthStore().user?.name || '当前用户'
         }
       }
       ElMessage.success(`已确认 ${selected.value.length} 条告警`)
@@ -601,7 +601,7 @@ async function handleBatchFalse() {
         if (alarm.status === 'unhandled') {
           await handleAlarmApi(alarm.id, 'false_alarm')
           alarm.status = 'false_alarm'
-          alarm.handledBy = useAuthStore().user?.displayName || '当前用户'
+          alarm.handledBy = useAuthStore().user?.name || '当前用户'
         }
       }
       ElMessage.success(`已标记 ${selected.value.length} 条为误报`)
