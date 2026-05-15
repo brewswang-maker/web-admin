@@ -243,6 +243,7 @@ import {
   Odometer, Monitor, Bell, CircleCheck,
   Cpu, Refresh, TrendCharts,
 } from '@element-plus/icons-vue'
+import { http } from '@/api/http'
 import LazyChart from '@/components/LazyChart.vue'
 import type { EChartsOption } from 'echarts'
 
@@ -264,18 +265,59 @@ function startRefreshTimer() {
   }, 1000)
 }
 
-onMounted(() => {
+onMounted(async () => {
   startRefreshTimer()
+  await fetchDashboardData()
+  // 30秒自动刷新
+  autoRefreshTimer = setInterval(fetchDashboardData, 30000)
 })
 
 onUnmounted(() => {
   if (refreshTimer) clearInterval(refreshTimer)
+  if (autoRefreshTimer) clearInterval(autoRefreshTimer)
 })
+
+// ── API数据获取 ──
+async function fetchDashboardData() {
+  try {
+    const [overviewRes, trendRes, deviceRes] = await Promise.allSettled([
+      http.get('/api/v1/stats/overview', { params: { project: selectedProject.value } }),
+      http.get('/api/v1/stats/alarm-trend', { params: { project: selectedProject.value, hours: 24 } }),
+      http.get('/api/v1/stats/device-status', { params: { project: selectedProject.value } }),
+    ])
+    if (overviewRes.status === 'fulfilled' && overviewRes.value.data) {
+      const d = overviewRes.value.data?.data || overviewRes.value.data
+      if (d.securityScore) securityScore.value = d.securityScore
+      if (d.agentActivity) agentActivity.value = d.agentActivity
+    }
+    if (trendRes.status === 'fulfilled' && trendRes.value.data) {
+      const d = trendRes.value.data?.data || trendRes.value.data
+      if (d.trend) alarmTrendData.value = d.trend
+    }
+    if (deviceRes.status === 'fulfilled' && deviceRes.value.data) {
+      const d = deviceRes.value.data?.data || deviceRes.value.data
+      if (d.online !== undefined) {
+        topStatsValues.value.deviceOnline = d.online
+        topStatsValues.value.deviceTotal = d.total
+      }
+    }
+  } catch (e) {
+    console.warn('[Dashboard] 数据获取失败:', e)
+  }
+}
+
+const topStatsValues = reactive({
+  deviceOnline: 128,
+  deviceTotal: 132,
+  alarmCount: 23,
+  handleRate: 96.5,
+})
+
+let autoRefreshTimer: ReturnType<typeof setInterval> | null = null
 
 async function refreshAll() {
   refreshing.value = true
-  // 模拟刷新
-  await new Promise(r => setTimeout(r, 800))
+  await fetchDashboardData()
   refreshing.value = false
   lastUpdated.value = '刚刚'
   startRefreshTimer()
@@ -299,17 +341,17 @@ const topStats = computed(() => [
   },
   {
     label: '设备在线',
-    value: '128/132',
+    value: `${topStatsValues.deviceOnline}/${topStatsValues.deviceTotal}`,
     unit: '',
     icon: Monitor,
     gradient: 'linear-gradient(135deg, #10B981, #059669)',
-    trend: -0.5,
+    trend: topStatsValues.deviceTotal > 0 ? +((topStatsValues.deviceOnline / topStatsValues.deviceTotal * 100 - 96).toFixed(1)) : 0,
     trendUnit: '%',
-    trendDesc: '在线率 96.9%',
+    trendDesc: `在线率 ${topStatsValues.deviceTotal > 0 ? (topStatsValues.deviceOnline / topStatsValues.deviceTotal * 100).toFixed(1) : '--'}%`,
   },
   {
     label: '今日告警',
-    value: 23,
+    value: topStatsValues.alarmCount,
     unit: '',
     icon: Bell,
     gradient: 'linear-gradient(135deg, #F59E0B, #D97706)',
@@ -319,7 +361,7 @@ const topStats = computed(() => [
   },
   {
     label: '处置率',
-    value: '96.5',
+    value: topStatsValues.handleRate.toFixed(1),
     unit: '%',
     icon: CircleCheck,
     gradient: 'linear-gradient(135deg, #7C3AED, #6D28D9)',
@@ -407,6 +449,8 @@ const federationStatus = ref({
   privacyBudget: 7.2,
   privacyBudgetTotal: 12,
 })
+
+const alarmTrendData = ref<number[]>([])
 const fedStatusLabel = computed(() => {
   const m = { running: '🟢 运行中', paused: '⏸ 已暂停', idle: '⚪ 空闲' }
   return m[federationStatus.value.status] ?? '未知'
