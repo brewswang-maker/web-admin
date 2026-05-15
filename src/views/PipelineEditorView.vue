@@ -54,14 +54,14 @@
           <div class="node-ports">
             <div class="ports-in">
               <div v-for="p in node.inputs" :key="p" class="port in-port"
-                   :data-node="node.id" :data-port="p" :data-dir="in"
+                   :data-node="node.id" :data-port="p" :data-dir="'in'"
                    @mousedown.stop="onPortMouseDown($event, node.id, p, 'in')">
                 <span class="port-dot"></span>{{ p }}
               </div>
             </div>
             <div class="ports-out">
               <div v-for="p in node.outputs" :key="p" class="port out-port"
-                   :data-node="node.id" :data-port="p" :data-dir="out"
+                   :data-node="node.id" :data-port="p" :data-dir="'out'"
                    @mousedown.stop="onPortMouseDown($event, node.id, p, 'out')">
                 {{ p }}<span class="port-dot"></span>
               </div>
