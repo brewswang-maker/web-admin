@@ -32,6 +32,7 @@ const ONVIFDiscoveryView = () => import('@/views/ONVIFDiscoveryView.vue')
 const StreamManagementView = () => import('@/views/StreamManagementView.vue')
 const ModelManagementView = () => import('@/views/ModelManagementView.vue')
 const RecordingView = () => import('@/views/RecordingView.vue')
+const PipelineEditorView = () => import('@/views/PipelineEditorView.vue')
 
 // 基础路由（无需权限）
 export const constantRoutes: RouteRecordRaw[] = [
@@ -244,6 +245,12 @@ export const asyncRoutes: RouteRecordRaw[] = [
     name: 'Recording',
     component: RecordingView,
     meta: { title: '录像回放', icon: 'Film', roles: ['admin', 'user', 'viewer'] }
+  },
+  {
+    path: '/pipelines',
+    name: 'PipelineEditor',
+    component: PipelineEditorView,
+    meta: { title: 'Pipeline编辑', icon: 'SetUp', roles: ['admin', 'user'] }
   },
   // 捕获所有未匹配路由
   { 

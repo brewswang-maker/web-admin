@@ -1,130 +1,145 @@
 <template>
   <div class="live-page">
     <el-row :gutter="16">
+      <!-- 左侧: 视频区 -->
       <el-col :span="18">
-        <el-card class="video-card">
-          <template #header>
-            <div class="video-header">
-              <span>{{ selectedChannel ? selectedChannel.name : '请选择通道预览' }}</span>
-              <div class="video-actions">
-                <el-button-group>
-                  <el-button size="small" @click="layoutMode = '1x1'">
-                    <el-icon><FullScreen /></el-icon>
-                  </el-button>
-                  <el-button size="small" @click="layoutMode = '2x2'">
-                    <el-icon><Grid /></el-icon>
-                  </el-button>
-                  <el-button size="small" @click="layoutMode = '3x3'">
-                    <el-icon><Platform /></el-icon>
-                  </el-button>
-                </el-button-group>
-                <el-button size="small" @click="handleSnapshot" :disabled="!selectedChannel">
-                  <el-icon><Camera /></el-icon>抓拍
-                </el-button>
-                <el-button size="small" @click="handleRecord" :disabled="!selectedChannel"
-                  :type="recording ? 'danger' : 'default'">
-                  <el-icon><VideoCamera /></el-icon>{{ recording ? '停止' : '录像' }}
-                </el-button>
-              </div>
+        <el-card class="video-card" :body-style="{ padding: '0' }">
+          <div class="video-toolbar">
+            <span class="toolbar-title">
+              <el-icon><VideoCamera /></el-icon>
+              {{ activeChannelName }}
+            </span>
+            <div class="toolbar-actions">
+              <el-button-group size="small">
+                <el-button :type="layout === 1 ? 'primary' : 'default'" @click="layout = 1">1</el-button>
+                <el-button :type="layout === 4 ? 'primary' : 'default'" @click="layout = 4">4</el-button>
+                <el-button :type="layout === 9 ? 'primary' : 'default'" @click="layout = 9">9</el-button>
+                <el-button :type="layout === 16 ? 'primary' : 'default'" @click="layout = 16">16</el-button>
+              </el-button-group>
+              <el-button size="small" @click="snapshotActive" :disabled="!hasActive">
+                <el-icon><Camera /></el-icon>截图
+              </el-button>
+              <el-button size="small" @click="toggleFullscreen">
+                <el-icon><FullScreen /></el-icon>
+              </el-button>
             </div>
-          </template>
-          <div class="video-grid" :class="layoutMode">
-            <div v-for="n in layoutCount" :key="n" class="video-cell">
-              <div class="video-placeholder">
-                <el-icon :size="48"><VideoCamera /></el-icon>
-                <span>CH{{ n }} {{ selectedChannel?.name || '无信号' }}</span>
-                <div class="video-overlay">
-                  <span class="algo-tag">{{ selectedChannel?.algoPlugin || '无' }}</span>
-                  <span class="fps-tag">{{ selectedChannel?.fps || 0 }}fps</span>
-                </div>
+          </div>
+          <div class="video-grid" :class="`grid-${layout}`" ref="gridRef">
+            <div v-for="(slot, idx) in gridSlots" :key="idx"
+                 class="video-cell"
+                 :class="{ active: activeSlotIdx === idx, 'has-stream': slot.channelId }"
+                 @click="activeSlotIdx = idx"
+                 @dblclick="maximizeSlot(idx)">
+              <!-- 真实视频播放 -->
+              <video v-if="slot.playing && slot.hlsUrl"
+                     :ref="el => setVideoRef(el, idx)"
+                     class="video-player"
+                     muted autoplay playsinline
+                     :src="slot.hlsUrl" />
+              <div v-else-if="slot.loading" class="video-loading">
+                <el-icon class="spin"><Loading /></el-icon>
+                <span>连接中...</span>
+              </div>
+              <div v-else class="video-empty" @dragover.prevent @drop="onDropChannel($event, idx)">
+                <el-icon :size="32"><VideoCamera /></el-icon>
+                <span>拖拽通道到此处</span>
+              </div>
+              <!-- 视频叠加层 -->
+              <div v-if="slot.channelId" class="video-hud">
+                <span class="hud-name">{{ slot.name || `CH${idx + 1}` }}</span>
+                <span class="hud-badge" :class="slot.status">{{ slot.status === 'streaming' ? 'LIVE' : 'OFF' }}</span>
+                <span class="hud-time">{{ currentTime }}</span>
+              </div>
+              <!-- 控制条 -->
+              <div v-if="slot.channelId" class="video-controls">
+                <el-button circle size="small" @click.stop="snapshotSlot(idx)"><el-icon><Camera /></el-icon></el-button>
+                <el-button circle size="small" @click.stop="toggleSlotAudio(idx)">
+                  <el-icon><component :is="slot.muted ? 'Mute' : 'Microphone'" /></el-icon>
+                </el-button>
+                <el-button circle size="small" @click.stop="closeSlot(idx)"><el-icon><Close /></el-icon></el-button>
               </div>
             </div>
           </div>
         </el-card>
 
-        <el-card header="AI检测实时日志" style="margin-top: 16px">
-          <div class="log-container" ref="logContainer">
-            <div v-for="(log, idx) in detectionLogs" :key="idx" class="log-item">
-              <span class="log-time">{{ log.time }}</span>
-              <el-tag :type="levelLogTag(log.level)" size="small" class="log-level">{{ log.level }}</el-tag>
-              <span class="log-msg">{{ log.message }}</span>
+        <!-- AI检测日志 -->
+        <el-card class="log-card" :body-style="{ padding: '8px 12px' }">
+          <template #header>
+            <div style="display:flex;justify-content:space-between;align-items:center">
+              <span>🧠 AI检测日志</span>
+              <el-button size="small" text @click="detectionLogs = []">清空</el-button>
             </div>
+          </template>
+          <div class="log-scroll" ref="logRef">
+            <div v-for="(log, i) in detectionLogs" :key="i" class="log-row">
+              <span class="log-t">{{ log.time }}</span>
+              <el-tag :type="log.tagType" size="small" effect="dark">{{ log.level }}</el-tag>
+              <span class="log-m">{{ log.msg }}</span>
+            </div>
+            <div v-if="!detectionLogs.length" class="log-empty">等待检测结果...</div>
           </div>
         </el-card>
       </el-col>
 
+      <!-- 右侧: 通道 + PTZ -->
       <el-col :span="6">
-        <el-card :header="queryDeviceId ? `${currentDeviceLabel} 的通道` : '设备列表'">
-          <template v-if="queryDeviceId">
-            <el-button size="small" link type="primary" @click="router.push({})" style="margin-bottom: 10px">
-              <el-icon><ArrowLeft /></el-icon> 返回设备列表
-            </el-button>
-            <el-divider style="margin: 8px 0" />
-          </template>
-          <div v-if="!queryDeviceId" class="device-select-list">
-            <div v-for="dev in devices" :key="dev.id" class="device-select-item"
-              @click="switchToDevice(dev.id)">
-              <div class="device-select-icon">
-                <el-icon :size="20"><Monitor /></el-icon>
-              </div>
-              <div class="device-select-info">
-                <div class="device-select-name">{{ dev.name }}</div>
-                <div class="device-select-meta">
-                  <el-tag :type="dev.status === 'online' ? 'success' : 'info'" size="small">
-                    {{ dev.status === 'online' ? '在线' : '离线' }}
-                  </el-tag>
-                  <span class="device-select-channels">{{ dev.channelCount }}通道</span>
-                </div>
-              </div>
+        <el-card>
+          <template #header>
+            <div style="display:flex;justify-content:space-between;align-items:center">
+              <span>通道列表</span>
+              <el-input v-model="chSearch" size="small" style="width:140px" placeholder="搜索..." clearable />
             </div>
-            <el-empty v-if="!devices.length" description="暂无设备" :image-size="60" />
-          </div>
-          <template v-if="queryDeviceId">
-            <el-input v-model="channelSearch" placeholder="搜索通道..." size="small" clearable />
           </template>
-        </el-card>
-
-        <el-card header="通道列表" v-if="queryDeviceId" style="margin-top: 12px" v-loading="channelsLoading">
           <div class="channel-list">
             <div v-for="ch in filteredChannels" :key="ch.id"
-              :class="['channel-item', { active: selectedChannel?.id === ch.id }]"
-              @click="selectChannel(ch)">
-              <div class="channel-thumb">
-                <el-icon :size="24"><VideoCamera /></el-icon>
+                 class="ch-item"
+                 draggable="true"
+                 @dragstart="onDragChannel($event, ch)"
+                 @click="assignToActive(ch)">
+              <div class="ch-icon" :class="ch.status">
+                <el-icon :size="18"><VideoCamera /></el-icon>
               </div>
-              <div class="channel-info">
-                <div class="channel-name">{{ ch.name }}</div>
-                <div class="channel-meta">
-                  <el-tag :type="channelStatusType(ch)" size="small">
-                    {{ channelStatusText(ch) }}
-                  </el-tag>
-                </div>
-                <div class="channel-stats">
-                  <span>{{ ch.algoPlugin || '无' }}</span>
-                  <span>{{ ch.fps }}fps</span>
+              <div class="ch-body">
+                <div class="ch-name">{{ ch.name }}</div>
+                <div class="ch-meta">
+                  <span>{{ ch.algo || '无算法' }}</span>
+                  <span>{{ ch.fps || 0 }}fps</span>
                 </div>
               </div>
+              <el-tag :type="ch.status === 'streaming' ? 'success' : ch.status === 'online' ? 'primary' : 'info'" size="small">
+                {{ ch.status === 'streaming' ? '推流' : ch.status === 'online' ? '在线' : '离线' }}
+              </el-tag>
             </div>
-            <el-empty v-if="!filteredChannels.length && !channelsLoading" description="暂无通道" :image-size="60" />
+            <el-empty v-if="!filteredChannels.length" description="暂无通道" :image-size="50" />
           </div>
         </el-card>
 
-        <el-card header="PTZ控制" style="margin-top: 16px" v-if="selectedChannel">
-          <div class="ptz-pad">
-            <div class="ptz-row">
-              <el-button circle @click="ptzMove('up')"><el-icon><ArrowUp /></el-icon></el-button>
+        <!-- PTZ面板 -->
+        <el-card v-if="hasActive" style="margin-top:12px">
+          <template #header>PTZ 云台</template>
+          <div class="ptz-panel">
+            <div class="ptz-dpad">
+              <div class="ptz-row"><el-button circle @mousedown="ptzStart('up')" @mouseup="ptzStop"><el-icon><ArrowUp /></el-icon></el-button></div>
+              <div class="ptz-row">
+                <el-button circle @mousedown="ptzStart('left')" @mouseup="ptzStop"><el-icon><ArrowLeft /></el-icon></el-button>
+                <el-button circle type="primary" @click="ptzHome"><el-icon><Aim /></el-icon></el-button>
+                <el-button circle @mousedown="ptzStart('right')" @mouseup="ptzStop"><el-icon><ArrowRight /></el-icon></el-button>
+              </div>
+              <div class="ptz-row"><el-button circle @mousedown="ptzStart('down')" @mouseup="ptzStop"><el-icon><ArrowDown /></el-icon></el-button></div>
             </div>
-            <div class="ptz-row">
-              <el-button circle @click="ptzMove('left')"><el-icon><ArrowLeft /></el-icon></el-button>
-              <el-button circle @click="ptzMove('home')"><el-icon><Aim /></el-icon></el-button>
-              <el-button circle @click="ptzMove('right')"><el-icon><ArrowRight /></el-icon></el-button>
+            <div class="ptz-zoom-row">
+              <el-button @mousedown="ptzStart('zoom_in')" @mouseup="ptzStop">变倍 +</el-button>
+              <el-button @mousedown="ptzStart('zoom_out')" @mouseup="ptzStop">变倍 -</el-button>
             </div>
-            <div class="ptz-row">
-              <el-button circle @click="ptzMove('down')"><el-icon><ArrowDown /></el-icon></el-button>
+            <div class="ptz-speed">
+              <span>速度</span>
+              <el-slider v-model="ptzSpeed" :min="1" :max="255" :show-tooltip="false" size="small" />
             </div>
-            <div class="ptz-zoom">
-              <el-button circle @click="ptzZoom('in')"><el-icon><ZoomIn /></el-icon></el-button>
-              <el-button circle @click="ptzZoom('out')"><el-icon><ZoomOut /></el-icon></el-button>
+            <div class="ptz-presets">
+              <span>预置位</span>
+              <el-button-group size="small">
+                <el-button v-for="p in 4" :key="p" @click="ptzPreset(p)">P{{ p }}</el-button>
+              </el-button-group>
             </div>
           </div>
         </el-card>
@@ -134,185 +149,326 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch, reactive, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useDeviceStore } from '@/stores/device'
 import { getDeviceChannels } from '@/api/devices'
+import { http } from '@/api/http'
 import { ElMessage } from 'element-plus'
 import type { Channel, DeviceItem } from '@/types/device'
+
+interface GridSlot {
+  channelId: string
+  name: string
+  status: string
+  hlsUrl: string
+  playing: boolean
+  loading: boolean
+  muted: boolean
+  deviceId: string
+}
 
 const route = useRoute()
 const router = useRouter()
 const deviceStore = useDeviceStore()
 
-const queryDeviceId = computed(() => (route.query.deviceId as string) || '')
-const queryChannelNo = computed(() => {
-  const v = parseInt(route.query.channel as string)
-  return isNaN(v) ? 0 : v
-})
+// 视频网格
+const layout = ref(4)
+const activeSlotIdx = ref(0)
+const gridSlots = reactive<GridSlot[]>(
+  Array.from({ length: 16 }, () => ({
+    channelId: '', name: '', status: '', hlsUrl: '', playing: false, loading: false, muted: true, deviceId: ''
+  }))
+)
+const videoRefs = ref<Record<number, HTMLVideoElement>>({})
+const gridRef = ref<HTMLElement>()
+const logRef = ref<HTMLElement>()
 
-const devices = ref<DeviceItem[]>([])
+const setVideoRef = (el: any, idx: number) => {
+  if (el) videoRefs.value[idx] = el as HTMLVideoElement
+}
 
-const layoutMode = ref<'1x1' | '2x2' | '3x3'>('2x2')
-const layoutCount = computed(() => {
-  return layoutMode.value === '1x1' ? 1 : layoutMode.value === '2x2' ? 4 : 9
-})
-
-const channelSearch = ref('')
-const selectedChannel = ref<Channel | null>(null)
-const recording = ref(false)
+// 通道数据
 const channels = ref<Channel[]>([])
-const channelsLoading = ref(false)
+const devices = ref<DeviceItem[]>([])
+const chSearch = ref('')
+const ptzSpeed = ref(128)
+const currentTime = ref('')
 
-const currentDeviceLabel = computed(() => {
-  const dev = devices.value.find(d => d.id === queryDeviceId.value)
-  return dev?.name || ''
-})
+// 检测日志
+interface LogEntry { time: string; level: string; tagType: string; msg: string }
+const detectionLogs = ref<LogEntry[]>([])
 
+const hasActive = computed(() => !!gridSlots[activeSlotIdx.value]?.channelId)
+const activeChannelName = computed(() => gridSlots[activeSlotIdx.value]?.name || '实时监控')
 const filteredChannels = computed(() => {
-  if (!channelSearch.value) return channels.value
-  const s = channelSearch.value.toLowerCase()
+  if (!chSearch.value) return channels.value
+  const s = chSearch.value.toLowerCase()
   return channels.value.filter(c => c.name.toLowerCase().includes(s))
 })
 
-function channelStatusText(ch: Channel): string {
-  if (ch.isRecording) return '录像中'
-  if (ch.status === 'streaming') return '推流中'
-  if (ch.status === 'error') return '异常'
-  return '待机'
-}
-function channelStatusType(ch: Channel): 'primary' | 'success' | 'warning' | 'info' | 'danger' {
-  if (ch.isRecording) return 'danger'
-  if (ch.status === 'streaming') return 'success'
-  if (ch.status === 'error') return 'danger'
-  return 'info'
+// 加载设备+通道
+async function loadData() {
+  if (!deviceStore.devices.length) await deviceStore.fetchDevices({ page: 1, pageSize: 100 })
+  devices.value = deviceStore.devices
+  // 加载所有设备的通道
+  const allChs: Channel[] = []
+  for (const dev of devices.value) {
+    try {
+      const chs = await getDeviceChannels(dev.id)
+      for (const ch of chs) { ch.deviceId = dev.id }
+      allChs.push(...chs)
+    } catch { /* skip */ }
+  }
+  channels.value = allChs
+
+  // 如果URL指定了设备，自动分配第一个通道
+  const qDev = route.query.deviceId as string
+  if (qDev) {
+    const ch = allChs.find(c => c.deviceId === qDev)
+    if (ch) assignChannel(0, ch)
+  }
 }
 
-async function loadChannels() {
-  if (!queryDeviceId.value) {
-    channels.value = []
-    selectedChannel.value = null
-    return
+// 分配通道到视频格
+function assignChannel(slotIdx: number, ch: Channel) {
+  const slot = gridSlots[slotIdx]
+  // 先关闭旧的
+  closeSlot(slotIdx)
+
+  slot.channelId = ch.id
+  slot.name = ch.name
+  slot.deviceId = ch.deviceId || ''
+  slot.status = ch.status
+  slot.loading = true
+  slot.muted = true
+
+  // 获取HLS播放地址
+  fetchStreamUrl(ch).then(url => {
+    if (url) {
+      slot.hlsUrl = url
+      slot.playing = true
+      slot.status = 'streaming'
+    }
+    slot.loading = false
+  }).catch(() => { slot.loading = false })
+}
+
+function assignToActive(ch: Channel) {
+  assignChannel(activeSlotIdx.value, ch)
+}
+
+function closeSlot(idx: number) {
+  const slot = gridSlots[idx]
+  if (slot.playing) {
+    const video = videoRefs.value[idx]
+    if (video) { video.pause(); video.src = '' }
   }
-  channelsLoading.value = true
+  Object.assign(slot, { channelId: '', name: '', status: '', hlsUrl: '', playing: false, loading: false, muted: true, deviceId: '' })
+}
+
+// 获取流地址
+async function fetchStreamUrl(ch: Channel): Promise<string | null> {
   try {
-    const chs = await getDeviceChannels(queryDeviceId.value)
-    channels.value = chs
-    if (queryChannelNo.value > 0) {
-      const target = chs.find(c => c.channelNo === queryChannelNo.value)
-      if (target) selectedChannel.value = target
-    }
-    if (!selectedChannel.value && chs.length) {
-      selectedChannel.value = chs[0]
-    }
+    // 尝试获取HLS地址
+    const { data } = await http.get(`/api/v1/streams/${ch.id}/hls-url`)
+    return data?.url || data?.data?.url || null
   } catch {
-    ElMessage.error('加载通道失败')
-  } finally {
-    channelsLoading.value = false
+    // Fallback: 尝试WebRTC SDP交换
+    try {
+      const { data: sdp } = await http.post(`/api/v1/streams/${ch.id}/webrtc-sdp`, {
+        offer: '' // 实际应用中这里应该是本地SDP offer
+      })
+      return sdp?.url || null
+    } catch {
+      // 最终fallback: 返回模拟地址（开发阶段）
+      return `/stream/${ch.id}/index.m3u8`
+    }
   }
 }
 
-function selectChannel(ch: Channel) {
-  selectedChannel.value = ch
-  ElMessage.info(`正在加载 ${ch.name} 视频流...`)
+// 拖拽通道到视频格
+function onDragChannel(e: DragEvent, ch: Channel) {
+  e.dataTransfer!.setData('application/json', JSON.stringify({ id: ch.id, name: ch.name, status: ch.status, deviceId: ch.deviceId }))
+}
+function onDropChannel(e: DragEvent, idx: number) {
+  const raw = e.dataTransfer?.getData('application/json')
+  if (!raw) return
+  try {
+    const ch = JSON.parse(raw)
+    assignChannel(idx, ch as any)
+  } catch { /* ignore */ }
 }
 
-function switchToDevice(deviceId: string) {
-  router.push({ query: { deviceId } })
+// 截图
+function snapshotSlot(idx: number) {
+  const video = videoRefs.value[idx]
+  if (!video) return
+  const canvas = document.createElement('canvas')
+  canvas.width = video.videoWidth || 640
+  canvas.height = video.videoHeight || 480
+  canvas.getContext('2d')!.drawImage(video, 0, 0)
+  const link = document.createElement('a')
+  link.download = `snapshot_${gridSlots[idx].name}_${Date.now()}.jpg`
+  link.href = canvas.toDataURL('image/jpeg', 0.95)
+  link.click()
+  ElMessage.success('截图已保存')
+}
+function snapshotActive() { snapshotSlot(activeSlotIdx.value) }
+
+// 音频
+function toggleSlotAudio(idx: number) {
+  const slot = gridSlots[idx]
+  slot.muted = !slot.muted
+  const video = videoRefs.value[idx]
+  if (video) video.muted = slot.muted
 }
 
-function ptzMove(dir: string) { ElMessage.info(`PTZ: ${dir}`) }
-function ptzZoom(dir: string) { ElMessage.info(`变焦: ${dir}`) }
-
-function handleSnapshot() { ElMessage.success('抓拍已保存') }
-function handleRecord() {
-  recording.value = !recording.value
-  ElMessage.info(recording.value ? '开始录像' : '停止录像')
+// 全屏
+function toggleFullscreen() {
+  const cell = gridRef.value?.children[activeSlotIdx.value] as HTMLElement
+  if (cell?.requestFullscreen) cell.requestFullscreen()
+}
+function maximizeSlot(idx: number) {
+  activeSlotIdx.value = idx
+  toggleFullscreen()
 }
 
-const detectionLogs = ref([
-  { time: '14:32:10', level: 'high', message: '[入侵检测] 检测到人员进入警戒区域 | 置信度92%' },
-  { time: '14:28:05', level: 'critical', message: '[烟火检测] 检测到烟雾+温度异常85°C | 置信度97%' },
-  { time: '14:15:22', level: 'medium', message: '[徘徊检测] 目标徘徊超30秒 | 置信度78%' },
-  { time: '14:10:47', level: 'low', message: '[安全帽检测] 未佩戴安全帽 | 置信度65%' }
-])
-
-function levelLogTag(level: string): 'primary' | 'success' | 'warning' | 'info' | 'danger' {
-  const map: Record<string, 'primary' | 'success' | 'warning' | 'info' | 'danger'> = { critical: 'danger', high: 'warning', medium: 'info', low: 'info' }
-  return map[level] || 'info'
+// PTZ控制
+function ptzStart(direction: string) {
+  const slot = gridSlots[activeSlotIdx.value]
+  if (!slot.channelId) return
+  http.post('/api/v1/ptz/control', {
+    deviceId: slot.deviceId,
+    channelId: slot.channelId,
+    direction,
+    speed: ptzSpeed.value
+  }).catch(() => {})
+}
+function ptzStop() { /* 停止持续移动 */ }
+function ptzHome() {
+  const slot = gridSlots[activeSlotIdx.value]
+  if (!slot.channelId) return
+  http.post('/api/v1/ptz/control', { deviceId: slot.deviceId, channelId: slot.channelId, direction: 'home' })
+}
+function ptzPreset(preset: number) {
+  const slot = gridSlots[activeSlotIdx.value]
+  if (!slot.channelId) return
+  http.post('/api/v1/ptz/control', { deviceId: slot.deviceId, channelId: slot.channelId, direction: 'goto_preset', preset })
 }
 
+// 时钟
+let clockTimer: ReturnType<typeof setInterval> | null = null
 let logTimer: ReturnType<typeof setInterval> | null = null
 
-onMounted(async () => {
-  if (!deviceStore.devices.length) {
-    await deviceStore.fetchDevices({ page: 1, pageSize: 100 })
-  }
-  devices.value = deviceStore.devices
-  if (queryDeviceId.value) {
-    await loadChannels()
-  }
-  logTimer = setInterval(() => {
-    const now = new Date().toLocaleTimeString('zh-CN', { hour12: false })
-    const ch = selectedChannel.value
-    const algo = ch?.algoPlugin && ch.algoPlugin !== '无' ? ch.algoPlugin : 'AI检测'
-    const chName = ch?.name || '未知通道'
-    detectionLogs.value.unshift({
-      time: now,
-      level: ['low', 'medium', 'high'][Math.floor(Math.random() * 3)],
-      message: `[${algo}] ${chName} 检测到目标活动 | 置信度${Math.floor(Math.random()*30+70)}%`
-    })
-    if (detectionLogs.value.length > 100) detectionLogs.value.pop()
-  }, 5000)
-})
+function updateClock() {
+  currentTime.value = new Date().toLocaleTimeString('zh-CN', { hour12: false })
+}
 
-watch(() => route.query.deviceId, async (newId) => {
-  channels.value = []
-  selectedChannel.value = null
-  if (newId) await loadChannels()
+function generateFakeLog() {
+  const playingSlots = gridSlots.filter(s => s.playing)
+  if (!playingSlots.length) return
+  const slot = playingSlots[Math.floor(Math.random() * playingSlots.length)]
+  const levels = [
+    { level: 'INFO', tagType: 'info' as const, msgs: ['目标跟踪中', '场景分析正常', '帧率稳定'] },
+    { level: 'WARN', tagType: 'warning' as const, msgs: ['检测到异常行为', '目标徘徊超时', '人员聚集告警'] },
+    { level: 'ALERT', tagType: 'danger' as const, msgs: ['周界入侵检测', '安全帽未佩戴', '烟火告警'] },
+  ]
+  const lvl = levels[Math.floor(Math.random() * levels.length)]
+  const msg = lvl.msgs[Math.floor(Math.random() * lvl.msgs.length)]
+  const conf = Math.floor(Math.random() * 25 + 75)
+  detectionLogs.value.unshift({
+    time: new Date().toLocaleTimeString('zh-CN', { hour12: false }),
+    level: lvl.level,
+    tagType: lvl.tagType,
+    msg: `[${slot.name}] ${msg} | 置信度${conf}%`
+  })
+  if (detectionLogs.value.length > 200) detectionLogs.value.length = 200
+}
+
+onMounted(() => {
+  loadData()
+  updateClock()
+  clockTimer = setInterval(updateClock, 1000)
+  logTimer = setInterval(generateFakeLog, 3000)
 })
 
 onUnmounted(() => {
+  if (clockTimer) clearInterval(clockTimer)
   if (logTimer) clearInterval(logTimer)
+  // 关闭所有流
+  for (let i = 0; i < 16; i++) closeSlot(i)
 })
 </script>
 
 <style scoped>
 .live-page { max-width: 1920px; }
-.video-card .el-card__body { padding: 12px; }
-.video-header { display: flex; justify-content: space-between; align-items: center; }
-.video-actions { display: flex; gap: 8px; align-items: center; }
-.video-grid { display: grid; gap: 4px; min-height: 400px; }
-.video-grid.\31 x1 { grid-template-columns: 1fr; }
-.video-grid.\32 x2 { grid-template-columns: 1fr 1fr; }
-.video-grid.\33 x3 { grid-template-columns: 1fr 1fr 1fr; }
-.video-cell { background: #1a1a2e; border-radius: 6px; min-height: 200px; }
-.video-placeholder { width: 100%; height: 100%; min-height: 200px; display: flex; flex-direction: column; align-items: center; justify-content: center; color: #ffffff60; gap: 8px; position: relative; }
-.video-overlay { position: absolute; top: 8px; left: 8px; display: flex; gap: 6px; }
-.algo-tag { background: rgba(24,144,255,0.8); color: #fff; padding: 2px 8px; border-radius: 4px; font-size: 12px; }
-.fps-tag { background: rgba(0,0,0,0.6); color: #fff; padding: 2px 8px; border-radius: 4px; font-size: 12px; }
-.log-container { max-height: 200px; overflow-y: auto; font-family: monospace; font-size: 13px; }
-.log-item { padding: 4px 0; border-bottom: 1px solid #f0f0f0; display: flex; gap: 8px; align-items: center; }
-.log-time { color: #8c8c8c; white-space: nowrap; }
-.log-msg { flex: 1; }
-.device-select-list { max-height: 380px; overflow-y: auto; }
-.device-select-item { display: flex; gap: 10px; padding: 10px; border-radius: 8px; cursor: pointer; margin-bottom: 6px; transition: background 0.2s; border: 2px solid transparent; }
-.device-select-item:hover { background: #f5f5f5; border-color: #1890ff; }
-.device-select-icon { width: 40px; height: 40px; background: #e6f7ff; border-radius: 6px; display: flex; align-items: center; justify-content: center; color: #1890ff; flex-shrink: 0; }
-.device-select-info { flex: 1; }
-.device-select-name { font-weight: 600; font-size: 14px; }
-.device-select-meta { margin-top: 4px; display: flex; gap: 8px; align-items: center; }
-.device-select-channels { font-size: 12px; color: #8c8c8c; }
+.video-card { background: #1A1D23; border: 1px solid #3C4043; }
+.video-toolbar { display: flex; justify-content: space-between; align-items: center; padding: 10px 16px; border-bottom: 1px solid #3C4043; }
+.toolbar-title { color: #E8EAED; display: flex; align-items: center; gap: 8px; font-weight: 600; }
+.toolbar-actions { display: flex; gap: 8px; align-items: center; }
+
+/* 视频网格 */
+.video-grid { display: grid; gap: 2px; background: #000; min-height: 480px; }
+.grid-1 { grid-template-columns: 1fr; }
+.grid-4 { grid-template-columns: 1fr 1fr; }
+.grid-9 { grid-template-columns: 1fr 1fr 1fr; }
+.grid-16 { grid-template-columns: 1fr 1fr 1fr 1fr; }
+
+.video-cell { position: relative; background: #111; cursor: pointer; overflow: hidden; border: 2px solid transparent; transition: border-color 0.2s; min-height: 120px; }
+.video-cell.active { border-color: #1A73E8; }
+.video-cell.has-stream:hover .video-controls { opacity: 1; }
+
+.video-player { width: 100%; height: 100%; object-fit: contain; display: block; }
+.video-empty { width: 100%; height: 100%; min-height: 160px; display: flex; flex-direction: column; align-items: center; justify-content: center; color: #555; gap: 8px; font-size: 13px; }
+.video-loading { width: 100%; height: 100%; min-height: 160px; display: flex; flex-direction: column; align-items: center; justify-content: center; color: #1A73E8; gap: 8px; }
+.spin { animation: spin 1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* HUD叠加 */
+.video-hud { position: absolute; top: 0; left: 0; right: 0; padding: 6px 10px; display: flex; align-items: center; gap: 8px; background: linear-gradient(180deg, rgba(0,0,0,0.7), transparent); font-size: 12px; color: #fff; pointer-events: none; }
+.hud-name { font-weight: 600; }
+.hud-badge { padding: 1px 6px; border-radius: 3px; font-size: 11px; font-weight: 700; }
+.hud-badge.streaming { background: #0F9D58; }
+.hud-badge.offline { background: #DB4437; }
+.hud-time { margin-left: auto; font-family: monospace; }
+
+/* 控制按钮 */
+.video-controls { position: absolute; bottom: 6px; right: 6px; display: flex; gap: 4px; opacity: 0; transition: opacity 0.2s; }
+.video-controls .el-button { background: rgba(0,0,0,0.6); border: none; color: #fff; }
+.video-controls .el-button:hover { background: rgba(26,115,232,0.8); }
+
+/* 日志 */
+.log-card { margin-top: 12px; background: #1A1D23; border: 1px solid #3C4043; color: #E8EAED; }
+.log-scroll { max-height: 160px; overflow-y: auto; font-family: 'Roboto Mono', monospace; font-size: 12px; }
+.log-row { display: flex; gap: 8px; padding: 3px 0; border-bottom: 1px solid #2D3039; align-items: center; }
+.log-t { color: #9AA0A6; white-space: nowrap; }
+.log-m { flex: 1; color: #E8EAED; }
+.log-empty { color: #666; text-align: center; padding: 20px; }
+
+/* 通道列表 */
 .channel-list { max-height: 400px; overflow-y: auto; }
-.channel-item { display: flex; gap: 10px; padding: 10px; border-radius: 8px; cursor: pointer; margin-bottom: 6px; transition: background 0.2s; border: 2px solid transparent; }
-.channel-item:hover { background: #f5f5f5; }
-.channel-item.active { border-color: #1890ff; background: #e6f7ff; }
-.channel-thumb { width: 56px; height: 40px; background: #1a1a2e; border-radius: 4px; display: flex; align-items: center; justify-content: center; color: #ffffff40; flex-shrink: 0; }
-.channel-info { flex: 1; }
-.channel-name { font-weight: 600; font-size: 14px; }
-.channel-meta { margin-top: 2px; }
-.channel-stats { font-size: 12px; color: #8c8c8c; margin-top: 4px; display: flex; gap: 12px; }
-.ptz-pad { display: flex; flex-direction: column; align-items: center; gap: 6px; }
-.ptz-row { display: flex; gap: 12px; }
-.ptz-zoom { display: flex; gap: 12px; margin-top: 8px; }
+.ch-item { display: flex; gap: 10px; padding: 8px 10px; border-radius: 6px; cursor: pointer; margin-bottom: 4px; transition: all 0.15s; border: 1px solid transparent; }
+.ch-item:hover { background: #2D3039; border-color: #1A73E8; }
+.ch-icon { width: 36px; height: 36px; border-radius: 6px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.ch-icon.streaming { background: rgba(15,157,88,0.15); color: #0F9D58; }
+.ch-icon.online { background: rgba(26,115,232,0.15); color: #1A73E8; }
+.ch-icon.offline { background: rgba(154,160,166,0.15); color: #9AA0A6; }
+.ch-body { flex: 1; min-width: 0; }
+.ch-name { font-weight: 600; font-size: 13px; color: #E8EAED; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ch-meta { font-size: 11px; color: #9AA0A6; display: flex; gap: 12px; margin-top: 2px; }
+
+/* PTZ */
+.ptz-panel { display: flex; flex-direction: column; align-items: center; gap: 12px; }
+.ptz-dpad { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.ptz-row { display: flex; gap: 16px; }
+.ptz-zoom-row { display: flex; gap: 8px; width: 100%; }
+.ptz-zoom-row .el-button { flex: 1; }
+.ptz-speed { display: flex; align-items: center; gap: 8px; width: 100%; font-size: 12px; color: #9AA0A6; }
+.ptz-speed .el-slider { flex: 1; }
+.ptz-presets { display: flex; align-items: center; gap: 8px; width: 100%; font-size: 12px; color: #9AA0A6; }
+
+/* 暗色主题覆盖 */
+:deep(.el-card) { background: #252830; border-color: #3C4043; color: #E8EAED; }
+:deep(.el-card__header) { border-color: #3C4043; color: #E8EAED; }
 </style>
