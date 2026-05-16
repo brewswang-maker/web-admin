@@ -270,19 +270,19 @@ export const asyncRoutes: RouteRecordRaw[] = [
     meta: { title: '联邦学习', icon: 'Share', roles: ['admin'] }
   },
   {
-    path: '/rbac/permissions',
+    path: '/permissions',
     name: 'PermissionManagement',
     component: PermissionManagementView,
     meta: { title: '权限管理', icon: 'Lock', hidden: true, roles: ['admin'] }
   },
   {
-    path: '/rbac/roles',
+    path: '/roles',
     name: 'RoleManagement',
     component: RoleManagementView,
     meta: { title: '角色管理', icon: 'UserFilled', hidden: true, roles: ['admin'] }
   },
   {
-    path: '/rbac/users',
+    path: '/users',
     name: 'UserManagement',
     component: UserManagementView,
     meta: { title: '用户管理', icon: 'Avatar', hidden: true, roles: ['admin'] }
