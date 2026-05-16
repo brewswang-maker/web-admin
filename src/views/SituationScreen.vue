@@ -1,145 +1,71 @@
 <template>
   <div class="situation-screen">
-    <!-- 全屏模式头部 -->
-    <div class="screen-header" v-if="!isFullscreen">
-      <h2>📊 3D 态势大屏</h2>
-      <div class="header-actions">
-        <el-button @click="enterFullscreen">
-          <el-icon><FullScreen /></el-icon>全屏
-        </el-button>
-        <el-button @click="refreshData">
-          <el-icon><Refresh /></el-icon>刷新
-        </el-button>
+    <div class="ss-header">
+      <h1>🛡️ 华盾AI 安全态势大屏</h1>
+      <div class="ss-header-right">
+        <span class="ss-clock">{{ currentTime }}</span>
+        <el-tag :type="connected ? 'success' : 'danger'" effect="dark" size="small">
+          {{ connected ? '实时在线' : '连接断开' }}
+        </el-tag>
       </div>
     </div>
 
-    <!-- 主屏幕内容 -->
-    <div class="screen-body" :class="{ fullscreen: isFullscreen }">
-      <!-- 退出全屏 -->
-      <div v-if="isFullscreen" class="exit-fullscreen">
-        <el-button @click="exitFullscreen" link>
-          <el-icon><Close /></el-icon>
-        </el-button>
-      </div>
-
-      <!-- 顶部统计条 -->
-      <div class="top-stats">
-        <div class="stat-item">
-          <div class="stat-icon blue"><el-icon><Monitor /></el-icon></div>
-          <div class="stat-info">
-            <div class="stat-num">{{ deviceStore.stats?.total ?? 0 }}</div>
-            <div class="stat-label">设备总数</div>
-          </div>
+    <div class="ss-body">
+      <!-- 左侧面板 -->
+      <div class="ss-col left-col">
+        <div class="ss-panel">
+          <div class="panel-title">📊 安全评分</div>
+          <div class="score-gauge" ref="scoreGaugeRef"></div>
         </div>
-        <div class="stat-item">
-          <div class="stat-icon green"><el-icon><CircleCheck /></el-icon></div>
-          <div class="stat-info">
-            <div class="stat-num">{{ deviceStore.stats?.onlineRate ?? 0 }}%</div>
-            <div class="stat-label">在线率</div>
-          </div>
+        <div class="ss-panel">
+          <div class="panel-title">🚨 告警趋势 (24h)</div>
+          <div class="chart-box" ref="alarmTrendRef"></div>
         </div>
-        <div class="stat-item">
-          <div class="stat-icon orange"><el-icon><WarningFilled /></el-icon></div>
-          <div class="stat-info">
-            <div class="stat-num">{{ alarmStats?.total ?? 0 }}</div>
-            <div class="stat-label">今日告警</div>
-          </div>
-        </div>
-        <div class="stat-item">
-          <div class="stat-icon purple"><el-icon><Cpu /></el-icon></div>
-          <div class="stat-info">
-            <div class="stat-num">{{ systemHealth?.apiLatency ?? 0 }}ms</div>
-            <div class="stat-label">平均延迟</div>
-          </div>
+        <div class="ss-panel">
+          <div class="panel-title">📹 设备状态</div>
+          <div class="chart-box" ref="devicePieRef"></div>
         </div>
       </div>
 
-      <!-- 中间地图 + 侧边栏 -->
-      <div class="screen-main">
-        <!-- 左侧面板 -->
-        <div class="side-panel left-panel">
-          <div class="panel-card">
-            <div class="panel-title">🟣 Agent 实时状态</div>
-            <div class="agent-row" v-for="a in agentList" :key="a.name">
-              <span class="agent-name">{{ a.name }}</span>
-              <span class="agent-status" :class="a.status">{{ a.status === 'active' ? '活跃' : '休眠' }}</span>
-              <span class="agent-calls">{{ a.calls }}/s</span>
-            </div>
-          </div>
-          <div class="panel-card">
-            <div class="panel-title">🔴 实时告警流</div>
-            <div class="alarm-stream">
-              <div v-for="a in recentAlarms" :key="a.id" class="alarm-item">
-                <span class="alarm-level" :class="a.level">{{ alarmLevelIcon(a.level) }}</span>
-                <span class="alarm-msg">{{ a.description }}</span>
-                <span class="alarm-time">{{ a.time }}</span>
-              </div>
+      <!-- 中间地图 -->
+      <div class="ss-col center-col">
+        <div class="ss-panel map-panel">
+          <div class="panel-title">🗺️ 厂区态势地图</div>
+          <div class="chart-box map-box" ref="mapRef"></div>
+        </div>
+        <div class="ss-panel">
+          <div class="panel-title">🚨 最新告警</div>
+          <div class="alarm-scroll">
+            <div v-for="alarm in latestAlarms" :key="alarm.id"
+                 :class="['alarm-row', alarm.level]">
+              <span class="alarm-dot"></span>
+              <span class="alarm-time">{{ alarm.time }}</span>
+              <span class="alarm-location">{{ alarm.location }}</span>
+              <span class="alarm-type">{{ alarm.type }}</span>
+              <el-tag :type="alarm.status === '已处置' ? 'success' : 'warning'" size="small" effect="dark">
+                {{ alarm.status }}
+              </el-tag>
             </div>
           </div>
         </div>
+      </div>
 
-        <!-- 中央地图 -->
-        <div class="map-container">
-          <div class="map-placeholder">
-            <div class="map-grid">
-              <!-- 模拟园区地图和设备点位 -->
-              <div class="map-area park">
-                <div class="area-label">🏢 智慧园区</div>
-                <div class="device-dot" v-for="i in 4" :key="'park-'+i"
-                  :class="['dot-'+i, i === 3 ? 'alarming' : 'online']"
-                  :style="getDotPosition('park', i)">
-                  <span class="dot-tooltip">IPC-A{{i}} ({{ i === 3 ? '告警' : '在线' }})</span>
-                </div>
-              </div>
-              <div class="map-area construction">
-                <div class="area-label">🏗️ 智慧工地</div>
-                <div class="device-dot" v-for="i in 3" :key="'cons-'+i"
-                  :class="['dot-'+i, 'online']"
-                  :style="getDotPosition('construction', i)">
-                  <span class="dot-tooltip">IPC-B{{i}} (在线)</span>
-                </div>
-              </div>
-              <div class="map-area parking">
-                <div class="area-label">🅿️ 停车场</div>
-                <div class="device-dot" v-for="i in 2" :key="'parking-'+i"
-                  :class="['dot-'+i, i === 1 ? 'offline' : 'online']"
-                  :style="getDotPosition('parking', i)">
-                  <span class="dot-tooltip">IPC-C{{i}} ({{ i === 1 ? '离线' : '在线' }})</span>
-                </div>
-              </div>
-              <!-- 围墙线 -->
-              <svg class="perimeter-line" viewBox="0 0 800 500">
-                <line x1="150" y1="100" x2="350" y2="100" stroke="#1890ff" stroke-width="2" stroke-dasharray="8,4" />
-                <line x1="350" y1="100" x2="350" y2="300" stroke="#1890ff" stroke-width="2" stroke-dasharray="8,4" />
-                <line x1="150" y1="100" x2="150" y2="300" stroke="#1890ff" stroke-width="2" stroke-dasharray="8,4" />
-                <line x1="150" y1="300" x2="350" y2="300" stroke="#1890ff" stroke-width="2" stroke-dasharray="8,4" />
-              </svg>
-            </div>
-            <div class="map-legend">
-              <span><span class="dot online"></span>在线</span>
-              <span><span class="dot offline"></span>离线</span>
-              <span><span class="dot alarming"></span>告警</span>
-            </div>
-          </div>
+      <!-- 右侧面板 -->
+      <div class="ss-col right-col">
+        <div class="ss-panel">
+          <div class="panel-title">🥧 告警类型分布</div>
+          <div class="chart-box" ref="alarmTypeRef"></div>
         </div>
-
-        <!-- 右侧面板 -->
-        <div class="side-panel right-panel">
-          <div class="panel-card">
-            <div class="panel-title">📋 项目概览</div>
-            <div v-for="p in projectOverview" :key="p.name" class="project-row">
-              <span class="proj-name">{{ p.name }}</span>
-              <el-progress :percentage="p.rate" :color="p.rate >= 95 ? '#52c41a' : p.rate >= 80 ? '#faad14' : '#f5222d'" :stroke-width="6" />
-              <span class="proj-rate">{{ p.rate }}%</span>
-            </div>
-          </div>
-          <div class="panel-card">
-            <div class="panel-title">🛡️ 系统健康</div>
-            <div class="health-grid">
-              <div v-for="s in serviceStatuses" :key="s.name" class="health-item">
-                <span class="health-dot" :class="s.status"></span>
-                <span class="health-name">{{ s.name }}</span>
-              </div>
+        <div class="ss-panel">
+          <div class="panel-title">🧠 Agent活跃度</div>
+          <div class="chart-box" ref="agentBarRef"></div>
+        </div>
+        <div class="ss-panel">
+          <div class="panel-title">⚡ 今日统计</div>
+          <div class="stats-grid">
+            <div class="stat-card" v-for="s in todayStats" :key="s.label">
+              <div class="stat-value" :style="{ color: s.color }">{{ s.value }}</div>
+              <div class="stat-label">{{ s.label }}</div>
             </div>
           </div>
         </div>
@@ -149,193 +75,339 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue'
-import { useDeviceStore } from '@/stores/device'
-import { useCloudStore } from '@/stores/cloud'
-import type { AlarmStats, SystemHealth } from '@/types/analytics'
+import { ref, onMounted, onUnmounted, nextTick } from 'vue'
+import { http } from '@/api/http'
+import { useWebSocket } from '@/composables/useWebSocket'
 
-const deviceStore = useDeviceStore()
-const cloudStore = useCloudStore()
+// WebSocket实时推送
+const { connected } = useWebSocket('/ws/situation')
 
-const isFullscreen = ref(false)
-const alarmStats = ref<AlarmStats | null>(null)
-const systemHealth = ref<SystemHealth | null>(null)
+// 时钟
+const currentTime = ref('')
+let clockTimer: ReturnType<typeof setInterval> | null = null
 
-const agentList = [
-  { name: '感知Agent', status: 'active', calls: 12 },
-  { name: '研判Agent', status: 'active', calls: 8 },
-  { name: '决策Agent', status: 'active', calls: 5 },
-  { name: '元认知Agent', status: 'idle', calls: 1 },
-  { name: '专家Agent-1', status: 'idle', calls: 0 }
-]
+// ECharts refs
+const scoreGaugeRef = ref<HTMLElement>()
+const alarmTrendRef = ref<HTMLElement>()
+const devicePieRef = ref<HTMLElement>()
+const mapRef = ref<HTMLElement>()
+const alarmTypeRef = ref<HTMLElement>()
+const agentBarRef = ref<HTMLElement>()
 
-const recentAlarms = ref([
-  { id: 1, level: 'critical', description: '东门围栏入侵告警', time: '14:32:15' },
-  { id: 2, level: 'high', description: 'B区烟雾传感器触发', time: '14:30:42' },
-  { id: 3, level: 'medium', description: '停车场徘徊行为检测', time: '14:28:10' },
-  { id: 4, level: 'low', description: '南门人脸未注册', time: '14:25:33' },
-  { id: 5, level: 'critical', description: '化工厂区域温度异常', time: '14:20:01' }
+// 数据
+interface Alarm { id: string; time: string; location: string; type: string; level: string; status: string }
+const latestAlarms = ref<Alarm[]>([])
+
+const todayStats = ref([
+  { label: '在线设备', value: '128', color: '#0F9D58' },
+  { label: '今日告警', value: '23', color: '#F4B400' },
+  { label: '处置率', value: '96.5%', color: '#1A73E8' },
+  { label: 'Agent调用', value: '2,660', color: '#7C3AED' },
 ])
 
-const projectOverview = [
-  { name: '智慧园区', rate: 98 },
-  { name: '智慧工地', rate: 96 },
-  { name: '停车场', rate: 100 },
-  { name: '商场客流', rate: 100 },
-  { name: '化工厂', rate: 89 }
-]
+let charts: any[] = []
 
-const serviceStatuses = [
-  { name: 'API网关', status: 'up' },
-  { name: '设备服务', status: 'up' },
-  { name: '告警服务', status: 'up' },
-  { name: 'AI引擎', status: 'up' },
-  { name: '消息队列', status: 'up' },
-  { name: 'Redis', status: 'up' },
-  { name: 'PostgreSQL', status: 'up' },
-  { name: 'Milvus', status: 'degraded' },
-  { name: 'Neo4j', status: 'up' }
-]
-
-function alarmLevelIcon(level: string) {
-  const m: Record<string, string> = { critical: '🔴', high: '🟠', medium: '🟡', low: '🟢' }
-  return m[level] ?? '⚪'
-}
-
-function getDotPosition(area: string, index: number) {
-  const positions: Record<string, Record<number, { left: string; top: string }>> = {
-    park: { 1: { left: '25%', top: '25%' }, 2: { left: '60%', top: '20%' }, 3: { left: '40%', top: '55%' }, 4: { left: '70%', top: '50%' } },
-    construction: { 1: { left: '30%', top: '25%' }, 2: { left: '50%', top: '50%' }, 3: { left: '70%', top: '35%' } },
-    parking: { 1: { left: '35%', top: '40%' }, 2: { left: '65%', top: '45%' } }
+function initCharts() {
+  // 动态加载echarts
+  const echarts = (window as any).echarts
+  if (!echarts) {
+    // 如果没有CDN加载，用简单占位
+    console.warn('ECharts not loaded, using placeholder')
+    return
   }
-  return positions[area]?.[index] ?? { left: '50%', top: '50%' }
+
+  // 安全评分仪表盘
+  if (scoreGaugeRef.value) {
+    const c = echarts.init(scoreGaugeRef.value, 'dark')
+    c.setOption({
+      series: [{
+        type: 'gauge', startAngle: 200, endAngle: -20,
+        pointer: { show: true, length: '60%', width: 4 },
+        detail: { formatter: '{value}', fontSize: 32, color: '#E8EAED', offsetCenter: [0, '70%'] },
+        data: [{ value: 85, name: '安全评分' }],
+        axisLine: { lineStyle: { width: 12, color: [[0.3, '#DB4437'], [0.7, '#F4B400'], [1, '#0F9D58']] } },
+        axisTick: { show: false }, splitLine: { show: false }, axisLabel: { show: false },
+        title: { show: true, offsetCenter: [0, '90%'], color: '#9AA0A6', fontSize: 12 },
+      }]
+    })
+    charts.push(c)
+  }
+
+  // 告警趋势
+  if (alarmTrendRef.value) {
+    const c = echarts.init(alarmTrendRef.value, 'dark')
+    const hours = Array.from({ length: 24 }, (_, i) => `${String(i).padStart(2, '0')}:00`)
+    const data = [2, 1, 0, 1, 0, 3, 5, 8, 12, 9, 7, 6, 8, 10, 11, 9, 6, 4, 7, 8, 5, 3, 2, 1]
+    c.setOption({
+      backgroundColor: 'transparent',
+      grid: { left: 36, right: 12, top: 12, bottom: 24 },
+      xAxis: { type: 'category', data: hours, axisLabel: { fontSize: 10, color: '#666' }, axisLine: { lineStyle: { color: '#3C4043' } } },
+      yAxis: { type: 'value', axisLabel: { fontSize: 10, color: '#666' }, splitLine: { lineStyle: { color: '#2D3039' } } },
+      series: [{
+        type: 'line', data, smooth: true,
+        areaStyle: { color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [{ offset: 0, color: 'rgba(26,115,232,0.4)' }, { offset: 1, color: 'rgba(26,115,232,0.05)' }]) },
+        lineStyle: { color: '#1A73E8', width: 2 },
+        itemStyle: { color: '#1A73E8' },
+      }]
+    })
+    charts.push(c)
+  }
+
+  // 设备饼图
+  if (devicePieRef.value) {
+    const c = echarts.init(devicePieRef.value, 'dark')
+    c.setOption({
+      backgroundColor: 'transparent',
+      series: [{
+        type: 'pie', radius: ['45%', '70%'], center: ['50%', '50%'],
+        label: { color: '#9AA0A6', fontSize: 11 },
+        data: [
+          { value: 128, name: '在线', itemStyle: { color: '#0F9D58' } },
+          { value: 3, name: '离线', itemStyle: { color: '#DB4437' } },
+          { value: 1, name: '维护中', itemStyle: { color: '#F4B400' } },
+        ]
+      }]
+    })
+    charts.push(c)
+  }
+
+  // 地图（散点图模拟厂区布局）
+  if (mapRef.value) {
+    const c = echarts.init(mapRef.value, 'dark')
+    c.setOption({
+      backgroundColor: '#111318',
+      grid: { left: 40, right: 20, top: 20, bottom: 30 },
+      xAxis: { type: 'value', min: 0, max: 100, axisLabel: { color: '#555', fontSize: 10 }, splitLine: { lineStyle: { color: '#1A1D23' } } },
+      yAxis: { type: 'value', min: 0, max: 100, axisLabel: { color: '#555', fontSize: 10 }, splitLine: { lineStyle: { color: '#1A1D23' } } },
+      series: [
+        // 厂区区域
+        { type: 'custom', renderItem: (_params: any, api: any) => ({ type: 'rect', shape: { x: api.coord([15, 10])[0], y: api.coord([15, 10])[1], width: 120, height: 80 }, style: { fill: 'rgba(26,115,232,0.08)', stroke: '#1A73E8', lineWidth: 1 } }), data: [[0]], z: 0 },
+        { type: 'custom', renderItem: (_params: any, api: any) => ({ type: 'rect', shape: { x: api.coord([55, 10])[0], y: api.coord([55, 10])[1], width: 100, height: 60 }, style: { fill: 'rgba(15,157,88,0.08)', stroke: '#0F9D58', lineWidth: 1 } }), data: [[0]], z: 0 },
+        { type: 'custom', renderItem: (_params: any, api: any) => ({ type: 'rect', shape: { x: api.coord([20, 65])[0], y: api.coord([20, 65])[1], width: 140, height: 60 }, style: { fill: 'rgba(244,180,0,0.08)', stroke: '#F4B400', lineWidth: 1 } }), data: [[0]], z: 0 },
+        // 设备点位
+        {
+          type: 'scatter', symbolSize: 14, z: 10,
+          label: { show: true, formatter: '{b}', position: 'bottom', color: '#9AA0A6', fontSize: 10 },
+          data: [
+            { value: [20, 20], name: 'CAM_01', itemStyle: { color: '#0F9D58' } },
+            { value: [35, 25], name: 'CAM_02', itemStyle: { color: '#0F9D58' } },
+            { value: [28, 40], name: 'CAM_03', itemStyle: { color: '#0F9D58' } },
+            { value: [60, 18], name: 'CAM_04', itemStyle: { color: '#0F9D58' } },
+            { value: [70, 30], name: 'CAM_05', itemStyle: { color: '#DB4437' } },
+            { value: [25, 72], name: 'CAM_06', itemStyle: { color: '#0F9D58' } },
+            { value: [45, 78], name: 'CAM_07', itemStyle: { color: '#0F9D58' } },
+            { value: [65, 75], name: 'CAM_08', itemStyle: { color: '#F4B400' } },
+          ]
+        },
+        // 告警点位（带涟漪效果）
+        {
+          type: 'effectScatter', symbolSize: 10, z: 20,
+          label: { show: true, formatter: '{b}', position: 'top', color: '#DB4437', fontSize: 10 },
+          data: [
+            { value: [70, 30], name: '🔴告警', itemStyle: { color: '#DB4437' } },
+          ]
+        },
+      ]
+    })
+    charts.push(c)
+  }
+
+  // 告警类型分布
+  if (alarmTypeRef.value) {
+    const c = echarts.init(alarmTypeRef.value, 'dark')
+    c.setOption({
+      backgroundColor: 'transparent',
+      series: [{
+        type: 'pie', radius: ['40%', '65%'], center: ['50%', '50%'],
+        roseType: 'radius',
+        label: { color: '#9AA0A6', fontSize: 11 },
+        data: [
+          { value: 40, name: '周界入侵', itemStyle: { color: '#DB4437' } },
+          { value: 30, name: '行为分析', itemStyle: { color: '#F4B400' } },
+          { value: 20, name: '安全合规', itemStyle: { color: '#1A73E8' } },
+          { value: 10, name: '交通违章', itemStyle: { color: '#7C3AED' } },
+        ]
+      }]
+    })
+    charts.push(c)
+  }
+
+  // Agent活跃度柱状图
+  if (agentBarRef.value) {
+    const c = echarts.init(agentBarRef.value, 'dark')
+    c.setOption({
+      backgroundColor: 'transparent',
+      grid: { left: 80, right: 12, top: 12, bottom: 24 },
+      xAxis: { type: 'value', axisLabel: { color: '#666', fontSize: 10 }, splitLine: { lineStyle: { color: '#2D3039' } } },
+      yAxis: { type: 'category', data: ['元认知', '执行', '决策', '研判', '感知'], axisLabel: { color: '#9AA0A6', fontSize: 11 } },
+      series: [{
+        type: 'bar',
+        data: [
+          { value: 67, itemStyle: { color: '#7C3AED' } },
+          { value: 456, itemStyle: { color: '#0F9D58' } },
+          { value: 892, itemStyle: { color: '#F4B400' } },
+          { value: 1245, itemStyle: { color: '#1A73E8' } },
+        ],
+        barWidth: 16,
+        label: { show: true, position: 'right', color: '#9AA0A6', fontSize: 10 },
+      }]
+    })
+    charts.push(c)
+  }
+
+  // resize handler
+  window.addEventListener('resize', handleResize)
 }
 
-function enterFullscreen() {
-  document.documentElement.requestFullscreen?.()
-  isFullscreen.value = true
+function handleResize() {
+  charts.forEach(c => c?.resize?.())
 }
 
-function exitFullscreen() {
-  document.exitFullscreen?.()
-  isFullscreen.value = false
+// 初始化告警数据
+function initAlarms() {
+  const types = ['周界入侵', '安全帽未佩戴', '人员聚集', '烟火检测', '绊线告警', '离岗检测']
+  const locations = ['3号厂区东围墙', '2号车间入口', '1号大门', '仓库区域', '停车场B区']
+  const levels = ['critical', 'high', 'medium']
+  const statuses = ['已处置', '未处理']
+  latestAlarms.value = Array.from({ length: 8 }, (_, i) => {
+    const now = new Date()
+    now.setMinutes(now.getMinutes() - i * 15)
+    return {
+      id: `a${i}`,
+      time: now.toLocaleTimeString('zh-CN', { hour12: false }),
+      location: locations[i % locations.length],
+      type: types[i % types.length],
+      level: levels[i % levels.length],
+      status: statuses[i % statuses.length],
+    }
+  })
 }
 
-function handleFullscreenChange() {
-  isFullscreen.value = !!document.fullscreenElement
-}
-
-async function refreshData() {
-  await Promise.all([
-    deviceStore.fetchStats(),
-    cloudStore.fetchAlarmStats({ range: '1d' }),
-    cloudStore.fetchSystemHealth()
-  ])
-  alarmStats.value = cloudStore.alarmStats
-  systemHealth.value = cloudStore.systemHealth
+async function fetchSituationData() {
+  try {
+    const { data } = await http.get('/api/v1/stats/situation')
+    const d = data?.data || data
+    if (d?.todayStats) todayStats.value = d.todayStats
+    if (d?.alarms) latestAlarms.value = d.alarms
+  } catch { /* keep defaults */ }
 }
 
 onMounted(() => {
-  document.addEventListener('fullscreenchange', handleFullscreenChange)
-  refreshData()
-  // 模拟实时告警更新
-  setInterval(() => {
-    const now = new Date()
-    const time = now.toTimeString().slice(0, 8)
-    recentAlarms.value.unshift({
-      id: Date.now(),
-      level: ['critical', 'high', 'medium', 'low'][Math.floor(Math.random() * 4)],
-      description: ['区域入侵检测', '徘徊行为告警', '烟火检测触发', '人脸识别异常'][Math.floor(Math.random() * 4)],
-      time
-    })
-    if (recentAlarms.value.length > 10) recentAlarms.value.pop()
-  }, 8000)
+  const updateClock = () => {
+    currentTime.value = new Date().toLocaleString('zh-CN', { hour12: false, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' })
+  }
+  updateClock()
+  clockTimer = setInterval(updateClock, 1000)
+
+  initAlarms()
+  fetchSituationData()
+
+  nextTick(() => initCharts())
 })
 
 onUnmounted(() => {
-  document.removeEventListener('fullscreenchange', handleFullscreenChange)
+  if (clockTimer) clearInterval(clockTimer)
+  charts.forEach(c => c?.dispose?.())
+  charts = []
+  window.removeEventListener('resize', handleResize)
 })
 </script>
 
 <style scoped>
-.situation-screen { padding: 0 4px; min-height: calc(100vh - 140px); }
-.screen-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
-.screen-header h2 { margin: 0; font-size: 20px; }
-.header-actions { display: flex; gap: 8px; }
-.screen-body { background: linear-gradient(135deg, #0a1628 0%, #132347 50%, #1a3454 100%); border-radius: 12px; padding: 16px; position: relative; }
-.screen-body.fullscreen { position: fixed; inset: 0; z-index: 9999; border-radius: 0; padding: 24px; overflow: auto; }
-.exit-fullscreen { position: absolute; top: 12px; right: 12px; z-index: 10; }
-.exit-fullscreen .el-button { color: #fff; font-size: 20px; }
+.situation-screen {
+  height: 100vh;
+  background: #0D0F12;
+  color: #E8EAED;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
 
-/* 顶部统计 */
-.top-stats { display: flex; gap: 16px; margin-bottom: 16px; }
-.stat-item { flex: 1; display: flex; align-items: center; gap: 12px; padding: 12px 16px; background: rgba(255,255,255,0.06); border-radius: 10px; border: 1px solid rgba(255,255,255,0.1); }
-.stat-icon { width: 44px; height: 44px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 20px; color: #fff; }
-.stat-icon.blue { background: rgba(24,144,255,0.3); }
-.stat-icon.green { background: rgba(82,196,26,0.3); }
-.stat-icon.orange { background: rgba(250,173,20,0.3); }
-.stat-icon.purple { background: rgba(124,58,237,0.3); }
-.stat-num { font-size: 24px; font-weight: 700; color: #fff; }
-.stat-label { font-size: 12px; color: rgba(255,255,255,0.6); }
+.ss-header {
+  height: 56px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0 24px;
+  background: linear-gradient(180deg, #151820, #0D0F12);
+  border-bottom: 1px solid #1E2028;
+  flex-shrink: 0;
+}
 
-/* 主体 */
-.screen-main { display: flex; gap: 16px; }
-.side-panel { width: 260px; flex-shrink: 0; display: flex; flex-direction: column; gap: 12px; }
-.panel-card { padding: 12px; background: rgba(255,255,255,0.05); border-radius: 10px; border: 1px solid rgba(255,255,255,0.08); }
-.panel-title { font-size: 13px; font-weight: 600; color: rgba(255,255,255,0.9); margin-bottom: 10px; }
+.ss-header h1 {
+  font-size: 20px;
+  font-weight: 700;
+  margin: 0;
+  background: linear-gradient(90deg, #1A73E8, #0F9D58);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
 
-/* Agent */
-.agent-row { display: flex; align-items: center; justify-content: space-between; padding: 5px 0; border-bottom: 1px solid rgba(255,255,255,0.06); }
-.agent-row:last-child { border: none; }
-.agent-name { font-size: 12px; color: rgba(255,255,255,0.7); }
-.agent-status { font-size: 11px; padding: 1px 6px; border-radius: 4px; }
-.agent-status.active { background: rgba(82,196,26,0.2); color: #52c41a; }
-.agent-status.idle { background: rgba(255,255,255,0.1); color: rgba(255,255,255,0.5); }
-.agent-calls { font-size: 11px; color: rgba(255,255,255,0.5); }
+.ss-header-right { display: flex; align-items: center; gap: 12px; }
+.ss-clock { font-family: 'Roboto Mono', monospace; font-size: 14px; color: #9AA0A6; }
 
-/* 告警流 */
-.alarm-stream { max-height: 220px; overflow-y: auto; }
-.alarm-item { display: flex; align-items: center; gap: 6px; padding: 4px 0; border-bottom: 1px solid rgba(255,255,255,0.05); font-size: 12px; }
-.alarm-level { flex-shrink: 0; }
-.alarm-msg { flex: 1; color: rgba(255,255,255,0.75); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.alarm-time { color: rgba(255,255,255,0.4); flex-shrink: 0; }
+.ss-body {
+  flex: 1;
+  display: flex;
+  gap: 12px;
+  padding: 12px;
+  overflow: hidden;
+}
 
-/* 地图 */
-.map-container { flex: 1; min-height: 420px; position: relative; }
-.map-placeholder { height: 100%; min-height: 420px; background: rgba(255,255,255,0.02); border-radius: 10px; border: 1px solid rgba(255,255,255,0.08); position: relative; overflow: hidden; }
-.map-grid { position: relative; width: 100%; height: 100%; }
-.map-area { position: absolute; border: 1px dashed rgba(255,255,255,0.15); border-radius: 8px; padding: 8px; }
-.map-area.park { left: 8%; top: 8%; width: 38%; height: 55%; }
-.map-area.construction { left: 50%; top: 6%; width: 30%; height: 40%; }
-.map-area.parking { left: 20%; top: 65%; width: 28%; height: 28%; }
-.area-label { font-size: 13px; color: rgba(255,255,255,0.7); font-weight: 600; }
+.ss-col { display: flex; flex-direction: column; gap: 12px; }
+.left-col { width: 280px; flex-shrink: 0; }
+.center-col { flex: 1; min-width: 0; }
+.right-col { width: 280px; flex-shrink: 0; }
 
-.device-dot { position: absolute; width: 14px; height: 14px; border-radius: 50%; cursor: pointer; z-index: 2; }
-.device-dot.online { background: #52c41a; box-shadow: 0 0 8px rgba(82,196,26,0.6); }
-.device-dot.offline { background: #8c8c8c; }
-.device-dot.alarming { background: #f5222d; box-shadow: 0 0 12px rgba(245,34,45,0.7); animation: alarm-pulse 1.2s infinite; }
-.device-dot .dot-tooltip { display: none; position: absolute; bottom: 120%; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,0.85); color: #fff; padding: 3px 8px; border-radius: 4px; font-size: 11px; white-space: nowrap; }
-.device-dot:hover .dot-tooltip { display: block; }
-@keyframes alarm-pulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.5); } }
+.ss-panel {
+  background: #151820;
+  border: 1px solid #1E2028;
+  border-radius: 8px;
+  overflow: hidden;
+}
 
-.perimeter-line { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; }
+.panel-title {
+  padding: 10px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #E8EAED;
+  border-bottom: 1px solid #1E2028;
+}
 
-.map-legend { position: absolute; bottom: 10px; right: 14px; display: flex; gap: 12px; font-size: 11px; color: rgba(255,255,255,0.6); }
-.map-legend .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 4px; }
-.map-legend .dot.online { background: #52c41a; }
-.map-legend .dot.offline { background: #8c8c8c; }
-.map-legend .dot.alarming { background: #f5222d; }
+.chart-box { width: 100%; height: 200px; }
+.score-gauge { width: 100%; height: 180px; }
+.map-panel { flex: 1; display: flex; flex-direction: column; }
+.map-box { flex: 1; min-height: 300px; }
 
-/* 右侧面板 */
-.project-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
-.proj-name { width: 70px; font-size: 12px; color: rgba(255,255,255,0.7); flex-shrink: 0; }
-.proj-rate { width: 36px; font-size: 12px; color: rgba(255,255,255,0.6); text-align: right; flex-shrink: 0; }
-.project-row :deep(.el-progress) { flex: 1; }
+/* 告警列表 */
+.alarm-scroll {
+  max-height: 180px;
+  overflow-y: auto;
+  padding: 6px;
+}
+.alarm-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 4px;
+  font-size: 12px;
+  margin-bottom: 2px;
+  background: rgba(255,255,255,0.02);
+}
+.alarm-dot {
+  width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0;
+}
+.alarm-row.critical .alarm-dot { background: #DB4437; }
+.alarm-row.high .alarm-dot { background: #F4B400; }
+.alarm-row.medium .alarm-dot { background: #1A73E8; }
+.alarm-time { color: #666; font-family: monospace; font-size: 11px; white-space: nowrap; }
+.alarm-location { color: #9AA0A6; flex: 1; }
+.alarm-type { color: #E8EAED; font-weight: 500; }
 
-.health-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
-.health-item { display: flex; align-items: center; gap: 6px; font-size: 12px; color: rgba(255,255,255,0.65); }
-.health-dot { width: 6px; height: 6px; border-radius: 50%; display: inline-block; }
-.health-dot.up { background: #52c41a; }
-.health-dot.degraded { background: #faad14; }
-.health-dot.down { background: #f5222d; }
+/* 统计格子 */
+.stats-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding: 12px; }
+.stat-card { text-align: center; padding: 10px; background: rgba(255,255,255,0.02); border-radius: 6px; }
+.stat-value { font-size: 22px; font-weight: 700; }
+.stat-label { font-size: 11px; color: #9AA0A6; margin-top: 4px; }
 </style>

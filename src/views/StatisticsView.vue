@@ -2,11 +2,14 @@
   <div class="statistics-page">
     <div class="page-title">
       <h2>📈 数据统计分析</h2>
-      <el-radio-group v-model="timeRange" size="small" @change="loadData">
-        <el-radio-button value="7d">近7天</el-radio-button>
-        <el-radio-button value="30d">近30天</el-radio-button>
-        <el-radio-button value="90d">近90天</el-radio-button>
-      </el-radio-group>
+      <div style="display:flex;gap:8px;align-items:center">
+        <el-button size="small" @click="exportCSV"><el-icon><Download /></el-icon>导出CSV</el-button>
+        <el-radio-group v-model="timeRange" size="small" @change="loadData">
+          <el-radio-button value="7d">近7天</el-radio-button>
+          <el-radio-button value="30d">近30天</el-radio-button>
+          <el-radio-button value="90d">近90天</el-radio-button>
+        </el-radio-group>
+      </div>
     </div>
 
     <!-- 安全态势评分 -->
@@ -108,6 +111,8 @@ import { ref, computed, onMounted } from 'vue'
 import { useCloudStore } from '@/stores/cloud'
 import LazyChart from '@/components/LazyChart.vue'
 import type { AlarmStats, SecurityScore, AgentActivity } from '@/types/analytics'
+import { Download } from '@element-plus/icons-vue'
+import { ElMessage } from 'element-plus'
 
 const cloudStore = useCloudStore()
 const timeRange = ref('7d')
@@ -248,6 +253,59 @@ async function loadData() {
 }
 
 onMounted(loadData)
+
+function exportCSV() {
+  // 从cloudStore获取当前数据导出为CSV
+  const stats = cloudStore.alarmStats || []
+  if (!stats.length) {
+    ElMessage.info('暂无数据可导出')
+    return
+  }
+  const headers = ['日期', '告警总数', '已处理', '未处理', '误报数']
+  const rows = stats.map((s: any) => [
+    s.date || s.date_range || '',
+    s.total ?? '',
+    s.handled ?? '',
+    s.unhandled ?? '',
+    s.false_alarms ?? ''
+  ])
+  const csv = [headers.join(','), ...rows.map((r: string[]) => r.join(','))].join('\n')
+  const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `alarm_stats_${timeRange.value}_${Date.now()}.csv`
+  a.click()
+  URL.revokeObjectURL(url)
+  ElMessage.success('导出成功')
+}
+
+// ── 导出CSV ──
+function exportCSV() {
+  const stats = cloudStore.alarmStats || []
+  if (!stats.length) {
+    ElMessage.warning('暂无数据可导出')
+    return
+  }
+  const headers = ['日期', '告警总数', '严重', '高危', '中危', '低危', '已处理', '处置率']
+  const rows = stats.map((s: any) => [
+    s.date || s.time || '',
+    s.total ?? '',
+    s.critical ?? '',
+    s.high ?? '',
+    s.medium ?? '',
+    s.low ?? '',
+    s.handled ?? '',
+    s.total ? ((s.handled / s.total * 100).toFixed(1) + '%') : '',
+  ])
+  const csv = [headers.join(','), ...rows.map((r: string[]) => r.join(','))].join('\n')
+  const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8' })
+  const a = document.createElement('a')
+  a.href = URL.createObjectURL(blob)
+  a.download = `alarm_stats_${timeRange.value}_${Date.now()}.csv`
+  a.click()
+  ElMessage.success('导出成功')
+}
 </script>
 
 <style scoped>

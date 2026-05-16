@@ -288,7 +288,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   Bell, Warning, CircleCheck, Clock,
@@ -296,6 +296,7 @@ import {
 } from '@element-plus/icons-vue'
 import { getAlarms, handleAlarm as handleAlarmApi } from '@/api/index'
 import { useAuthStore } from '@/stores/auth'
+import { useWebSocket } from '@/composables/useWebSocket'
 
 // ── 严重等级中文映射 ──
 const SEVERITY_LABELS: Record<string, string> = {
@@ -403,6 +404,20 @@ function refreshAlarms() {
   fetchAlarms()
   ElMessage.success('正在刷新告警列表...')
 }
+
+// ── WebSocket实时推送新告警 ──
+const { connected: wsConnected, subscribe: wsSubscribe } = useWebSocket('/ws/alarms')
+
+const unsubscribeAlarm = wsSubscribe('alarm', (data: any) => {
+  // 新告警推送到列表头部
+  alarms.value.unshift(data)
+  totalAlarms.value++
+  ElMessage({
+    type: data.severity === 'critical' ? 'error' : 'warning',
+    message: `🚨 新告警: ${data.type || data.alarm_type} — ${data.location || data.device_name}`,
+    duration: 5000,
+  })
+})
 
 // ── 统计卡片数据 ──
 const alarmStatCards = computed(() => {
@@ -621,6 +636,10 @@ function exportAlarms() {
 // 页面加载时获取数据
 onMounted(() => {
   fetchAlarms()
+})
+
+onUnmounted(() => {
+  unsubscribeAlarm?.()
 })
 </script>
 

@@ -56,18 +56,53 @@
           </el-menu-item>
         </el-menu-item-group>
 
-        <!-- ===== 智能分析 ===== -->
+        <!-- ===== 视频与流 ===== -->
         <el-menu-item-group>
           <template #title v-if="!isCollapsed">
-            <span class="group-title">智能分析</span>
+            <span class="group-title">视频与流</span>
           </template>
+          <el-menu-item index="/channels">
+            <el-icon><VideoPlay /></el-icon>
+            <template #title>通道管理</template>
+          </el-menu-item>
+          <el-menu-item index="/streams">
+            <el-icon><Film /></el-icon>
+            <template #title>流管理</template>
+          </el-menu-item>
+          <el-menu-item index="/recordings">
+            <el-icon><VideoPause /></el-icon>
+            <template #title>录像回放</template>
+          </el-menu-item>
+          <el-menu-item index="/gb28181">
+            <el-icon><Connection /></el-icon>
+            <template #title>GB28181</template>
+          </el-menu-item>
+          <el-menu-item index="/onvif">
+            <el-icon><Camera /></el-icon>
+            <template #title>ONVIF发现</template>
+          </el-menu-item>
+        </el-menu-item-group>
+
+        <!-- ===== 🧩 算法与AI ===== -->
+        <el-menu-item-group>
+          <template #title v-if="!isCollapsed">
+            <span class="group-title">算法与AI</span>
+          </template>
+          <el-menu-item index="/pipelines">
+            <el-icon><SetUp /></el-icon>
+            <template #title>Pipeline编辑</template>
+          </el-menu-item>
+          <el-menu-item index="/models">
+            <el-icon><Cpu /></el-icon>
+            <template #title>模型管理</template>
+          </el-menu-item>
+          <el-menu-item index="/ai-chat">
+            <el-icon><ChatDotRound /></el-icon>
+            <template #title>AI助手</template>
+          </el-menu-item>
           <el-menu-item index="/statistics">
             <el-icon><TrendCharts /></el-icon>
             <template #title>数据分析</template>
-          </el-menu-item>
-          <el-menu-item index="/ai">
-            <el-icon><ChatDotRound /></el-icon>
-            <template #title>AI助手</template>
           </el-menu-item>
           <el-menu-item index="/federation">
             <el-icon><Connection /></el-icon>
@@ -75,7 +110,7 @@
           </el-menu-item>
         </el-menu-item-group>
 
-        <!-- ===== 管理 ===== -->
+        <!-- ===== ⚙️ 管理 ===== -->
         <el-menu-item-group>
           <template #title v-if="!isCollapsed">
             <span class="group-title">管理</span>
@@ -83,6 +118,10 @@
           <el-menu-item index="/projects" v-if="auth.can('projects', 'read')">
             <el-icon><FolderOpened /></el-icon>
             <template #title>项目管理</template>
+          </el-menu-item>
+          <el-menu-item index="/teams">
+            <el-icon><User /></el-icon>
+            <template #title>团队管理</template>
           </el-menu-item>
           <el-menu-item index="/ota">
             <el-icon><Upload /></el-icon>
@@ -233,7 +272,7 @@ import {
   ChatDotRound, Connection, FolderOpened, Upload, Setting,
   DocumentChecked, Link, User, Avatar, Lock, Search,
   Sunny, Moon, Cpu, UserFilled, ArrowDown, SwitchButton,
-  DArrowLeft, DArrowRight,
+  DArrowLeft, DArrowRight, VideoPlay, Film, VideoPause, Camera, SetUp,
 } from '@element-plus/icons-vue'
 import { useAuthStore } from '@/stores/auth'
 import { useAlarmStore } from '@/stores/alarm'
