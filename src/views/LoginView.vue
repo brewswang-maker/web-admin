@@ -16,7 +16,7 @@
             <img src="/favicon.svg" alt="华盾AI" width="48" height="48" />
           </div>
           <h1 class="login-title">华盾AI</h1>
-          <p class="login-subtitle">Smart Gateway v6.0</p>
+          <p class="login-subtitle">Smart Gateway v7.0</p>
           <p class="login-desc">Hermes 多智能体自进化架构</p>
         </div>
 
@@ -100,7 +100,7 @@
 
         <!-- 底部信息 -->
         <div class="login-footer">
-          <span class="version-text">v6.0.0 · Hermes</span>
+          <span class="version-text">v7.0.0 · Hermes</span>
         </div>
       </div>
 

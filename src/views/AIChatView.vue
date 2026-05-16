@@ -232,8 +232,12 @@ function newConversation() {
 
 function switchConversation(id: string) {
   currentConvId.value = id
-  // TODO: 从后端加载历史消息
-  messages.value = []
+  // Load chat history from backend
+  http.get(`/api/v1/ai/conversations/${id}/messages`).then(res => {
+    messages.value = res.data?.data ?? []
+  }).catch(() => {
+    messages.value = []
+  })
 }
 
 async function deleteConversation(id: string) {

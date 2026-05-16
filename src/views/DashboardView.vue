@@ -244,6 +244,7 @@ import {
   Cpu, Refresh, TrendCharts,
 } from '@element-plus/icons-vue'
 import { http } from '@/api/http'
+import { federationApi } from '@/api/federation'
 import LazyChart from '@/components/LazyChart.vue'
 import type { EChartsOption } from 'echarts'
 
@@ -280,10 +281,11 @@ onUnmounted(() => {
 // ── API数据获取 ──
 async function fetchDashboardData() {
   try {
-    const [overviewRes, trendRes, deviceRes] = await Promise.allSettled([
+    const [overviewRes, trendRes, deviceRes, fedRes] = await Promise.allSettled([
       http.get('/api/v1/stats/overview', { params: { project: selectedProject.value } }),
       http.get('/api/v1/stats/alarm-trend', { params: { project: selectedProject.value, hours: 24 } }),
       http.get('/api/v1/stats/device-status', { params: { project: selectedProject.value } }),
+      federationApi.getStatus(),
     ])
     if (overviewRes.status === 'fulfilled' && overviewRes.value.data) {
       const d = overviewRes.value.data?.data || overviewRes.value.data
@@ -301,16 +303,28 @@ async function fetchDashboardData() {
         topStatsValues.value.deviceTotal = d.total
       }
     }
+    if (fedRes.status === 'fulfilled' && fedRes.value.data?.data) {
+      const f = fedRes.value.data.data
+      federationStatus.value = {
+        status: f.status,
+        participatingBoxes: f.participatingBoxes,
+        totalBoxes: f.totalBoxes,
+        currentRound: f.currentRound,
+        aggregationAccuracy: f.currentAccuracy ?? f.bestAccuracy ?? 0,
+        privacyBudget: f.privacyBudget,
+        privacyBudgetTotal: f.privacyBudgetTotal,
+      }
+    }
   } catch (e) {
     console.warn('[Dashboard] 数据获取失败:', e)
   }
 }
 
 const topStatsValues = reactive({
-  deviceOnline: 128,
-  deviceTotal: 132,
-  alarmCount: 23,
-  handleRate: 96.5,
+  deviceOnline: 0,
+  deviceTotal: 0,
+  alarmCount: 0,
+  handleRate: 0,
 })
 
 let autoRefreshTimer: ReturnType<typeof setInterval> | null = null
@@ -441,13 +455,13 @@ const confidenceColor = computed(() => {
 
 // ── 联邦学习 ──
 const federationStatus = ref({
-  status: 'running' as 'running' | 'paused' | 'idle',
-  participatingBoxes: 8,
-  totalBoxes: 12,
-  currentRound: 42,
-  aggregationAccuracy: 0.943,
-  privacyBudget: 7.2,
-  privacyBudgetTotal: 12,
+  status: 'idle' as 'running' | 'paused' | 'idle',
+  participatingBoxes: 0,
+  totalBoxes: 0,
+  currentRound: 0,
+  aggregationAccuracy: 0,
+  privacyBudget: 0,
+  privacyBudgetTotal: 0,
 })
 
 const alarmTrendData = ref<number[]>([])
@@ -465,7 +479,22 @@ const fedPrivacyUsed = computed(() =>
 // ── 7日告警趋势 ──
 const alarmTrendUp = ref(true)
 const alarmTrendPercent = ref(8)
-const alarmTrendOption = computed<EChartsOption>(() => ({
+const alarmTrendOption = computed<EChartsOption>(() => {
+  const trend = alarmTrendData.value || []
+  const days = trend.length > 0
+    ? trend.map((t: any) => String(t.date || '').slice(-5))
+    : ['周一', '周二', '周三', '周四', '周五', '周六', '周日']
+  const seriesData = trend.length > 0
+    ? {
+      critical: trend.map((t: any) => t.critical ?? 0),
+      high: trend.map((t: any) => t.high ?? 0),
+      medium: trend.map((t: any) => t.medium ?? 0),
+      low: trend.map((t: any) => t.low ?? 0),
+      total: trend.map((t: any) => t.total ?? 0),
+    }
+    : null
+
+  return ({
   tooltip: {
     trigger: 'axis',
     backgroundColor: '#1F2937',
@@ -475,7 +504,7 @@ const alarmTrendOption = computed<EChartsOption>(() => ({
   grid: { top: 10, right: 16, bottom: 20, left: 40 },
   xAxis: {
     type: 'category',
-    data: ['周一', '周二', '周三', '周四', '周五', '周六', '周日'],
+    data: days,
     axisLine: { lineStyle: { color: '#374151' } },
     axisLabel: { color: '#9CA3AF' },
     axisTick: { show: false },
@@ -485,62 +514,46 @@ const alarmTrendOption = computed<EChartsOption>(() => ({
     splitLine: { lineStyle: { color: '#1F2937', type: 'dashed' } },
     axisLabel: { color: '#9CA3AF' },
   },
-  series: [
+  series: seriesData ? [
     {
-      name: '严重',
-      type: 'bar',
-      stack: 'total',
-      data: [2, 1, 3, 2, 1, 0, 1],
-      itemStyle: { color: '#DC2626', borderRadius: [0, 0, 0, 0] },
-      barWidth: 24,
+      name: '严重', type: 'bar', stack: 'total',
+      data: seriesData.critical,
+      itemStyle: { color: '#DC2626' }, barWidth: 24,
     },
     {
-      name: '高',
-      type: 'bar',
-      stack: 'total',
-      data: [5, 4, 6, 5, 3, 2, 4],
+      name: '高', type: 'bar', stack: 'total',
+      data: seriesData.high,
       itemStyle: { color: '#EA580C' },
     },
     {
-      name: '中',
-      type: 'bar',
-      stack: 'total',
-      data: [8, 9, 10, 8, 6, 5, 7],
+      name: '中', type: 'bar', stack: 'total',
+      data: seriesData.medium,
       itemStyle: { color: '#F59E0B' },
     },
     {
-      name: '低',
-      type: 'bar',
-      stack: 'total',
-      data: [10, 11, 12, 9, 8, 7, 10],
+      name: '低', type: 'bar', stack: 'total',
+      data: seriesData.low,
       itemStyle: { color: '#22C55E', borderRadius: [4, 4, 0, 0] },
     },
     {
-      type: 'line',
-      data: [25, 25, 31, 24, 18, 14, 22],
+      type: 'line', data: seriesData.total,
       lineStyle: { color: '#7C3AED', width: 2 },
       itemStyle: { color: '#7C3AED', borderColor: '#7C3AED' },
-      symbol: 'circle',
-      symbolSize: 6,
-      smooth: true,
+      symbol: 'circle', symbolSize: 6, smooth: true,
     },
+  ] : [
+    { name: '暂无数据', type: 'bar', data: [] },
   ],
   legend: {
     bottom: 0,
     textStyle: { color: '#9CA3AF', fontSize: 12 },
-    itemWidth: 12,
-    itemHeight: 12,
+    itemWidth: 12, itemHeight: 12,
   },
-}))
+}) as EChartsOption
+})
 
 // ── 项目热力图 ──
-const projectHeatmap = [
-  { name: '智慧园区', rate: 98 },
-  { name: '智慧工地', rate: 96 },
-  { name: '停车场', rate: 100 },
-  { name: '商场客流', rate: 100 },
-  { name: '化工厂', rate: 89 },
-]
+const projectHeatmap = ref<Array<{ name: string; rate: number }>>([])
 </script>
 
 <style scoped>

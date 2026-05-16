@@ -1,5 +1,5 @@
 <template>
-  <div class="settings-page">
+  <div class="settings-page" v-loading="loading">
     <el-tabs tab-position="left">
       <el-tab-pane label="基本设置">
         <el-form :model="basic" label-width="120px">
@@ -56,7 +56,7 @@
           </el-form-item>
           <el-form-item>
             <el-button type="primary" @click="saveCloud" :loading="cloudSaving">保存</el-button>
-            <el-button @click="testConnection">测试连接</el-button>
+            <el-button @click="testConnection" :loading="testConnLoading">测试连接</el-button>
           </el-form-item>
         </el-form>
       </el-tab-pane>
@@ -89,21 +89,25 @@
       </el-tab-pane>
 
       <el-tab-pane label="AI模型管理">
-        <el-table :data="aiModels" stripe>
+        <el-table :data="aiModels" stripe v-loading="modelsLoading">
           <el-table-column prop="name" label="模型名称" width="180" />
           <el-table-column prop="version" label="版本" width="80" />
           <el-table-column prop="precision" label="精度" width="80" />
-          <el-table-column prop="sizeMB" label="大小(MB)" width="90" />
-          <el-table-column prop="inferTimeMs" label="推理时间(ms)" width="110" />
+          <el-table-column prop="sizeMB" label="大小(MB)" width="90">
+            <template #default="{ row }">{{ (row.size / 1048576).toFixed(0) }}</template>
+          </el-table-column>
+          <el-table-column prop="inferTimeMs" label="推理(ms)" width="100" />
           <el-table-column prop="status" label="状态" width="90">
             <template #default="{ row }">
               <el-tag :type="row.status === 'active' ? 'success' : 'info'" size="small">
-                {{ row.status === 'active' ? '运行中' : '已停止' }}
+                {{ row.status === 'active' ? '运行中' : row.status === 'loading' ? '加载中' : '已停止' }}
               </el-tag>
             </template>
           </el-table-column>
-          <el-table-column label="操作" width="120">
+          <el-table-column label="操作" width="150">
             <template #default="{ row }">
+              <el-button v-if="row.status === 'active'" size="small" @click="handleModelAction(row, 'deactivate')">停用</el-button>
+              <el-button v-else size="small" type="primary" @click="handleModelAction(row, 'activate')">激活</el-button>
               <el-button size="small" @click="handleModelReload(row)">重载</el-button>
             </template>
           </el-table-column>
@@ -111,114 +115,175 @@
       </el-tab-pane>
 
       <el-tab-pane label="关于">
-        <el-descriptions :column="1" border>
-          <el-descriptions-item label="产品名称">华盾AI智能视频盒子 v6.0</el-descriptions-item>
-          <el-descriptions-item label="SDK版本">ShieldBoxSDK v6.0.0</el-descriptions-item>
-          <el-descriptions-item label="Hermes AgentOS">v6.0.0</el-descriptions-item>
-          <el-descriptions-item label="硬件平台">算能 BM1684X (32 TOPS INT8)</el-descriptions-item>
-          <el-descriptions-item label="架构">云边端六层 + 12智能体集群 + 三级记忆</el-descriptions-item>
-          <el-descriptions-item label="算法插件">19个已部署 (30+可扩展)</el-descriptions-item>
-          <el-descriptions-item label="最大通道数">16路 1080P @ 25fps</el-descriptions-item>
-          <el-descriptions-item label="推理精度">INT8 / FP16 / FP32 可切换</el-descriptions-item>
+        <el-descriptions :column="1" border v-if="systemInfo">
+          <el-descriptions-item label="产品名称">{{ systemInfo.productName }}</el-descriptions-item>
+          <el-descriptions-item label="SDK版本">{{ systemInfo.sdkVersion }}</el-descriptions-item>
+          <el-descriptions-item label="Hermes AgentOS">{{ systemInfo.hermesVersion }}</el-descriptions-item>
+          <el-descriptions-item label="硬件平台">{{ systemInfo.hardware }}</el-descriptions-item>
+          <el-descriptions-item label="架构">{{ systemInfo.architecture }}</el-descriptions-item>
+          <el-descriptions-item label="算法插件">{{ systemInfo.algorithmPlugins }}个已部署</el-descriptions-item>
+          <el-descriptions-item label="最大通道数">{{ systemInfo.maxChannels }}路 1080P @ 25fps</el-descriptions-item>
+          <el-descriptions-item label="推理精度">{{ systemInfo.inferencePrecision }}</el-descriptions-item>
         </el-descriptions>
+        <el-empty v-else description="加载系统信息失败" />
       </el-tab-pane>
     </el-tabs>
   </div>
 </template>
 
 <script setup lang="ts">
-import { reactive, ref } from 'vue'
+import { reactive, ref, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { settingsApi, type BasicSettings, type CloudSettings, type AlarmPolicySettings, type SystemInfo } from '@/api/settings'
+import { getModels, activateModel, deactivateModel, type ModelInfo } from '@/api/model'
 
 // ---- 基本设置 ----
+const loading = ref(true)
 const basicSaving = ref(false)
-const basic = reactive({
-  deviceName: '华盾AI盒子-001',
-  logLevel: 'info',
-  maxChannels: 16,
-  recordRetentionDays: 30,
-  ntpServer: 'ntp.aliyun.com'
-})
+const basicDefaults: BasicSettings = {
+  deviceName: '', logLevel: 'info', maxChannels: 16, recordRetentionDays: 30, ntpServer: 'ntp.aliyun.com'
+}
+const basic = reactive<BasicSettings>({ ...basicDefaults })
 
-function saveBasic() {
+async function saveBasic() {
   basicSaving.value = true
-  setTimeout(() => {
-    basicSaving.value = false
+  try {
+    await settingsApi.saveBasic({ ...basic })
     ElMessage.success('基本设置已保存')
-    localStorage.setItem('shield_basic', JSON.stringify(basic))
-  }, 500)
+  } catch (e: any) {
+    ElMessage.error('保存失败: ' + (e.message || '未知错误'))
+  } finally {
+    basicSaving.value = false
+  }
 }
 
 function resetBasic() {
   ElMessageBox.confirm('确认重置为默认设置？', '提示', { type: 'warning' })
     .then(() => {
-      basic.deviceName = '华盾AI盒子-001'
-      basic.logLevel = 'info'
-      basic.maxChannels = 16
-      basic.recordRetentionDays = 30
-      basic.ntpServer = 'ntp.aliyun.com'
+      Object.assign(basic, basicDefaults)
       ElMessage.success('已重置')
     })
 }
 
 // ---- 云端连接 ----
 const cloudSaving = ref(false)
-const cloud = reactive({
-  mqttBroker: 'tcp://mqtt.shieldai.com:1883',
-  mqttPort: 1883,
-  heartbeatInterval: 30,
-  tlsEnabled: true,
-  maxOfflineEvents: 100000,
-  syncMode: 'auto'
-})
+const testConnLoading = ref(false)
+const cloudDefaults: CloudSettings = {
+  mqttBroker: '', mqttPort: 1883, heartbeatInterval: 30,
+  tlsEnabled: true, maxOfflineEvents: 100000, syncMode: 'auto'
+}
+const cloud = reactive<CloudSettings>({ ...cloudDefaults })
 
-function saveCloud() {
+async function saveCloud() {
   cloudSaving.value = true
-  setTimeout(() => {
-    cloudSaving.value = false
+  try {
+    await settingsApi.saveCloud({ ...cloud })
     ElMessage.success('云端连接设置已保存')
-  }, 500)
+  } catch (e: any) {
+    ElMessage.error('保存失败: ' + (e.message || '未知错误'))
+  } finally {
+    cloudSaving.value = false
+  }
 }
 
-function testConnection() {
-  ElMessage.info('正在测试 MQTT 连接...')
-  setTimeout(() => {
-    ElMessage.success(`连接成功: ${cloud.mqttBroker}:${cloud.mqttPort}`)
-  }, 1500)
+async function testConnection() {
+  testConnLoading.value = true
+  try {
+    const res = await settingsApi.testConnection({
+      mqttBroker: cloud.mqttBroker, mqttPort: cloud.mqttPort, tlsEnabled: cloud.tlsEnabled
+    })
+    if (res.data.data?.success) {
+      ElMessage.success(`连接成功 (${res.data.data.latency}ms)`)
+    } else {
+      ElMessage.error('连接失败')
+    }
+  } catch (e: any) {
+    ElMessage.error('连接失败: ' + (e.message || '未知错误'))
+  } finally {
+    testConnLoading.value = false
+  }
 }
 
 // ---- 告警策略 ----
 const alarmSaving = ref(false)
-const alarm = reactive({
-  dedupWindow: 5,
-  minConfidence: 0.5,
-  criticalMaxLatency: 500,
-  linkageActions: ['ptz', 'record', 'push']
-})
+const alarmDefaults: AlarmPolicySettings = {
+  dedupWindow: 5, minConfidence: 0.5, criticalMaxLatency: 500, linkageActions: ['ptz', 'record', 'push']
+}
+const alarm = reactive<AlarmPolicySettings>({ ...alarmDefaults })
 
-function saveAlarm() {
+async function saveAlarm() {
   alarmSaving.value = true
-  setTimeout(() => {
-    alarmSaving.value = false
+  try {
+    await settingsApi.saveAlarmPolicy({ ...alarm })
     ElMessage.success('告警策略已保存')
-  }, 500)
+  } catch (e: any) {
+    ElMessage.error('保存失败: ' + (e.message || '未知错误'))
+  } finally {
+    alarmSaving.value = false
+  }
 }
 
 // ---- AI模型 ----
-const aiModels = ref([
-  { name: 'YOLO-World v2', version: '4.0.0', precision: 'INT8', sizeMB: 28, inferTimeMs: 8.5, status: 'active' },
-  { name: 'YOLO-FireSmoke', version: '4.0.0', precision: 'INT8', sizeMB: 22, inferTimeMs: 8.5, status: 'active' },
-  { name: 'YOLO-Head', version: '4.0.0', precision: 'INT8', sizeMB: 18, inferTimeMs: 6.8, status: 'active' },
-  { name: 'VideoMAE-Tiny', version: '4.0.0', precision: 'INT8', sizeMB: 45, inferTimeMs: 35.0, status: 'active' },
-  { name: 'HRNet-Pose', version: '4.0.0', precision: 'INT8', sizeMB: 30, inferTimeMs: 12.0, status: 'active' },
-  { name: 'WhisperTiny', version: '6.0.0', precision: 'FP16', sizeMB: 78, inferTimeMs: 50.0, status: 'active' },
-  { name: 'TinyLLM-Qwen', version: '6.0.0', precision: 'INT4', sizeMB: 512, inferTimeMs: 200.0, status: 'stopped' }
-])
+const modelsLoading = ref(false)
+const aiModels = ref<Array<ModelInfo & { inferTimeMs?: number; sizeMB?: number }>>([])
+
+async function loadModels() {
+  modelsLoading.value = true
+  try {
+    const res = await getModels()
+    aiModels.value = (res.data.data || []).map(m => ({
+      ...m,
+      sizeMB: Math.round(m.size / 1048576),
+      inferTimeMs: m.tpuUsage ? Math.round(m.tpuUsage * 100) / 10 : 0
+    }))
+  } catch { /* empty */ }
+  modelsLoading.value = false
+}
+
+async function handleModelAction(row: any, action: 'activate' | 'deactivate') {
+  try {
+    if (action === 'activate') {
+      await activateModel(row.id)
+      ElMessage.success(`模型 ${row.name} 已激活`)
+    } else {
+      await deactivateModel(row.id)
+      ElMessage.success(`模型 ${row.name} 已停用`)
+    }
+    loadModels()
+  } catch (e: any) {
+    ElMessage.error(e.message || '操作失败')
+  }
+}
 
 function handleModelReload(row: any) {
   ElMessage.info(`正在重载模型: ${row.name}...`)
-  setTimeout(() => ElMessage.success(`模型 ${row.name} 重载完成`), 1000)
+  deactivateModel(row.id).then(() => activateModel(row.id)).then(() => {
+    ElMessage.success(`模型 ${row.name} 重载完成`)
+    loadModels()
+  }).catch(() => ElMessage.error('重载失败'))
 }
+
+// ---- 系统信息 ----
+const systemInfo = ref<SystemInfo | null>(null)
+
+// ---- 初始化加载 ----
+onMounted(async () => {
+  loading.value = true
+  try {
+    const [basicRes, cloudRes, alarmRes, infoRes] = await Promise.allSettled([
+      settingsApi.getBasic(),
+      settingsApi.getCloud(),
+      settingsApi.getAlarmPolicy(),
+      settingsApi.getSystemInfo(),
+    ])
+    if (basicRes.status === 'fulfilled') Object.assign(basic, basicRes.value.data.data)
+    if (cloudRes.status === 'fulfilled') Object.assign(cloud, cloudRes.value.data.data)
+    if (alarmRes.status === 'fulfilled') Object.assign(alarm, alarmRes.value.data.data)
+    if (infoRes.status === 'fulfilled') systemInfo.value = infoRes.value.data.data
+  } catch { /* individual errors handled above */ }
+  loading.value = false
+  loadModels()
+})
 </script>
 
 <style scoped>

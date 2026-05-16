@@ -291,7 +291,8 @@ async function handleRecordToggle(ch: Channel) {
   const action = ch.isRecording ? '停止录像' : '开始录像'
   try {
     await ElMessageBox.confirm(`确认对通道 ${ch.name} ${action}？`, action)
-    // 模拟切换
+    const endpoint = ch.isRecording ? `/api/v1/channels/${ch.id}/stop-record` : `/api/v1/channels/${ch.id}/start-record`
+    await http.post(endpoint)
     ch.isRecording = !ch.isRecording
     ElMessage.success(`${action}指令已发送`)
   } catch { /* cancelled */ }
