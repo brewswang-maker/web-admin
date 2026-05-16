@@ -25,7 +25,7 @@
             <template #prefix><el-icon><Search /></el-icon></template>
           </el-input>
           <el-select v-model="enabledFilter" placeholder="状态筛选" style="width: 120px" clearable @change="fetchRules">
-            <el-option label="全部" :value="undefined" />
+            <el-option label="全部" :value="undefined as any" />
             <el-option label="已启用" :value="true" />
             <el-option label="已停用" :value="false" />
           </el-select>

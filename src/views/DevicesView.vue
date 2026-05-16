@@ -74,7 +74,7 @@
         <el-table-column prop="ip" label="IP地址" width="140" />
         <el-table-column prop="status" label="状态" width="90">
           <template #default="{ row }">
-            <el-tag :type="statusTagType(row.status)" size="small">{{ statusLabel(row.status) }}</el-tag>
+            <el-tag :type="statusTagType(row.status) as any" size="small">{{ statusLabel(row.status) }}</el-tag>
           </template>
         </el-table-column>
         <el-table-column prop="channelCount" label="通道数" width="85">
@@ -92,7 +92,7 @@
         </el-table-column>
         <el-table-column prop="syncStatus" label="同步" width="90">
           <template #default="{ row }">
-            <el-tag :type="syncTagType(row.syncStatus)" size="small">{{ syncLabel(row.syncStatus) }}</el-tag>
+            <el-tag :type="syncTagType(row.syncStatus) as any" size="small">{{ syncLabel(row.syncStatus) }}</el-tag>
           </template>
         </el-table-column>
         <el-table-column prop="location" label="位置" width="100" show-overflow-tooltip />
@@ -133,39 +133,39 @@
         <div style="display:flex;align-items:center;gap:8px">
           <el-tag type="primary" size="small">GB/T 28181</el-tag>
           <span style="font-weight:600">SIP 服务器配置</span>
-          <el-tag v-if="sipConfig.sip_server_running" type="success" size="small" effect="dark">运行中</el-tag>
+          <el-tag v-if="(sipConfig as any).sip_server_running" type="success" size="small" effect="dark">运行中</el-tag>
           <el-tag v-else type="danger" size="small" effect="dark">已停止</el-tag>
         </div>
       </template>
       <el-descriptions :column="3" border size="small">
-        <el-descriptions-item label="SIP 服务器 ID">{{ sipConfig.sip_server_id }}</el-descriptions-item>
-        <el-descriptions-item label="SIP 服务器域">{{ sipConfig.sip_server_domain }}</el-descriptions-item>
-        <el-descriptions-item label="SIP Realm">{{ sipConfig.sip_realm }}</el-descriptions-item>
-        <el-descriptions-item label="监听地址">{{ sipConfig.sip_server_ip }}:{{ sipConfig.sip_server_port }}</el-descriptions-item>
-        <el-descriptions-item label="传输协议">{{ sipConfig.transport_protocol }}</el-descriptions-item>
-        <el-descriptions-item label="RTP 端口范围">{{ sipConfig.rtp_port_range }}</el-descriptions-item>
+        <el-descriptions-item label="SIP 服务器 ID">{{ sipConfig.sipServerId }}</el-descriptions-item>
+        <el-descriptions-item label="SIP 服务器域">{{ sipConfig.sipServerDomain }}</el-descriptions-item>
+        <el-descriptions-item label="SIP Realm">{{ sipConfig.sipRealm }}</el-descriptions-item>
+        <el-descriptions-item label="监听地址">{{ sipConfig.sipServerIp }}:{{ sipConfig.sipServerPort }}</el-descriptions-item>
+        <el-descriptions-item label="传输协议">{{ sipConfig.transportProtocol }}</el-descriptions-item>
+        <el-descriptions-item label="RTP 端口范围">{{ sipConfig.rtpPortRange }}</el-descriptions-item>
         <el-descriptions-item label="Digest 鉴权">
-          <el-tag :type="sipConfig.auth_enabled ? 'success' : 'info'" size="small">
-            {{ sipConfig.auth_enabled ? '已启用' : '未启用' }}
+          <el-tag :type="(sipConfig as any).auth_enabled ? 'success' : 'info'" size="small">
+            {{ (sipConfig as any).auth_enabled ? '已启用' : '未启用' }}
           </el-tag>
         </el-descriptions-item>
-        <el-descriptions-item label="SIP 超时">{{ sipConfig.sip_timeout_sec }} 秒</el-descriptions-item>
-        <el-descriptions-item label="已注册设备">{{ sipConfig.registered_devices }} 台</el-descriptions-item>
-        <el-descriptions-item label="活跃会话">{{ sipConfig.active_sessions }}</el-descriptions-item>
+        <el-descriptions-item label="SIP 超时">{{ sipConfig.sipTimeoutSec }} 秒</el-descriptions-item>
+        <el-descriptions-item label="已注册设备">{{ sipConfig.registeredDevices }} 台</el-descriptions-item>
+        <el-descriptions-item label="活跃会话">{{ sipConfig.activeSessions }}</el-descriptions-item>
         <el-descriptions-item label="级联注册">
-          <el-tag :type="sipConfig.cascade_registered ? 'success' : 'info'" size="small">
-            {{ sipConfig.cascade_registered ? '已注册到上级' : '未级联' }}
+          <el-tag :type="sipConfig.cascadeRegistered ? 'success' : 'info'" size="small">
+            {{ sipConfig.cascadeRegistered ? '已注册到上级' : '未级联' }}
           </el-tag>
         </el-descriptions-item>
       </el-descriptions>
       <!-- 级联详情 -->
-      <template v-if="sipConfig.cascade?.enabled">
+      <template v-if="(sipConfig as any).cascade?.enabled">
         <el-divider content-position="left">级联配置</el-divider>
         <el-descriptions :column="3" border size="small">
-          <el-descriptions-item label="上级 SIP IP">{{ sipConfig.cascade.superior_sip_server_ip || '-' }}:{{ sipConfig.cascade.superior_sip_server_port }}</el-descriptions-item>
-          <el-descriptions-item label="上级 SIP ID">{{ sipConfig.cascade.superior_sip_id || '-' }}</el-descriptions-item>
-          <el-descriptions-item label="上级 SIP 域">{{ sipConfig.cascade.superior_sip_domain || '-' }}</el-descriptions-item>
-          <el-descriptions-item label="本机 SIP ID">{{ sipConfig.cascade.local_sip_id || '-' }}</el-descriptions-item>
+          <el-descriptions-item label="上级 SIP IP">{{ (sipConfig.cascade as any)?.superior_sip_server_ip || '-' }}:{{ (sipConfig.cascade as any)?.superior_sip_server_port }}</el-descriptions-item>
+          <el-descriptions-item label="上级 SIP ID">{{ (sipConfig.cascade as any)?.superior_sip_id || '-' }}</el-descriptions-item>
+          <el-descriptions-item label="上级 SIP 域">{{ (sipConfig.cascade as any)?.superior_sip_domain || '-' }}</el-descriptions-item>
+          <el-descriptions-item label="本机 SIP ID">{{ (sipConfig.cascade as any)?.local_sip_id || '-' }}</el-descriptions-item>
         </el-descriptions>
       </template>
     </el-card>
@@ -282,7 +282,7 @@
           </el-form-item>
           <el-form-item v-if="discoveredList.length" label="发现设备">
             <el-select v-model="selectedDiscovered" style="width:100%" placeholder="选择发现的设备" @change="onDiscoverSelect">
-              <el-option v-for="d in discoveredList" :key="d.id" :label="`${d.name} (${d.ip}:${d.port})`" :value="d.id" />
+              <el-option v-for="d in discoveredList" :key="d.id" :label="`${d.name} (${d.ip}:${d.port})`" :value="d.id as any" />
             </el-select>
           </el-form-item>
         </template>
@@ -467,7 +467,8 @@ async function runDiscoverScan() {
   discoverLoading.value = true
   discoveredDevices.value = []
   try {
-    const list = await discoverDevices(discoverMethod.value)
+    const res = await discoverDevices(discoverMethod.value) as any
+    const list: DiscoveredDevice[] = res?.data?.data ?? res?.data ?? res
     discoveredDevices.value = list
     discoverFinished.value = true
     if (list.length) ElMessage.success(`发现 ${list.length} 台设备`)
@@ -482,15 +483,15 @@ async function runDiscoverScan() {
 function quickAddFromDiscover(d: DiscoveredDevice) {
   // 预填充添加对话框
   addForm.value.protocol = d.protocol as ProtocolType
-  addForm.value.ip = d.ip
-  addForm.value.rtspPort = d.port
-  addForm.value.name = d.name || `${d.vendor || ''} ${d.model || ''}`.trim() || d.id
-  addForm.value.deviceId = d.id  // 预填设备 ID
+  addForm.value.ip = d.ip ?? ''
+  addForm.value.rtspPort = d.port ?? 554
+  addForm.value.name = d.name || `${d.vendor || ''} ${d.model || ''}`.trim() || (d.id ?? '')
+  addForm.value.deviceId = d.id ?? ''  // 预填设备 ID
   onProtocolChange(d.protocol as ProtocolType)
   // GB28181 设备预填国标ID
   if (d.protocol === 'GB28181') {
-    addForm.value.protocolConfig.gbDeviceId = d.id
-    addForm.value.protocolConfig.gbChannelId = d.id
+    addForm.value.protocolConfig.gbDeviceId = d.id ?? ''
+    addForm.value.protocolConfig.gbChannelId = d.id ?? ''
   }
   showDiscoverDialog.value = false
   showAddDialog.value = true
@@ -517,7 +518,8 @@ const sipConfigLoading = ref(false)
 async function fetchSipConfig() {
   sipConfigLoading.value = true
   try {
-    sipConfig.value = await getGB28181Config()
+    const res = await getGB28181Config() as any
+    sipConfig.value = res?.data?.data ?? res?.data ?? res
   } catch { /* GB28181 未启用时忽略 */ }
   finally { sipConfigLoading.value = false }
 }
@@ -546,7 +548,7 @@ function onProtocolChange(proto: ProtocolType) {
   selectedDiscovered.value = ''
   addForm.value.protocolConfig = emptyProtocolConfig()
   const opt = PROTOCOL_OPTIONS.find(o => o.value === proto)
-  if (opt) addForm.value.rtspPort = opt.defaultPort
+  if (opt) addForm.value.rtspPort = opt.defaultPort ?? 554
 }
 
 // ---- 设备发现 ----
@@ -554,7 +556,8 @@ async function handleDiscover(method: 'onvif' | 'gb28181') {
   discovering.value = true
   discoveredList.value = []
   try {
-    const list = await discoverDevices(method)
+    const res = await discoverDevices(method) as any
+    const list: DiscoveredDevice[] = res?.data?.data ?? res?.data ?? res
     discoveredList.value = list
     if (list.length) ElMessage.success(`发现 ${list.length} 台设备`)
     else ElMessage.info('未发现设备')
@@ -565,17 +568,17 @@ async function handleDiscover(method: 'onvif' | 'gb28181') {
 function onDiscoverSelect(deviceId: string) {
   const d = discoveredList.value.find(d => d.id === deviceId)
   if (!d) return
-  addForm.value.ip = d.ip
-  addForm.value.rtspPort = d.port
-  addForm.value.name = d.name
+  addForm.value.ip = d.ip ?? ''
+  addForm.value.rtspPort = d.port ?? 554
+  addForm.value.name = d.name ?? ''
 }
 
 // ---- 数据请求 ----
 function fetchData() {
   deviceStore.fetchDevices({
     page: page.value, pageSize: pageSize.value,
-    search: search.value, status: statusFilter.value,
-    type: typeFilter.value, project: projectFilter.value
+    keyword: search.value, status: statusFilter.value as any,
+    deviceType: typeFilter.value as any, projectId: projectFilter.value
   })
   deviceStore.fetchStats()
 }
@@ -653,7 +656,7 @@ async function confirmAdd() {
         ),
       },
     }
-    await deviceStore.addDevice(data)
+    await deviceStore.addDevice(data as any)
     ElMessage.success('设备添加成功')
     showAddDialog.value = false
     fetchData()

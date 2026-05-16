@@ -321,9 +321,9 @@ function animate() {
   if (alarmPulse.value) {
     deviceMeshes.forEach((entry) => {
       if (entry.pulse) {
-        const s = 1 + 0.3 * Math.sin(t * 3)
-        entry.pulse.scale.set(s, s, s)
-        entry.pulse.material.opacity = 0.15 + 0.1 * Math.sin(t * 3)
+        const s = 1 + 0.3 * Math.sin(t * 3);
+        (entry.pulse.scale as any).set(s, s, s);
+        (entry.pulse.material as any).opacity = 0.15 + 0.1 * Math.sin(t * 3);
       }
     })
   }

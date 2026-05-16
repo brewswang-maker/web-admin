@@ -129,35 +129,30 @@ const scorePercent = computed(() => {
 const dimensions = computed(() => {
   const d = securityScore.value?.dimensions
   if (!d) return []
-  return [
-    { label: '周界防护', value: d.perimeter, color: '#1890ff' },
-    { label: '入侵检测', value: d.intrusion, color: '#f5222d' },
-    { label: '烟火安全', value: d.fire, color: '#fa8c16' },
-    { label: '行为分析', value: d.behavior, color: '#722ed1' },
-    { label: '门禁管理', value: d.access, color: '#52c41a' }
-  ]
+  if (!Array.isArray(d)) return []
+  return d
 })
 
 // ---- 告警趋势 ----
-const alarmTrendOption = computed(() => {
-  const data = alarmStats.value?.trend ?? []
+const alarmTrendOption = computed<any>(() => {
+  const data = alarmStats.value?.trendData ?? []
   return {
     tooltip: { trigger: 'axis' as const },
     legend: { data: ['严重', '高', '中', '低'] },
     grid: { left: '3%', right: '4%', bottom: '3%', containLabel: true },
-    xAxis: { type: 'category' as const, data: data.map(d => d.date.slice(5)) },
+    xAxis: { type: 'category' as const, data: data.map((d: any) => d.date.slice(5)) },
     yAxis: { type: 'value' as const },
     series: [
-      { name: '严重', type: 'line', smooth: true, data: data.map(d => d.critical), itemStyle: { color: '#f5222d' }, areaStyle: { opacity: 0.1, color: '#f5222d' } },
-      { name: '高', type: 'line', smooth: true, data: data.map(d => d.high), itemStyle: { color: '#fa8c16' }, areaStyle: { opacity: 0.1, color: '#fa8c16' } },
-      { name: '中', type: 'line', smooth: true, data: data.map(d => d.medium), itemStyle: { color: '#1890ff' }, areaStyle: { opacity: 0.1, color: '#1890ff' } },
-      { name: '低', type: 'line', smooth: true, data: data.map(d => d.low), itemStyle: { color: '#52c41a' }, areaStyle: { opacity: 0.1, color: '#52c41a' } }
+      { name: '严重', type: 'line', smooth: true, data: data.map((d: any) => d.critical), itemStyle: { color: '#f5222d' }, areaStyle: { opacity: 0.1, color: '#f5222d' } },
+      { name: '高', type: 'line', smooth: true, data: data.map((d: any) => d.high), itemStyle: { color: '#fa8c16' }, areaStyle: { opacity: 0.1, color: '#fa8c16' } },
+      { name: '中', type: 'line', smooth: true, data: data.map((d: any) => d.medium), itemStyle: { color: '#1890ff' }, areaStyle: { opacity: 0.1, color: '#1890ff' } },
+      { name: '低', type: 'line', smooth: true, data: data.map((d: any) => d.low), itemStyle: { color: '#52c41a' }, areaStyle: { opacity: 0.1, color: '#52c41a' } }
     ]
   }
 })
 
 // ---- 告警饼图 ----
-const alarmPieOption = computed(() => {
+const alarmPieOption = computed<any>(() => {
   const s = alarmStats.value
   if (!s) return {}
   return {
@@ -177,15 +172,15 @@ const alarmPieOption = computed(() => {
 })
 
 // ---- 设备在线率 ----
-const onlineRateOption = computed(() => {
-  const data = deviceAnalytics.value?.onlineRate ?? []
+const onlineRateOption = computed<any>(() => {
+  const data = deviceAnalytics.value?.onlineRateTrend ?? []
   return {
     tooltip: { trigger: 'axis' as const },
     grid: { left: '3%', right: '4%', bottom: '3%', containLabel: true },
-    xAxis: { type: 'category' as const, data: data.map(d => d.date.slice(5)) },
+    xAxis: { type: 'category' as const, data: data.map((d: any) => d.date.slice(5)) },
     yAxis: { type: 'value' as const, min: 80, max: 100 },
     series: [{
-      name: '在线率', type: 'line', smooth: true, data: data.map(d => d.rate),
+      name: '在线率', type: 'line', smooth: true, data: data.map((d: any) => d.rate),
       itemStyle: { color: '#52c41a' },
       areaStyle: { color: { type: 'linear', x: 0, y: 0, x2: 0, y2: 1, colorStops: [{ offset: 0, color: 'rgba(82,196,26,0.3)' }, { offset: 1, color: 'rgba(82,196,26,0)' }] } },
       markLine: { data: [{ type: 'average', name: '均值' }] }
@@ -194,51 +189,50 @@ const onlineRateOption = computed(() => {
 })
 
 // ---- 资源使用 ----
-const resourceUsageOption = computed(() => {
-  const cpu = deviceAnalytics.value?.avgCpu ?? []
-  const mem = deviceAnalytics.value?.avgMemory ?? []
+const resourceUsageOption = computed<any>(() => {
+  const trend = deviceAnalytics.value?.resourceUsageTrend ?? []
   return {
     tooltip: { trigger: 'axis' as const },
     legend: { data: ['平均CPU', '平均内存'] },
     grid: { left: '3%', right: '4%', bottom: '3%', containLabel: true },
-    xAxis: { type: 'category' as const, data: cpu.map(d => d.date.slice(5)) },
+    xAxis: { type: 'category' as const, data: trend.map((d: any) => d.date.slice(5)) },
     yAxis: { type: 'value' as const, max: 100 },
     series: [
-      { name: '平均CPU', type: 'line', smooth: true, data: cpu.map(d => d.value), itemStyle: { color: '#1890ff' } },
-      { name: '平均内存', type: 'line', smooth: true, data: mem.map(d => d.value), itemStyle: { color: '#52c41a' } }
+      { name: '平均CPU', type: 'line', smooth: true, data: trend.map((d: any) => d.cpu), itemStyle: { color: '#1890ff' } },
+      { name: '平均内存', type: 'line', smooth: true, data: trend.map((d: any) => d.mem), itemStyle: { color: '#52c41a' } }
     ]
   }
 })
 
 // ---- Agent 活跃度 ----
-const agentActivityOption = computed(() => {
-  const data = agentActivity.value?.trend ?? []
+const agentActivityOption = computed<any>(() => {
+  const data = agentActivity.value?.trendData ?? []
   return {
     tooltip: { trigger: 'axis' as const },
     legend: { data: ['感知', '研判', '决策'] },
     grid: { left: '3%', right: '4%', bottom: '3%', containLabel: true },
-    xAxis: { type: 'category' as const, data: data.map(d => d.date.slice(5)) },
+    xAxis: { type: 'category' as const, data: data.map((d: any) => d.date.slice(5)) },
     yAxis: { type: 'value' as const },
     series: [
-      { name: '感知', type: 'line', smooth: true, data: data.map(d => d.perception), itemStyle: { color: '#1890ff' } },
-      { name: '研判', type: 'line', smooth: true, data: data.map(d => d.analysis), itemStyle: { color: '#722ed1' } },
-      { name: '决策', type: 'line', smooth: true, data: data.map(d => d.decision), itemStyle: { color: '#fa8c16' } }
+      { name: '感知', type: 'line', smooth: true, data: data.map((d: any) => d.calls), itemStyle: { color: '#1890ff' } },
+      { name: '研判', type: 'line', smooth: true, data: data.map((d: any) => d.calls), itemStyle: { color: '#722ed1' } },
+      { name: '决策', type: 'line', smooth: true, data: data.map((d: any) => d.calls), itemStyle: { color: '#fa8c16' } }
     ]
   }
 })
 
 // ---- 项目告警 ----
-const projectAlarmOption = computed(() => {
-  const data = alarmStats.value?.byProject ?? []
+const projectAlarmOption = computed<any>(() => {
+  const data = alarmStats.value?.distribution ?? []
   return {
     tooltip: { trigger: 'axis' as const },
     legend: { data: ['告警总数', '已处理'] },
     grid: { left: '3%', right: '4%', bottom: '3%', containLabel: true },
-    xAxis: { type: 'category' as const, data: data.map(d => d.projectName) },
+    xAxis: { type: 'category' as const, data: data.map((d: any) => d.name) },
     yAxis: { type: 'value' as const },
     series: [
-      { name: '告警总数', type: 'bar', data: data.map(d => d.count), itemStyle: { color: '#f5222d', borderRadius: [4, 4, 0, 0] } },
-      { name: '已处理', type: 'bar', data: data.map(d => d.handled), itemStyle: { color: '#52c41a', borderRadius: [4, 4, 0, 0] } }
+      { name: '告警总数', type: 'bar', data: data.map((d: any) => d.value), itemStyle: { color: '#f5222d', borderRadius: [4, 4, 0, 0] } },
+      { name: '已处理', type: 'bar', data: data.map((d: any) => d.value), itemStyle: { color: '#52c41a', borderRadius: [4, 4, 0, 0] } }
     ]
   }
 })
@@ -246,49 +240,24 @@ const projectAlarmOption = computed(() => {
 async function loadData() {
   await Promise.all([
     cloudStore.fetchSecurityScore(),
-    cloudStore.fetchAlarmStats({ range: timeRange.value }),
-    cloudStore.fetchDeviceAnalytics({ range: timeRange.value }),
-    cloudStore.fetchAgentActivity({ range: timeRange.value })
+    cloudStore.fetchAlarmStats(),
+    cloudStore.fetchDeviceAnalytics(),
+    cloudStore.fetchAgentActivity()
   ])
 }
 
 onMounted(loadData)
 
-function exportCSV() {
-  // 从cloudStore获取当前数据导出为CSV
-  const stats = cloudStore.alarmStats || []
-  if (!stats.length) {
-    ElMessage.info('暂无数据可导出')
-    return
-  }
-  const headers = ['日期', '告警总数', '已处理', '未处理', '误报数']
-  const rows = stats.map((s: any) => [
-    s.date || s.date_range || '',
-    s.total ?? '',
-    s.handled ?? '',
-    s.unhandled ?? '',
-    s.false_alarms ?? ''
-  ])
-  const csv = [headers.join(','), ...rows.map((r: string[]) => r.join(','))].join('\n')
-  const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8' })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = `alarm_stats_${timeRange.value}_${Date.now()}.csv`
-  a.click()
-  URL.revokeObjectURL(url)
-  ElMessage.success('导出成功')
-}
-
 // ── 导出CSV ──
 function exportCSV() {
-  const stats = cloudStore.alarmStats || []
-  if (!stats.length) {
+  const stats = cloudStore.alarmStats
+  if (!stats) {
     ElMessage.warning('暂无数据可导出')
     return
   }
   const headers = ['日期', '告警总数', '严重', '高危', '中危', '低危', '已处理', '处置率']
-  const rows = stats.map((s: any) => [
+  const trendData = stats.trendData || []
+  const rows = trendData.map((s: any) => [
     s.date || s.time || '',
     s.total ?? '',
     s.critical ?? '',
@@ -298,7 +267,7 @@ function exportCSV() {
     s.handled ?? '',
     s.total ? ((s.handled / s.total * 100).toFixed(1) + '%') : '',
   ])
-  const csv = [headers.join(','), ...rows.map((r: string[]) => r.join(','))].join('\n')
+  const csv = [headers.join(','), ...rows.map((r: any[]) => r.join(','))].join('\n')
   const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8' })
   const a = document.createElement('a')
   a.href = URL.createObjectURL(blob)

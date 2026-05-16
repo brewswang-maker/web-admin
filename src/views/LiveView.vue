@@ -47,7 +47,7 @@
               <!-- 视频叠加层 -->
               <div v-if="slot.channelId" class="video-hud">
                 <span class="hud-name">{{ slot.name || `CH${idx + 1}` }}</span>
-                <span class="hud-badge" :class="slot.status">{{ slot.status === 'streaming' ? 'LIVE' : 'OFF' }}</span>
+                <span class="hud-badge" :class="slot.status">{{ (slot as any).status === 'streaming' ? 'LIVE' : 'OFF' }}</span>
                 <span class="hud-time">{{ currentTime }}</span>
               </div>
               <!-- 控制条 -->
@@ -73,7 +73,7 @@
           <div class="log-scroll" ref="logRef">
             <div v-for="(log, i) in detectionLogs" :key="i" class="log-row">
               <span class="log-t">{{ log.time }}</span>
-              <el-tag :type="log.tagType" size="small" effect="dark">{{ log.level }}</el-tag>
+              <el-tag :type="log.tagType as any" size="small" effect="dark">{{ log.level }}</el-tag>
               <span class="log-m">{{ log.msg }}</span>
             </div>
             <div v-if="!detectionLogs.length" class="log-empty">等待检测结果...</div>
@@ -102,12 +102,12 @@
               <div class="ch-body">
                 <div class="ch-name">{{ ch.name }}</div>
                 <div class="ch-meta">
-                  <span>{{ ch.algo || '无算法' }}</span>
+                  <span>{{ ch.algoPlugin || '无算法' }}</span>
                   <span>{{ ch.fps || 0 }}fps</span>
                 </div>
               </div>
-              <el-tag :type="ch.status === 'streaming' ? 'success' : ch.status === 'online' ? 'primary' : 'info'" size="small">
-                {{ ch.status === 'streaming' ? '推流' : ch.status === 'online' ? '在线' : '离线' }}
+              <el-tag :type="((ch as any).status === 'streaming' ? 'success' : (ch as any).status === 'online' ? 'primary' : 'info') as any" size="small">
+                {{ (ch as any).status === 'streaming' ? '推流' : (ch as any).status === 'online' ? '在线' : '离线' }}
               </el-tag>
             </div>
             <el-empty v-if="!filteredChannels.length" description="暂无通道" :image-size="50" />
@@ -215,8 +215,9 @@ async function loadData() {
   const allChs: Channel[] = []
   for (const dev of devices.value) {
     try {
-      const chs = await getDeviceChannels(dev.id)
-      for (const ch of chs) { ch.deviceId = dev.id }
+      const res = await getDeviceChannels(dev.id) as any
+      const chs: Channel[] = res?.data?.data ?? res?.data ?? res
+      for (const ch of chs) { (ch as any).deviceId = dev.id }
       allChs.push(...chs)
     } catch { /* skip */ }
   }

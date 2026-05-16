@@ -484,7 +484,7 @@ function levelLabel(level: string) {
 }
 
 function levelTagType(level: string): 'primary' | 'success' | 'warning' | 'info' | 'danger' {
-  const map: Record<string, string> = { critical: 'danger', high: 'warning', medium: 'warning', low: 'success' }
+  const map: Record<string, 'primary' | 'success' | 'warning' | 'info' | 'danger'> = { critical: 'danger', high: 'warning', medium: 'warning', low: 'success' }
   return map[level] || 'info'
 }
 
@@ -494,7 +494,7 @@ function statusLabel(status: string) {
 }
 
 function statusTagType(status: string): 'primary' | 'success' | 'warning' | 'info' | 'danger' {
-  const map: Record<string, string> = { unhandled: 'danger', handling: 'warning', handled: 'success', confirmed: 'success', false_alarm: 'warning', ignored: 'info' }
+  const map: Record<string, 'primary' | 'success' | 'warning' | 'info' | 'danger'> = { unhandled: 'danger', handling: 'warning', handled: 'success', confirmed: 'success', false_alarm: 'warning', ignored: 'info' }
   return map[status] || 'info'
 }
 

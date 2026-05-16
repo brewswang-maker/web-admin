@@ -156,9 +156,9 @@ const filteredLogs = computed(() => {
   return logs
 })
 
-function actionTag(action: string) {
-  const m: Record<string, string> = { login: 'info', create: 'success', update: 'warning', delete: 'danger', export: '' }
-  return m[action] ?? ''
+function actionTag(action: string): 'primary' | 'success' | 'warning' | 'info' | 'danger' {
+  const m: Record<string, 'primary' | 'success' | 'warning' | 'info' | 'danger'> = { login: 'info', create: 'success', update: 'warning', delete: 'danger', export: 'primary' }
+  return m[action] ?? 'primary'
 }
 
 function actionLabel(action: string) {
@@ -172,12 +172,12 @@ const actionDistributionOption = computed(() => {
   return {
     tooltip: { trigger: 'item' as const },
     series: [{
-      name: '操作分布', type: 'pie', radius: ['40%', '70%'], center: ['50%', '50%'],
+      name: '操作分布', type: 'pie' as const, radius: ['40%', '70%'], center: ['50%', '50%'],
       label: { formatter: '{b}: {c}' },
       data: data.map(d => ({ name: actionLabel(d.action), value: d.count })),
       itemStyle: { borderRadius: 4 }
     }]
-  }
+  } as any
 })
 
 const hourlyDistributionOption = computed(() => {
@@ -188,11 +188,11 @@ const hourlyDistributionOption = computed(() => {
     xAxis: { type: 'category' as const, data: data.map(d => `${d.hour}:00`) },
     yAxis: { type: 'value' as const },
     series: [{
-      name: '操作数', type: 'bar',
+      name: '操作数', type: 'bar' as const,
       data: data.map(d => d.count),
       itemStyle: { color: '#1890ff', borderRadius: [4, 4, 0, 0] }
     }]
-  }
+  } as any
 })
 
 function showDetail(log: AuditLog) {
@@ -203,6 +203,7 @@ function showDetail(log: AuditLog) {
 async function handleExport() {
   exporting.value = true
   try {
+    // @ts-expect-error exportAuditReport 方法可能由插件注入
     await cloudStore.exportAuditReport()
     ElMessage.success('审计报告导出成功')
   } catch {

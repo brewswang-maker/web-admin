@@ -41,7 +41,7 @@
             </div>
             <div class="channel-status-badges">
               <el-tooltip :content="statusTooltip(ch.status)" placement="top">
-                <el-tag :type="streamTagType(ch.status)" size="small" effect="dark">
+                <el-tag :type="streamTagType(ch.status) as any" size="small" effect="dark">
                   {{ streamLabel(ch.status) }}
                 </el-tag>
               </el-tooltip>
@@ -213,6 +213,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useDeviceStore } from '@/stores/device'
 import { getDeviceChannels, updateChannel } from '@/api/devices'
+import { http } from '@/api/http'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { Channel, DeviceDetail } from '@/types/device'
 
@@ -232,7 +233,7 @@ const showAlgoDialog = ref(false)
 const currentChannel = ref<Channel | null>(null)
 
 // ---- 配置表单 ----
-const configForm = ref({ name: '', resolution: '1920x1080', fps: 25, codec: 'H.264' as Channel['codec'], bitrate: '2 Mbps', enabled: true })
+const configForm = ref({ name: '', resolution: '1920x1080', fps: 25, codec: 'H.264' as Channel['codec'], bitrate: 0, enabled: true })
 const algoForm = ref({ plugin: '无', sensitivity: 5, interval: 5 })
 
 // ---- 状态标签 ----
@@ -245,9 +246,9 @@ function streamLabel(s: string) {
 function statusTooltip(s: string) {
   return s === 'streaming' ? '通道正在推送视频流' : s === 'error' ? '通道发生错误，需检查' : '通道空闲，未推流'
 }
-function bitrateClass(bitrate: string) {
+function bitrateClass(bitrate: string | number) {
   if (!bitrate || bitrate === '-') return ''
-  const val = parseFloat(bitrate)
+  const val = parseFloat(String(bitrate))
   if (isNaN(val)) return ''
   return val > 4 ? 'warning' : ''
 }
@@ -260,10 +261,11 @@ async function loadChannels() {
     await deviceStore.fetchDeviceDetail(deviceId.value)
 
     // 再加载通道列表
-    const chs = await getDeviceChannels(deviceId.value)
+    const chRes = await getDeviceChannels(deviceId.value) as any
+    const chs: any[] = chRes?.data?.data ?? chRes?.data ?? chRes
     channels.value = chs.length
       ? chs
-      : device.value?.channels?.map((ch, idx) => ({
+      : (device.value as any)?.channels?.map((ch: any, idx: any) => ({
           ...ch,
           codec: (ch as any).codec || 'H.264',
           isRecording: (ch as any).isRecording ?? false,
@@ -305,10 +307,10 @@ function handleChannelCommand(cmd: string, ch: Channel) {
       configForm.value = {
         name: ch.name,
         resolution: ch.resolution || '1920x1080',
-        fps: ch.fps || 25,
+        fps: Number(ch.fps) || 25,
         codec: ch.codec || 'H.264',
-        bitrate: ch.bitrate || '2 Mbps',
-        enabled: ch.enabled ?? true,
+        bitrate: Number(String(ch.bitrate).replace(/[^0-9.]/g, '')) || 2,
+        enabled: (ch as any).enabled ?? true,
       }
       showConfigDialog.value = true
       break
@@ -335,14 +337,13 @@ async function saveChannelConfig() {
   if (!currentChannel.value) return
   saving.value = true
   try {
-    await updateChannel(deviceId.value, currentChannel.value.id, {
+    await updateChannel(currentChannel.value.id, {
       name: configForm.value.name,
       resolution: configForm.value.resolution,
       fps: configForm.value.fps,
       codec: configForm.value.codec,
-      bitrate: configForm.value.bitrate,
-      enabled: configForm.value.enabled,
-    })
+      bitrate: typeof configForm.value.bitrate === 'string' ? parseFloat(configForm.value.bitrate) : configForm.value.bitrate,
+    } as any)
     ElMessage.success('通道配置已保存')
     showConfigDialog.value = false
     loadChannels()
@@ -357,7 +358,7 @@ async function saveAlgoConfig() {
   if (!currentChannel.value) return
   saving.value = true
   try {
-    await updateChannel(deviceId.value, currentChannel.value.id, {
+    await updateChannel(currentChannel.value.id, {
       algoPlugin: algoForm.value.plugin,
     })
     ElMessage.success('算法插件已应用')

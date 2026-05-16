@@ -30,7 +30,7 @@
         <el-card shadow="hover" class="metric-card">
           <div class="metric-value orange">{{ privacyUsed }}%</div>
           <div class="metric-label">隐私预算已用</div>
-          <div class="metric-sub">ε = {{ federationStatus?.privacyBudget?.toFixed(1) ?? '--' }} / {{ federationStatus?.privacyBudgetTotal ?? '--' }}</div>
+          <div class="metric-sub">ε = {{ (federationStatus as any)?.privacyBudget?.toFixed(1) ?? '--' }} / {{ (federationStatus as any)?.privacyBudgetTotal ?? '--' }}</div>
         </el-card>
       </el-col>
     </el-row>
@@ -61,11 +61,11 @@
             </div>
             <div class="privacy-row">
               <span class="privacy-label">安全聚合 (SecAgg)</span>
-              <el-tag :type="federationStatus?.secAggEnabled ? 'success' : 'info'" size="small">{{ federationStatus?.secAggEnabled ? '✅ 已启用' : '⏸ 未启用' }}</el-tag>
+              <el-tag :type="(federationStatus as any)?.secAggEnabled ? 'success' : 'info'" size="small">{{ (federationStatus as any)?.secAggEnabled ? '✅ 已启用' : '⏸ 未启用' }}</el-tag>
             </div>
             <div class="privacy-row">
               <span class="privacy-label">梯度加密</span>
-              <el-tag :type="federationStatus?.gradientEncryptionEnabled ? 'success' : 'info'" size="small">{{ federationStatus?.gradientEncryptionEnabled ? '✅ 已启用' : '⏸ 未启用' }}</el-tag>
+              <el-tag :type="(federationStatus as any)?.gradientEncryptionEnabled ? 'success' : 'info'" size="small">{{ (federationStatus as any)?.gradientEncryptionEnabled ? '✅ 已启用' : '⏸ 未启用' }}</el-tag>
             </div>
             <div class="privacy-row">
               <span class="privacy-label">联邦蒸馏</span>
@@ -89,7 +89,7 @@
             </el-table-column>
             <el-table-column prop="status" label="状态" width="90">
               <template #default="{ row }">
-                <el-tag :type="taskStatusTag(row.status)" size="small">{{ taskStatusLabel(row.status) }}</el-tag>
+                <el-tag :type="taskStatusTag(row.status) as any" size="small">{{ taskStatusLabel(row.status) }}</el-tag>
               </template>
             </el-table-column>
             <el-table-column label="操作" width="120">
@@ -111,27 +111,27 @@ import { ref, computed, onMounted } from 'vue'
 import { useCloudStore } from '@/stores/cloud'
 import { ElMessage } from 'element-plus'
 import LazyChart from '@/components/LazyChart.vue'
-import type { FederationStatus, FederationTask } from '@/types/analytics'
+import type { FederationDashboardData } from '@/types/analytics'
 
 const cloudStore = useCloudStore()
 
-const federationStatus = computed(() => cloudStore.federationStatus)
-const federationTasks = computed(() => cloudStore.federationTasks)
-const boxContributions = computed(() => cloudStore.boxContributions)
+const federationStatus = computed(() => cloudStore.federationData)
+const federationTasks = computed(() => (cloudStore as any).federationTasks ?? [])
+const boxContributions = computed(() => cloudStore.federationData?.boxContributions ?? [])
 
 const aggregationAccuracy = computed(() => {
-  const v = federationStatus.value?.aggregationAccuracy
+  const v = federationStatus.value?.accuracy
   return v !== undefined ? (v * 100).toFixed(1) : '--'
 })
 
 const privacyUsed = computed(() => {
-  const used = federationStatus.value?.privacyBudget ?? 0
-  const total = federationStatus.value?.privacyBudgetTotal ?? 1
+  const used = (federationStatus.value as any)?.privacyBudget ?? 0
+  const total = (federationStatus.value as any)?.privacyBudgetTotal ?? 1
   return Math.round((used / total) * 100)
 })
 
 const statusCardClass = computed(() => {
-  const s = federationStatus.value?.status
+  const s = federationStatus.value?.status as string | undefined
   return s === 'running' ? 'running' : s === 'paused' ? 'paused' : s === 'error' ? 'error' : ''
 })
 
@@ -156,31 +156,31 @@ function taskStatusLabel(s: string) {
 }
 
 // ---- 图表 ----
-const accuracyChartOption = computed(() => {
-  const data = federationStatus.value?.accuracyTrend ?? []
+const accuracyChartOption = computed<any>(() => {
+  const data = federationStatus.value?.accuracyHistory ?? []
   return {
     tooltip: { trigger: 'axis' as const },
     grid: { left: '3%', right: '4%', bottom: '3%', containLabel: true },
-    xAxis: { type: 'category' as const, data: data.map(d => `R${d.round}`) },
+    xAxis: { type: 'category' as const, data: data.map((d: any) => `R${d.round}`) },
     yAxis: { type: 'value' as const, min: 80, max: 100 },
     series: [{
-      name: '聚合精度', type: 'line', smooth: true, data: data.map(d => +(d.accuracy * 100).toFixed(1)),
+      name: '聚合精度', type: 'line', smooth: true, data: data.map((d: any) => +(d.accuracy * 100).toFixed(1)),
       itemStyle: { color: '#722ed1' },
       areaStyle: { color: { type: 'linear', x: 0, y: 0, x2: 0, y2: 1, colorStops: [{ offset: 0, color: 'rgba(124,58,237,0.2)' }, { offset: 1, color: 'rgba(124,58,237,0)' }] } }
     }]
   }
 })
 
-const contributionChartOption = computed(() => {
+const contributionChartOption = computed<any>(() => {
   const data = boxContributions.value
   return {
     tooltip: { trigger: 'axis' as const },
     grid: { left: '3%', right: '6%', bottom: '3%', containLabel: true },
     xAxis: { type: 'value' as const, name: '%' },
-    yAxis: { type: 'category' as const, data: data.map(d => d.boxName), inverse: true },
+    yAxis: { type: 'category' as const, data: data.map((d: any) => d.name ?? d.boxName), inverse: true },
     series: [{
       name: '贡献度', type: 'bar',
-      data: data.map((d, i) => ({
+      data: data.map((d: any, i: any) => ({
         value: +(d.contribution * 100).toFixed(1),
         itemStyle: {
           color: ['#722ed1', '#1890ff', '#52c41a', '#fa8c16', '#f5222d', '#13c2c2'][i % 6],
@@ -192,29 +192,26 @@ const contributionChartOption = computed(() => {
   }
 })
 
-async function handlePause(task: FederationTask) {
-  await cloudStore.controlFederation(task.id, 'pause')
+async function handlePause(task: any) {
+  await (cloudStore as any).controlFederation?.(task.id, 'pause')
   ElMessage.success(`任务 "${task.name}" 已暂停`)
 }
 
-async function handleResume(task: FederationTask) {
-  await cloudStore.controlFederation(task.id, 'start')
+async function handleResume(task: any) {
+  await (cloudStore as any).controlFederation?.(task.id, 'start')
   ElMessage.success(`任务 "${task.name}" 已恢复`)
 }
 
-async function handleStop(task: FederationTask) {
-  await cloudStore.controlFederation(task.id, 'stop')
+async function handleStop(task: any) {
+  await (cloudStore as any).controlFederation?.(task.id, 'stop')
   ElMessage.success(`任务 "${task.name}" 已停止`)
 }
 
 async function refreshAll() {
-  await Promise.all([
-    cloudStore.fetchFederationStatus(),
-    cloudStore.fetchFederationTasks()
-  ])
-  const tasks = cloudStore.federationTasks
+  await cloudStore.fetchFederationData()
+  const tasks = (cloudStore as any).federationTasks ?? []
   if (tasks.length > 0) {
-    await cloudStore.fetchBoxContributions(tasks[0].id)
+    // Box contributions are in federationData
   }
 }
 

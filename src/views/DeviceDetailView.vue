@@ -99,7 +99,7 @@
     </el-row>
 
     <!-- 通道列表 -->
-    <el-card style="margin-top: 16px" v-if="device?.channels">
+    <el-card style="margin-top: 16px" v-if="(device as any)?.channels">
       <template #header>
         <div style="display:flex;justify-content:space-between;align-items:center">
           <span>视频通道</span>
@@ -108,7 +108,7 @@
           </el-button>
         </div>
       </template>
-      <el-table :data="device.channels" stripe>
+      <el-table :data="(device as any).channels || []" stripe>
         <el-table-column prop="channelNo" label="通道号" width="80" />
         <el-table-column prop="name" label="通道名称" width="180" />
         <el-table-column prop="rtspUrl" label="RTSP地址" min-width="220" />
@@ -251,7 +251,7 @@ const configForm = ref({
 
 // 协议标签
 const protocolLabel = computed(() => {
-  const proto = device.value?.protocol ?? device.value?.config?.protocol ?? 'RTSP'
+  const proto = device.value?.protocol ?? (device.value as any)?.config?.protocol ?? 'RTSP'
   const opt = PROTOCOL_OPTIONS.find(o => o.value === proto)
   return opt?.label ?? proto
 })
@@ -262,11 +262,11 @@ const metricItems = computed(() => {
   if (!m) return []
   return [
     { label: 'CPU', value: `${m.cpuUsage}%`, percent: m.cpuUsage, color: m.cpuUsage > 80 ? '#f5222d' : '#1890ff' },
-    { label: '内存', value: `${m.memoryUsage}%`, percent: m.memoryUsage, color: m.memoryUsage > 80 ? '#f5222d' : '#52c41a' },
+    { label: '内存', value: `${m.memUsage}%`, percent: m.memUsage, color: m.memUsage > 80 ? '#f5222d' : '#52c41a' },
     { label: 'GPU', value: `${m.gpuUsage}%`, percent: m.gpuUsage, color: '#722ed1' },
     { label: '磁盘', value: `${m.diskUsage}%`, percent: m.diskUsage, color: m.diskUsage > 90 ? '#f5222d' : '#faad14' },
     { label: '温度', value: `${m.temperature}°C`, percent: Math.min(m.temperature * 1.2, 100), color: m.temperature > 75 ? '#f5222d' : '#52c41a' },
-    { label: 'RTT', value: `${m.networkRtt}ms`, percent: Math.min(m.networkRtt / 5, 100), color: m.networkRtt < 50 ? '#52c41a' : '#faad14' }
+    { label: 'RTT', value: `${(m as any).networkRtt ?? m.networkIn}ms`, percent: Math.min(((m as any).networkRtt ?? m.networkIn) / 5, 100), color: ((m as any).networkRtt ?? m.networkIn) < 50 ? '#52c41a' : '#faad14' }
   ]
 })
 
@@ -278,9 +278,9 @@ const resourceChartOption = computed(() => ({
   xAxis: { type: 'category' as const, data: metricsHistory.value.map(m => m.timestamp.slice(11, 16)) },
   yAxis: { type: 'value' as const, max: 100 },
   series: [
-    { name: 'CPU %', type: 'line', smooth: true, data: metricsHistory.value.map(m => m.cpuUsage), itemStyle: { color: '#1890ff' } },
-    { name: '内存 %', type: 'line', smooth: true, data: metricsHistory.value.map(m => m.memoryUsage), itemStyle: { color: '#52c41a' } },
-    { name: 'GPU %', type: 'line', smooth: true, data: metricsHistory.value.map(m => m.gpuUsage), itemStyle: { color: '#722ed1' } }
+    { name: 'CPU %', type: 'line' as const, smooth: true, data: metricsHistory.value.map(m => m.cpuUsage), itemStyle: { color: '#1890ff' } },
+    { name: '内存 %', type: 'line' as const, smooth: true, data: metricsHistory.value.map(m => m.memUsage), itemStyle: { color: '#52c41a' } },
+    { name: 'GPU %', type: 'line' as const, smooth: true, data: metricsHistory.value.map(m => m.gpuUsage), itemStyle: { color: '#722ed1' } }
   ]
 }))
 
@@ -294,13 +294,13 @@ const networkChartOption = computed(() => ({
     { type: 'value' as const, name: '°C' }
   ],
   series: [
-    { name: 'RTT (ms)', type: 'line', smooth: true, data: metricsHistory.value.map(m => m.networkRtt), itemStyle: { color: '#fa8c16' } },
-    { name: '温度 (°C)', type: 'line', smooth: true, yAxisIndex: 1, data: metricsHistory.value.map(m => m.temperature), itemStyle: { color: '#f5222d' } }
+    { name: 'RTT (ms)', type: 'line' as const, smooth: true, data: metricsHistory.value.map(m => (m as any).networkRtt ?? m.networkIn), itemStyle: { color: '#fa8c16' } },
+    { name: '温度 (°C)', type: 'line' as const, smooth: true, yAxisIndex: 1, data: metricsHistory.value.map(m => m.temperature), itemStyle: { color: '#f5222d' } }
   ]
 }))
 
 // ---- 辅助 ----
-function statusTagType(s: string) {
+function statusTagType(s: string): any {
   const m: Record<string, string> = { online: 'success', offline: 'danger', alarming: 'warning', maintenance: 'info' }
   return m[s] ?? 'info'
 }
@@ -310,7 +310,7 @@ function statusLabel(s: string) {
   return m[s] ?? s
 }
 
-const syncTagType = computed(() => {
+const syncTagType = computed((): any => {
   const m: Record<string, string> = { synced: 'success', syncing: 'warning', pending: 'info', conflict: 'danger', offline: 'info' }
   return m[device.value?.syncStatus ?? 'offline']
 })
@@ -363,9 +363,9 @@ async function loadData() {
   try {
     await Promise.all([
       deviceStore.fetchDeviceDetail(deviceId),
-      deviceStore.fetchDeviceMetrics(deviceId, '1h'),
+      deviceStore.fetchDeviceMetrics(deviceId),
       deviceStore.fetchLatestMetrics(deviceId),
-      deviceStore.fetchSyncRecords({ deviceId })
+      deviceStore.fetchSyncRecords(deviceId)
     ])
     metricsHistory.value = deviceStore.deviceMetrics
     syncRecords.value = deviceStore.syncRecords

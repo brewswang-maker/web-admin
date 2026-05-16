@@ -149,7 +149,7 @@ onMounted(fetchModels)
         <el-table-column prop="precision" label="精度" width="80" />
         <el-table-column label="状态" width="100">
           <template #default="{ row }">
-            <el-tag :type="statusTag(row.status)" size="small">{{ statusLabel(row.status) }}</el-tag>
+            <el-tag :type="statusTag(row.status) as any" size="small">{{ statusLabel(row.status) }}</el-tag>
           </template>
         </el-table-column>
         <el-table-column label="TPU占用" width="150">
@@ -206,7 +206,7 @@ onMounted(fetchModels)
           <el-descriptions-item label="类型">{{ selectedModel.type }}</el-descriptions-item>
           <el-descriptions-item label="精度">{{ selectedModel.precision }}</el-descriptions-item>
           <el-descriptions-item label="状态">
-            <el-tag :type="statusTag(selectedModel.status)">{{ statusLabel(selectedModel.status) }}</el-tag>
+            <el-tag :type="statusTag(selectedModel.status) as any">{{ statusLabel(selectedModel.status) }}</el-tag>
           </el-descriptions-item>
           <el-descriptions-item label="TPU占用">{{ selectedModel.tpu_usage }}%</el-descriptions-item>
           <el-descriptions-item label="推理延迟">{{ selectedModel.inference_latency_ms }}ms</el-descriptions-item>

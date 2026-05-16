@@ -148,7 +148,7 @@ import {
   RefreshRight,
 } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
-import { compressImage, formatFileSize, type CompressResult } from '@/utils/imageCompress'
+import { compressImage, formatFileSize, getImageInfo, type CompressResult } from '@/utils/imageCompress'
 
 // ─── Props ──────────────────────────────────────────────
 
@@ -318,26 +318,31 @@ async function processFile(item: UploadFileItem, idx: number) {
       // ── 阶段1：压缩 ──
       item.status = 'compressing'
 
-      const result: CompressResult = await compressImage(item.raw, {
-        outputFormat:
-          compressFormat.value === 'original' ? 'original' : compressFormat.value,
+      const startTime = Date.now()
+      const compressedBlob: Blob = await compressImage(item.raw, {
+        mimeType: compressFormat.value === 'original' ? undefined : `image/${compressFormat.value}`,
         maxWidth: compressMaxWidth.value,
       })
+      const elapsed = Date.now() - startTime
 
-      item.compressedSize = result.compressedSize
-      item.compressionRatio = result.compressionRatio
-      item.compressed = new File([result.blob], item.name.replace(/\.[^.]+$/, '') + '.' + result.format, {
-        type: result.blob.type,
+      const compressedSize = compressedBlob.size
+      const compressionRatio = item.size > 0 ? (1 - compressedSize / item.size) : 0
+
+      item.compressedSize = compressedSize
+      item.compressionRatio = compressionRatio
+      const ext = compressFormat.value === 'original' ? item.name.split('.').pop() || 'jpg' : compressFormat.value
+      item.compressed = new File([compressedBlob], item.name.replace(/\.[^.]+$/, '') + '.' + ext, {
+        type: compressedBlob.type,
       })
 
-      // 更新预览（可能变为 WebP）
-      if (result.previewUrl && result.format !== 'png') {
+      // 更新预览（可能变为压缩后格式）
+      if (compressFormat.value !== 'original') {
         if (item.previewUrl) URL.revokeObjectURL(item.previewUrl)
-        item.previewUrl = result.previewUrl
+        item.previewUrl = URL.createObjectURL(compressedBlob)
       }
 
       console.log(
-        `[ImageUpload] ${item.name}: ${formatFileSize(item.size)} → ${formatFileSize(result.compressedSize)} (-${(result.compressionRatio * 100).toFixed(0)}%, ${result.elapsed.toFixed(0)}ms)`
+        `[ImageUpload] ${item.name}: ${formatFileSize(item.size)} → ${formatFileSize(compressedSize)} (-${(compressionRatio * 100).toFixed(0)}%, ${elapsed.toFixed(0)}ms)`
       )
     }
 

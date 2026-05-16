@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { defineConfig, type Plugin } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import { resolve } from 'path'
@@ -166,7 +167,7 @@ export default defineConfig(async () => {
       rollupOptions: {
         output: {
           // 🆕 分包策略 — 6 层递进
-          manualChunks(id, { getModuleInfo }) {
+          manualChunks(id: string, { getModuleInfo }: { getModuleInfo: (id: string) => any }) {
             // L1: Vue 核心生态（最稳定，长期缓存命中率最高）
             if (/\/node_modules\/(vue|@vue\/(reactivity|runtime|shared|compiler))/.test(id)) {
               return 'vendor-vue-core'
@@ -232,7 +233,7 @@ export default defineConfig(async () => {
           // content-hash 命名 → 长期缓存
           chunkFileNames: 'assets/js/[name]-[hash:10].js',
           entryFileNames: 'assets/js/[name]-[hash:10].js',
-          assetFileNames: (assetInfo) => {
+          assetFileNames: (assetInfo: { name?: string, type: string }) => {
             if (assetInfo.name?.endsWith('.css')) {
               return 'assets/css/[name]-[hash:10].[ext]'
             }

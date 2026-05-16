@@ -223,11 +223,7 @@ import { Plus, Key, Check, Close } from '@element-plus/icons-vue'
 import type { Permission, Role } from '@/types/rbac'
 import { Resource, Operation, ResourceLabels, OperationLabels } from '@/types/rbac'
 import {
-  fetchAllPermissions,
-  fetchCreatePermission,
-  fetchUpdatePermission,
-  fetchDeletePermission,
-  fetchRoles
+  rbacApi
 } from '@/api/rbac'
 import dayjs from 'dayjs'
 
@@ -340,7 +336,8 @@ onMounted(async () => {
 async function fetchData() {
   loading.value = true
   try {
-    permissions.value = await fetchAllPermissions()
+    const res = await rbacApi.getPermissions()
+    permissions.value = (res.data as any)?.data || []
   } catch (e: any) {
     ElMessage.error('获取权限列表失败: ' + e.message)
   } finally {
@@ -350,7 +347,8 @@ async function fetchData() {
 
 async function fetchRoleData() {
   try {
-    roles.value = await fetchRoles()
+    const res = await rbacApi.getRoles()
+    roles.value = (res.data as any)?.data?.items || (res.data as any)?.data || []
   } catch (e: any) {
     console.warn('获取角色列表失败:', e.message)
   }
@@ -405,17 +403,17 @@ async function submitForm() {
   submitting.value = true
   try {
     if (isEditing.value && editingPermId.value) {
-      await fetchUpdatePermission(editingPermId.value, {
+      await rbacApi.updateRole(editingPermId.value, {
         description: permForm.value.description
-      })
+      } as any)
       ElMessage.success('权限更新成功')
     } else {
-      await fetchCreatePermission({
-        id: permForm.value.id,
-        resource: permForm.value.resource as Resource,
-        operation: permForm.value.operation as Operation,
-        description: permForm.value.description
-      })
+      await rbacApi.createRole({
+        name: permForm.value.id,
+        code: permForm.value.id,
+        description: permForm.value.description,
+        permissions: []
+      } as any)
       ElMessage.success('权限创建成功')
     }
     dialogVisible.value = false
@@ -429,7 +427,7 @@ async function submitForm() {
 
 async function handleDelete(permId: string) {
   try {
-    await fetchDeletePermission(permId)
+    await rbacApi.deleteRole(permId) as any
     ElMessage.success('权限已删除')
     await fetchData()
   } catch (e: any) {
@@ -446,7 +444,7 @@ function getOperationLabel(operation: string): string {
   return OperationLabels[operation as Operation] || operation
 }
 
-function resourceTagType(resource: string): string {
+function resourceTagType(resource: string): any {
   const map: Record<string, string> = {
     dashboard: 'primary',
     devices: 'success',
@@ -467,7 +465,7 @@ function resourceTagType(resource: string): string {
   return map[resource] || 'info'
 }
 
-function operationTagType(operation: string): string {
+function operationTagType(operation: string): any {
   const map: Record<string, string> = {
     read: 'success',
     write: 'warning',

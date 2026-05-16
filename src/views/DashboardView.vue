@@ -299,14 +299,14 @@ async function fetchDashboardData() {
     if (deviceRes.status === 'fulfilled' && deviceRes.value.data) {
       const d = deviceRes.value.data?.data || deviceRes.value.data
       if (d.online !== undefined) {
-        topStatsValues.value.deviceOnline = d.online
-        topStatsValues.value.deviceTotal = d.total
+        topStatsValues.deviceOnline = d.online
+        topStatsValues.deviceTotal = d.total
       }
     }
     if (fedRes.status === 'fulfilled' && fedRes.value.data?.data) {
       const f = fedRes.value.data.data
       federationStatus.value = {
-        status: f.status,
+        status: f.status as 'running' | 'paused' | 'idle',
         participatingBoxes: f.participatingBoxes,
         totalBoxes: f.totalBoxes,
         currentRound: f.currentRound,

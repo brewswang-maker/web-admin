@@ -33,7 +33,7 @@
           <div class="panel-title">🗺️ 3D 厂区态势地图
             <span style="font-size:11px;color:#9AA0A6;margin-left:8px">拖拽旋转 · 滚轮缩放</span>
           </div>
-          <Scene3D class="scene3d-wrapper" :devices="sceneDevices" :buildings="sceneBuildings" />
+          <Scene3D class="scene3d-wrapper" :devices="sceneDevices as any" :buildings="sceneBuildings" />
         </div>
         <div class="ss-panel">
           <div class="panel-title">🚨 最新告警</div>

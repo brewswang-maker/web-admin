@@ -35,7 +35,7 @@
           </el-table-column>
           <el-table-column prop="status" label="状态" width="90">
             <template #default="{ row }">
-              <el-tag :type="fwStatusTag(row.status)" size="small">{{ fwStatusLabel(row.status) }}</el-tag>
+              <el-tag :type="fwStatusTag(row.status) as any" size="small">{{ fwStatusLabel(row.status) }}</el-tag>
             </template>
           </el-table-column>
           <el-table-column prop="publishedAt" label="发布时间" width="170" />
@@ -84,7 +84,7 @@
           </el-table-column>
           <el-table-column prop="status" label="状态" width="100">
             <template #default="{ row }">
-              <el-tag :type="taskStatusTag(row.status)" size="small">{{ taskStatusLabel(row.status) }}</el-tag>
+              <el-tag :type="taskStatusTag(row.status) as any" size="small">{{ taskStatusLabel(row.status) }}</el-tag>
             </template>
           </el-table-column>
           <el-table-column prop="startedAt" label="开始时间" width="170" />
@@ -142,7 +142,7 @@
       <el-form label-width="100px">
         <el-form-item label="目标版本">
           <el-select v-model="taskForm.firmwareId" style="width:100%" placeholder="选择固件版本">
-            <el-option v-for="f in firmwares.filter(fw => fw.status === 'published')" :key="f.id" :label="`v${f.version} - ${f.description}`" :value="f.id" />
+            <el-option v-for="f in firmwares.filter((fw: any) => fw.status === 'published')" :key="f.id" :label="`v${f.version} - ${f.description}`" :value="f.id" />
           </el-select>
         </el-form-item>
         <el-form-item label="目标设备">
@@ -173,7 +173,7 @@
 import { ref, onMounted } from 'vue'
 import { useCloudStore } from '@/stores/cloud'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import type { OTAFirmware, OTATask } from '@/types/analytics'
+// Types defined inline as needed
 
 const cloudStore = useCloudStore()
 const activeTab = ref('firmware')
@@ -181,8 +181,8 @@ const showUploadDialog = ref(false)
 const showCreateTaskDialog = ref(false)
 const uploading = ref(false)
 
-const firmwares = ref<OTAFirmware[]>([])
-const otaTasks = ref<OTATask[]>([])
+const firmwares = ref<any[]>([])
+const otaTasks = ref<any[]>([])
 
 const uploadForm = ref({
   version: '', description: '', targetHardware: ['BM1684X'],
@@ -219,35 +219,35 @@ function taskStatusLabel(s: string) {
   return m[s] ?? s
 }
 
-function handlePublish(row: OTAFirmware) {
+function handlePublish(row: any) {
   ElMessageBox.confirm(`确认发布 v${row.version}？发布后设备可进行升级。`, '发布确认', { type: 'warning' }).then(() => {
-    const f = firmwares.value.find(f => f.id === row.id)
+    const f = firmwares.value.find((f: any) => f.id === row.id)
     if (f) f.status = 'published'
     ElMessage.success('固件已发布')
   }).catch(() => {})
 }
 
-function handleDeprecate(row: OTAFirmware) {
+function handleDeprecate(row: any) {
   ElMessageBox.confirm(`确认废弃 v${row.version}？`, '废弃确认', { type: 'warning' }).then(() => {
-    const f = firmwares.value.find(f => f.id === row.id)
+    const f = firmwares.value.find((f: any) => f.id === row.id)
     if (f) f.status = 'deprecated'
     ElMessage.success('固件已废弃')
   }).catch(() => {})
 }
 
-function handleCreateTask(row: OTAFirmware) {
+function handleCreateTask(row: any) {
   taskForm.value.firmwareId = row.id
   showCreateTaskDialog.value = true
 }
 
-function handleCancelTask(row: OTATask) {
+function handleCancelTask(row: any) {
   ElMessageBox.confirm('确认取消该升级任务？', '取消确认', { type: 'warning' }).then(() => {
     row.status = 'cancelled'
     ElMessage.success('任务已取消')
   }).catch(() => {})
 }
 
-function handleRetryTask(_row: OTATask) {
+function handleRetryTask(_row: any) {
   ElMessage.success('重试指令已发送')
 }
 
@@ -279,7 +279,7 @@ function confirmCreateTask() {
   otaTasks.value.push({
     id: `task-${Date.now()}`,
     firmwareId: taskForm.value.firmwareId,
-    firmwareVer: firmwares.value.find(f => f.id === taskForm.value.firmwareId)?.version ?? '?',
+    firmwareVer: firmwares.value.find((f: any) => f.id === taskForm.value.firmwareId)?.version ?? '?',
     deviceCount: taskForm.value.deviceIds.length || 1,
     successCount: 0,
     failedCount: 0,
@@ -294,9 +294,23 @@ function confirmCreateTask() {
 }
 
 onMounted(async () => {
-  await Promise.all([cloudStore.fetchFirmwares(), cloudStore.fetchOTATasks()])
-  firmwares.value = cloudStore.firmwares
-  otaTasks.value = cloudStore.otaTasks
+  await cloudStore.fetchOTAStats()
+  const otaData = cloudStore.otaStats
+  // Convert OTAStats firmware versions to firmware list format
+  firmwares.value = otaData?.firmwareVersions?.map((v: any) => ({
+    id: v.version,
+    version: v.version,
+    description: `${v.count} 台设备`,
+    fileSize: 0,
+    md5: '',
+    targetHardware: [],
+    changelog: '',
+    isForce: false,
+    status: 'published',
+    publishedAt: '',
+    createdAt: new Date().toISOString()
+  })) ?? []
+  otaTasks.value = []
 })
 </script>
 

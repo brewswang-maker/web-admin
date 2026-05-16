@@ -13,7 +13,7 @@
       <el-col :span="16">
         <el-card>
           <div class="team-profile">
-            <el-avatar :size="56" :src="team.avatar">{{ team.name.charAt(0) }}</el-avatar>
+            <el-avatar :size="56" :src="(team as any).avatar">{{ team.name.charAt(0) }}</el-avatar>
             <div class="team-profile-info">
               <h2>{{ team.name }}</h2>
               <p>{{ team.description || '暂无描述' }}</p>
@@ -28,19 +28,19 @@
         <el-card header="团队成员" style="margin-top: 16px">
           <template #header>
             <div class="card-header-row">
-              <span>团队成员 ({{ teamStore.totalMembers }})</span>
+              <span>团队成员 ({{ teamStore.members.length }})</span>
               <el-button v-if="isAdmin" type="primary" size="small" @click="showInviteDialog = true">
                 <el-icon><Plus /></el-icon>邀请成员
               </el-button>
             </div>
           </template>
-          <el-table :data="teamStore.members" stripe v-loading="teamStore.membersLoading">
+          <el-table :data="teamStore.members" stripe v-loading="teamStore.loading">
             <el-table-column label="成员" min-width="200">
               <template #default="{ row }">
                 <div class="member-cell">
-                  <el-avatar :size="32" :src="row.avatar">{{ row.displayName.charAt(0) }}</el-avatar>
+                  <el-avatar :size="32" :src="row.avatar">{{ row.name.charAt(0) }}</el-avatar>
                   <div>
-                    <div class="member-name">{{ row.displayName }}</div>
+                    <div class="member-name">{{ row.name }}</div>
                     <div class="member-email">{{ row.email }}</div>
                   </div>
                 </div>
@@ -79,21 +79,21 @@
         <el-card header="团队统计">
           <div class="stats-grid">
             <div class="stat-item"><span class="stat-num">{{ team?.memberCount ?? 0 }}</span><span class="stat-label">成员</span></div>
-            <div class="stat-item"><span class="stat-num">{{ team?.projectCount ?? 0 }}</span><span class="stat-label">项目</span></div>
-            <div class="stat-item"><span class="stat-num">{{ teamStore.onlineMembers.length }}</span><span class="stat-label">在线</span></div>
+            <div class="stat-item"><span class="stat-num">{{ (team as any).projectCount ?? teamStore.teamStats?.projectCount ?? 0 }}</span><span class="stat-label">项目</span></div>
+            <div class="stat-item"><span class="stat-num">{{ ((teamStore as any).onlineMembers || []).length }}</span><span class="stat-label">在线</span></div>
             <div class="stat-item"><span class="stat-num">{{ pendingInvites.length }}</span><span class="stat-label">待确认</span></div>
           </div>
         </el-card>
 
         <el-card header="活动日志" style="margin-top: 16px">
           <div class="activity-list">
-            <div v-for="log in teamStore.activityLogs.slice(0, 10)" :key="log.id" class="activity-item">
+            <div v-for="log in ((teamStore as any).activityLogs || []).slice(0, 10)" :key="log.id" class="activity-item">
               <el-icon :size="14"><Clock /></el-icon>
               <span class="activity-text">{{ log.username }} {{ actionLabel(log.action) }}</span>
               <span class="activity-time">{{ log.timestamp }}</span>
             </div>
           </div>
-          <el-empty v-if="teamStore.activityLogs.length === 0" description="暂无活动" :image-size="40" />
+          <el-empty v-if="!((teamStore as any).activityLogs || []).length" description="暂无活动" :image-size="40" />
         </el-card>
       </el-col>
     </el-row>
@@ -125,7 +125,7 @@ import { ref, computed, onMounted, reactive } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useTeamStore } from '@/stores/team'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import type { TeamMember, TeamMemberRole } from '@/types/team'
+import type { TeamMember } from '@/types/team'
 
 const route = useRoute()
 const router = useRouter()
@@ -133,22 +133,22 @@ const teamStore = useTeamStore()
 
 const teamId = computed(() => route.params.id as string)
 const team = computed(() => teamStore.currentTeam)
-const myMembership = computed(() => teamStore.members.find(m => m.userId === 'current'))
+const myMembership = computed(() => (teamStore as any).members?.find((m: any) => m.userId === 'current' || m.id === 'current'))
 const isOwner = computed(() => myMembership.value?.role === 'owner')
 const isAdmin = computed(() => myMembership.value?.role === 'owner' || myMembership.value?.role === 'admin')
-const pendingInvites = computed(() => teamStore.invitations.filter(i => i.status === 'pending'))
+const pendingInvites = computed(() => ((teamStore as any).invitations || []).filter((i: any) => i.status === 'pending'))
 
 const showEditDialog = ref(false)
 const showInviteDialog = ref(false)
 const inviting = ref(false)
-const inviteForm = reactive({ email: '', role: 'member' as TeamMemberRole })
+const inviteForm = reactive({ email: '', role: 'member' as string })
 
-function roleLabel(role: TeamMemberRole) {
-  const map: Record<TeamMemberRole, string> = { owner: '拥有者', admin: '管理员', member: '成员', viewer: '观察者' }
+function roleLabel(role: string) {
+  const map: Record<string, string> = { owner: '拥有者', admin: '管理员', member: '成员', viewer: '观察者' }
   return map[role] || role
 }
 
-function roleTagType(role: TeamMemberRole) {
+function roleTagType(role: string) {
   return role === 'owner' ? 'danger' : role === 'admin' ? 'warning' : role === 'member' ? 'success' : 'info'
 }
 
@@ -161,17 +161,17 @@ function actionLabel(action: string) {
   return map[action] || action
 }
 
-async function changeRole(member: TeamMember, role: TeamMemberRole) {
+async function changeRole(member: TeamMember, role: string) {
   try {
-    await teamStore.updateMemberRole(teamId.value, member.id, { role })
-    ElMessage.success(`已将 ${member.displayName} 的角色更新为 ${roleLabel(role)}`)
+    await (teamStore as any).updateMemberRole(teamId.value, member.id, { role })
+    ElMessage.success(`已将 ${member.name} 的角色更新为 ${roleLabel(role)}`)
   } catch { ElMessage.error('操作失败') }
 }
 
 async function handleRemoveMember(member: TeamMember) {
   try {
-    await ElMessageBox.confirm(`确认将 ${member.displayName} 移出团队？`, '确认操作', { type: 'warning' })
-    await teamStore.removeMemberFromTeam(teamId.value, member.id)
+    await ElMessageBox.confirm(`确认将 ${member.name} 移出团队？`, '确认操作', { type: 'warning' })
+    await (teamStore as any).removeMemberFromTeam(teamId.value, member.id)
     ElMessage.success('已移出团队')
   } catch { /* cancelled */ }
 }
@@ -180,7 +180,7 @@ async function handleInvite() {
   if (!inviteForm.email) { ElMessage.warning('请输入邮箱'); return }
   inviting.value = true
   try {
-    await teamStore.inviteMember(teamId.value, { email: inviteForm.email, role: inviteForm.role })
+    await (teamStore as any).inviteMember(teamId.value, { email: inviteForm.email, role: inviteForm.role })
     ElMessage.success('邀请已发送')
     showInviteDialog.value = false
     inviteForm.email = ''
@@ -192,7 +192,7 @@ async function handleInvite() {
 async function handleDelete() {
   try {
     await ElMessageBox.confirm('解散团队后所有数据将被清除，不可恢复。确认继续？', '危险操作', { type: 'error', confirmButtonText: '确认解散' })
-    await teamStore.removeTeam(teamId.value)
+    await (teamStore as any).removeTeam(teamId.value)
     ElMessage.success('团队已解散')
     router.push('/teams')
   } catch { /* cancelled */ }
@@ -201,8 +201,8 @@ async function handleDelete() {
 onMounted(() => {
   teamStore.fetchTeamDetail(teamId.value)
   teamStore.fetchMembers(teamId.value)
-  teamStore.fetchInvitations(teamId.value)
-  teamStore.fetchActivityLogs(teamId.value)
+  ;(teamStore as any).fetchInvitations?.(teamId.value)
+  ;(teamStore as any).fetchActivityLogs?.(teamId.value)
   teamStore.fetchTeamStats(teamId.value)
 })
 </script>

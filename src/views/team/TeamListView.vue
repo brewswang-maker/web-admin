@@ -8,13 +8,12 @@
     </div>
 
     <!-- 邀请提示 -->
-    <el-alert v-if="teamStore.pendingInvitationCount > 0" type="info" show-icon :closable="false" class="invite-alert">
+    <el-alert v-if="((teamStore as any).pendingInvitationCount || 0) > 0" type="info" show-icon :closable="false" class="invite-alert">
       <template #title>
-        您有 <strong>{{ teamStore.pendingInvitationCount }}</strong> 条待处理的团队邀请
+        您有 <strong>{{ (teamStore as any).pendingInvitationCount || 0 }}</strong> 条待处理的团队邀请
         <el-button link type="primary" @click="showInvitations = true">查看</el-button>
       </template>
     </el-alert>
-
     <!-- 团队列表 -->
     <el-row :gutter="16">
       <el-col v-for="team in teamStore.teams" :key="team.id" :xs="24" :sm="12" :lg="8">
@@ -22,7 +21,7 @@
           <template #header>
             <div class="team-card-header">
               <div class="team-info">
-                <el-avatar :size="40" :src="team.avatar">{{ team.name.charAt(0) }}</el-avatar>
+                <el-avatar :size="40" :src="(team as any).avatar">{{ team.name.charAt(0) }}</el-avatar>
                 <div class="team-name-wrap">
                   <span class="team-name">{{ team.name }}</span>
                   <el-tag :type="team.status === 'active' ? 'success' : 'info'" size="small">{{ team.status === 'active' ? '活跃' : '已归档' }}</el-tag>
@@ -33,10 +32,10 @@
           <p class="team-desc">{{ team.description || '暂无描述' }}</p>
           <div class="team-meta">
             <span><el-icon><User /></el-icon> {{ team.memberCount }} 成员</span>
-            <span><el-icon><FolderOpened /></el-icon> {{ team.projectCount }} 项目</span>
+            <span><el-icon><FolderOpened /></el-icon> {{ (team as any).projectCount || 0 }} 项目</span>
           </div>
           <div class="team-footer">
-            <span class="team-owner">负责人: {{ team.ownerName }}</span>
+            <span class="team-owner">负责人: {{ (team as any).ownerName || team.owner }}</span>
             <span class="team-time">更新于 {{ team.updatedAt }}</span>
           </div>
         </el-card>
@@ -89,7 +88,7 @@ import { useTeamStore } from '@/stores/team'
 import { useAuthStore } from '@/stores/auth'
 import { ElMessage } from 'element-plus'
 import type { FormInstance, FormRules } from 'element-plus'
-import type { TeamMemberRole } from '@/types/team'
+import type { TeamMember } from '@/types/team'
 
 const router = useRouter()
 const teamStore = useTeamStore()
@@ -106,10 +105,10 @@ const rules: FormRules = {
   description: [{ max: 200, message: '不超过200个字符', trigger: 'blur' }],
 }
 
-const myInvites = computed(() => teamStore.myInvitations.filter(i => i.status === 'pending'))
+const myInvites = computed(() => ((teamStore as any).myInvitations || []).filter((i: any) => i.status === 'pending'))
 
-function roleLabel(role: TeamMemberRole) {
-  const map: Record<TeamMemberRole, string> = { owner: '拥有者', admin: '管理员', member: '成员', viewer: '观察者' }
+function roleLabel(role: string) {
+  const map: Record<string, string> = { owner: '拥有者', admin: '管理员', member: '成员', viewer: '观察者' }
   return map[role] || role
 }
 
@@ -124,7 +123,7 @@ async function handleCreate() {
   if (!valid) return
   creating.value = true
   try {
-    await teamStore.createTeam({ name: form.name, description: form.description })
+    await (teamStore as any).createTeam({ name: form.name, description: form.description })
     ElMessage.success('团队创建成功')
     showCreateDialog.value = false
   } catch {
@@ -140,7 +139,7 @@ function enterTeam(team: { id: string }) {
 
 async function handleAccept(inv: { id: string }) {
   try {
-    await teamStore.acceptInvitation(inv.id)
+    await (teamStore as any).acceptInvitation(inv.id)
     ElMessage.success('已接受邀请')
     teamStore.fetchTeams()
   } catch { ElMessage.error('操作失败') }
@@ -148,14 +147,14 @@ async function handleAccept(inv: { id: string }) {
 
 async function handleDecline(inv: { id: string }) {
   try {
-    await teamStore.cancelInvitation(inv.id, inv.id)
+    await (teamStore as any).cancelInvitation(inv.id, inv.id)
     ElMessage.info('已拒绝邀请')
   } catch { ElMessage.error('操作失败') }
 }
 
 onMounted(() => {
   teamStore.fetchTeams()
-  teamStore.fetchMyInvitations()
+  ;(teamStore as any).fetchMyInvitations?.()
 })
 </script>
 

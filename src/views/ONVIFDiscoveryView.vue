@@ -203,7 +203,7 @@ async function fetchAddedDevices() {
   addedLoading.value = true
   try {
     const res = await http.get<ApiResponse<AddedDevice[]>>('/devices', { params: { protocol: 'onvif' } })
-    addedDevices.value = res.data?.data?.items ?? res.data?.data ?? []
+    addedDevices.value = (res.data?.data as any)?.items ?? res.data?.data ?? []
   } catch {
     addedDevices.value = []
   } finally {
@@ -314,7 +314,7 @@ function resetForm() {
 }
 
 // ===== 自动刷新 =====
-function toggleAutoRefresh(val: boolean) {
+function toggleAutoRefresh(val: boolean | string | number) {
   if (val) {
     autoRefreshTimer = setInterval(() => {
       startDiscovery()

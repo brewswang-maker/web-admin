@@ -138,7 +138,7 @@ import { ref, computed, onMounted } from 'vue'
 import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
 import type { User, Role } from '@/types/rbac'
-import { getUsers, createUser, updateUser, deleteUser, getRoles } from '@/api/rbac'
+import { rbacApi } from '@/api/rbac'
 import { useAuthStore } from '@/stores/auth'
 import dayjs from 'dayjs'
 
@@ -186,7 +186,7 @@ const filteredUsers = computed(() => {
   let list = users.value
   if (searchForm.value.username) {
     const kw = searchForm.value.username.toLowerCase()
-    list = list.filter(u => u.username.toLowerCase().includes(kw) || u.displayName.includes(kw))
+    list = list.filter((u: any) => u.username.toLowerCase().includes(kw) || (u.displayName || u.name || '').includes(kw))
   }
   if (searchForm.value.status) {
     list = list.filter(u => u.status === searchForm.value.status)
@@ -202,7 +202,8 @@ onMounted(async () => {
 async function fetchUsers() {
   loading.value = true
   try {
-    users.value = await getUsers()
+    const res = await rbacApi.getUsers()
+    users.value = ((res.data as any)?.data?.items || (res.data as any)?.data || []) as any[]
   } catch (e: any) {
     ElMessage.error('获取用户列表失败: ' + e.message)
   } finally {
@@ -212,7 +213,8 @@ async function fetchUsers() {
 
 async function fetchRoles() {
   try {
-    allRoles.value = await getRoles()
+    const res = await rbacApi.getRoles()
+    allRoles.value = (res.data as any)?.data?.items || (res.data as any)?.data || []
   } catch (e: any) {
     ElMessage.error('获取角色列表失败: ' + e.message)
   }
@@ -231,14 +233,14 @@ function openCreateDialog() {
 
 function openEditDialog(row: User) {
   isEditing.value = true
-  editingUserId.value = row.id
+  editingUserId.value = String(row.id)
   userForm.value = {
-    username: row.username,
-    displayName: row.displayName,
-    email: row.email,
+    username: (row as any).username,
+    displayName: (row as any).displayName || (row as any).name || '',
+    email: row.email || '',
     password: '',
-    roleIds: [...row.roleIds],
-    status: row.status
+    roleIds: [...(row.roleIds || [])],
+    status: row.status === 'locked' ? 'disabled' : row.status
   }
   dialogVisible.value = true
 }
@@ -263,16 +265,16 @@ async function submitForm() {
   try {
     if (isEditing.value && editingUserId.value) {
       const { password, ...data } = userForm.value
-      await updateUser(editingUserId.value, password ? userForm.value : data)
+      await (rbacApi as any).updateUser(editingUserId.value, password ? userForm.value : data)
       ElMessage.success('用户更新成功')
     } else {
-      await createUser({
+      await (rbacApi as any).createUser({
         username: userForm.value.username,
         displayName: userForm.value.displayName,
         email: userForm.value.email,
         roleIds: userForm.value.roleIds,
         status: userForm.value.status
-      } as any)
+      })
       ElMessage.success('用户创建成功')
     }
     dialogVisible.value = false
@@ -287,8 +289,8 @@ async function submitForm() {
 async function toggleUserStatus(row: User) {
   const newStatus = row.status === 'active' ? 'disabled' : 'active'
   try {
-    await updateUser(row.id, { status: newStatus })
-    row.status = newStatus
+    await (rbacApi as any).updateUser(String(row.id), { status: newStatus }) as any
+    ;(row as any).status = newStatus
     ElMessage.success(`用户已${newStatus === 'active' ? '启用' : '禁用'}`)
   } catch (e: any) {
     ElMessage.error('操作失败: ' + e.message)
@@ -297,7 +299,7 @@ async function toggleUserStatus(row: User) {
 
 async function handleDelete(userId: string) {
   try {
-    await deleteUser(userId)
+    await (rbacApi as any).deleteUser(userId)
     ElMessage.success('用户已删除')
     await fetchUsers()
   } catch (e: any) {

@@ -159,8 +159,8 @@ export const useDeviceStore = defineStore('device', () => {
 
   async function fetchDeviceMetrics(id: string) {
     try {
-      const { data } = await deviceApi.getById(id)
-      deviceMetrics.value = data?.data?.metrics ?? []
+      const res = await deviceApi.getDetail(id) as any
+      deviceMetrics.value = res?.data?.data?.latestMetrics ?? res?.data?.data?.metrics ?? []
     } catch { deviceMetrics.value = [] }
   }
 

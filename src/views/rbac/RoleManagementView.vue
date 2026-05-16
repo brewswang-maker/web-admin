@@ -125,9 +125,8 @@ import { ref, computed, onMounted } from 'vue'
 import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
 import type { Role, Permission } from '@/types/rbac'
-import { ResourceLabels } from '@/types/rbac'
-import { getRoles, createRole, updateRole, deleteRole, getAllPermissions } from '@/api/rbac'
-import { ALL_PERMISSIONS } from '@/core/rbac'
+import { Resource, ResourceLabels } from '@/types/rbac'
+import { rbacApi } from '@/api/rbac'
 import dayjs from 'dayjs'
 
 const loading = ref(false)
@@ -159,14 +158,15 @@ interface PermGroup {
 
 const permissionGroups = computed<PermGroup[]>(() => {
   const map = new Map<string, Permission[]>()
-  ALL_PERMISSIONS.forEach(p => {
-    const list = map.get(p.resource) || []
+  allPermissions.value.forEach((p: any) => {
+    const res = p.resource || p.module || 'system'
+    const list = map.get(res) || []
     list.push(p)
-    map.set(p.resource, list)
+    map.set(res, list)
   })
   return Array.from(map.entries()).map(([resource, permissions]) => ({
     resource,
-    label: ResourceLabels[resource as any] || resource,
+    label: (ResourceLabels as any)[resource] || resource,
     permissions
   }))
 })
@@ -179,7 +179,8 @@ onMounted(async () => {
 async function fetchRoles() {
   loading.value = true
   try {
-    roles.value = await getRoles()
+    const res = await rbacApi.getRoles()
+    roles.value = (res.data as any)?.data?.items || (res.data as any)?.data || []
   } catch (e: any) {
     ElMessage.error('获取角色列表失败: ' + e.message)
   } finally {
@@ -189,7 +190,8 @@ async function fetchRoles() {
 
 async function fetchPermissions() {
   try {
-    allPermissions.value = await getAllPermissions()
+    const res = await rbacApi.getPermissions()
+    allPermissions.value = (res.data as any)?.data || []
   } catch (e: any) {
     ElMessage.error('获取权限列表失败: ' + e.message)
   }
@@ -197,43 +199,43 @@ async function fetchPermissions() {
 
 // ---- 权限组操作 ----
 function isGroupFullySelected(group: PermGroup): boolean {
-  return group.permissions.every(p => roleForm.permissions.includes(p.id))
+  return group.permissions.every((p: any) => roleForm.value.permissions.includes(p.id))
 }
 
 function isGroupIndeterminate(group: PermGroup): boolean {
-  const selected = group.permissions.filter(p => roleForm.permissions.includes(p.id)).length
+  const selected = group.permissions.filter((p: any) => roleForm.value.permissions.includes(p.id)).length
   return selected > 0 && selected < group.permissions.length
 }
 
 function toggleGroup(group: PermGroup, checked: any) {
   if (checked) {
-    group.permissions.forEach(p => {
-      if (!roleForm.permissions.includes(p.id)) {
-        roleForm.permissions.push(p.id)
+    group.permissions.forEach((p: any) => {
+      if (!roleForm.value.permissions.includes(p.id)) {
+        roleForm.value.permissions.push(p.id)
       }
     })
   } else {
-    roleForm.permissions = roleForm.permissions.filter(
-      id => !group.permissions.some(p => p.id === id)
+    roleForm.value.permissions = roleForm.value.permissions.filter(
+      (id: any) => !group.permissions.some((p: any) => p.id === id)
     )
   }
 }
 
 function togglePermission(permId: string) {
-  const idx = roleForm.permissions.indexOf(permId)
+  const idx = roleForm.value.permissions.indexOf(permId)
   if (idx >= 0) {
-    roleForm.permissions.splice(idx, 1)
+    roleForm.value.permissions.splice(idx, 1)
   } else {
-    roleForm.permissions.push(permId)
+    roleForm.value.permissions.push(permId)
   }
 }
 
 function selectAll() {
-  roleForm.permissions = ALL_PERMISSIONS.map(p => p.id)
+  roleForm.value.permissions = allPermissions.value.map((p: any) => p.id)
 }
 
 function deselectAll() {
-  roleForm.permissions = []
+  roleForm.value.permissions = []
 }
 
 // ---- CRUD ----
@@ -266,10 +268,15 @@ async function submitForm() {
   submitting.value = true
   try {
     if (isEditing.value && editingRoleId.value) {
-      await updateRole(editingRoleId.value, roleForm.value)
+      await rbacApi.updateRole(editingRoleId.value, roleForm.value)
       ElMessage.success('角色更新成功')
     } else {
-      await createRole(roleForm.value)
+      await rbacApi.createRole({
+        name: roleForm.value.name,
+        code: roleForm.value.name.toLowerCase().replace(/\s+/g, '_'),
+        description: roleForm.value.description,
+        permissions: roleForm.value.permissions
+      })
       ElMessage.success('角色创建成功')
     }
     dialogVisible.value = false
@@ -283,7 +290,7 @@ async function submitForm() {
 
 async function handleDelete(roleId: string) {
   try {
-    await deleteRole(roleId)
+    await rbacApi.deleteRole(roleId)
     ElMessage.success('角色已删除')
     await fetchRoles()
   } catch (e: any) {
@@ -292,14 +299,16 @@ async function handleDelete(roleId: string) {
 }
 
 // ---- 工具函数 ----
-function getPermDescription(permId: string): string {
-  const perm = ALL_PERMISSIONS.find(p => p.id === permId)
-  return perm ? `${perm.description} (${permId})` : permId
+function getPermDescription(permId: string | undefined): string {
+  if (!permId) return ''
+  const perm: any = allPermissions.value.find((p: any) => p.id === permId)
+  return perm ? `${perm.description || perm.name} (${permId})` : permId
 }
 
-function formatPermId(permId: string): string {
-  const perm = ALL_PERMISSIONS.find(p => p.id === permId)
-  return perm?.description || permId
+function formatPermId(permId: string | undefined): string {
+  if (!permId) return ''
+  const perm: any = allPermissions.value.find((p: any) => p.id === permId)
+  return perm?.description || perm?.name || permId
 }
 
 function roleTagType(roleId: string): 'danger' | 'warning' | 'success' | 'info' {
@@ -312,7 +321,8 @@ function roleTagType(roleId: string): 'danger' | 'warning' | 'success' | 'info' 
   return (map[roleId] || '') as any
 }
 
-function formatTime(time: string): string {
+function formatTime(time: string | undefined): string {
+  if (!time) return '-'
   return dayjs(time).format('YYYY-MM-DD HH:mm:ss')
 }
 </script>
