@@ -123,7 +123,7 @@
             <el-icon><User /></el-icon>
             <template #title>团队管理</template>
           </el-menu-item>
-          <el-menu-item index="/ota">
+          <el-menu-item index="/upgrade">
             <el-icon><Upload /></el-icon>
             <template #title>OTA升级</template>
           </el-menu-item>
@@ -142,7 +142,7 @@
             <el-icon><DocumentChecked /></el-icon>
             <template #title>审计中心</template>
           </el-menu-item>
-          <el-menu-item index="/open-api">
+          <el-menu-item index="/open-platform">
             <el-icon><Link /></el-icon>
             <template #title>开放平台</template>
           </el-menu-item>
@@ -198,7 +198,7 @@
 
           <!-- AI 助手快捷入口 -->
           <el-tooltip content="AI助手" placement="bottom">
-            <div class="header-icon-btn ai-btn" @click="router.push('/ai')">
+            <div class="header-icon-btn ai-btn" @click="router.push('/ai-chat')">
               <el-icon :size="20"><Cpu /></el-icon>
             </div>
           </el-tooltip>
@@ -257,7 +257,15 @@
         <template #prefix><el-icon><Search /></el-icon></template>
       </el-input>
       <div class="search-results" v-if="searchQuery">
-        <div class="search-hint-text">输入关键词开始搜索...</div>
+        <div v-if="searchLoading" class="search-hint-text">搜索中...</div>
+        <div v-else-if="searchResults.length === 0" class="search-hint-text">未找到结果</div>
+        <div v-else class="search-list">
+          <div v-for="r in searchResults" :key="r.path + r.title" class="search-result-item" @click="goToResult(r)">
+            <span class="result-type">{{ r.type }}</span>
+            <span class="result-title">{{ r.title }}</span>
+            <span class="result-desc">{{ r.desc }}</span>
+          </div>
+        </div>
       </div>
     </el-dialog>
   </el-container>
@@ -277,6 +285,7 @@ import {
 import { useAuthStore } from '@/stores/auth'
 import { useAlarmStore } from '@/stores/alarm'
 import NotificationBell from '@/components/NotificationBell.vue'
+import { http } from '@/api/http'
 
 const router = useRouter()
 const route = useRoute()
@@ -326,30 +335,64 @@ const activeMenu = computed(() => {
 const showSearch = ref(false)
 const searchQuery = ref('')
 const searchInputRef = ref<any>(null)
+const searchResults = ref<Array<{ type: string; title: string; path: string; desc: string }>>([])
+const searchLoading = ref(false)
 
 watch(showSearch, (val) => {
   if (val) {
-    nextTick(() => {
-      searchInputRef.value?.focus()
-    })
+    nextTick(() => { searchInputRef.value?.focus() })
   } else {
     searchQuery.value = ''
+    searchResults.value = []
+  }
+})
+
+watch(searchQuery, async (q) => {
+  if (!q.trim() || q.length < 2) { searchResults.value = []; return }
+  searchLoading.value = true
+  try {
+    const { data } = await http.get('/api/v1/search', { params: { q: q.trim(), limit: 20 } })
+    searchResults.value = data?.data || data || []
+  } catch {
+    // fallback: 本地菜单匹配
+    const keyword = q.toLowerCase()
+    const menuItems = [
+      { type: 'page', title: '仪表盘', path: '/dashboard', desc: '监控概览' },
+      { type: 'page', title: '态势大屏', path: '/situation', desc: '3D GIS态势' },
+      { type: 'page', title: '设备管理', path: '/devices', desc: '设备列表' },
+      { type: 'page', title: '实时监控', path: '/live', desc: '视频监控' },
+      { type: 'page', title: '告警中心', path: '/alarms', desc: '告警列表' },
+      { type: 'page', title: 'Pipeline编辑', path: '/pipelines', desc: '算法管线' },
+      { type: 'page', title: '模型管理', path: '/models', desc: 'BModel管理' },
+      { type: 'page', title: 'AI助手', path: '/ai-chat', desc: 'AI对话' },
+      { type: 'page', title: 'GB28181', path: '/gb28181', desc: '国标设备' },
+      { type: 'page', title: 'ONVIF发现', path: '/onvif', desc: '设备发现' },
+      { type: 'page', title: '流管理', path: '/streams', desc: 'ZLM流' },
+      { type: 'page', title: '录像回放', path: '/recordings', desc: '录像查询' },
+      { type: 'page', title: '数据分析', path: '/statistics', desc: '统计分析' },
+      { type: 'page', title: '系统设置', path: '/settings', desc: '配置' },
+      { type: 'page', title: '用户管理', path: '/users', desc: '用户列表' },
+      { type: 'page', title: '角色管理', path: '/roles', desc: 'RBAC' },
+      { type: 'page', title: '审计中心', path: '/audit', desc: '操作日志' },
+      { type: 'page', title: '开放平台', path: '/open-platform', desc: 'API Keys' },
+    ]
+    searchResults.value = menuItems.filter(m =>
+      m.title.toLowerCase().includes(keyword) || m.desc.toLowerCase().includes(keyword) || m.path.includes(keyword)
+    )
+  } finally {
+    searchLoading.value = false
   }
 })
 
 function handleGlobalSearch() {
-  if (!searchQuery.value.trim()) return
-  // 简单搜索逻辑：根据关键词跳转
-  const q = searchQuery.value.toLowerCase()
-  if (q.includes('设备') || q.includes('ipc')) {
-    router.push('/devices')
-  } else if (q.includes('告警') || q.includes('alarm')) {
-    router.push('/alarms')
-  } else if (q.includes('监控') || q.includes('live')) {
-    router.push('/live')
-  } else {
-    router.push('/dashboard')
+  if (searchResults.value.length > 0) {
+    router.push(searchResults.value[0].path)
+    showSearch.value = false
   }
+}
+
+function goToResult(r: { path: string }) {
+  router.push(r.path)
   showSearch.value = false
 }
 
@@ -674,6 +717,20 @@ function handleUserCommand(command: string) {
   text-align: center;
   padding: 40px 0;
 }
+
+.search-list { max-height: 320px; overflow-y: auto; }
+.search-result-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 12px; border-radius: 6px; cursor: pointer;
+  transition: background 0.15s;
+}
+.search-result-item:hover { background: var(--app-surface-hover); }
+.result-type {
+  font-size: 10px; padding: 2px 6px; border-radius: 3px;
+  background: rgba(26,115,232,0.15); color: #1A73E8; text-transform: uppercase;
+}
+.result-title { font-size: 13px; color: var(--app-text-primary); font-weight: 500; }
+.result-desc { font-size: 11px; color: var(--app-text-secondary); margin-left: auto; }
 
 /* ── 响应式 ── */
 @media (max-width: 768px) {
