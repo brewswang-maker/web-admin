@@ -61,6 +61,7 @@ export const asyncRoutes: RouteRecordRaw[] = [
     path: '/',
     name: 'Dashboard',
     component: DashboardView,
+    alias: '/dashboard',
     meta: { 
       title: '控制台', 
       icon: 'Odom',
