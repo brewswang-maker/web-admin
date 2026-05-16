@@ -30,8 +30,10 @@
       <!-- 中间地图 -->
       <div class="ss-col center-col">
         <div class="ss-panel map-panel">
-          <div class="panel-title">🗺️ 厂区态势地图</div>
-          <div class="chart-box map-box" ref="mapRef"></div>
+          <div class="panel-title">🗺️ 3D 厂区态势地图
+            <span style="font-size:11px;color:#9AA0A6;margin-left:8px">拖拽旋转 · 滚轮缩放</span>
+          </div>
+          <Scene3D class="scene3d-wrapper" :devices="sceneDevices" :buildings="sceneBuildings" />
         </div>
         <div class="ss-panel">
           <div class="panel-title">🚨 最新告警</div>
@@ -78,6 +80,7 @@
 import { ref, onMounted, onUnmounted, nextTick } from 'vue'
 import { http } from '@/api/http'
 import { useWebSocket } from '@/composables/useWebSocket'
+import Scene3D from '@/components/Scene3D.vue'
 
 // WebSocket实时推送
 const { connected } = useWebSocket('/ws/situation')
@@ -90,7 +93,6 @@ let clockTimer: ReturnType<typeof setInterval> | null = null
 const scoreGaugeRef = ref<HTMLElement>()
 const alarmTrendRef = ref<HTMLElement>()
 const devicePieRef = ref<HTMLElement>()
-const mapRef = ref<HTMLElement>()
 const alarmTypeRef = ref<HTMLElement>()
 const agentBarRef = ref<HTMLElement>()
 
@@ -103,6 +105,29 @@ const todayStats = ref([
   { label: '今日告警', value: '23', color: '#F4B400' },
   { label: '处置率', value: '96.5%', color: '#1A73E8' },
   { label: 'Agent调用', value: '2,660', color: '#7C3AED' },
+])
+
+// ── 3D场景数据 ──
+const sceneBuildings = [
+  { name: '1号车间', x: -20, z: -15, w: 24, d: 16, h: 8, color: '#1A73E8' },
+  { name: '2号车间', x: 15, z: -15, w: 20, d: 14, h: 7, color: '#0F9D58' },
+  { name: '仓库', x: -25, z: 15, w: 18, d: 12, h: 6, color: '#F4B400' },
+  { name: '办公楼', x: 20, z: 15, w: 16, d: 12, h: 12, color: '#7C3AED' },
+  { name: '配电房', x: 35, z: -5, w: 8, d: 8, h: 4, color: '#666666' },
+  { name: '门卫室', x: 0, z: 42, w: 6, d: 4, h: 3, color: '#888888' },
+]
+
+const sceneDevices = ref([
+  { id: 'cam1', name: 'CAM_01 东门', x: -40, y: 4, z: -35, status: 'online', location: '1号厂区东门', fov: 60, rotation: 0 },
+  { id: 'cam2', name: 'CAM_02 围墙北', x: 20, y: 4, z: -38, status: 'online', location: '北围墙', fov: 75, rotation: Math.PI / 4 },
+  { id: 'cam3', name: 'CAM_03 车间A', x: -15, y: 5, z: 5, status: 'online', location: '2号车间入口', fov: 60, rotation: Math.PI / 2 },
+  { id: 'cam4', name: 'CAM_04 车间B', x: 25, y: 5, z: 10, status: 'alarm', location: '3号厂区东围墙', alarmType: '周界入侵', fov: 65, rotation: -Math.PI / 3 },
+  { id: 'cam5', name: 'CAM_05 仓库', x: -30, y: 4, z: 20, status: 'online', location: '仓库区域', fov: 70, rotation: Math.PI },
+  { id: 'cam6', name: 'CAM_06 停车场', x: 35, y: 4, z: 25, status: 'online', location: '停车场B区', fov: 80, rotation: Math.PI / 6 },
+  { id: 'cam7', name: 'CAM_07 大门', x: 0, y: 5, z: 40, status: 'online', location: '1号大门', fov: 60, rotation: Math.PI },
+  { id: 'cam8', name: 'CAM_08 办公楼', x: -35, y: 6, z: -10, status: 'maintenance', location: '办公楼', fov: 55, rotation: -Math.PI / 2 },
+  { id: 'cam9', name: 'CAM_09 配电房', x: 40, y: 4, z: -15, status: 'offline', location: '配电房', fov: 60, rotation: 0 },
+  { id: 'cam10', name: 'CAM_10 围墙南', x: -10, y: 4, z: 38, status: 'online', location: '南围墙', fov: 75, rotation: Math.PI },
 ])
 
 let charts: any[] = []
@@ -167,47 +192,6 @@ function initCharts() {
           { value: 1, name: '维护中', itemStyle: { color: '#F4B400' } },
         ]
       }]
-    })
-    charts.push(c)
-  }
-
-  // 地图（散点图模拟厂区布局）
-  if (mapRef.value) {
-    const c = echarts.init(mapRef.value, 'dark')
-    c.setOption({
-      backgroundColor: '#111318',
-      grid: { left: 40, right: 20, top: 20, bottom: 30 },
-      xAxis: { type: 'value', min: 0, max: 100, axisLabel: { color: '#555', fontSize: 10 }, splitLine: { lineStyle: { color: '#1A1D23' } } },
-      yAxis: { type: 'value', min: 0, max: 100, axisLabel: { color: '#555', fontSize: 10 }, splitLine: { lineStyle: { color: '#1A1D23' } } },
-      series: [
-        // 厂区区域
-        { type: 'custom', renderItem: (_params: any, api: any) => ({ type: 'rect', shape: { x: api.coord([15, 10])[0], y: api.coord([15, 10])[1], width: 120, height: 80 }, style: { fill: 'rgba(26,115,232,0.08)', stroke: '#1A73E8', lineWidth: 1 } }), data: [[0]], z: 0 },
-        { type: 'custom', renderItem: (_params: any, api: any) => ({ type: 'rect', shape: { x: api.coord([55, 10])[0], y: api.coord([55, 10])[1], width: 100, height: 60 }, style: { fill: 'rgba(15,157,88,0.08)', stroke: '#0F9D58', lineWidth: 1 } }), data: [[0]], z: 0 },
-        { type: 'custom', renderItem: (_params: any, api: any) => ({ type: 'rect', shape: { x: api.coord([20, 65])[0], y: api.coord([20, 65])[1], width: 140, height: 60 }, style: { fill: 'rgba(244,180,0,0.08)', stroke: '#F4B400', lineWidth: 1 } }), data: [[0]], z: 0 },
-        // 设备点位
-        {
-          type: 'scatter', symbolSize: 14, z: 10,
-          label: { show: true, formatter: '{b}', position: 'bottom', color: '#9AA0A6', fontSize: 10 },
-          data: [
-            { value: [20, 20], name: 'CAM_01', itemStyle: { color: '#0F9D58' } },
-            { value: [35, 25], name: 'CAM_02', itemStyle: { color: '#0F9D58' } },
-            { value: [28, 40], name: 'CAM_03', itemStyle: { color: '#0F9D58' } },
-            { value: [60, 18], name: 'CAM_04', itemStyle: { color: '#0F9D58' } },
-            { value: [70, 30], name: 'CAM_05', itemStyle: { color: '#DB4437' } },
-            { value: [25, 72], name: 'CAM_06', itemStyle: { color: '#0F9D58' } },
-            { value: [45, 78], name: 'CAM_07', itemStyle: { color: '#0F9D58' } },
-            { value: [65, 75], name: 'CAM_08', itemStyle: { color: '#F4B400' } },
-          ]
-        },
-        // 告警点位（带涟漪效果）
-        {
-          type: 'effectScatter', symbolSize: 10, z: 20,
-          label: { show: true, formatter: '{b}', position: 'top', color: '#DB4437', fontSize: 10 },
-          data: [
-            { value: [70, 30], name: '🔴告警', itemStyle: { color: '#DB4437' } },
-          ]
-        },
-      ]
     })
     charts.push(c)
   }
@@ -377,7 +361,7 @@ onUnmounted(() => {
 .chart-box { width: 100%; height: 200px; }
 .score-gauge { width: 100%; height: 180px; }
 .map-panel { flex: 1; display: flex; flex-direction: column; }
-.map-box { flex: 1; min-height: 300px; }
+.scene3d-wrapper { flex: 1; min-height: 320px; }
 
 /* 告警列表 */
 .alarm-scroll {
