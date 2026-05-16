@@ -1,7 +1,12 @@
 /**
- * Pipeline管理 API
+ * 华盾AI智能视频盒子 v7.0 - Pipeline 管理 API
+ * api/pipeline.ts — Pipeline CRUD、启停控制
+ *
+ * 🆕 优化：使用专用 pipelineHttp 客户端，移除硬编码 URL
  */
-import { http } from './http'
+
+import { pipelineHttp } from './http'
+import type { ApiResponse } from '@/types/common'
 
 export interface PipelineNode {
   id: string
@@ -36,35 +41,35 @@ export interface Pipeline {
 
 /** 获取Pipeline列表 */
 export function getPipelines(params?: { project?: string }) {
-  return http.get('/api/v1/pipelines', { params })
+  return pipelineHttp.get<ApiResponse<Pipeline[]>>('', { params })
 }
 
 /** 获取单个Pipeline */
 export function getPipeline(id: string) {
-  return http.get(`/api/v1/pipelines/${id}`)
+  return pipelineHttp.get<ApiResponse<Pipeline>>(`/${id}`)
 }
 
 /** 创建/保存Pipeline */
 export function savePipeline(data: Pipeline) {
-  return http.post('/api/v1/pipelines', data)
+  return pipelineHttp.post<ApiResponse<Pipeline>>('', data)
 }
 
 /** 更新Pipeline */
 export function updatePipeline(id: string, data: Partial<Pipeline>) {
-  return http.put(`/api/v1/pipelines/${id}`, data)
+  return pipelineHttp.put<ApiResponse<Pipeline>>(`/${id}`, data)
 }
 
 /** 删除Pipeline */
 export function deletePipeline(id: string) {
-  return http.delete(`/api/v1/pipelines/${id}`)
+  return pipelineHttp.delete<ApiResponse<void>>(`/${id}`)
 }
 
 /** 启动Pipeline */
 export function startPipeline(id: string) {
-  return http.post(`/api/v1/pipelines/${id}/start`)
+  return pipelineHttp.post<ApiResponse<void>>(`/${id}/start`)
 }
 
 /** 停止Pipeline */
 export function stopPipeline(id: string) {
-  return http.post(`/api/v1/pipelines/${id}/stop`)
+  return pipelineHttp.post<ApiResponse<void>>(`/${id}/stop`)
 }

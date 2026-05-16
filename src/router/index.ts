@@ -33,6 +33,7 @@ const StreamManagementView = () => import('@/views/StreamManagementView.vue')
 const ModelManagementView = () => import('@/views/ModelManagementView.vue')
 const RecordingView = () => import('@/views/RecordingView.vue')
 const PipelineEditorView = () => import('@/views/PipelineEditorView.vue')
+const LinkageRuleView = () => import('@/views/LinkageRuleView.vue')
 
 // 基础路由（无需权限）
 export const constantRoutes: RouteRecordRaw[] = [
@@ -205,6 +206,12 @@ export const asyncRoutes: RouteRecordRaw[] = [
       icon: 'Connection',
       roles: ['admin']
     }
+  },
+  {
+    path: '/linkage',
+    name: 'LinkageRule',
+    component: LinkageRuleView,
+    meta: { title: '联动规则', icon: 'Connection', roles: ['admin', 'user'] }
   },
   {
     path: '/settings',
