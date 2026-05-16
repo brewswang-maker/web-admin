@@ -34,6 +34,10 @@ const ModelManagementView = () => import('@/views/ModelManagementView.vue')
 const RecordingView = () => import('@/views/RecordingView.vue')
 const PipelineEditorView = () => import('@/views/PipelineEditorView.vue')
 const LinkageRuleView = () => import('@/views/LinkageRuleView.vue')
+const FederationDashboard = () => import('@/views/FederationDashboard.vue')
+const PermissionManagementView = () => import('@/views/rbac/PermissionManagementView.vue')
+const RoleManagementView = () => import('@/views/rbac/RoleManagementView.vue')
+const UserManagementView = () => import('@/views/rbac/UserManagementView.vue')
 
 // 基础路由（无需权限）
 export const constantRoutes: RouteRecordRaw[] = [
@@ -258,6 +262,30 @@ export const asyncRoutes: RouteRecordRaw[] = [
     name: 'PipelineEditor',
     component: PipelineEditorView,
     meta: { title: 'Pipeline编辑', icon: 'SetUp', roles: ['admin', 'user'] }
+  },
+  {
+    path: '/federation',
+    name: 'FederationDashboard',
+    component: FederationDashboard,
+    meta: { title: '联邦学习', icon: 'Share', roles: ['admin'] }
+  },
+  {
+    path: '/rbac/permissions',
+    name: 'PermissionManagement',
+    component: PermissionManagementView,
+    meta: { title: '权限管理', icon: 'Lock', hidden: true, roles: ['admin'] }
+  },
+  {
+    path: '/rbac/roles',
+    name: 'RoleManagement',
+    component: RoleManagementView,
+    meta: { title: '角色管理', icon: 'UserFilled', hidden: true, roles: ['admin'] }
+  },
+  {
+    path: '/rbac/users',
+    name: 'UserManagement',
+    component: UserManagementView,
+    meta: { title: '用户管理', icon: 'Avatar', hidden: true, roles: ['admin'] }
   },
   // 捕获所有未匹配路由
   { 
