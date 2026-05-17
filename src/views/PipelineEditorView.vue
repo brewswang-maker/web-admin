@@ -7,7 +7,7 @@
       </div>
       <div class="pe-actions">
         <el-button size="small" @click="loadPipeline">加载</el-button>
-        <el-button size="small" type="primary" @click="savePipeline" :disabled="!dirty">保存</el-button>
+        <el-button size="small" type="primary" @click="handleSavePipeline" :disabled="!dirty">保存</el-button>
         <el-button size="small" @click="clearCanvas">清空</el-button>
       </div>
     </div>
@@ -136,7 +136,7 @@
 
 <script setup lang="ts">
 import { ref, computed, reactive, nextTick, onMounted } from 'vue'
-import { savePipeline, getPipelines } from '@/api/pipeline'
+import { savePipeline as apiSavePipeline, getPipelines } from '@/api/pipeline'
 import { ElMessage } from 'element-plus'
 
 interface PipelineNode {
@@ -341,10 +341,10 @@ function drawRoi() {
 }
 
 // 保存/加载
-async function savePipeline() {
+async function handleSavePipeline() {
   const payload = { name: pipelineName.value, nodes: nodes.map(n => ({ ...n })), connections: [...connections] }
   try {
-    await savePipeline(payload)
+    await apiSavePipeline(payload)
     ElMessage.success('Pipeline已保存')
     dirty.value = false
   } catch (e: any) {
@@ -353,12 +353,13 @@ async function savePipeline() {
 }
 async function loadPipeline() {
   try {
-    const { data } = await getPipelines({ params: { name: pipelineName.value } })
-    const pl = data?.data || data
+    const { data: resp } = await getPipelines()
+    const list = resp?.data || resp
+    const pl = Array.isArray(list) ? list.find((p: any) => p.name === pipelineName.value) : null
     if (!pl) return ElMessage.info('未找到Pipeline')
     nodes.splice(0); connections.splice(0)
-    nodes.push(...(pl.nodes || []))
-    connections.push(...(pl.connections || []))
+    nodes.push(...((pl as any)?.nodes || []) as PipelineNode[])
+    connections.push(...((pl as any)?.connections || []) as Connection[])
     dirty.value = false
   } catch { /* ignore */ }
 }

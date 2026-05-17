@@ -2,7 +2,7 @@
 import { ref, onMounted, computed, watch, nextTick } from 'vue'
 import { ElMessage } from 'element-plus'
 import { deviceHttp } from '@/api/http'
-import { getRecordings } from '@/api/recording'
+import { getRecordings, type RecordingSegment as ApiRecordingSeg } from '@/api/recording'
 
 interface Device {
   id: string
@@ -14,13 +14,8 @@ interface Channel {
   name: string
   deviceId: string
 }
-interface RecordingSegment {
-  id: string
-  startTime: string
-  endTime: string
-  duration: number
-  fileSize: number
-  filePath: string
+interface RecordingSegment extends ApiRecordingSeg {
+  filePath?: string
 }
 
 const devices = ref<Device[]>([])
@@ -69,11 +64,10 @@ async function fetchRecordings() {
   loading.value = true
   try {
     const { data } = await getRecordings({
-      params: {
-        deviceId: selectedDeviceId.value,
-        channelId: selectedChannelId.value,
-        date: selectedDate.value
-      }
+      deviceId: selectedDeviceId.value,
+      channelNo: selectedChannelId.value ? Number(selectedChannelId.value) : undefined,
+      startTime: selectedDate.value ? selectedDate.value + 'T00:00:00' : undefined,
+      endTime: selectedDate.value ? selectedDate.value + 'T23:59:59' : undefined,
     })
     recordings.value = data?.data || data || []
     await nextTick()

@@ -2,10 +2,10 @@
 import { ref, onMounted, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { getModels, uploadModel as apiUploadModel, activateModel as apiActivateModel, deactivateModel as apiDeactivateModel, deleteModel as apiDeleteModel, getTpuUsage } from '@/api/model'
-import type { ModelInfo } from '@/api/model'
 
 interface ModelInfo {
   id: string
+  model_id?: string
   name: string
   type: string
   precision: string
@@ -45,7 +45,8 @@ async function fetchModels() {
   loading.value = true
   try {
     const { data } = await getModels()
-    models.value = data?.data || data || []
+    const raw = (data as any)?.data || data || []
+    models.value = Array.isArray(raw) ? raw : raw?.models || []
   } catch (e: any) {
     ElMessage.error('获取模型列表失败: ' + (e.message || '未知错误'))
   } finally {

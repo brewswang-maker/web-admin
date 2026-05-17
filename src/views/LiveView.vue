@@ -337,7 +337,7 @@ function maximizeSlot(idx: number) {
 }
 
 // PTZ控制
-function ptzStart(direction: string) {
+function ptzStart(direction: 'left' | 'right' | 'up' | 'down' | 'zoom_in' | 'zoom_out') {
   const slot = gridSlots[activeSlotIdx.value]
   if (!slot.channelId) return
   ptzApi({

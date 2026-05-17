@@ -297,7 +297,6 @@ import {
 import { alarmApi } from '@/api/alarm'
 import type { AlarmHandleForm } from '@/types/alarm'
 import { useAuthStore } from '@/stores/auth'
-import { useAuthStore } from '@/stores/auth'
 import { useWebSocket } from '@/composables/useWebSocket'
 
 // ── 严重等级中文映射 ──

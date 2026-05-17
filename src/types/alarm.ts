@@ -50,7 +50,7 @@ export interface AlarmStats {
 
 /** 告警处理表单 */
 export interface AlarmHandleForm {
-  status: 'confirmed' | 'false_alarm' | 'forwarded'
+  status: 'confirmed' | 'false_alarm' | 'forwarded' | 'ignored'
   note?: string
   forwardTo?: string
 }
