@@ -16,9 +16,16 @@ const USER_KEY = 'shieldai_user'
 export const useUserStore = defineStore('user', () => {
   // 状态
   const token = ref<string>(Cookies.get(TOKEN_KEY) || '')
-  const userInfo = ref<UserInfo | null>(null)
-  const roles = ref<string[]>([])
-  const permissions = ref<string[]>([])
+  // 从 localStorage 恢复 userInfo，避免刷新后丢失
+  const savedUser = (() => {
+    try {
+      const raw = localStorage.getItem(USER_KEY)
+      return raw ? JSON.parse(raw) : null
+    } catch { return null }
+  })()
+  const userInfo = ref<UserInfo | null>(savedUser)
+  const roles = ref<string[]>(savedUser?.roles || savedUser?.roleIds || [])
+  const permissions = ref<string[]>(savedUser?.permissions || [])
   const isLoading = ref(false)
 
   // 计算属性

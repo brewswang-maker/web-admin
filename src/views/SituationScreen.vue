@@ -78,9 +78,17 @@
 
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, nextTick } from 'vue'
+import * as echarts from 'echarts/core'
+import { GaugeChart, LineChart, PieChart, BarChart } from 'echarts/charts'
+import {
+  GridComponent, TooltipComponent, LegendComponent, TitleComponent,
+} from 'echarts/components'
+import { CanvasRenderer } from 'echarts/renderers'
 import { statsHttp } from '@/api/http'
 import { useWebSocket } from '@/composables/useWebSocket'
 import Scene3D from '@/components/Scene3D.vue'
+
+echarts.use([GaugeChart, LineChart, PieChart, BarChart, GridComponent, TooltipComponent, LegendComponent, TitleComponent, CanvasRenderer])
 
 // WebSocket实时推送
 const { connected } = useWebSocket('/ws/situation')
@@ -133,14 +141,6 @@ const sceneDevices = ref([
 let charts: any[] = []
 
 function initCharts() {
-  // 动态加载echarts
-  const echarts = (window as any).echarts
-  if (!echarts) {
-    // 如果没有CDN加载，用简单占位
-    console.warn('ECharts not loaded, using placeholder')
-    return
-  }
-
   // 安全评分仪表盘
   if (scoreGaugeRef.value) {
     const c = echarts.init(scoreGaugeRef.value, 'dark')
@@ -170,7 +170,7 @@ function initCharts() {
       yAxis: { type: 'value', axisLabel: { fontSize: 10, color: '#666' }, splitLine: { lineStyle: { color: '#2D3039' } } },
       series: [{
         type: 'line', data, smooth: true,
-        areaStyle: { color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [{ offset: 0, color: 'rgba(26,115,232,0.4)' }, { offset: 1, color: 'rgba(26,115,232,0.05)' }]) },
+        areaStyle: { color: 'rgba(26,115,232,0.25)' },
         lineStyle: { color: '#1A73E8', width: 2 },
         itemStyle: { color: '#1A73E8' },
       }]
