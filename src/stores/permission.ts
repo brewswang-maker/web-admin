@@ -5,7 +5,7 @@
  */
 
 import { defineStore } from 'pinia'
-import { ref } from 'vue'
+import { ref, markRaw } from 'vue'
 import type { RouteRecordRaw } from 'vue-router'
 import { asyncRoutes } from '@/router'
 
@@ -19,7 +19,8 @@ export const usePermissionStore = defineStore('permission', () => {
     return new Promise<void>((resolve) => {
       // 从后端获取动态路由（如果有）
       // 目前直接使用本地配置的异步路由
-      routes.value = asyncRoutes
+      // markRaw prevents Vue from making route component objects reactive
+      routes.value = markRaw(asyncRoutes) as RouteRecordRaw[]
       dynamicRoutesAdded.value = true
       resolve()
     })

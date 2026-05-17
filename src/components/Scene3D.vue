@@ -57,7 +57,7 @@ let renderer: THREE.WebGLRenderer
 let labelRenderer: CSS2DRenderer
 let controls: OrbitControls
 let animationId: number
-let clock: THREE.Clock
+let startTime = 0
 let deviceMeshes: Map<string, { mesh: THREE.Mesh; cone: THREE.Mesh; pulse?: THREE.Mesh; label?: CSS2DObject }> = new Map()
 let raycaster: THREE.Raycaster
 let mouse: THREE.Vector2
@@ -106,7 +106,7 @@ function init() {
   renderer.setSize(w, h)
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
   renderer.shadowMap.enabled = true
-  renderer.shadowMap.type = THREE.PCFSoftShadowMap
+  renderer.shadowMap.type = THREE.PCFShadowMap
   container.appendChild(renderer.domElement)
 
   // CSS2D Label renderer
@@ -127,7 +127,7 @@ function init() {
   controls.maxDistance = 150
   controls.target.set(0, 0, 0)
 
-  clock = new THREE.Clock()
+  startTime = performance.now()
   raycaster = new THREE.Raycaster()
   mouse = new THREE.Vector2()
 
@@ -315,7 +315,7 @@ function onMouseMove(event: MouseEvent) {
 
 function animate() {
   animationId = requestAnimationFrame(animate)
-  const t = clock.getElapsedTime()
+  const t = (performance.now() - startTime) / 1000
 
   // 告警脉冲动画
   if (alarmPulse.value) {
