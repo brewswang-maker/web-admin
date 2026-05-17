@@ -294,7 +294,9 @@ import {
   Bell, Warning, CircleCheck, Clock,
   Search, Refresh, Download, WarningFilled,
 } from '@element-plus/icons-vue'
-import { getAlarms, handleAlarm as handleAlarmApi } from '@/api/index'
+import { alarmApi } from '@/api/alarm'
+import type { AlarmHandleForm } from '@/types/alarm'
+import { useAuthStore } from '@/stores/auth'
 import { useAuthStore } from '@/stores/auth'
 import { useWebSocket } from '@/composables/useWebSocket'
 
@@ -376,15 +378,16 @@ async function fetchAlarms() {
       params.endTime = dateRange.value[1].toISOString()
     }
 
-    const response = await getAlarms(params) as any
+    const response = await alarmApi.getList(params)
+    const data = response.data?.data ?? response.data
     
     // 处理API响应结构
-    if (response && response.items) {
-      alarms.value = response.items
-      totalAlarms.value = response.total || response.items.length
-    } else if (Array.isArray(response)) {
-      alarms.value = response
-      totalAlarms.value = response.length
+    if (data && data.items) {
+      alarms.value = data.items
+      totalAlarms.value = data.total || data.items.length
+    } else if (Array.isArray(data)) {
+      alarms.value = data
+      totalAlarms.value = data.length
     } else {
       alarms.value = []
       totalAlarms.value = 0
@@ -533,7 +536,7 @@ async function handleConfirm(row: any) {
     type: 'warning',
   }).then(async () => {
     try {
-      await handleAlarmApi(row.id, 'confirm')
+      await alarmApi.handle(row.id, { status: 'confirmed', note: '' })
       row.status = 'handled'
       row.handledBy = useAuthStore().user?.name || '当前用户'
       ElMessage.success('已确认')
@@ -551,7 +554,7 @@ async function handleFalse(row: any) {
     type: 'info',
   }).then(async () => {
     try {
-      await handleAlarmApi(row.id, 'false_alarm')
+      await alarmApi.handle(row.id, { status: 'false_alarm', note: '' })
       row.status = 'false_alarm'
       row.handledBy = useAuthStore().user?.name || '当前用户'
       ElMessage.success('已标记为误报')
@@ -568,7 +571,7 @@ async function handleIgnore(row: any) {
     cancelButtonText: '取消',
   }).then(async () => {
     try {
-      await handleAlarmApi(row.id, 'ignore')
+      await alarmApi.handle(row.id, { status: 'ignored', note: '' })
       row.status = 'ignored'
       ElMessage.success('已忽略')
     } catch (err) {
@@ -591,7 +594,7 @@ async function handleBatchConfirm() {
     try {
       for (const alarm of selected.value) {
         if (alarm.status === 'unhandled') {
-          await handleAlarmApi(alarm.id, 'confirm')
+          await alarmApi.handle(alarm.id, { status: 'confirmed', note: '' })
           alarm.status = 'handled'
           alarm.handledBy = useAuthStore().user?.name || '当前用户'
         }
@@ -614,7 +617,7 @@ async function handleBatchFalse() {
     try {
       for (const alarm of selected.value) {
         if (alarm.status === 'unhandled') {
-          await handleAlarmApi(alarm.id, 'false_alarm')
+          await alarmApi.handle(alarm.id, { status: 'false_alarm', note: '' })
           alarm.status = 'false_alarm'
           alarm.handledBy = useAuthStore().user?.name || '当前用户'
         }

@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { http } from '@/api/http'
+import { getModels, uploadModel as apiUploadModel, activateModel as apiActivateModel, deactivateModel as apiDeactivateModel, deleteModel as apiDeleteModel, getTpuUsage } from '@/api/model'
+import type { ModelInfo } from '@/api/model'
 
 interface ModelInfo {
   id: string
@@ -43,7 +44,7 @@ const totalTpuUsage = computed(() => models.value.reduce((sum, m) => sum + m.tpu
 async function fetchModels() {
   loading.value = true
   try {
-    const { data } = await http.get('/api/v1/models')
+    const { data } = await getModels()
     models.value = data?.data || data || []
   } catch (e: any) {
     ElMessage.error('获取模型列表失败: ' + (e.message || '未知错误'))
@@ -54,7 +55,7 @@ async function fetchModels() {
 
 async function activateModel(model: ModelInfo) {
   try {
-    await http.post(`/api/v1/models/${model.id}/activate`)
+    await apiActivateModel(model.id)
     ElMessage.success(`模型 ${model.name} 已激活`)
     fetchModels()
   } catch (e: any) {
@@ -64,7 +65,7 @@ async function activateModel(model: ModelInfo) {
 
 async function deactivateModel(model: ModelInfo) {
   try {
-    await http.post(`/api/v1/models/${model.id}/deactivate`)
+    await apiDeactivateModel(model.id)
     ElMessage.success(`模型 ${model.name} 已卸载`)
     fetchModels()
   } catch (e: any) {
@@ -75,7 +76,7 @@ async function deactivateModel(model: ModelInfo) {
 async function deleteModel(model: ModelInfo) {
   try {
     await ElMessageBox.confirm(`确定删除模型 ${model.name}?`, '删除确认', { type: 'warning' })
-    await http.delete(`/api/v1/models/${model.id}`)
+    await apiDeleteModel(model.id)
     ElMessage.success('已删除')
     fetchModels()
   } catch { /* cancelled */ }
@@ -94,9 +95,8 @@ async function uploadModel() {
   formData.append('description', uploadForm.value.description)
 
   try {
-    await http.post('/api/v1/models/upload', formData, {
-      headers: { 'Content-Type': 'multipart/form-data' }
-    })
+    await apiUploadModel(formData)
+    // headers handled by api module
     ElMessage.success('模型上传成功')
     uploadDialogVisible.value = false
     uploadForm.value = { name: '', type: 'YOLO', precision: 'INT8', description: '', file: null }

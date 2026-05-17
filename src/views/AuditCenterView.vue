@@ -203,7 +203,6 @@ function showDetail(log: AuditLog) {
 async function handleExport() {
   exporting.value = true
   try {
-    // @ts-expect-error exportAuditReport 方法可能由插件注入
     await cloudStore.exportAuditReport()
     ElMessage.success('审计报告导出成功')
   } catch {

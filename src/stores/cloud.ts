@@ -116,12 +116,17 @@ export const useCloudStore = defineStore('cloud', () => {
     finally { loading.value = false }
   }
 
+  async function exportAuditReport(format: string = 'csv') {
+    const { data } = await http.post('/logs/export', { format })
+    return data?.data
+  }
+
   return {
     cloudStatus, federationData, platformStats, otaStats, loading, connected,
     securityScore, alarmStats, agentActivity, deviceAnalytics,
     auditStats, auditLogs, auditTotal,
     fetchCloudStatus, fetchFederationData, fetchPlatformStats, fetchOTAStats,
     fetchSecurityScore, fetchAlarmStats, fetchDeviceAnalytics, fetchAgentActivity,
-    fetchAuditStats, fetchAuditLogs,
+    fetchAuditStats, fetchAuditLogs, exportAuditReport,
   }
 })
