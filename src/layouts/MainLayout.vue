@@ -6,7 +6,7 @@
       <div class="logo" @click="router.push('/dashboard')">
         <img src="/favicon.svg" alt="logo" width="32" height="32" />
         <transition name="logo-fade">
-          <span v-if="!isCollapsed" class="logo-text">华盾AI v6.0</span>
+          <span v-if="!isCollapsed" class="logo-text">华盾AI v7.0</span>
         </transition>
       </div>
 
@@ -16,8 +16,8 @@
         :collapse="isCollapsed"
         router
         background-color="transparent"
-        text-color="var(--app-sidebar-text)"
-        active-text-color="var(--app-sidebar-active)"
+        text-color="rgba(255,255,255,0.85)"
+        active-text-color="#3B82F6"
         class="sidebar-menu"
         :collapse-transition="false"
       >
@@ -509,7 +509,7 @@ function handleUserCommand(command: string) {
 
 .group-title {
   font-size: 11px;
-  color: rgba(255, 255, 255, 0.3);
+  color: rgba(255, 255, 255, 0.45);
   text-transform: uppercase;
   letter-spacing: 1px;
   font-weight: var(--font-semibold, 600);
@@ -525,7 +525,8 @@ function handleUserCommand(command: string) {
 }
 
 .sidebar-menu :deep(.el-menu-item:hover) {
-  background: rgba(255, 255, 255, 0.05);
+  background: rgba(255, 255, 255, 0.08) !important;
+  color: rgba(255, 255, 255, 0.95);
 }
 
 .sidebar-menu :deep(.el-menu-item.is-active) {
@@ -562,6 +563,30 @@ function handleUserCommand(command: string) {
 .sidebar-collapse-btn:hover {
   color: rgba(255, 255, 255, 0.7);
   background: rgba(255, 255, 255, 0.03);
+}
+
+.main-layout:not(.dark-theme) .sidebar {
+  background: var(--app-sidebar-bg, #001529);
+}
+
+.main-layout:not(.dark-theme) .sidebar .logo-text {
+  color: #FFFFFF;
+}
+
+.main-layout:not(.dark-theme) .sidebar .group-title {
+  color: rgba(255, 255, 255, 0.45);
+}
+
+.main-layout:not(.dark-theme) .sidebar .sidebar-collapse-btn {
+  color: rgba(255, 255, 255, 0.45);
+}
+
+.main-layout:not(.dark-theme) .sidebar .sidebar-collapse-btn:hover {
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.main-layout.dark-theme .sidebar {
+  background: var(--app-sidebar-bg, #0F1419);
 }
 
 /* ── 内容容器 ── */
