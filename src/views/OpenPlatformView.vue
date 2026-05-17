@@ -196,16 +196,16 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { useCloudStore } from '@/stores/cloud'
+import { openPlatformApi, type APIKeyItem, type WebhookItem } from '@/api/open-platform'
 import { ElMessage, ElMessageBox } from 'element-plus'
-// Types defined inline
 
 const cloudStore = useCloudStore()
 const activeTab = ref('keys')
 const showCreateKeyDialog = ref(false)
 const showCreateWebhookDialog = ref(false)
 
-const apiKeys = ref<any[]>([])
-const webhooks = ref<any[]>([])
+const apiKeys = ref<APIKeyItem[]>([])
+const webhooks = ref<WebhookItem[]>([])
 
 const newKey = ref({ name: '', permissions: ['read'] as string[], rateLimit: 10, expiresAt: null as Date | null })
 const newWebhook = ref({ name: '', url: '', events: ['alarm.created'] as string[] })
@@ -237,43 +237,81 @@ async function copyKey(key: string) {
   } catch { ElMessage.warning('复制失败') }
 }
 
-async function handleRevoke(row: any) {
+async function loadApiKeys() {
+  try {
+    const res = await openPlatformApi.getAPIKeys()
+    const data = res.data?.data
+    apiKeys.value = Array.isArray(data) ? data : data?.items ?? []
+  } catch { apiKeys.value = [] }
+}
+
+async function loadWebhooks() {
+  try {
+    const res = await openPlatformApi.getWebhooks()
+    const data = res.data?.data
+    webhooks.value = Array.isArray(data) ? data : data?.items ?? []
+  } catch { webhooks.value = [] }
+}
+
+async function handleRevoke(row: APIKeyItem) {
   try {
     await ElMessageBox.confirm(`确认吊销 API Key "${row.name}"？此操作不可恢复！`, '吊销确认', { type: 'error' })
+    await openPlatformApi.revokeAPIKey(row.id)
     ElMessage.success('API Key 已吊销')
-    apiKeys.value = apiKeys.value.filter((k: any) => k.id !== row.id)
+    loadApiKeys()
   } catch { /* cancelled */ }
 }
 
-function handleTestWebhook(row: any) {
-  ElMessage.success(`测试请求已发送至 ${row.url}`)
+async function handleTestWebhook(row: WebhookItem) {
+  try {
+    await openPlatformApi.testWebhook(row.id)
+    ElMessage.success(`测试请求已发送至 ${row.url}`)
+  } catch { ElMessage.error('测试请求失败') }
 }
 
-function handleDeleteWebhook(row: any) {
-  ElMessageBox.confirm(`确认删除 Webhook "${row.name}"？`, '删除确认', { type: 'warning' }).then(() => {
-    webhooks.value = webhooks.value.filter((w: any) => w.id !== row.id)
+function handleDeleteWebhook(row: WebhookItem) {
+  ElMessageBox.confirm(`确认删除 Webhook "${row.name}"？`, '删除确认', { type: 'warning' }).then(async () => {
+    await openPlatformApi.deleteWebhook(row.id)
     ElMessage.success('已删除')
+    loadWebhooks()
   }).catch(() => {})
 }
 
-function confirmCreateKey() {
-  ElMessage.success('API Key 创建成功')
-  showCreateKeyDialog.value = false
-  newKey.value = { name: '', permissions: ['read'], rateLimit: 10, expiresAt: null }
+async function confirmCreateKey() {
+  try {
+    await openPlatformApi.createAPIKey({
+      name: newKey.value.name,
+      permissions: newKey.value.permissions,
+      rateLimit: newKey.value.rateLimit,
+      expiresAt: newKey.value.expiresAt?.toISOString(),
+    })
+    ElMessage.success('API Key 创建成功')
+    showCreateKeyDialog.value = false
+    newKey.value = { name: '', permissions: ['read'], rateLimit: 10, expiresAt: null }
+    loadApiKeys()
+  } catch { ElMessage.error('创建失败') }
 }
 
-function confirmCreateWebhook() {
-  ElMessage.success('Webhook 添加成功')
-  showCreateWebhookDialog.value = false
-  newWebhook.value = { name: '', url: '', events: ['alarm.created'] }
+async function confirmCreateWebhook() {
+  try {
+    await openPlatformApi.createWebhook({
+      name: newWebhook.value.name,
+      url: newWebhook.value.url,
+      events: newWebhook.value.events,
+    })
+    ElMessage.success('Webhook 添加成功')
+    showCreateWebhookDialog.value = false
+    newWebhook.value = { name: '', url: '', events: ['alarm.created'] }
+    loadWebhooks()
+  } catch { ElMessage.error('添加失败') }
 }
 
 onMounted(async () => {
-  await cloudStore.fetchPlatformStats()
-  // Platform stats don't include API keys/webhooks directly
-  // Using placeholder data for now
-  apiKeys.value = []
-  webhooks.value = []
+  await Promise.all([
+    cloudStore.fetchPlatformStats(),
+    loadApiKeys(),
+    loadWebhooks(),
+  ])
 })
 </script>
 

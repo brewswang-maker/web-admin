@@ -35,7 +35,7 @@
           </el-table-column>
           <el-table-column prop="status" label="状态" width="90">
             <template #default="{ row }">
-              <el-tag :type="fwStatusTag(row.status) as any" size="small">{{ fwStatusLabel(row.status) }}</el-tag>
+              <el-tag :type="fwStatusTag(row.status) as 'info' | 'success' | 'danger'" size="small">{{ fwStatusLabel(row.status) }}</el-tag>
             </template>
           </el-table-column>
           <el-table-column prop="publishedAt" label="发布时间" width="170" />
@@ -84,7 +84,7 @@
           </el-table-column>
           <el-table-column prop="status" label="状态" width="100">
             <template #default="{ row }">
-              <el-tag :type="taskStatusTag(row.status) as any" size="small">{{ taskStatusLabel(row.status) }}</el-tag>
+              <el-tag :type="taskStatusTag(row.status) as 'info' | 'warning' | 'success' | 'danger'" size="small">{{ taskStatusLabel(row.status) }}</el-tag>
             </template>
           </el-table-column>
           <el-table-column prop="startedAt" label="开始时间" width="170" />
@@ -142,7 +142,7 @@
       <el-form label-width="100px">
         <el-form-item label="目标版本">
           <el-select v-model="taskForm.firmwareId" style="width:100%" placeholder="选择固件版本">
-            <el-option v-for="f in firmwares.filter((fw: any) => fw.status === 'published')" :key="f.id" :label="`v${f.version} - ${f.description}`" :value="f.id" />
+            <el-option v-for="f in firmwares.filter((fw: FirmwareItem) => fw.status === 'published')" :key="f.id" :label="`v${f.version} - ${f.description}`" :value="f.id" />
           </el-select>
         </el-form-item>
         <el-form-item label="目标设备">
@@ -171,18 +171,17 @@
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import { useCloudStore } from '@/stores/cloud'
 import { ElMessage, ElMessageBox } from 'element-plus'
-// Types defined inline as needed
+import { otaApi, type FirmwareItem, type OTATask } from '@/api/ota'
 
-const cloudStore = useCloudStore()
 const activeTab = ref('firmware')
 const showUploadDialog = ref(false)
 const showCreateTaskDialog = ref(false)
 const uploading = ref(false)
+const loading = ref(false)
 
-const firmwares = ref<any[]>([])
-const otaTasks = ref<any[]>([])
+const firmwares = ref<FirmwareItem[]>([])
+const otaTasks = ref<OTATask[]>([])
 
 const uploadForm = ref({
   version: '', description: '', targetHardware: ['BM1684X'],
@@ -219,98 +218,116 @@ function taskStatusLabel(s: string) {
   return m[s] ?? s
 }
 
-function handlePublish(row: any) {
-  ElMessageBox.confirm(`确认发布 v${row.version}？发布后设备可进行升级。`, '发布确认', { type: 'warning' }).then(() => {
-    const f = firmwares.value.find((f: any) => f.id === row.id)
+async function handlePublish(row: FirmwareItem) {
+  try {
+    await ElMessageBox.confirm(`确认发布 v${row.version}？发布后设备可进行升级。`, '发布确认', { type: 'warning' })
+    await otaApi.publishFirmware(row.id)
+    const f = firmwares.value.find((fw: FirmwareItem) => fw.id === row.id)
     if (f) f.status = 'published'
     ElMessage.success('固件已发布')
-  }).catch(() => {})
+  } catch { /* cancelled or error */ }
 }
 
-function handleDeprecate(row: any) {
-  ElMessageBox.confirm(`确认废弃 v${row.version}？`, '废弃确认', { type: 'warning' }).then(() => {
-    const f = firmwares.value.find((f: any) => f.id === row.id)
+async function handleDeprecate(row: FirmwareItem) {
+  try {
+    await ElMessageBox.confirm(`确认废弃 v${row.version}？`, '废弃确认', { type: 'warning' })
+    await otaApi.deprecateFirmware(row.id)
+    const f = firmwares.value.find((fw: FirmwareItem) => fw.id === row.id)
     if (f) f.status = 'deprecated'
     ElMessage.success('固件已废弃')
-  }).catch(() => {})
+  } catch { /* cancelled or error */ }
 }
 
-function handleCreateTask(row: any) {
+function handleCreateTask(row: FirmwareItem) {
   taskForm.value.firmwareId = row.id
   showCreateTaskDialog.value = true
 }
 
-function handleCancelTask(row: any) {
-  ElMessageBox.confirm('确认取消该升级任务？', '取消确认', { type: 'warning' }).then(() => {
+async function handleCancelTask(row: OTATask) {
+  try {
+    await ElMessageBox.confirm('确认取消该升级任务？', '取消确认', { type: 'warning' })
+    await otaApi.cancelTask(row.id)
     row.status = 'cancelled'
     ElMessage.success('任务已取消')
-  }).catch(() => {})
+  } catch { /* cancelled or error */ }
 }
 
-function handleRetryTask(_row: any) {
-  ElMessage.success('重试指令已发送')
+async function handleRetryTask(row: OTATask) {
+  try {
+    await otaApi.retryTask(row.id)
+    ElMessage.success('重试指令已发送')
+  } catch {
+    ElMessage.error('重试失败')
+  }
 }
 
-function confirmUpload() {
+async function confirmUpload() {
+  if (!uploadForm.value.version) {
+    ElMessage.warning('请输入版本号')
+    return
+  }
   uploading.value = true
-  setTimeout(() => {
-    firmwares.value.push({
-      id: `fw-${Date.now()}`,
-      version: uploadForm.value.version || '6.1.0',
+  try {
+    // In a real scenario, a file would be attached; here we send metadata only
+    const dummyFile = new File([], 'firmware.bin')
+    await otaApi.uploadFirmware(dummyFile, {
+      version: uploadForm.value.version,
       description: uploadForm.value.description,
-      fileSize: 512 * 1024 * 1024,
-      md5: 'd41d8cd98f00b204e9800998ecf8427e',
       targetHardware: uploadForm.value.targetHardware,
-      changelog: uploadForm.value.changelog,
       isForce: uploadForm.value.isForce,
-      status: 'draft',
-      publishedAt: '',
-      createdAt: new Date().toISOString()
     })
-    uploading.value = false
     showUploadDialog.value = false
     ElMessage.success('固件上传成功')
     uploadForm.value = { version: '', description: '', targetHardware: ['BM1684X'], isForce: false, changelog: '' }
-  }, 1000)
+    await loadFirmwares()
+  } catch {
+    ElMessage.error('固件上传失败')
+  } finally {
+    uploading.value = false
+  }
 }
 
-function confirmCreateTask() {
+async function confirmCreateTask() {
   if (!taskForm.value.firmwareId) { ElMessage.warning('请选择固件版本'); return }
-  otaTasks.value.push({
-    id: `task-${Date.now()}`,
-    firmwareId: taskForm.value.firmwareId,
-    firmwareVer: firmwares.value.find((f: any) => f.id === taskForm.value.firmwareId)?.version ?? '?',
-    deviceCount: taskForm.value.deviceIds.length || 1,
-    successCount: 0,
-    failedCount: 0,
-    progress: 0,
-    status: 'running',
-    startedAt: new Date().toISOString(),
-    completedAt: ''
-  })
-  showCreateTaskDialog.value = false
-  ElMessage.success('升级任务已创建')
-  taskForm.value = { firmwareId: '', deviceIds: [], strategy: 'immediate' }
+  try {
+    await otaApi.createTask({
+      firmwareId: taskForm.value.firmwareId,
+      targetDeviceIds: taskForm.value.deviceIds.length > 0 ? taskForm.value.deviceIds : [],
+    })
+    showCreateTaskDialog.value = false
+    ElMessage.success('升级任务已创建')
+    taskForm.value = { firmwareId: '', deviceIds: [], strategy: 'immediate' }
+    await loadTasks()
+  } catch {
+    ElMessage.error('创建升级任务失败')
+  }
+}
+
+async function loadFirmwares() {
+  loading.value = true
+  try {
+    const { data: res } = await otaApi.getFirmwares()
+    const d = (res as unknown as Record<string, unknown>).data ?? res
+    firmwares.value = (d as { items: FirmwareItem[] }).items ?? []
+  } catch {
+    firmwares.value = []
+  } finally {
+    loading.value = false
+  }
+}
+
+async function loadTasks() {
+  try {
+    const { data: res } = await otaApi.getTasks()
+    const d = (res as unknown as Record<string, unknown>).data ?? res
+    otaTasks.value = (d as { items: OTATask[] }).items ?? []
+  } catch {
+    otaTasks.value = []
+  }
 }
 
 onMounted(async () => {
-  await cloudStore.fetchOTAStats()
-  const otaData = cloudStore.otaStats
-  // Convert OTAStats firmware versions to firmware list format
-  firmwares.value = otaData?.firmwareVersions?.map((v: any) => ({
-    id: v.version,
-    version: v.version,
-    description: `${v.count} 台设备`,
-    fileSize: 0,
-    md5: '',
-    targetHardware: [],
-    changelog: '',
-    isForce: false,
-    status: 'published',
-    publishedAt: '',
-    createdAt: new Date().toISOString()
-  })) ?? []
-  otaTasks.value = []
+  await Promise.all([loadFirmwares(), loadTasks()])
 })
 </script>
 
