@@ -341,12 +341,13 @@ onUnmounted(() => {
   gap: 12px;
   padding: 12px;
   overflow: hidden;
+  min-height: 0;
 }
 
-.ss-col { display: flex; flex-direction: column; gap: 12px; min-height: 0; }
-.left-col { width: 280px; flex-shrink: 0; }
-.center-col { flex: 1; min-width: 0; min-height: 0; }
-.right-col { width: 280px; flex-shrink: 0; }
+.ss-col { display: flex; flex-direction: column; gap: 12px; min-height: 0; overflow-y: auto; }
+.left-col { width: 280px; flex-shrink: 0; flex: none; }
+.center-col { flex: 1; min-width: 0; min-height: 0; overflow: hidden; }
+.right-col { width: 280px; flex-shrink: 0; flex: none; }
 
 .ss-panel {
   background: #151820;
