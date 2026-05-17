@@ -8,30 +8,21 @@ import { ElementPlusResolver } from 'unplugin-vue-components/resolvers'
 import viteCompression from 'vite-plugin-compression'
 
 /**
- * 华盾AI Web管理后台 — 生产级 Vite 构建配置 v7.1
+ * 华盾AI Web管理后台 — 生产级 Vite 构建配置 v7.2
+ *
+ * 🆕 v7.2 修复：
+ * - FIX: lodash-es 自动分包策略导致 427 个空 chunk + 大量循环依赖警告
+ * - FIX: ECharts/Three/lodash-es 整包优先匹配，防止被 L6 碎片化规则拆散
+ * - FIX: 移除 getModuleInfo 动态分包逻辑（对 lodash-es/echarts 的 tree-shaking 产物有害）
  *
  * 🆕 v7.1 修复：
  * - FIX: conditionalPlugins 未合并到插件数组，导致 visualizer 分析永不被加载
  *
  * 🆕 v7.0 升级（构建耗时 -40% / 包体积 -25%）：
- * 1️⃣ 压缩引擎升级
- *    - Terser → esbuild（20-40x 更快，压缩率几乎持平）
- *    - lightningcss 保留（CSS 压缩最优解）
- *    - Gzip/Brotli 压缩改为 post-build 异步模式，不阻塞主流程
- *
- * 2️⃣ 代码拆分精细化
- *    - Element Plus 细拆（UI 核心 / Icons 独立）
- *    - ECharts 按需子包隔离（core + 各 chart type 分 chunk）
- *    - 将手动 vendor 拆分配置提升为策略函数，引入分包上限防止过碎
- *
- * 3️⃣ 构建管线加速
- *    - sourcemap 仅 analyze 模式生成
- *    - emptyOutDir 保留（防止旧产物残留）
- *    - reportCompressedSize 关闭（省去 gzip 二次计算，压缩后 .gz/.br 直接可用）
- *
- * 4️⃣ ECharts 按需加载
- *    - LazyChart.vue 改为按需动态 import echarts 子模块
- *    - 核心渲染器 ~300KB → 按需 ~80KB（首次仅加载用到的图表类型）
+ * 1️⃣ 压缩引擎升级：Terser → esbuild / lightningcss
+ * 2️⃣ 代码拆分精细化：Element Plus / ECharts 按需子包隔离
+ * 3️⃣ 构建管线加速：sourcemap 仅 analyze 模式、关闭 reportCompressedSize
+ * 4️⃣ ECharts 按需加载：核心渲染器 ~300KB → 按需 ~80KB
  */
 
 // ─── 环境判断 ───────────────────────────────────────────
@@ -53,7 +44,7 @@ export default defineConfig(async () => {
         gzipSize: true,
         brotliSize: true,
         filename: 'dist/stats.html',
-        title: '华盾AI Web - 包体积分析 v7',
+        title: '华盾AI Web - 包体积分析 v7.2',
       }) as Plugin
     )
   }
@@ -78,7 +69,6 @@ export default defineConfig(async () => {
         resolvers: [
           ElementPlusResolver({
             importStyle: 'css',
-            // 显式排除已全局注册的组件，减少重复解析
           }),
         ],
         dts: 'src/components.d.ts',
@@ -103,7 +93,7 @@ export default defineConfig(async () => {
         deleteOriginFile: false,
       }),
 
-      // 🆕 FIX: 将条件插件合并到主插件数组（v7.0 遗漏导致 visualizer 永不生效）
+      // FIX: 将条件插件合并到主插件数组
       ...conditionalPlugins,
     ],
 
@@ -118,7 +108,6 @@ export default defineConfig(async () => {
     server: {
       port: 3000,
       warmup: {
-        // 预热关键文件，提升冷启动速度
         clientFiles: [
           './src/main.ts',
           './src/App.vue',
@@ -139,10 +128,8 @@ export default defineConfig(async () => {
       assetsDir: 'assets',
       emptyOutDir: true,
 
-      // 🆕 sourcemap 仅在分析时生成
       sourcemap: isAnalyze ? 'hidden' : false,
 
-      // 🆕 esbuild 替代 terser（20-40x 更快，压缩率仅差 ~1-3%）
       target: 'es2020',
       cssTarget: 'chrome87',
       cssCodeSplit: true,
@@ -150,84 +137,94 @@ export default defineConfig(async () => {
       // 小资源 base64 内联（<4KB）
       assetsInlineLimit: 4096,
 
-      // 🆕 CSS 压缩：lightningcss（Rust 实现，最快）
+      // CSS 压缩：lightningcss（Rust 实现，最快）
       cssMinify: 'lightningcss',
 
-      // 🆕 JS 压缩：esbuild（原生速度，无需额外依赖）
+      // JS 压缩：esbuild（原生速度）
       minify: 'esbuild',
 
       chunkSizeWarningLimit: 500,
 
-      // 🆕 关闭压缩体积报告（节省 ~2-5s，.gz/.br 文件已经足够）
+      // 关闭压缩体积报告（节省 ~2-5s）
       reportCompressedSize: false,
 
       // ============================================
-      // Rollup 精细代码分割 v7
+      // Rollup 精细代码分割 v7.2
       // ============================================
       rollupOptions: {
         output: {
-          // 🆕 分包策略 — 6 层递进
-          manualChunks(id: string, { getModuleInfo }: { getModuleInfo: (id: string) => any }) {
+          /**
+           * 分包策略 — 6 层递进
+           *
+           * v7.2 关键修复：
+           * - L1~L5 整包匹配优先，防止 lodash-es / echarts / three 被碎片化
+           * - L6 移除 getModuleInfo 动态分包（曾导致 427 个 lodash-es 空 chunk）
+           * - 未匹配的 node_modules 统一归入 vendor-misc
+           */
+          manualChunks(id: string) {
+            // 仅处理 node_modules
+            if (!id.includes('node_modules')) return undefined
+
             // L1: Vue 核心生态（最稳定，长期缓存命中率最高）
-            if (/\/node_modules\/(vue|@vue\/(reactivity|runtime|shared|compiler))/.test(id)) {
+            if (/\/node_modules\/(vue|@vue\/(reactivity|runtime|shared|compiler|devtools))/.test(id)) {
               return 'vendor-vue-core'
             }
-            if (/\/node_modules\/(vue-router|pinia|@vue\/(devtools|use))/.test(id)) {
+            if (/\/node_modules\/(vue-router|pinia)/.test(id)) {
               return 'vendor-vue-ecosystem'
             }
 
             // L2: Element Plus 分包 — UI 核心 / Icons 分离
-            if (/\/node_modules\/element-plus\/es\/(components|hooks|utils|directives|locale)/.test(id)) {
+            if (/\/node_modules\/element-plus/.test(id)) {
+              // 样式文件单独归入 UI chunk
+              if (/\/es\/(components|hooks|utils|directives|locale)/.test(id) || /\.css/.test(id)) {
+                return 'vendor-element-ui'
+              }
               return 'vendor-element-ui'
             }
             if (/\/node_modules\/@element-plus\/icons-vue/.test(id)) {
               return 'vendor-element-icons'
             }
-            // element-plus 其他（如 theme-chalk 样式）
-            if (/\/node_modules\/element-plus/.test(id)) {
-              return 'vendor-element-ui'
-            }
 
-            // L3: ECharts 分包 — 核心 / 组件 / 图表类型
-            if (/\/node_modules\/echarts\/lib\/(core|util|model|coord|scale|data|legend|tooltip|label)/.test(id)) {
+            // L3: ECharts 分包 — 整包优先，避免碎片化
+            if (/\/node_modules\/echarts\//.test(id)) {
+              if (/\/lib\/(core|util|model|coord|scale|data)/.test(id)) {
+                return 'vendor-echarts-core'
+              }
+              if (/\/lib\/component/.test(id)) {
+                return 'vendor-echarts-components'
+              }
+              if (/\/lib\/chart/.test(id)) {
+                return 'vendor-echarts-charts'
+              }
+              // echarts 其他（含 lib 根文件、renderers 等）
               return 'vendor-echarts-core'
             }
-            if (/\/node_modules\/echarts\/lib\/component/.test(id)) {
-              return 'vendor-echarts-components'
-            }
-            if (/\/node_modules\/echarts\/lib\/chart/.test(id)) {
-              return 'vendor-echarts-charts'
-            }
-            // zrender（ECharts 底层渲染器）
-            if (/\/node_modules\/zrender/.test(id)) {
+            // zrender（ECharts 底层渲染器）统一归入 echarts-core
+            if (/\/node_modules\/zrender\//.test(id)) {
               return 'vendor-echarts-core'
             }
 
-            // L4: 工具库（HTTP/日期/存储）
+            // L4: Three.js — 整包归入一个 chunk（3D 库内部交叉引用多，不可拆碎）
+            if (/\/node_modules\/three\//.test(id)) {
+              return 'vendor-three'
+            }
+
+            // L5: 工具库（HTTP/日期/存储/lodash）
+            if (/\/node_modules\/(lodash-es|lodash)\//.test(id)) {
+              return 'vendor-utils'
+            }
             if (/\/node_modules\/(axios|dayjs|js-cookie)/.test(id)) {
               return 'vendor-utils'
             }
 
-            // L5: VueUse / 其他 composable 库
+            // L6: VueUse / 其他
             if (/\/node_modules\/@vueuse\/(core|shared)/.test(id)) {
               return 'vendor-vueuse'
             }
 
-            // L6: 自动抽取共享模块（≥3 个 chunk 引用才抽，避免过碎）
-            if (id.includes('node_modules')) {
-              const info = getModuleInfo(id)
-              if (info && info.importers && info.importers.length >= 3) {
-                const pkgName = id.match(
-                  /node_modules\/(@?[^/]+(?:\/[^/]+)?)/
-                )?.[1]
-                if (pkgName) {
-                  const safeName = pkgName.replace('@', '').replace(/\//g, '-')
-                  return `shared-${safeName}`
-                }
-              }
-              // 未被以上规则匹配的 node_modules 统一归入 vendor-misc
-              return 'vendor-misc'
-            }
+            // L7: 未匹配的 node_modules 统一归入 vendor-misc
+            // (不再使用 getModuleInfo 动态分包，避免 lodash-es 碎片化)
+            return 'vendor-misc'
           },
 
           // content-hash 命名 → 长期缓存
@@ -240,10 +237,6 @@ export default defineConfig(async () => {
             const extType = assetInfo.name?.match(/\.(\w+)$/)?.[1] || 'misc'
             return `assets/${extType}/[name]-[hash:10].[ext]`
           },
-
-          // 🆕 实验性：manifest 用于精确缓存控制
-          // 若需要可取消注释：
-          // manualChunks 已足够；manifest 会增加 ~2KB 额外请求
         },
       },
     },
@@ -255,17 +248,11 @@ export default defineConfig(async () => {
           additionalData: '',
         },
       },
-      // 🆕 lightningcss 编译选项
+      // lightningcss 编译选项
       lightningcss: {
-        // lightningcss 使用 Rust 风格的版本编码：major << 16
         // Chrome 87 (2020.11) → 87 << 16 = 5701632
         targets: { chrome: 87 << 16 },
       },
-    },
-
-    // ─── 实验性优化 ─────────────────────────────
-    experimental: {
-      // 🆕 启用 renderBuiltUrl 可进一步优化 CDN 部署
     },
   }
 })

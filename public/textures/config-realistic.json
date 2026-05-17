@@ -1,0 +1,131 @@
+{
+  "id": "realistic-factory",
+  "name": "写实工厂纹理方案",
+  "description": "使用程序化生成的写实工厂纹理，模拟混凝土路面、金属板墙、玻璃幕墙等材质。纹理已优化至合理体积，适用于正式展示场景。",
+  "backgroundColor": "#1a1f2e",
+  "textures": [
+    {
+      "id": "ground-concrete",
+      "type": "ground",
+      "source": "public_resource",
+      "url": "/textures/ground/concrete_stamped_2048.png",
+      "repeat": [4, 3],
+      "tileable": true,
+      "description": "混凝土路面 + 车道标线 + 停车位"
+    },
+    {
+      "id": "ground-asphalt",
+      "type": "ground",
+      "source": "public_resource",
+      "url": "/textures/ground/asphalt_2048.png",
+      "repeat": [4, 3],
+      "tileable": true,
+      "description": "沥青路面"
+    },
+    {
+      "id": "wall-metal-panel",
+      "type": "buildingWall",
+      "source": "public_resource",
+      "url": "/textures/wall/metal_panel_1024.png",
+      "tileable": true,
+      "description": "波纹金属板墙"
+    },
+    {
+      "id": "wall-concrete-block",
+      "type": "buildingWall",
+      "source": "public_resource",
+      "url": "/textures/wall/concrete_block_1024.png",
+      "tileable": true,
+      "description": "混凝土砌块墙"
+    },
+    {
+      "id": "wall-glass-curtain",
+      "type": "buildingWall",
+      "source": "public_resource",
+      "url": "/textures/wall/glass_curtain_1024.png",
+      "tileable": true,
+      "description": "玻璃幕墙"
+    },
+    {
+      "id": "roof-metal",
+      "type": "roof",
+      "source": "public_resource",
+      "url": "/textures/roof/metal_roof_512.png",
+      "tileable": true,
+      "description": "波纹金属屋顶"
+    },
+    {
+      "id": "fence-chain",
+      "type": "fence",
+      "source": "public_resource",
+      "url": "/textures/fence/chain_link_512.png",
+      "repeat": [10, 1],
+      "tileable": true,
+      "description": "铁丝网围墙"
+    }
+  ],
+  "buildingTextures": [
+    {
+      "buildingName": "1号车间",
+      "wallTextureId": "wall-metal-panel",
+      "roofTextureId": "roof-metal",
+      "tintColor": "#1A73E8"
+    },
+    {
+      "buildingName": "2号车间",
+      "wallTextureId": "wall-metal-panel",
+      "roofTextureId": "roof-metal",
+      "tintColor": "#0F9D58"
+    },
+    {
+      "buildingName": "仓库",
+      "wallTextureId": "wall-concrete-block",
+      "roofTextureId": "roof-metal",
+      "tintColor": "#F4B400"
+    },
+    {
+      "buildingName": "办公楼",
+      "wallTextureId": "wall-glass-curtain",
+      "roofTextureId": "roof-metal",
+      "tintColor": "#7C3AED"
+    },
+    {
+      "buildingName": "配电房",
+      "wallTextureId": "wall-concrete-block",
+      "roofTextureId": "roof-metal",
+      "tintColor": "#666666"
+    },
+    {
+      "buildingName": "门卫室",
+      "wallTextureId": "wall-concrete-block",
+      "roofTextureId": "roof-metal",
+      "tintColor": "#888888"
+    }
+  ],
+  "lighting": {
+    "ambientColor": "#b8c8e0",
+    "ambientIntensity": 1.2,
+    "hemisphereSkyColor": "#88aacc",
+    "hemisphereGroundColor": "#445533",
+    "hemisphereIntensity": 0.8,
+    "directionalColor": "#ffeedd",
+    "directionalIntensity": 1.8,
+    "directionalPosition": [40, 60, 30],
+    "castShadow": true,
+    "fillColor": "#aabbdd",
+    "fillIntensity": 0.5,
+    "fillPosition": [-30, 30, -20],
+    "pointColor": "#4488ff",
+    "pointIntensity": 0.6,
+    "pointPosition": [0, 25, 0]
+  },
+  "toneMapping": {
+    "mode": "ACESFilmic",
+    "exposure": 1.4
+  },
+  "fog": {
+    "type": "exp2",
+    "color": "#151a28",
+    "density": 0.005
+  }
+}

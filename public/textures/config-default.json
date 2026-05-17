@@ -1,0 +1,133 @@
+{
+  "id": "default-procedural",
+  "name": "默认程序化工厂纹理",
+  "description": "使用 Canvas 程序化生成的工厂场景纹理，无外部图片依赖。作为默认方案，可随时替换为实际工厂图。",
+  "backgroundColor": "#151a28",
+  "textures": [
+    {
+      "id": "ground-default",
+      "type": "ground",
+      "source": "procedural",
+      "seed": 42,
+      "repeat": [4, 3],
+      "tileable": true,
+      "description": "混凝土路面 + 车道标线"
+    },
+    {
+      "id": "wall-workshop",
+      "type": "buildingWall",
+      "source": "procedural",
+      "seed": 100,
+      "tileable": true,
+      "description": "车间厂房金属板墙"
+    },
+    {
+      "id": "wall-warehouse",
+      "type": "buildingWall",
+      "source": "procedural",
+      "seed": 200,
+      "tileable": true,
+      "description": "仓库彩钢墙"
+    },
+    {
+      "id": "wall-office",
+      "type": "buildingWall",
+      "source": "procedural",
+      "seed": 300,
+      "tileable": true,
+      "description": "办公楼玻璃幕墙"
+    },
+    {
+      "id": "wall-utility",
+      "type": "buildingWall",
+      "source": "procedural",
+      "seed": 400,
+      "tileable": true,
+      "description": "配电房/门卫室混凝土墙"
+    },
+    {
+      "id": "roof-default",
+      "type": "roof",
+      "source": "procedural",
+      "seed": 500,
+      "tileable": true,
+      "description": "彩钢瓦屋顶"
+    },
+    {
+      "id": "fence-default",
+      "type": "fence",
+      "source": "procedural",
+      "seed": 600,
+      "repeat": [10, 1],
+      "tileable": true,
+      "description": "围墙铁丝网"
+    }
+  ],
+  "buildingTextures": [
+    {
+      "buildingName": "1号车间",
+      "wallTextureId": "wall-workshop",
+      "roofTextureId": "roof-default",
+      "tintColor": "#1A73E8"
+    },
+    {
+      "buildingName": "2号车间",
+      "wallTextureId": "wall-workshop",
+      "roofTextureId": "roof-default",
+      "tintColor": "#0F9D58"
+    },
+    {
+      "buildingName": "仓库",
+      "wallTextureId": "wall-warehouse",
+      "roofTextureId": "roof-default",
+      "tintColor": "#F4B400"
+    },
+    {
+      "buildingName": "办公楼",
+      "wallTextureId": "wall-office",
+      "roofTextureId": "roof-default",
+      "tintColor": "#7C3AED"
+    },
+    {
+      "buildingName": "配电房",
+      "wallTextureId": "wall-utility",
+      "roofTextureId": "roof-default",
+      "tintColor": "#666666"
+    },
+    {
+      "buildingName": "门卫室",
+      "wallTextureId": "wall-utility",
+      "roofTextureId": "roof-default",
+      "tintColor": "#888888"
+    }
+  ],
+  "lighting": {
+    "ambientColor": "#b8c8e0",
+    "ambientIntensity": 1.2,
+    "hemisphereSkyColor": "#88aacc",
+    "hemisphereGroundColor": "#445533",
+    "hemisphereIntensity": 0.8,
+    "directionalColor": "#ffeedd",
+    "directionalIntensity": 1.8,
+    "directionalPosition": [40, 60, 30],
+    "castShadow": true,
+    "fillColor": "#aabbdd",
+    "fillIntensity": 0.5,
+    "fillPosition": [-30, 30, -20],
+    "pointColor": "#4488ff",
+    "pointIntensity": 0.6,
+    "pointPosition": [0, 25, 0]
+  },
+  "toneMapping": {
+    "mode": "ACESFilmic",
+    "exposure": 1.4
+  },
+  "fog": {
+    "type": "exp2",
+    "color": "#151a28",
+    "density": 0.005
+  },
+  "active": true,
+  "createdAt": "2025-01-15T00:00:00Z",
+  "updatedAt": "2025-01-15T00:00:00Z"
+}

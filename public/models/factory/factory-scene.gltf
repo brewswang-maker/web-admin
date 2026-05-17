@@ -1,0 +1,324 @@
+{
+  "asset": {
+    "version": "2.0",
+    "generator": "ShieldBox Factory Scene v1.0"
+  },
+  "scene": 0,
+  "scenes": [
+    {
+      "name": "FactoryScene",
+      "nodes": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]
+    }
+  ],
+  "nodes": [
+    { "name": "Ground", "mesh": 0 },
+    { "name": "Workshop1", "mesh": 1, "translation": [-20, 0, -15] },
+    { "name": "Workshop2", "mesh": 2, "translation": [15, 0, -15] },
+    { "name": "Warehouse", "mesh": 3, "translation": [-25, 0, 15] },
+    { "name": "OfficeBuilding", "mesh": 4, "translation": [20, 0, 15] },
+    { "name": "PowerStation", "mesh": 5, "translation": [35, 0, -5] },
+    { "name": "GuardHouse", "mesh": 6, "translation": [0, 0, 42] },
+    { "name": "WallLeft", "mesh": 7, "translation": [-55, 0, 0] },
+    { "name": "WallRight", "mesh": 8, "translation": [55, 0, 0] },
+    { "name": "WallBack", "mesh": 9, "translation": [0, 0, -48] },
+    { "name": "WallFront", "mesh": 10, "translation": [0, 0, 48] },
+    { "name": "Camera01", "mesh": 11, "translation": [-40, 4, -35] },
+    { "name": "Camera02", "mesh": 12, "translation": [20, 4, -38] },
+    { "name": "Camera03", "mesh": 13, "translation": [-15, 5, 5] },
+    { "name": "Camera04", "mesh": 14, "translation": [25, 5, 10] },
+    { "name": "Camera05", "mesh": 15, "translation": [-30, 4, 20] },
+    { "name": "Camera06", "mesh": 16, "translation": [35, 4, 25] },
+    { "name": "Camera07", "mesh": 17, "translation": [0, 5, 40] },
+    { "name": "Camera08", "mesh": 18, "translation": [-35, 6, -10] },
+    { "name": "Camera09", "mesh": 19, "translation": [40, 4, -15] }
+  ],
+  "meshes": [
+    {
+      "name": "GroundPlane",
+      "primitives": [{
+        "attributes": { "POSITION": 0 },
+        "indices": 12,
+        "material": 0
+      }]
+    },
+    {
+      "name": "Workshop1",
+      "primitives": [{ "attributes": { "POSITION": 1 }, "material": 1 }]
+    },
+    {
+      "name": "Workshop2",
+      "primitives": [{ "attributes": { "POSITION": 2 }, "material": 2 }]
+    },
+    {
+      "name": "Warehouse",
+      "primitives": [{ "attributes": { "POSITION": 3 }, "material": 3 }]
+    },
+    {
+      "name": "OfficeBuilding",
+      "primitives": [{ "attributes": { "POSITION": 4 }, "material": 4 }]
+    },
+    {
+      "name": "PowerStation",
+      "primitives": [{ "attributes": { "POSITION": 5 }, "material": 5 }]
+    },
+    {
+      "name": "GuardHouse",
+      "primitives": [{ "attributes": { "POSITION": 6 }, "material": 6 }]
+    },
+    {
+      "name": "WallLeft",
+      "primitives": [{ "attributes": { "POSITION": 7 }, "material": 7 }]
+    },
+    {
+      "name": "WallRight",
+      "primitives": [{ "attributes": { "POSITION": 8 }, "material": 7 }]
+    },
+    {
+      "name": "WallBack",
+      "primitives": [{ "attributes": { "POSITION": 9 }, "material": 7 }]
+    },
+    {
+      "name": "WallFront",
+      "primitives": [{ "attributes": { "POSITION": 10 }, "material": 7 }]
+    },
+    {
+      "name": "CameraUnit",
+      "primitives": [{ "attributes": { "POSITION": 11 }, "material": 8 }]
+    }
+  ],
+  "materials": [
+    {
+      "name": "GroundMaterial",
+      "pbrMetallicRoughness": {
+        "baseColorFactor": [0.082, 0.094, 0.125, 1.0],
+        "metallicFactor": 0.1,
+        "roughnessFactor": 0.9
+      }
+    },
+    {
+      "name": "Workshop1Material",
+      "pbrMetallicRoughness": {
+        "baseColorFactor": [0.102, 0.451, 0.910, 0.35],
+        "metallicFactor": 0.2,
+        "roughnessFactor": 0.7
+      },
+      "alphaMode": "BLEND"
+    },
+    {
+      "name": "Workshop2Material",
+      "pbrMetallicRoughness": {
+        "baseColorFactor": [0.059, 0.616, 0.345, 0.35],
+        "metallicFactor": 0.2,
+        "roughnessFactor": 0.7
+      },
+      "alphaMode": "BLEND"
+    },
+    {
+      "name": "WarehouseMaterial",
+      "pbrMetallicRoughness": {
+        "baseColorFactor": [0.957, 0.706, 0.0, 0.35],
+        "metallicFactor": 0.2,
+        "roughnessFactor": 0.7
+      },
+      "alphaMode": "BLEND"
+    },
+    {
+      "name": "OfficeMaterial",
+      "pbrMetallicRoughness": {
+        "baseColorFactor": [0.486, 0.227, 0.929, 0.35],
+        "metallicFactor": 0.2,
+        "roughnessFactor": 0.7
+      },
+      "alphaMode": "BLEND"
+    },
+    {
+      "name": "PowerStationMaterial",
+      "pbrMetallicRoughness": {
+        "baseColorFactor": [0.4, 0.4, 0.4, 0.35],
+        "metallicFactor": 0.2,
+        "roughnessFactor": 0.7
+      },
+      "alphaMode": "BLEND"
+    },
+    {
+      "name": "GuardHouseMaterial",
+      "pbrMetallicRoughness": {
+        "baseColorFactor": [0.533, 0.533, 0.533, 0.35],
+        "metallicFactor": 0.2,
+        "roughnessFactor": 0.7
+      },
+      "alphaMode": "BLEND"
+    },
+    {
+      "name": "WallMaterial",
+      "pbrMetallicRoughness": {
+        "baseColorFactor": [0.102, 0.125, 0.251, 0.4],
+        "metallicFactor": 0.1,
+        "roughnessFactor": 0.8
+      },
+      "alphaMode": "BLEND"
+    },
+    {
+      "name": "CameraOnline",
+      "pbrMetallicRoughness": {
+        "baseColorFactor": [0.165, 0.376, 0.263, 1.0],
+        "metallicFactor": 0.6,
+        "roughnessFactor": 0.3
+      },
+      "emissiveFactor": [0.059, 0.616, 0.345]
+    }
+  ],
+  "accessors": [
+    {
+      "name": "GroundPositions",
+      "type": "VEC3",
+      "componentType": 5126,
+      "count": 4,
+      "max": [60.0, 0.0, 50.0],
+      "min": [-60.0, 0.0, -50.0],
+      "bufferView": 0,
+      "byteOffset": 0
+    },
+    {
+      "name": "Workshop1Positions",
+      "type": "VEC3",
+      "componentType": 5126,
+      "count": 36,
+      "max": [12.0, 8.0, 8.0],
+      "min": [-12.0, 0.0, -8.0],
+      "bufferView": 1,
+      "byteOffset": 0
+    },
+    {
+      "name": "Workshop2Positions",
+      "type": "VEC3",
+      "componentType": 5126,
+      "count": 36,
+      "max": [10.0, 7.0, 7.0],
+      "min": [-10.0, 0.0, -7.0],
+      "bufferView": 2,
+      "byteOffset": 0
+    },
+    {
+      "name": "WarehousePositions",
+      "type": "VEC3",
+      "componentType": 5126,
+      "count": 36,
+      "max": [9.0, 6.0, 6.0],
+      "min": [-9.0, 0.0, -6.0],
+      "bufferView": 3,
+      "byteOffset": 0
+    },
+    {
+      "name": "OfficePositions",
+      "type": "VEC3",
+      "componentType": 5126,
+      "count": 36,
+      "max": [8.0, 12.0, 6.0],
+      "min": [-8.0, 0.0, -6.0],
+      "bufferView": 4,
+      "byteOffset": 0
+    },
+    {
+      "name": "PowerStationPositions",
+      "type": "VEC3",
+      "componentType": 5126,
+      "count": 36,
+      "max": [4.0, 4.0, 4.0],
+      "min": [-4.0, 0.0, -4.0],
+      "bufferView": 5,
+      "byteOffset": 0
+    },
+    {
+      "name": "GuardHousePositions",
+      "type": "VEC3",
+      "componentType": 5126,
+      "count": 36,
+      "max": [3.0, 3.0, 2.0],
+      "min": [-3.0, 0.0, -2.0],
+      "bufferView": 6,
+      "byteOffset": 0
+    },
+    {
+      "name": "WallLeftPositions",
+      "type": "VEC3",
+      "componentType": 5126,
+      "count": 36,
+      "max": [0.15, 3.0, 50.0],
+      "min": [-0.15, 0.0, -50.0],
+      "bufferView": 7,
+      "byteOffset": 0
+    },
+    {
+      "name": "WallRightPositions",
+      "type": "VEC3",
+      "componentType": 5126,
+      "count": 36,
+      "max": [0.15, 3.0, 50.0],
+      "min": [-0.15, 0.0, -50.0],
+      "bufferView": 8,
+      "byteOffset": 0
+    },
+    {
+      "name": "WallBackPositions",
+      "type": "VEC3",
+      "componentType": 5126,
+      "count": 36,
+      "max": [55.0, 3.0, 0.15],
+      "min": [-55.0, 0.0, -0.15],
+      "bufferView": 9,
+      "byteOffset": 0
+    },
+    {
+      "name": "WallFrontPositions",
+      "type": "VEC3",
+      "componentType": 5126,
+      "count": 36,
+      "max": [55.0, 3.0, 0.15],
+      "min": [-55.0, 0.0, -0.15],
+      "bufferView": 10,
+      "byteOffset": 0
+    },
+    {
+      "name": "CameraPositions",
+      "type": "VEC3",
+      "componentType": 5126,
+      "count": 36,
+      "max": [0.5, 1.2, 0.5],
+      "min": [-0.5, 0.0, -0.5],
+      "bufferView": 11,
+      "byteOffset": 0
+    },
+    {
+      "name": "GroundIndices",
+      "type": "SCALAR",
+      "componentType": 5123,
+      "count": 6,
+      "bufferView": 12,
+      "byteOffset": 0,
+      "max": [3],
+      "min": [0]
+    }
+  ],
+  "bufferViews": [
+    { "buffer": 0, "byteOffset": 0, "byteLength": 48, "target": 34962 },
+    { "buffer": 0, "byteOffset": 48, "byteLength": 432, "target": 34962 },
+    { "buffer": 0, "byteOffset": 480, "byteLength": 432, "target": 34962 },
+    { "buffer": 0, "byteOffset": 912, "byteLength": 432, "target": 34962 },
+    { "buffer": 0, "byteOffset": 1344, "byteLength": 432, "target": 34962 },
+    { "buffer": 0, "byteOffset": 1776, "byteLength": 432, "target": 34962 },
+    { "buffer": 0, "byteOffset": 2208, "byteLength": 432, "target": 34962 },
+    { "buffer": 0, "byteOffset": 2640, "byteLength": 432, "target": 34962 },
+    { "buffer": 0, "byteOffset": 3072, "byteLength": 432, "target": 34962 },
+    { "buffer": 0, "byteOffset": 3504, "byteLength": 432, "target": 34962 },
+    { "buffer": 0, "byteOffset": 3936, "byteLength": 432, "target": 34962 },
+    { "buffer": 0, "byteOffset": 4368, "byteLength": 432, "target": 34962 },
+    { "buffer": 0, "byteOffset": 4800, "byteLength": 12, "target": 34963 }
+  ],
+  "buffers": [
+    {
+      "uri": "factory-scene.bin",
+      "byteLength": 4812
+    }
+  ]
+}

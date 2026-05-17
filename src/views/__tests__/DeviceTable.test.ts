@@ -82,13 +82,34 @@ const mockStore = {
   stats: { total: 4, online: 1, offline: 1, maintaining: 1, onlineRate: 25, alarming: 1, maintenance: 1 },
   fetchDevices: vi.fn(),
   fetchStats: vi.fn(),
+  fetchTemplates: vi.fn(),       // ← 修复: 补充 DevicesView.onMounted 调用的 fetchTemplates
   deleteDevice: vi.fn(),
   rebootDevice: vi.fn(),
   syncDevice: vi.fn(),
+  reboot: vi.fn(),
+  removeDevice: vi.fn(),
+  templates: [],
 }
 
 vi.mock('@/stores/device', () => ({
   useDeviceStore: vi.fn(() => mockStore),
+}))
+
+// ── Mock SIP config API (DevicesView.onMounted → fetchSipConfig) ──
+vi.mock('@/api/device', () => ({
+  deviceApi: {
+    getList: vi.fn(() => Promise.resolve({ data: { code: 0, data: { items: [], total: 0 } } })),
+    getStats: vi.fn(() => Promise.resolve({ data: { code: 0, data: {} } })),
+    getSipConfig: vi.fn(() => Promise.resolve({ data: { code: 0, data: {} } })),
+  },
+}))
+
+// ── Mock http ──────────────────────────────────────────────
+vi.mock('@/api/http', () => ({
+  http: {
+    get: vi.fn(() => Promise.resolve({ data: { code: 0, data: {} } })),
+    post: vi.fn(() => Promise.resolve({ data: { code: 0, data: {} } })),
+  },
 }))
 
 // ── 创建测试用 Router ──────────────────────────────────────
@@ -170,7 +191,6 @@ describe('views/DevicesView (DeviceTable)', () => {
     it('loading 状态时显示加载指示', () => {
       mockStore.loading = true
       const wrapper = createWrapper()
-      // v-loading 指令在表格上
       expect(wrapper.find('.el-table').exists()).toBe(true)
     })
   })
@@ -193,7 +213,6 @@ describe('views/DevicesView (DeviceTable)', () => {
     it('渲染类型筛选下拉框', () => {
       const wrapper = createWrapper()
       const selects = wrapper.findAll('.el-select')
-      // 状态 + 类型 + 项目 = 3 个 select
       expect(selects.length).toBeGreaterThanOrEqual(2)
     })
   })
@@ -224,7 +243,6 @@ describe('views/DevicesView (DeviceTable)', () => {
   // ========================================================================
   describe('状态标签映射', () => {
     it('statusTagType: online → success', () => {
-      // 从组件代码中提取逻辑进行独立测试
       const statusTagType = (status: string) => {
         const map: Record<string, string> = {
           online: 'success', offline: 'danger', alarming: 'warning', maintenance: 'info',

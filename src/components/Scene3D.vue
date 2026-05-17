@@ -15,7 +15,7 @@
     <div class="scene-overlay" v-if="hoveredDevice">
       <div class="device-tooltip">
         <div class="tooltip-name">{{ hoveredDevice.name }}</div>
-        <div class="tooltip-status" :class="hoveredDevice.status">{{ hoveredDevice.status === 'online' ? '🟢 在线' : hoveredDevice.status === 'alarm' ? '🔴 告警' : '⚫ 离线' }}</div>
+        <div class="tooltip-status" :class="hoveredDevice.status">{{ statusLabel(hoveredDevice.status) }}</div>
         <div class="tooltip-info">{{ hoveredDevice.location }}</div>
         <div class="tooltip-info" v-if="hoveredDevice.alarmType">告警: {{ hoveredDevice.alarmType }}</div>
       </div>
@@ -61,6 +61,65 @@ let startTime = 0
 let deviceMeshes: Map<string, { mesh: THREE.Mesh; cone: THREE.Mesh; pulse?: THREE.Mesh; label?: CSS2DObject }> = new Map()
 let raycaster: THREE.Raycaster
 let mouse: THREE.Vector2
+
+// ── 工具函数 ──
+
+/** 解析 hex 颜色字符串为整数（支持 3 位缩写 #RGB → #RRGGBB） */
+function parseHexColor(hex: string): number {
+  const h = hex.replace('#', '')
+  const full = h.length === 3
+    ? h.split('').map(c => c + c).join('')
+    : h
+  return parseInt(full, 16)
+}
+
+/** 设备状态显示文本 */
+function statusLabel(status: string): string {
+  switch (status) {
+    case 'online': return '🟢 在线'
+    case 'alarm': return '🔴 告警'
+    case 'maintenance': return '🟡 维护中'
+    case 'offline': return '⚫ 离线'
+    default: return '⚫ 未知'
+  }
+}
+
+/** 设备状态图标 */
+function statusIcon(status: string): string {
+  switch (status) {
+    case 'online': return '🟢'
+    case 'alarm': return '🔴'
+    case 'maintenance': return '🟡'
+    case 'offline': return '⚫'
+    default: return '⚫'
+  }
+}
+
+/** 递归释放场景中所有 GPU 资源（geometry + material） */
+function disposeSceneResources(sc: THREE.Scene) {
+  sc.traverse((obj) => {
+    if (obj instanceof THREE.Mesh) {
+      obj.geometry?.dispose()
+      const materials = Array.isArray(obj.material) ? obj.material : [obj.material]
+      materials.forEach(m => {
+        // 释放材质引用的纹理
+        if (m instanceof THREE.MeshStandardMaterial) {
+          m.map?.dispose()
+          m.normalMap?.dispose()
+          m.roughnessMap?.dispose()
+          m.metalnessMap?.dispose()
+        } else if (m instanceof THREE.MeshBasicMaterial) {
+          m.map?.dispose()
+        }
+        m.dispose()
+      })
+    }
+    if (obj instanceof THREE.LineSegments) {
+      obj.geometry?.dispose()
+      obj.material?.dispose()
+    }
+  })
+}
 
 // ── 默认设备数据 ──
 const defaultDevices: Device3D[] = [
@@ -198,7 +257,7 @@ function createWall(x: number, y: number, z: number, w: number, h: number, d: nu
 }
 
 function createBuilding(b: { name: string; x: number; z: number; w: number; d: number; h: number; color?: string }) {
-  const color = b.color ? parseInt(b.color.replace('#', '0x')) : 0x1A73E8
+  const color = b.color ? parseHexColor(b.color) : 0x1A73E8
   const geo = new THREE.BoxGeometry(b.w, b.h, b.d)
   const mat = new THREE.MeshStandardMaterial({
     color,
@@ -282,8 +341,8 @@ function createDevice(d: Device3D) {
   // 设备标签
   const labelDiv = document.createElement('div')
   labelDiv.className = 'device-label-3d'
-  const statusIcon = d.status === 'online' ? '🟢' : d.status === 'alarm' ? '🔴' : d.status === 'maintenance' ? '🟡' : '⚫'
-  labelDiv.textContent = `${statusIcon} ${d.name}`
+  const icon = statusIcon(d.status)
+  labelDiv.textContent = `${icon} ${d.name}`
   labelDiv.style.cssText = `color:${d.status === 'alarm' ? '#DB4437' : '#E8EAED'};font-size:11px;font-family:system-ui;background:rgba(0,0,0,0.6);padding:2px 6px;border-radius:3px;white-space:nowrap;`
   const label = new CSS2DObject(labelDiv)
   label.position.set(d.x, d.y + 2.5, d.z)
@@ -291,6 +350,24 @@ function createDevice(d: Device3D) {
   entry.label = label
 
   deviceMeshes.set(d.id, entry)
+}
+
+/** 从场景中移除设备对象并释放其 GPU 资源 */
+function removeDeviceEntry(entry: { mesh: THREE.Mesh; cone: THREE.Mesh; pulse?: THREE.Mesh; label?: CSS2DObject }) {
+  scene.remove(entry.mesh)
+  scene.remove(entry.cone)
+  if (entry.pulse) scene.remove(entry.pulse)
+  if (entry.label) scene.remove(entry.label)
+
+  // 释放 GPU 资源
+  entry.mesh.geometry?.dispose()
+  ;(entry.mesh.material as THREE.Material)?.dispose()
+  entry.cone.geometry?.dispose()
+  ;(entry.cone.material as THREE.Material)?.dispose()
+  if (entry.pulse) {
+    entry.pulse.geometry?.dispose()
+    ;(entry.pulse.material as THREE.Material)?.dispose()
+  }
 }
 
 function onMouseMove(event: MouseEvent) {
@@ -360,12 +437,9 @@ function toggleLabels() { showLabels.value = !showLabels.value }
 // ── Watch devices prop ──
 watch(() => props.devices, (newDevices) => {
   if (!newDevices) return
-  // 移除旧设备
+  // 移除旧设备并释放 GPU 资源
   deviceMeshes.forEach((entry) => {
-    scene.remove(entry.mesh)
-    scene.remove(entry.cone)
-    if (entry.pulse) scene.remove(entry.pulse)
-    if (entry.label) scene.remove(entry.label)
+    removeDeviceEntry(entry)
   })
   deviceMeshes.clear()
   newDevices.forEach(d => createDevice(d))
@@ -380,6 +454,8 @@ onUnmounted(() => {
   cancelAnimationFrame(animationId)
   window.removeEventListener('resize', onResize)
   renderer?.domElement.removeEventListener('mousemove', onMouseMove)
+  // 递归释放所有 GPU 资源后再清空场景
+  if (scene) disposeSceneResources(scene)
   renderer?.dispose()
   labelRenderer?.domElement.remove()
   scene?.clear()
@@ -452,5 +528,6 @@ onUnmounted(() => {
 .tooltip-status.alarm { color: #DB4437; }
 .tooltip-status.online { color: #0F9D58; }
 .tooltip-status.offline { color: #666; }
+.tooltip-status.maintenance { color: #F4B400; }
 .tooltip-info { font-size: 11px; color: #9AA0A6; }
 </style>

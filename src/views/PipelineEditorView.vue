@@ -101,7 +101,7 @@
                       @mousedown="onRoiMouseDown" @mousemove="onRoiMouseMove" @mouseup="onRoiMouseUp" />
               <div v-if="roiPoints.length" style="margin-top:4px">
                 <el-tag size="small">{{ roiPoints.length }}个点</el-tag>
-                <el-button size="small" text @click="roiPoints = []">清除</el-button>
+                <el-button size="small" text @click="roiPoints.splice(0)">清除</el-button>
               </div>
             </el-form-item>
 
