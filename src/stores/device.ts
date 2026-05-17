@@ -41,7 +41,7 @@ export const useDeviceStore = defineStore('device', () => {
       query.value = { ...query.value, ...params }
       const res = await deviceApi.getList({ page: currentPage.value, pageSize: pageSize.value, ...query.value })
       const resData = (res.data as any).data ?? res.data
-      devices.value = resData.items || []
+      devices.value = resData.items || resData.devices || []
       total.value = resData.total || 0
       currentPage.value = resData.page || 1
     } catch (e: any) {
