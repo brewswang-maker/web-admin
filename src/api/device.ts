@@ -40,12 +40,12 @@ export const deviceApi = {
 
   /** ONVIF 发现 */
   discoverOnvif(subnet?: string) {
-    return http.get<ApiResponse<DiscoveredDevice[]>>('/devices/discover/onvif', { params: { subnet } })
+    return http.get<ApiResponse<{ devices: DiscoveredDevice[]; total: number }>>('/devices/discover/onvif', { params: { subnet } })
   },
 
   /** GB28181 发现 */
   discoverGB28181() {
-    return http.get<ApiResponse<DiscoveredDevice[]>>('/devices/discover/gb28181')
+    return http.get<ApiResponse<{ devices: DiscoveredDevice[]; total: number }>>('/devices/discover/gb28181')
   },
 
   /** 同步设备 */

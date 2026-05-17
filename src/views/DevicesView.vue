@@ -472,7 +472,8 @@ async function runDiscoverScan() {
     const res = method === 'gb28181'
       ? await discoverGB28181()
       : await deviceApi.discoverOnvif()
-    const list: DiscoveredDevice[] = res?.data?.data ?? []
+    const payload = res?.data?.data
+    const list: DiscoveredDevice[] = payload?.devices ?? (Array.isArray(payload) ? payload : [])
     discoveredDevices.value = list
     discoverFinished.value = true
     if (list.length) ElMessage.success(`发现 ${list.length} 台设备`)
@@ -563,7 +564,8 @@ async function handleDiscover(method: 'onvif' | 'gb28181') {
     const res = method === 'gb28181'
       ? await discoverGB28181()
       : await deviceApi.discoverOnvif()
-    const list: DiscoveredDevice[] = res?.data?.data ?? []
+    const payload = res?.data?.data
+    const list: DiscoveredDevice[] = payload?.devices ?? (Array.isArray(payload) ? payload : [])
     discoveredList.value = list
     if (list.length) ElMessage.success(`发现 ${list.length} 台设备`)
     else ElMessage.info('未发现设备')
