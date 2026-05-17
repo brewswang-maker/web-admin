@@ -153,7 +153,8 @@ import { ref, computed, onMounted, onUnmounted, watch, reactive, nextTick } from
 import { useRoute, useRouter } from 'vue-router'
 import { useDeviceStore } from '@/stores/device'
 import { getDeviceChannels } from '@/api/devices'
-import { http } from '@/api/http'
+import { streamHttp } from '@/api/http'
+import { ptzControl as ptzApi } from '@/api/ptz'
 import { ElMessage } from 'element-plus'
 import type { Channel, DeviceItem } from '@/types/device'
 
@@ -272,12 +273,12 @@ function closeSlot(idx: number) {
 async function fetchStreamUrl(ch: Channel): Promise<string | null> {
   try {
     // 尝试获取HLS地址
-    const { data } = await http.get(`/api/v1/streams/${ch.id}/hls-url`)
+    const { data } = await streamHttp.get(`/${ch.id}/hls-url`)
     return data?.url || data?.data?.url || null
   } catch {
     // Fallback: 尝试WebRTC SDP交换
     try {
-      const { data: sdp } = await http.post(`/api/v1/streams/${ch.id}/webrtc-sdp`, {
+      const { data: sdp } = await streamHttp.post(`/${ch.id}/webrtc-sdp`, {
         offer: '' // 实际应用中这里应该是本地SDP offer
       })
       return sdp?.url || null
@@ -339,7 +340,7 @@ function maximizeSlot(idx: number) {
 function ptzStart(direction: string) {
   const slot = gridSlots[activeSlotIdx.value]
   if (!slot.channelId) return
-  http.post('/api/v1/ptz/control', {
+  ptzApi({
     deviceId: slot.deviceId,
     channelId: slot.channelId,
     direction,
@@ -350,12 +351,12 @@ function ptzStop() { /* 停止持续移动 */ }
 function ptzHome() {
   const slot = gridSlots[activeSlotIdx.value]
   if (!slot.channelId) return
-  http.post('/api/v1/ptz/control', { deviceId: slot.deviceId, channelId: slot.channelId, direction: 'home' })
+  ptzApi({ deviceId: slot.deviceId, channelId: slot.channelId, direction: 'home' })
 }
 function ptzPreset(preset: number) {
   const slot = gridSlots[activeSlotIdx.value]
   if (!slot.channelId) return
-  http.post('/api/v1/ptz/control', { deviceId: slot.deviceId, channelId: slot.channelId, direction: 'goto_preset', preset })
+  ptzApi({ deviceId: slot.deviceId, channelId: slot.channelId, direction: 'goto_preset', preset })
 }
 
 // 时钟

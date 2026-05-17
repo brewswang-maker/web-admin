@@ -136,7 +136,7 @@
 
 <script setup lang="ts">
 import { ref, computed, reactive, nextTick, onMounted } from 'vue'
-import { http } from '@/api/http'
+import { savePipeline, getPipelines } from '@/api/pipeline'
 import { ElMessage } from 'element-plus'
 
 interface PipelineNode {
@@ -344,7 +344,7 @@ function drawRoi() {
 async function savePipeline() {
   const payload = { name: pipelineName.value, nodes: nodes.map(n => ({ ...n })), connections: [...connections] }
   try {
-    await http.post('/api/v1/pipelines', payload)
+    await savePipeline(payload)
     ElMessage.success('Pipeline已保存')
     dirty.value = false
   } catch (e: any) {
@@ -353,7 +353,7 @@ async function savePipeline() {
 }
 async function loadPipeline() {
   try {
-    const { data } = await http.get('/api/v1/pipelines', { params: { name: pipelineName.value } })
+    const { data } = await getPipelines({ params: { name: pipelineName.value } })
     const pl = data?.data || data
     if (!pl) return ElMessage.info('未找到Pipeline')
     nodes.splice(0); connections.splice(0)

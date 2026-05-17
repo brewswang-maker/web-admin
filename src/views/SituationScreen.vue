@@ -78,7 +78,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, nextTick } from 'vue'
-import { http } from '@/api/http'
+import { statsHttp } from '@/api/http'
 import { useWebSocket } from '@/composables/useWebSocket'
 import Scene3D from '@/components/Scene3D.vue'
 
@@ -269,7 +269,7 @@ function initAlarms() {
 
 async function fetchSituationData() {
   try {
-    const { data } = await http.get('/api/v1/stats/situation')
+    const { data } = await statsHttp.get('/situation')
     const d = data?.data || data
     if (d?.todayStats) todayStats.value = d.todayStats
     if (d?.alarms) latestAlarms.value = d.alarms

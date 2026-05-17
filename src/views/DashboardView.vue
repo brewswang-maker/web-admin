@@ -243,7 +243,7 @@ import {
   Odometer, Monitor, Bell, CircleCheck,
   Cpu, Refresh, TrendCharts,
 } from '@element-plus/icons-vue'
-import { http } from '@/api/http'
+import { statsHttp } from '@/api/http'
 import { federationApi } from '@/api/federation'
 import LazyChart from '@/components/LazyChart.vue'
 import type { EChartsOption } from 'echarts'
@@ -282,9 +282,9 @@ onUnmounted(() => {
 async function fetchDashboardData() {
   try {
     const [overviewRes, trendRes, deviceRes, fedRes] = await Promise.allSettled([
-      http.get('/api/v1/stats/overview', { params: { project: selectedProject.value } }),
-      http.get('/api/v1/stats/alarm-trend', { params: { project: selectedProject.value, hours: 24 } }),
-      http.get('/api/v1/stats/device-status', { params: { project: selectedProject.value } }),
+      statsHttp.get('/overview', { params: { project: selectedProject.value } }),
+      statsHttp.get('/alarm-trend', { params: { project: selectedProject.value, hours: 24 } }),
+      statsHttp.get('/device-status', { params: { project: selectedProject.value } }),
       federationApi.getStatus(),
     ])
     if (overviewRes.status === 'fulfilled' && overviewRes.value.data) {

@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { ref, onMounted, computed, watch, nextTick } from 'vue'
 import { ElMessage } from 'element-plus'
-import { http } from '@/api/http'
+import { deviceHttp } from '@/api/http'
+import { getRecordings } from '@/api/recording'
 
 interface Device {
   id: string
@@ -46,7 +47,7 @@ watch(selectedDate, () => { recordings.value = [] })
 
 async function fetchDevices() {
   try {
-    const { data } = await http.get('/api/v1/devices', { params: { protocol: 'GB28181,ONVIF' } })
+    const { data } = await deviceHttp.get('', { params: { protocol: 'GB28181,ONVIF' } })
     const list = data?.data || data || []
     devices.value = list.map((d: any) => ({
       id: d.device_id || d.id,
@@ -67,7 +68,7 @@ async function fetchRecordings() {
   }
   loading.value = true
   try {
-    const { data } = await http.get('/api/v1/recordings', {
+    const { data } = await getRecordings({
       params: {
         deviceId: selectedDeviceId.value,
         channelId: selectedChannelId.value,

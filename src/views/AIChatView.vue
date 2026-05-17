@@ -159,7 +159,7 @@
 
 <script setup lang="ts">
 import { ref, reactive, onMounted, nextTick, onUnmounted } from 'vue'
-import { http } from '@/api/http'
+import { aiHttp } from '@/api/http'
 import { ElMessage } from 'element-plus'
 import { Promotion } from '@element-plus/icons-vue'
 
@@ -215,7 +215,8 @@ function formatJson(obj: any): string {
 
 async function loadConversations() {
   try {
-    const { data } = await http.get('/api/v1/ai/conversations')
+    const { data } = await aiHttp.get('/sessions')
+    // sessions = conversations alias
     conversations.value = data?.data || data || []
   } catch {
     conversations.value = [{ id: 'default', title: '新对话', created_at: new Date().toISOString() }]
@@ -233,7 +234,7 @@ function newConversation() {
 function switchConversation(id: string) {
   currentConvId.value = id
   // Load chat history from backend
-  http.get(`/api/v1/ai/conversations/${id}/messages`).then(res => {
+  aiHttp.get(`/sessions/${id}/messages`).then(res => {
     messages.value = res.data?.data ?? []
   }).catch(() => {
     messages.value = []
@@ -241,7 +242,7 @@ function switchConversation(id: string) {
 }
 
 async function deleteConversation(id: string) {
-  try { await http.delete(`/api/v1/ai/conversations/${id}`) } catch { /* ignore */ }
+  try { await aiHttp.delete(`/sessions/${id}`) } catch { /* ignore */ }
   conversations.value = conversations.value.filter(c => c.id !== id)
   if (currentConvId.value === id && conversations.value.length) {
     currentConvId.value = conversations.value[0].id
