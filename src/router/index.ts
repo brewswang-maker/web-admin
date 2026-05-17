@@ -7,6 +7,7 @@
 import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
 import { useUserStore } from '@/stores/user'
 import { usePermissionStore } from '@/stores/permission'
+import MainLayout from '@/layouts/MainLayout.vue'
 
 // 路由懒加载
 const DashboardView = () => import('@/views/DashboardView.vue')
@@ -55,240 +56,180 @@ export const constantRoutes: RouteRecordRaw[] = [
   }
 ]
 
-// 异步路由（需要权限）
+// 异步路由（需要权限）— 包裹在 MainLayout 下
 export const asyncRoutes: RouteRecordRaw[] = [
   {
     path: '/',
-    name: 'Dashboard',
-    component: DashboardView,
-    alias: '/dashboard',
-    meta: { 
-      title: '控制台', 
-      icon: 'Odom',
-      roles: ['admin', 'user', 'viewer']
-    }
+    component: MainLayout,
+    redirect: '/dashboard',
+    children: [
+      {
+        path: 'dashboard',
+        name: 'Dashboard',
+        component: DashboardView,
+        meta: { title: '控制台', icon: 'Odom', roles: ['admin', 'user', 'viewer'] }
+      },
+      {
+        path: 'devices',
+        name: 'Devices',
+        component: DevicesView,
+        meta: { title: '设备管理', icon: 'Monitor', roles: ['admin', 'user'] }
+      },
+      {
+        path: 'devices/:id',
+        name: 'DeviceDetail',
+        component: DeviceDetailView,
+        meta: { title: '设备详情', icon: 'Monitor', hidden: true, roles: ['admin', 'user'] },
+        props: true
+      },
+      {
+        path: 'live',
+        name: 'Live',
+        component: LiveView,
+        meta: { title: '实时监控', icon: 'VideoCamera', roles: ['admin', 'user', 'viewer'] }
+      },
+      {
+        path: 'channels',
+        name: 'Channels',
+        component: ChannelView,
+        meta: { title: '通道管理', icon: 'Grid', roles: ['admin', 'user'] }
+      },
+      {
+        path: 'alarms',
+        name: 'Alarms',
+        component: AlarmsView,
+        meta: { title: '告警中心', icon: 'Bell', roles: ['admin', 'user', 'viewer'] }
+      },
+      {
+        path: 'statistics',
+        name: 'Statistics',
+        component: StatisticsView,
+        meta: { title: '统计分析', icon: 'DataLine', roles: ['admin', 'user'] }
+      },
+      {
+        path: 'projects',
+        name: 'Projects',
+        component: ProjectsView,
+        meta: { title: '项目管理', icon: 'FolderOpened', roles: ['admin', 'user'] }
+      },
+      {
+        path: 'teams',
+        name: 'Teams',
+        component: TeamListView,
+        meta: { title: '团队管理', icon: 'User', roles: ['admin'] }
+      },
+      {
+        path: 'teams/:id',
+        name: 'TeamDetail',
+        component: TeamDetailView,
+        meta: { title: '团队详情', icon: 'User', hidden: true, roles: ['admin'] },
+        props: true
+      },
+      {
+        path: 'audit',
+        name: 'Audit',
+        component: AuditCenterView,
+        meta: { title: '审计中心', icon: 'Document', roles: ['admin'] }
+      },
+      {
+        path: 'upgrade',
+        name: 'OTAUpgrade',
+        component: OTAUpgradeView,
+        meta: { title: 'OTA升级', icon: 'Upload', roles: ['admin'] }
+      },
+      {
+        path: 'ai-chat',
+        name: 'AIChat',
+        component: AIChatView,
+        meta: { title: 'AI助手', icon: 'ChatDotRound', roles: ['admin', 'user'] }
+      },
+      {
+        path: 'situation',
+        name: 'Situation',
+        component: SituationScreen,
+        meta: { title: '态势大屏', icon: 'DataBoard', roles: ['admin'] }
+      },
+      {
+        path: 'open-platform',
+        name: 'OpenPlatform',
+        component: OpenPlatformView,
+        meta: { title: '开放平台', icon: 'Connection', roles: ['admin'] }
+      },
+      {
+        path: 'linkage',
+        name: 'LinkageRule',
+        component: LinkageRuleView,
+        meta: { title: '联动规则', icon: 'Connection', roles: ['admin', 'user'] }
+      },
+      {
+        path: 'settings',
+        name: 'Settings',
+        component: SettingsView,
+        meta: { title: '系统设置', icon: 'Setting', roles: ['admin'] }
+      },
+      {
+        path: 'gb28181',
+        name: 'GB28181',
+        component: GB28181View,
+        meta: { title: 'GB28181配置', icon: 'Connection', roles: ['admin', 'user'] }
+      },
+      {
+        path: 'onvif',
+        name: 'ONVIFDiscovery',
+        component: ONVIFDiscoveryView,
+        meta: { title: 'ONVIF发现', icon: 'Search', roles: ['admin', 'user'] }
+      },
+      {
+        path: 'streams',
+        name: 'StreamManagement',
+        component: StreamManagementView,
+        meta: { title: '流管理', icon: 'VideoPlay', roles: ['admin', 'user'] }
+      },
+      {
+        path: 'models',
+        name: 'ModelManagement',
+        component: ModelManagementView,
+        meta: { title: '模型管理', icon: 'Cpu', roles: ['admin'] }
+      },
+      {
+        path: 'recordings',
+        name: 'Recording',
+        component: RecordingView,
+        meta: { title: '录像回放', icon: 'Film', roles: ['admin', 'user', 'viewer'] }
+      },
+      {
+        path: 'pipelines',
+        name: 'PipelineEditor',
+        component: PipelineEditorView,
+        meta: { title: 'Pipeline编辑', icon: 'SetUp', roles: ['admin', 'user'] }
+      },
+      {
+        path: 'federation',
+        name: 'FederationDashboard',
+        component: FederationDashboard,
+        meta: { title: '联邦学习', icon: 'Share', roles: ['admin'] }
+      },
+      {
+        path: 'permissions',
+        name: 'PermissionManagement',
+        component: PermissionManagementView,
+        meta: { title: '权限管理', icon: 'Lock', hidden: true, roles: ['admin'] }
+      },
+      {
+        path: 'roles',
+        name: 'RoleManagement',
+        component: RoleManagementView,
+        meta: { title: '角色管理', icon: 'UserFilled', hidden: true, roles: ['admin'] }
+      },
+      {
+        path: 'users',
+        name: 'UserManagement',
+        component: UserManagementView,
+        meta: { title: '用户管理', icon: 'Avatar', hidden: true, roles: ['admin'] }
+      },
+    ]
   },
-  {
-    path: '/devices',
-    name: 'Devices',
-    component: DevicesView,
-    meta: { 
-      title: '设备管理', 
-      icon: 'Monitor',
-      roles: ['admin', 'user']
-    }
-  },
-  {
-    path: '/devices/:id',
-    name: 'DeviceDetail',
-    component: DeviceDetailView,
-    meta: { 
-      title: '设备详情', 
-      icon: 'Monitor',
-      hidden: true,
-      roles: ['admin', 'user']
-    },
-    props: true
-  },
-  {
-    path: '/live',
-    name: 'Live',
-    component: LiveView,
-    meta: { 
-      title: '实时监控', 
-      icon: 'VideoCamera',
-      roles: ['admin', 'user', 'viewer']
-    }
-  },
-  {
-    path: '/channels',
-    name: 'Channels',
-    component: ChannelView,
-    meta: { 
-      title: '通道管理', 
-      icon: 'Grid',
-      roles: ['admin', 'user']
-    }
-  },
-  {
-    path: '/alarms',
-    name: 'Alarms',
-    component: AlarmsView,
-    meta: { 
-      title: '告警中心', 
-      icon: 'Bell',
-      roles: ['admin', 'user', 'viewer']
-    }
-  },
-  {
-    path: '/statistics',
-    name: 'Statistics',
-    component: StatisticsView,
-    meta: { 
-      title: '统计分析', 
-      icon: 'DataLine',
-      roles: ['admin', 'user']
-    }
-  },
-  {
-    path: '/projects',
-    name: 'Projects',
-    component: ProjectsView,
-    meta: { 
-      title: '项目管理', 
-      icon: 'FolderOpened',
-      roles: ['admin', 'user']
-    }
-  },
-  {
-    path: '/teams',
-    name: 'Teams',
-    component: TeamListView,
-    meta: { 
-      title: '团队管理', 
-      icon: 'User',
-      roles: ['admin']
-    }
-  },
-  {
-    path: '/teams/:id',
-    name: 'TeamDetail',
-    component: TeamDetailView,
-    meta: { 
-      title: '团队详情', 
-      icon: 'User',
-      hidden: true,
-      roles: ['admin']
-    },
-    props: true
-  },
-  {
-    path: '/audit',
-    name: 'Audit',
-    component: AuditCenterView,
-    meta: { 
-      title: '审计中心', 
-      icon: 'Document',
-      roles: ['admin']
-    }
-  },
-  {
-    path: '/upgrade',
-    name: 'OTAUpgrade',
-    component: OTAUpgradeView,
-    meta: { 
-      title: 'OTA升级', 
-      icon: 'Upload',
-      roles: ['admin']
-    }
-  },
-  {
-    path: '/ai-chat',
-    name: 'AIChat',
-    component: AIChatView,
-    meta: { 
-      title: 'AI助手', 
-      icon: 'ChatDotRound',
-      roles: ['admin', 'user']
-    }
-  },
-  {
-    path: '/situation',
-    name: 'Situation',
-    component: SituationScreen,
-    meta: { 
-      title: '态势大屏', 
-      icon: 'DataBoard',
-      roles: ['admin']
-    }
-  },
-  {
-    path: '/open-platform',
-    name: 'OpenPlatform',
-    component: OpenPlatformView,
-    meta: { 
-      title: '开放平台', 
-      icon: 'Connection',
-      roles: ['admin']
-    }
-  },
-  {
-    path: '/linkage',
-    name: 'LinkageRule',
-    component: LinkageRuleView,
-    meta: { title: '联动规则', icon: 'Connection', roles: ['admin', 'user'] }
-  },
-  {
-    path: '/settings',
-    name: 'Settings',
-    component: SettingsView,
-    meta: { 
-      title: '系统设置', 
-      icon: 'Setting',
-      roles: ['admin']
-    }
-  },
-  {
-    path: '/gb28181',
-    name: 'GB28181',
-    component: GB28181View,
-    meta: { title: 'GB28181配置', icon: 'Connection', roles: ['admin', 'user'] }
-  },
-  {
-    path: '/onvif',
-    name: 'ONVIFDiscovery',
-    component: ONVIFDiscoveryView,
-    meta: { title: 'ONVIF发现', icon: 'Search', roles: ['admin', 'user'] }
-  },
-  {
-    path: '/streams',
-    name: 'StreamManagement',
-    component: StreamManagementView,
-    meta: { title: '流管理', icon: 'VideoPlay', roles: ['admin', 'user'] }
-  },
-  {
-    path: '/models',
-    name: 'ModelManagement',
-    component: ModelManagementView,
-    meta: { title: '模型管理', icon: 'Cpu', roles: ['admin'] }
-  },
-  {
-    path: '/recordings',
-    name: 'Recording',
-    component: RecordingView,
-    meta: { title: '录像回放', icon: 'Film', roles: ['admin', 'user', 'viewer'] }
-  },
-  {
-    path: '/pipelines',
-    name: 'PipelineEditor',
-    component: PipelineEditorView,
-    meta: { title: 'Pipeline编辑', icon: 'SetUp', roles: ['admin', 'user'] }
-  },
-  {
-    path: '/federation',
-    name: 'FederationDashboard',
-    component: FederationDashboard,
-    meta: { title: '联邦学习', icon: 'Share', roles: ['admin'] }
-  },
-  {
-    path: '/permissions',
-    name: 'PermissionManagement',
-    component: PermissionManagementView,
-    meta: { title: '权限管理', icon: 'Lock', hidden: true, roles: ['admin'] }
-  },
-  {
-    path: '/roles',
-    name: 'RoleManagement',
-    component: RoleManagementView,
-    meta: { title: '角色管理', icon: 'UserFilled', hidden: true, roles: ['admin'] }
-  },
-  {
-    path: '/users',
-    name: 'UserManagement',
-    component: UserManagementView,
-    meta: { title: '用户管理', icon: 'Avatar', hidden: true, roles: ['admin'] }
-  },
-  // 捕获所有未匹配路由
+  // 捕获所有未匹配路由（放在 MainLayout 外部）
   { 
     path: '/:pathMatch(.*)*', 
     redirect: '/404',
