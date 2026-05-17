@@ -265,26 +265,43 @@ function closeSlot(idx: number) {
   if (slot.playing) {
     const video = videoRefs.value[idx]
     if (video) { video.pause(); video.src = '' }
+    // 停止国标推流 (BYE)
+    if (slot.channelId) {
+      streamHttp.post(`/${slot.channelId}/stop`).catch(() => {})
+    }
   }
   Object.assign(slot, { channelId: '', name: '', status: '', hlsUrl: '', playing: false, loading: false, muted: true, deviceId: '' })
 }
 
-// 获取流地址
+// 获取流地址 — 先启动国标 INVITE, 再取 HLS 地址
 async function fetchStreamUrl(ch: Channel): Promise<string | null> {
   try {
-    // 尝试获取HLS地址
+    // 1. 启动国标设备推流 (GB28181 INVITE)
+    try {
+      await streamHttp.post(`/${ch.id}/start`)
+    } catch {
+      // start 可能已在推流，忽略错误继续
+    }
+
+    // 2. 等待流就绪
+    await new Promise(r => setTimeout(r, 1500))
+
+    // 3. 获取 HLS/FLV 播放地址
     const { data } = await streamHttp.get(`/${ch.id}/hls-url`)
-    return data?.url || data?.data?.url || null
+    const d = data?.data || data
+    if (d?.hlsUrl) return d.hlsUrl
+    if (d?.flvUrl) return d.flvUrl
+    if (d?.rtspUrl) return d.rtspUrl
+    return null
   } catch {
-    // Fallback: 尝试WebRTC SDP交换
+    // Fallback: 尝试 WebRTC SDP 交换
     try {
       const { data: sdp } = await streamHttp.post(`/${ch.id}/webrtc-sdp`, {
-        offer: '' // 实际应用中这里应该是本地SDP offer
+        offer: ''
       })
       return sdp?.url || null
     } catch {
-      // 最终fallback: 返回模拟地址（开发阶段）
-      return `/stream/${ch.id}/index.m3u8`
+      return null
     }
   }
 }

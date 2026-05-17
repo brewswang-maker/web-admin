@@ -5,11 +5,40 @@
         <el-button @click="resetCamera"><el-icon><RefreshRight /></el-icon>复位</el-button>
         <el-button @click="toggleAlarmPulse">{{ alarmPulse ? '关闭脉冲' : '开启脉冲' }}</el-button>
         <el-button @click="toggleLabels">{{ showLabels ? '隐藏标签' : '显示标签' }}</el-button>
+        <el-button @click="togglePerfPanel">{{ showPerfPanel ? '关闭性能面板' : '性能面板' }}</el-button>
       </el-button-group>
       <div class="legend-bar">
         <span class="legend-item"><span class="dot online"></span>在线设备</span>
         <span class="legend-item"><span class="dot alarm"></span>告警点位</span>
         <span class="legend-item"><span class="dot offline"></span>离线设备</span>
+      </div>
+    </div>
+    <!-- 性能监控面板 -->
+    <div class="perf-panel" v-if="showPerfPanel && perfSnapshot">
+      <div class="perf-title">📊 性能监控</div>
+      <div class="perf-row">
+        <span class="perf-label">FPS</span>
+        <span class="perf-value" :class="fpsClass">{{ perfSnapshot.fps }}</span>
+      </div>
+      <div class="perf-row">
+        <span class="perf-label">Draw Calls</span>
+        <span class="perf-value">{{ perfSnapshot.drawCalls }}</span>
+      </div>
+      <div class="perf-row">
+        <span class="perf-label">三角面</span>
+        <span class="perf-value">{{ formatNumber(perfSnapshot.triangles) }}</span>
+      </div>
+      <div class="perf-row">
+        <span class="perf-label">几何体</span>
+        <span class="perf-value">{{ perfSnapshot.geometries }}</span>
+      </div>
+      <div class="perf-row">
+        <span class="perf-label">纹理</span>
+        <span class="perf-value">{{ perfSnapshot.textures }}</span>
+      </div>
+      <div class="perf-row" v-if="perfSnapshot.jsHeapUsedMB !== null">
+        <span class="perf-label">内存</span>
+        <span class="perf-value">{{ perfSnapshot.jsHeapUsedMB.toFixed(1) }} MB</span>
       </div>
     </div>
     <div class="scene-overlay" v-if="hoveredDevice">
@@ -24,11 +53,17 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, watch } from 'vue'
+import { ref, onMounted, onUnmounted, watch, computed } from 'vue'
 import { RefreshRight } from '@element-plus/icons-vue'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { CSS2DRenderer, CSS2DObject } from 'three/examples/jsm/renderers/CSS2DRenderer.js'
+import {
+  PerformanceCollector,
+  formatPerformanceReport,
+  type PerformanceSnapshot,
+  type PerformanceReport,
+} from '@/utils/performance'
 
 // ── Props ──
 interface Device3D {
@@ -44,12 +79,25 @@ interface Device3D {
 const props = defineProps<{
   devices?: Device3D[]
   buildings?: { name: string; x: number; z: number; w: number; d: number; h: number; color?: string }[]
+  /** 是否默认显示性能面板，默认 false */
+  showPerformance?: boolean
+  /** FPS 低于此阈值时自动卸载不可见设备（懒卸载优化），默认 15 */
+  lowFpsThreshold?: number
+  /** 是否启用模型懒加载优化，默认 false */
+  enableLazyLoad?: boolean
+}>()
+
+const emit = defineEmits<{
+  /** 性能报告就绪事件（可由外部触发导出） */
+  'performance-report': [report: PerformanceReport]
 }>()
 
 const containerRef = ref<HTMLElement>()
 const alarmPulse = ref(true)
 const showLabels = ref(true)
+const showPerfPanel = ref(props.showPerformance ?? false)
 const hoveredDevice = ref<Device3D | null>(null)
+const perfSnapshot = ref<PerformanceSnapshot | null>(null)
 
 let scene: THREE.Scene
 let camera: THREE.PerspectiveCamera
@@ -62,6 +110,19 @@ let deviceMeshes: Map<string, { mesh: THREE.Mesh; cone: THREE.Mesh; pulse?: THRE
 let raycaster: THREE.Raycaster
 let mouse: THREE.Vector2
 let resizeObserver: ResizeObserver | null = null
+
+// ── 性能采集器 ──
+let perfCollector: PerformanceCollector | null = null
+
+// ── 懒加载/卸载优化 ──
+/** 被懒卸载的设备 ID 集合（数据保留，仅移除 3D 对象释放 GPU） */
+const lazyUnloadedIds = new Set<string>()
+/** 懒卸载前缓存的设备数据 */
+const lazyDeviceCache = new Map<string, Device3D>()
+/** 低 FPS 持续帧数计数 */
+let lowFpsFrames = 0
+/** 上次 FPS 状态（用于判断是否需要恢复） */
+let wasLowFps = false
 
 // ── 工具函数 ──
 
@@ -95,6 +156,21 @@ function statusIcon(status: string): string {
     default: return '⚫'
   }
 }
+
+/** 格式化大数字 */
+function formatNumber(n: number): string {
+  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M'
+  if (n >= 1_000) return (n / 1_000).toFixed(1) + 'K'
+  return String(n)
+}
+
+/** FPS 颜色等级 */
+const fpsClass = computed(() => {
+  const fps = perfSnapshot.value?.fps ?? 60
+  if (fps >= 50) return 'fps-good'
+  if (fps >= 30) return 'fps-warn'
+  return 'fps-bad'
+})
 
 /** 递归释放场景中所有 GPU 资源（geometry + material） */
 function disposeSceneResources(sc: THREE.Scene) {
@@ -237,9 +313,23 @@ function init() {
   const buildings = props.buildings || defaultBuildings
   buildings.forEach(b => createBuilding(b))
 
-  // ── 设备 ──
+  // ── 设备（懒加载模式下延迟创建） ──
   const devices = props.devices || defaultDevices
-  devices.forEach(d => createDevice(d))
+  if (props.enableLazyLoad && devices.length > 20) {
+    // 懒加载：先加载前 20 个设备，其余在后续帧中分批加载
+    const firstBatch = devices.slice(0, 20)
+    const remaining = devices.slice(20)
+    firstBatch.forEach(d => createDevice(d))
+    scheduleLazyLoad(remaining)
+  } else {
+    devices.forEach(d => createDevice(d))
+  }
+
+  // ── 性能采集器 ──
+  perfCollector = new PerformanceCollector(renderer, {
+    sampleInterval: 500,
+    maxSnapshots: 120,
+  })
 
   // ── 事件 ──
   renderer.domElement.addEventListener('mousemove', onMouseMove)
@@ -258,6 +348,79 @@ function init() {
     })
   })
   resizeObserver.observe(container)
+}
+
+// ── 懒加载：分批调度 ──
+let lazyLoadQueue: Device3D[] = []
+let lazyLoadScheduled = false
+
+function scheduleLazyLoad(devices: Device3D[]) {
+  lazyLoadQueue = [...devices]
+  lazyLoadScheduled = true
+}
+
+function processLazyLoadBatch() {
+  if (!lazyLoadScheduled || lazyLoadQueue.length === 0) {
+    lazyLoadScheduled = false
+    return
+  }
+  // 每帧最多加载 5 个设备
+  const batch = lazyLoadQueue.splice(0, 5)
+  batch.forEach(d => createDevice(d))
+  if (lazyLoadQueue.length === 0) {
+    lazyLoadScheduled = false
+  }
+}
+
+// ── 懒卸载优化：低 FPS 时自动卸载离线/维护设备 ──
+function checkLazyUnload() {
+  if (!props.enableLazyLoad) return
+
+  const fps = perfSnapshot.value?.fps ?? 60
+  const threshold = props.lowFpsThreshold ?? 15
+
+  if (fps < threshold) {
+    lowFpsFrames++
+    wasLowFps = true
+    // 连续 60 帧（约 1 秒）低 FPS，触发懒卸载
+    if (lowFpsFrames >= 60 && lazyUnloadedIds.size === 0) {
+      performLazyUnload()
+    }
+  } else {
+    // FPS 恢复后，重新加载被卸载的设备
+    if (wasLowFps && fps >= threshold + 10 && lazyUnloadedIds.size > 0) {
+      performLazyReload()
+    }
+    lowFpsFrames = 0
+    wasLowFps = false
+  }
+}
+
+/** 卸载离线/维护状态的设备以释放 GPU 资源 */
+function performLazyUnload() {
+  const devices = props.devices || defaultDevices
+  for (const d of devices) {
+    // 只卸载离线和维护中的设备（告警和在线设备保留）
+    if ((d.status === 'offline' || d.status === 'maintenance') && deviceMeshes.has(d.id)) {
+      const entry = deviceMeshes.get(d.id)!
+      removeDeviceEntry(entry)
+      deviceMeshes.delete(d.id)
+      lazyUnloadedIds.add(d.id)
+      lazyDeviceCache.set(d.id, d)
+    }
+  }
+}
+
+/** FPS 恢复后重新加载被卸载的设备 */
+function performLazyReload() {
+  for (const id of lazyUnloadedIds) {
+    const d = lazyDeviceCache.get(id)
+    if (d) {
+      createDevice(d)
+    }
+  }
+  lazyUnloadedIds.clear()
+  lazyDeviceCache.clear()
 }
 
 function createWall(x: number, y: number, z: number, w: number, h: number, d: number, color: number) {
@@ -415,6 +578,9 @@ function animate() {
   animationId = requestAnimationFrame(animate)
   const t = (performance.now() - startTime) / 1000
 
+  // 性能采集器 tick（精确计算 FPS）
+  perfCollector?.tick()
+
   // 告警脉冲动画
   if (alarmPulse.value) {
     deviceMeshes.forEach((entry) => {
@@ -434,6 +600,27 @@ function animate() {
   controls.update()
   renderer.render(scene, camera)
   labelRenderer.render(scene, camera)
+
+  // 更新性能面板数据（从采集器获取最新快照）
+  if (showPerfPanel.value && perfCollector) {
+    const snap = perfCollector.latestSnapshot
+    if (snap) {
+      // 补充 renderer 实时数据（采集器的快照是采样间隔的，但 renderer.info 每帧更新）
+      perfSnapshot.value = {
+        ...snap,
+        drawCalls: renderer.info.render.calls,
+        triangles: renderer.info.render.triangles,
+        geometries: renderer.info.memory.geometries,
+        textures: renderer.info.memory.textures,
+      }
+    }
+  }
+
+  // 懒加载分批调度
+  processLazyLoadBatch()
+
+  // 懒卸载检查
+  checkLazyUnload()
 }
 
 /**
@@ -469,6 +656,32 @@ function resetCamera() {
 
 function toggleAlarmPulse() { alarmPulse.value = !alarmPulse.value }
 function toggleLabels() { showLabels.value = !showLabels.value }
+function togglePerfPanel() {
+  showPerfPanel.value = !showPerfPanel.value
+  if (showPerfPanel.value) {
+    // 打开面板时启动采集
+    perfCollector?.start()
+  } else {
+    perfSnapshot.value = null
+  }
+}
+
+/**
+ * 导出性能报告（供外部调用）
+ */
+function exportPerformanceReport(): PerformanceReport | null {
+  if (!perfCollector) return null
+  const report = perfCollector.generateReport()
+  emit('performance-report', report)
+  console.log(formatPerformanceReport(report))
+  return report
+}
+
+// 暴露给父组件的方法
+defineExpose({
+  exportPerformanceReport,
+  perfCollector: () => perfCollector,
+})
 
 // ── Watch devices prop ──
 watch(() => props.devices, (newDevices) => {
@@ -478,7 +691,17 @@ watch(() => props.devices, (newDevices) => {
     removeDeviceEntry(entry)
   })
   deviceMeshes.clear()
-  newDevices.forEach(d => createDevice(d))
+  lazyUnloadedIds.clear()
+  lazyDeviceCache.clear()
+
+  if (props.enableLazyLoad && newDevices.length > 20) {
+    const firstBatch = newDevices.slice(0, 20)
+    const remaining = newDevices.slice(20)
+    firstBatch.forEach(d => createDevice(d))
+    scheduleLazyLoad(remaining)
+  } else {
+    newDevices.forEach(d => createDevice(d))
+  }
 }, { deep: true })
 
 onMounted(() => {
@@ -487,6 +710,10 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  // 停止性能采集
+  perfCollector?.dispose()
+  perfCollector = null
+
   cancelAnimationFrame(animationId)
   window.removeEventListener('resize', onResize)
   renderer?.domElement.removeEventListener('mousemove', onMouseMove)
@@ -554,6 +781,59 @@ onUnmounted(() => {
   0%, 100% { opacity: 1; transform: scale(1); }
   50% { opacity: 0.5; transform: scale(1.3); }
 }
+
+/* ── 性能监控面板 ── */
+.perf-panel {
+  position: absolute;
+  top: 50px;
+  left: 8px;
+  z-index: 10;
+  background: rgba(10, 12, 16, 0.88);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  padding: 10px 14px;
+  min-width: 180px;
+  font-family: 'SF Mono', 'Cascadia Code', 'Consolas', monospace;
+  font-size: 12px;
+  color: #E8EAED;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+  pointer-events: none;
+  user-select: none;
+}
+
+.perf-title {
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.perf-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 3px 0;
+}
+
+.perf-label {
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 11px;
+}
+
+.perf-value {
+  font-weight: 600;
+  font-size: 13px;
+  color: #E8EAED;
+  font-variant-numeric: tabular-nums;
+}
+
+.perf-value.fps-good { color: #0F9D58; }
+.perf-value.fps-warn { color: #F4B400; }
+.perf-value.fps-bad { color: #DB4437; }
 
 .scene-overlay {
   position: absolute;
