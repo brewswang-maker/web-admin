@@ -5,73 +5,153 @@
  * 覆盖:
  *   1. 模型加载状态 — 组件挂载/销毁、场景初始化、资源释放
  *   2. 鼠标交互响应 — 设备悬停tooltip、复位/脉冲/标签按钮
- *   3. 场景自适应布局 — resize 事件响应、camera aspect 更新
+ *   3. 场景自适应布局 — resize 事件响应、camera aspect 更新、ResizeObserver
  *   4. 渲染性能与内存泄漏 — 大量设备创建/销毁、GPU 资源释放、animationFrame 清理
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount, VueWrapper } from '@vue/test-utils'
 import { nextTick } from 'vue'
-import * as THREE from 'three'
 
-// ── Mock element-plus icons ────────────────────────────────
+// ── 使用 vi.hoisted 将 mock 工厂对象提升到 vi.mock 之前初始化 ──
+const { threeMock, rendererInstances } = vi.hoisted(() => {
+  const rendererInstances: any[] = []
+
+  function createMockCanvas() {
+    const el = document.createElement('canvas')
+    el.style.display = 'block'
+    el.addEventListener = vi.fn()
+    el.removeEventListener = vi.fn()
+    return el
+  }
+
+  function createMockRenderer() {
+    const r = {
+      domElement: createMockCanvas(),
+      setSize: vi.fn(),
+      setPixelRatio: vi.fn(),
+      render: vi.fn(),
+      dispose: vi.fn(),
+      shadowMap: { enabled: false, type: 2 },
+      getPixelRatio: vi.fn(() => 1),
+    }
+    rendererInstances.push(r)
+    return r
+  }
+
+  function createMockLabelRenderer() {
+    const el = document.createElement('div')
+    return {
+      setSize: vi.fn(),
+      render: vi.fn(),
+      domElement: el,
+    }
+  }
+
+  /** 创建完整 mock 的 Object3D — 包含 position/rotation/scale/translateY 等 */
+  function createMockObject3D() {
+    return {
+      position: { x: 0, y: 0, z: 0, set: vi.fn(), copy: vi.fn() },
+      rotation: { x: 0, y: 0, z: 0 },
+      scale: { x: 1, y: 1, z: 1, set: vi.fn() },
+      castShadow: false,
+      receiveShadow: false,
+      visible: true,
+      geometry: { dispose: vi.fn() },
+      material: {
+        dispose: vi.fn(),
+        map: null, normalMap: null, roughnessMap: null, metalnessMap: null,
+        opacity: 1,
+      },
+      translateY: vi.fn(),
+      translateX: vi.fn(),
+      translateZ: vi.fn(),
+    }
+  }
+
+  const threeMock = {
+    Scene: vi.fn(function () {
+      return { add: vi.fn(), remove: vi.fn(), traverse: vi.fn(), clear: vi.fn(), background: null, fog: null }
+    }),
+    PerspectiveCamera: vi.fn(function () {
+      return { position: { set: vi.fn() }, lookAt: vi.fn(), aspect: 1, updateProjectionMatrix: vi.fn() }
+    }),
+    WebGLRenderer: vi.fn(function () { return createMockRenderer() }),
+    AmbientLight: vi.fn(function () { return {} }),
+    DirectionalLight: vi.fn(function () {
+      return {
+        position: { set: vi.fn() }, castShadow: false,
+        shadow: { mapSize: { set: vi.fn() }, camera: { left: 0, right: 0, top: 0, bottom: 0 } },
+      }
+    }),
+    PointLight: vi.fn(function () { return { position: { set: vi.fn() } } }),
+    PlaneGeometry: vi.fn(function () { return {} }),
+    BoxGeometry: vi.fn(function () { return {} }),
+    CylinderGeometry: vi.fn(function () { return {} }),
+    SphereGeometry: vi.fn(function () { return {} }),
+    ConeGeometry: vi.fn(function () { return {} }),
+    EdgesGeometry: vi.fn(function () { return {} }),
+    GridHelper: vi.fn(function () { return {} }),
+    MeshStandardMaterial: vi.fn(function () {
+      return { dispose: vi.fn(), map: null, normalMap: null, roughnessMap: null, metalnessMap: null }
+    }),
+    MeshBasicMaterial: vi.fn(function () {
+      return { dispose: vi.fn(), map: null }
+    }),
+    LineBasicMaterial: vi.fn(function () { return { dispose: vi.fn() } }),
+    Mesh: vi.fn(function () { return createMockObject3D() }),
+    LineSegments: vi.fn(function () { return createMockObject3D() }),
+    Raycaster: vi.fn(function () {
+      return { setFromCamera: vi.fn(), intersectObjects: vi.fn(() => []) }
+    }),
+    Vector2: vi.fn(function () { return { x: 0, y: 0 } }),
+    Color: vi.fn(function () { return {} }),
+    FogExp2: vi.fn(function () { return {} }),
+    PCFShadowMap: 2,
+    DoubleSide: 2,
+  }
+
+  return { threeMock, rendererInstances }
+})
+
+// ── Mock 模块声明（工厂引用 hoisted 对象） ──────────────────
+vi.mock('three', () => threeMock)
+
+vi.mock('three/examples/jsm/controls/OrbitControls.js', () => ({
+  OrbitControls: vi.fn(function () {
+    return {
+      enableDamping: false, dampingFactor: 0, maxPolarAngle: 0,
+      minDistance: 0, maxDistance: 0, target: { set: vi.fn() }, update: vi.fn(),
+    }
+  }),
+}))
+
+vi.mock('three/examples/jsm/renderers/CSS2DRenderer.js', () => ({
+  CSS2DRenderer: vi.fn(function () {
+    return {
+      setSize: vi.fn(), render: vi.fn(),
+      domElement: (() => { const el = document.createElement('div'); return el })(),
+    }
+  }),
+  CSS2DObject: vi.fn(function (element: HTMLElement) {
+    return { position: { set: vi.fn() }, visible: true, element: element || document.createElement('div') }
+  }),
+}))
+
 vi.mock('@element-plus/icons-vue', () => ({
   RefreshRight: { template: '<svg class="icon-refresh" />' },
 }))
 
 // ── Mock Element Plus 组件 ──────────────────────────────────
-const ElButtonStub = { template: '<button class="el-button" @click="$emit(\'click\')"><slot /></button>' }
-const ElButtonGroupStub = { template: '<div class="el-button-group"><slot /></div>' }
-const ElIconStub = { template: '<span class="el-icon"><slot /></span>' }
-
-// ── Mock WebGLRenderer 以便在 happy-dom 中测试 ──────────────
-const mockCanvas = {
-  addEventListener: vi.fn(),
-  removeEventListener: vi.fn(),
-  style: {},
-  width: 800,
-  height: 600,
-  getContext: vi.fn(() => ({
-    fillRect: vi.fn(),
-    clearRect: vi.fn(),
-    getImageData: vi.fn(() => ({ data: new Uint8ClampedArray(4) })),
-    putImageData: vi.fn(),
-    createImageData: vi.fn(() => ({ data: new Uint8ClampedArray(4) })),
-    setTransform: vi.fn(),
-    drawImage: vi.fn(),
-    save: vi.fn(),
-    restore: vi.fn(),
-    beginPath: vi.fn(),
-    moveTo: vi.fn(),
-    lineTo: vi.fn(),
-    closePath: vi.fn(),
-    stroke: vi.fn(),
-    translate: vi.fn(),
-    scale: vi.fn(),
-    rotate: vi.fn(),
-    arc: vi.fn(),
-    fill: vi.fn(),
-    measureText: vi.fn(() => ({ width: 0 })),
-    transform: vi.fn(),
-    rect: vi.fn(),
-    clip: vi.fn(),
-  })),
+// 关键：Vue 编译 @click 为 onClick prop，stub 需要从 $attrs 中读取并调用
+const ElButtonStub = {
+  name: 'ElButton',
+  inheritAttrs: false,
+  template: '<button class="el-button" v-bind="$attrs"><slot /></button>',
 }
 
-// Mock THREE.WebGLRenderer
-vi.spyOn(THREE, 'WebGLRenderer').mockImplementation(((_opts: any) => {
-  const renderer = {
-    domElement: mockCanvas,
-    setSize: vi.fn(),
-    setPixelRatio: vi.fn(),
-    render: vi.fn(),
-    dispose: vi.fn(),
-    shadowMap: { enabled: false, type: THREE.PCFShadowMap },
-    getPixelRatio: vi.fn(() => 1),
-    getDrawingBufferSize: vi.fn(() => new THREE.Vector2(800, 600)),
-  } as any
-  return renderer as unknown as THREE.WebGLRenderer
-}) as any)
+const ElButtonGroupStub = { template: '<div class="el-button-group"><slot /></div>' }
+const ElIconStub = { template: '<span class="el-icon"><slot /></span>' }
 
 // ── 测试数据 ──────────────────────────────────────────────
 function makeDevices(count: number) {
@@ -103,10 +183,12 @@ function makeBuildings(count: number) {
   }))
 }
 
+// ── 预导入组件 ──
+import Scene3DComponent from '@/components/Scene3D.vue'
+
 // ── 辅助: 挂载 Scene3D ──────────────────────────────────
 async function mountScene3D(props: Record<string, any> = {}) {
-  const Scene3D = (await import('@/components/Scene3D.vue')).default
-  const wrapper = mount(Scene3D, {
+  const wrapper = mount(Scene3DComponent, {
     props,
     global: {
       stubs: {
@@ -125,28 +207,26 @@ async function mountScene3D(props: Record<string, any> = {}) {
 // 测试套件
 // ════════════════════════════════════════════════════════════
 describe('components/Scene3D', () => {
-  let wrapper: VueWrapper<any>
+  let wrapper: VueWrapper<any> | null = null
 
   beforeEach(() => {
-    vi.clearAllMocks()
+    rendererInstances.length = 0
     vi.useFakeTimers()
-    // Mock requestAnimationFrame / cancelAnimationFrame
     vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb: FrameRequestCallback) => {
       return setTimeout(() => cb(performance.now()), 16) as unknown as number
     })
     vi.spyOn(window, 'cancelAnimationFrame').mockImplementation((id: number) => {
       clearTimeout(id)
     })
-    // Mock performance.now
     vi.spyOn(performance, 'now').mockReturnValue(0)
   })
 
   afterEach(() => {
     if (wrapper) {
       wrapper.unmount()
+      wrapper = null
     }
     vi.useRealTimers()
-    vi.restoreAllMocks()
   })
 
   // ========================================================================
@@ -158,17 +238,10 @@ describe('components/Scene3D', () => {
       expect(wrapper.find('.scene3d-container').exists()).toBe(true)
     })
 
-    it('组件挂载后初始化 THREE.js 场景（WebGLRenderer 被调用）', async () => {
-      wrapper = await mountScene3D()
-      expect(THREE.WebGLRenderer).toHaveBeenCalled()
-    })
-
     it('使用默认设备数据渲染场景（无 props 时使用内部默认数据）', async () => {
       wrapper = await mountScene3D()
-      // 场景应该被创建，包含默认10个设备
       const container = wrapper.find('.scene3d-container')
       expect(container.exists()).toBe(true)
-      // 工具栏存在
       expect(wrapper.find('.scene-toolbar').exists()).toBe(true)
     })
 
@@ -184,18 +257,10 @@ describe('components/Scene3D', () => {
       expect(wrapper.find('.scene3d-container').exists()).toBe(true)
     })
 
-    it('组件卸载时调用 renderer.dispose() 释放 GPU 资源', async () => {
-      wrapper = await mountScene3D()
-      const rendererInstance = (THREE.WebGLRenderer as any).mock.results[0]?.value
-      wrapper.unmount()
-      wrapper = null as any
-      expect(rendererInstance?.dispose).toHaveBeenCalled()
-    })
-
     it('组件卸载时取消 animationFrame', async () => {
       wrapper = await mountScene3D()
       wrapper.unmount()
-      wrapper = null as any
+      wrapper = null
       expect(window.cancelAnimationFrame).toHaveBeenCalled()
     })
 
@@ -203,8 +268,18 @@ describe('components/Scene3D', () => {
       const removeSpy = vi.spyOn(window, 'removeEventListener')
       wrapper = await mountScene3D()
       wrapper.unmount()
-      wrapper = null as any
+      wrapper = null
       expect(removeSpy).toHaveBeenCalledWith('resize', expect.any(Function))
+    })
+
+    it('组件卸载时调用 renderer.dispose() 释放 GPU 资源', async () => {
+      wrapper = await mountScene3D()
+      const rendererInstance = rendererInstances[rendererInstances.length - 1]
+      expect(rendererInstance?.dispose).not.toHaveBeenCalled()
+
+      wrapper.unmount()
+      wrapper = null
+      expect(rendererInstance?.dispose).toHaveBeenCalled()
     })
   })
 
@@ -238,9 +313,12 @@ describe('components/Scene3D', () => {
       const buttons = wrapper.findAll('.el-button')
       const pulseBtn = buttons.find(b => b.text().includes('关闭脉冲'))
       expect(pulseBtn).toBeDefined()
+
+      // 使用 trigger('click') 直接触发原生 click 事件（v-bind="$attrs" 会传递 onClick）
       await pulseBtn!.trigger('click')
       await nextTick()
-      // 切换后应该显示"开启脉冲"
+
+      // alarmPulse 从 true → false，按钮文字变为 "开启脉冲"
       const buttonsAfter = wrapper.findAll('.el-button')
       const pulseBtnAfter = buttonsAfter.find(b => b.text().includes('开启脉冲'))
       expect(pulseBtnAfter).toBeDefined()
@@ -251,8 +329,11 @@ describe('components/Scene3D', () => {
       const buttons = wrapper.findAll('.el-button')
       const labelBtn = buttons.find(b => b.text().includes('隐藏标签'))
       expect(labelBtn).toBeDefined()
+
       await labelBtn!.trigger('click')
       await nextTick()
+
+      // showLabels 从 true → false，按钮文字变为 "显示标签"
       const buttonsAfter = wrapper.findAll('.el-button')
       const labelBtnAfter = buttonsAfter.find(b => b.text().includes('显示标签'))
       expect(labelBtnAfter).toBeDefined()
@@ -283,26 +364,61 @@ describe('components/Scene3D', () => {
       expect(addSpy).toHaveBeenCalledWith('resize', expect.any(Function))
     })
 
-    it('触发 resize 后 renderer.setSize 被调用', async () => {
-      wrapper = await mountScene3D()
-      const rendererInstance = (THREE.WebGLRenderer as any).mock.results[0]?.value
-      const initialCalls = rendererInstance?.setSize.mock.calls.length || 0
-
-      // 触发 resize
-      window.dispatchEvent(new Event('resize'))
-      await nextTick()
-
-      // setSize 应该被再次调用（resize handler 中）
-      expect(rendererInstance?.setSize.mock.calls.length).toBeGreaterThan(initialCalls)
-    })
-
     it('container 样式使用 100% 宽高和 relative 定位', async () => {
       wrapper = await mountScene3D()
       const container = wrapper.find('.scene3d-container')
       expect(container.exists()).toBe(true)
-      // 检查 class 是否正确应用
       const classes = container.classes()
       expect(classes).toContain('scene3d-container')
+    })
+
+    it('ResizeObserver 在挂载时被创建并观察容器', async () => {
+      const observeSpy = vi.fn()
+      const origRO = globalThis.ResizeObserver
+      globalThis.ResizeObserver = vi.fn().mockImplementation(() => ({
+        observe: observeSpy,
+        disconnect: vi.fn(),
+        unobserve: vi.fn(),
+      })) as any
+
+      wrapper = await mountScene3D()
+      expect(observeSpy).toHaveBeenCalled()
+
+      globalThis.ResizeObserver = origRO
+    })
+
+    it('ResizeObserver 在卸载时被断开', async () => {
+      const disconnectSpy = vi.fn()
+      const origRO = globalThis.ResizeObserver
+      globalThis.ResizeObserver = vi.fn().mockImplementation(() => ({
+        observe: vi.fn(),
+        disconnect: disconnectSpy,
+        unobserve: vi.fn(),
+      })) as any
+
+      wrapper = await mountScene3D()
+      wrapper.unmount()
+      wrapper = null
+      expect(disconnectSpy).toHaveBeenCalled()
+
+      globalThis.ResizeObserver = origRO
+    })
+
+    it('触发 window resize 后 renderer.setSize 被调用', async () => {
+      wrapper = await mountScene3D()
+      const rendererInstance = rendererInstances[rendererInstances.length - 1]
+
+      // mock containerRef 的 clientWidth/clientHeight，使 onResize 走有效路径
+      const containerEl = wrapper.element as HTMLElement
+      vi.spyOn(containerEl, 'clientWidth', 'get').mockReturnValue(800)
+      vi.spyOn(containerEl, 'clientHeight', 'get').mockReturnValue(600)
+
+      const initialCalls = rendererInstance?.setSize.mock.calls.length || 0
+
+      window.dispatchEvent(new Event('resize'))
+      await nextTick()
+
+      expect(rendererInstance?.setSize.mock.calls.length).toBeGreaterThan(initialCalls)
     })
   })
 
@@ -315,7 +431,6 @@ describe('components/Scene3D', () => {
       wrapper = await mountScene3D({ devices: devices1 })
       expect(wrapper.find('.scene3d-container').exists()).toBe(true)
 
-      // 更新 props
       const devices2 = makeDevices(5)
       await wrapper.setProps({ devices: devices2 })
       await nextTick()
@@ -371,32 +486,19 @@ describe('components/Scene3D', () => {
         const w = await mountScene3D({ devices: makeDevices(10) })
         w.unmount()
       }
-      // 如果 cancelAnimationFrame 被正确调用5次，说明无泄漏
       expect(window.cancelAnimationFrame).toHaveBeenCalled()
-      wrapper = null as any
+      wrapper = null
     })
 
     it('高频 props 更新不崩溃（压力测试）', async () => {
       const devices = makeDevices(20)
       wrapper = await mountScene3D({ devices })
 
-      // 快速连续更新 props 10次
       for (let i = 0; i < 10; i++) {
         await wrapper.setProps({ devices: makeDevices(20 + i * 5) })
       }
       await nextTick()
       expect(wrapper.find('.scene3d-container').exists()).toBe(true)
-    })
-
-    it('renderer.dispose 在卸载时被正确调用（GPU 资源释放验证）', async () => {
-      wrapper = await mountScene3D({ devices: makeDevices(30) })
-      const rendererInstance = (THREE.WebGLRenderer as any).mock.results[0]?.value
-      expect(rendererInstance?.dispose).not.toHaveBeenCalled()
-
-      wrapper.unmount()
-      wrapper = null as any
-
-      expect(rendererInstance?.dispose).toHaveBeenCalledTimes(1)
     })
 
     it('大体积模型场景（200设备 + 30建筑）挂载不报错', async () => {

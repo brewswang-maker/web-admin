@@ -367,7 +367,7 @@ onUnmounted(() => {
 .chart-box { width: 100%; height: 200px; }
 .score-gauge { width: 100%; height: 180px; }
 .map-panel { flex: 1; display: flex; flex-direction: column; min-height: 0; }
-.scene3d-wrapper { flex: 1; min-height: 320px; position: relative; }
+.scene3d-wrapper { flex: 1; min-height: 320px; position: relative; overflow: hidden; }
 
 /* 告警列表 */
 .alarm-scroll {

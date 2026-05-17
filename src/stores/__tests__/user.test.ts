@@ -186,7 +186,7 @@ describe('stores/user', () => {
       // 先登录
       const authRes = makeAuthResponse()
       vi.mocked(userApi.login).mockResolvedValueOnce(authRes as any)
-      vi.mocked(userApi.logout).mockResolvedValueOnce({})
+      vi.mocked(userApi.logout).mockResolvedValueOnce({} as any)
 
       const store = useUserStore()
       await store.login({ username: 'admin', password: 'pass' })

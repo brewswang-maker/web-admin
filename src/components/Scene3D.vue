@@ -61,6 +61,7 @@ let startTime = 0
 let deviceMeshes: Map<string, { mesh: THREE.Mesh; cone: THREE.Mesh; pulse?: THREE.Mesh; label?: CSS2DObject }> = new Map()
 let raycaster: THREE.Raycaster
 let mouse: THREE.Vector2
+let resizeObserver: ResizeObserver | null = null
 
 // ── 工具函数 ──
 
@@ -150,19 +151,23 @@ function init() {
   const w = container.clientWidth
   const h = container.clientHeight
 
+  // 防止零尺寸导致 Canvas/WebGL 异常
+  const safeW = Math.max(w, 1)
+  const safeH = Math.max(h, 1)
+
   // Scene
   scene = new THREE.Scene()
   scene.background = new THREE.Color(0x0a0c10)
   scene.fog = new THREE.FogExp2(0x0a0c10, 0.008)
 
   // Camera
-  camera = new THREE.PerspectiveCamera(50, w / h, 0.1, 500)
+  camera = new THREE.PerspectiveCamera(50, safeW / safeH, 0.1, 500)
   camera.position.set(60, 50, 70)
   camera.lookAt(0, 0, 0)
 
   // Renderer
   renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true })
-  renderer.setSize(w, h)
+  renderer.setSize(safeW, safeH)
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
   renderer.shadowMap.enabled = true
   renderer.shadowMap.type = THREE.PCFShadowMap
@@ -170,7 +175,7 @@ function init() {
 
   // CSS2D Label renderer
   labelRenderer = new CSS2DRenderer()
-  labelRenderer.setSize(w, h)
+  labelRenderer.setSize(safeW, safeH)
   labelRenderer.domElement.style.position = 'absolute'
   labelRenderer.domElement.style.top = '0'
   labelRenderer.domElement.style.left = '0'
@@ -239,6 +244,20 @@ function init() {
   // ── 事件 ──
   renderer.domElement.addEventListener('mousemove', onMouseMove)
   window.addEventListener('resize', onResize)
+
+  // ── ResizeObserver: 监听容器尺寸变化（侧边栏折叠/展开等） ──
+  resizeObserver = new ResizeObserver((entries) => {
+    // 使用 requestAnimationFrame 防止在同一帧内多次触发
+    requestAnimationFrame(() => {
+      for (const entry of entries) {
+        const { width, height } = entry.contentRect
+        if (width > 0 && height > 0) {
+          updateSize(width, height)
+        }
+      }
+    })
+  })
+  resizeObserver.observe(container)
 }
 
 function createWall(x: number, y: number, z: number, w: number, h: number, d: number, color: number) {
@@ -373,8 +392,10 @@ function removeDeviceEntry(entry: { mesh: THREE.Mesh; cone: THREE.Mesh; pulse?: 
 function onMouseMove(event: MouseEvent) {
   if (!containerRef.value) return
   const rect = containerRef.value.getBoundingClientRect()
-  mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1
-  mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1
+  const w = rect.width || 1
+  const h = rect.height || 1
+  mouse.x = ((event.clientX - rect.left) / w) * 2 - 1
+  mouse.y = -((event.clientY - rect.top) / h) * 2 + 1
 
   raycaster.setFromCamera(mouse, camera)
   const meshes = Array.from(deviceMeshes.values()).map(e => e.mesh)
@@ -415,14 +436,29 @@ function animate() {
   labelRenderer.render(scene, camera)
 }
 
+/**
+ * 统一的尺寸更新函数
+ * 确保 Canvas、Camera aspect、LabelRenderer 三者同步
+ */
+function updateSize(w: number, h: number) {
+  if (!renderer || !camera || !labelRenderer) return
+  const safeW = Math.max(Math.round(w), 1)
+  const safeH = Math.max(Math.round(h), 1)
+
+  camera.aspect = safeW / safeH
+  camera.updateProjectionMatrix()
+  renderer.setSize(safeW, safeH)
+  labelRenderer.setSize(safeW, safeH)
+}
+
+/** window resize 回调 */
 function onResize() {
   if (!containerRef.value) return
   const w = containerRef.value.clientWidth
   const h = containerRef.value.clientHeight
-  camera.aspect = w / h
-  camera.updateProjectionMatrix()
-  renderer.setSize(w, h)
-  labelRenderer.setSize(w, h)
+  if (w > 0 && h > 0) {
+    updateSize(w, h)
+  }
 }
 
 function resetCamera() {
@@ -454,6 +490,13 @@ onUnmounted(() => {
   cancelAnimationFrame(animationId)
   window.removeEventListener('resize', onResize)
   renderer?.domElement.removeEventListener('mousemove', onMouseMove)
+
+  // 断开 ResizeObserver
+  if (resizeObserver) {
+    resizeObserver.disconnect()
+    resizeObserver = null
+  }
+
   // 递归释放所有 GPU 资源后再清空场景
   if (scene) disposeSceneResources(scene)
   renderer?.dispose()
@@ -470,6 +513,8 @@ onUnmounted(() => {
   overflow: hidden;
   border-radius: 0 0 8px 8px;
   min-height: 0;
+  /* 确保 flex 子项能正确收缩 */
+  flex-shrink: 1;
 }
 
 .scene3d-container canvas {
@@ -484,6 +529,9 @@ onUnmounted(() => {
   display: flex;
   gap: 12px;
   align-items: center;
+  /* 防止工具栏超出容器 */
+  max-width: calc(100% - 16px);
+  flex-wrap: wrap;
 }
 
 .legend-bar {

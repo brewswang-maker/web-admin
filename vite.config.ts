@@ -106,7 +106,7 @@ export default defineConfig(async () => {
 
     // ─── 开发服务器 ──────────────────────────────
     server: {
-      port: 3000,
+      port: 3100,
       warmup: {
         clientFiles: [
           './src/main.ts',
