@@ -393,6 +393,11 @@ onUnmounted(() => {
   position: relative;
   overflow: hidden;
   border-radius: 0 0 8px 8px;
+  min-height: 0;
+}
+
+.scene3d-container canvas {
+  display: block;
 }
 
 .scene-toolbar {

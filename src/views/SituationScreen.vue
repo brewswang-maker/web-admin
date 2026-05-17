@@ -339,9 +339,9 @@ onUnmounted(() => {
   overflow: hidden;
 }
 
-.ss-col { display: flex; flex-direction: column; gap: 12px; }
+.ss-col { display: flex; flex-direction: column; gap: 12px; min-height: 0; }
 .left-col { width: 280px; flex-shrink: 0; }
-.center-col { flex: 1; min-width: 0; }
+.center-col { flex: 1; min-width: 0; min-height: 0; }
 .right-col { width: 280px; flex-shrink: 0; }
 
 .ss-panel {
@@ -361,8 +361,8 @@ onUnmounted(() => {
 
 .chart-box { width: 100%; height: 200px; }
 .score-gauge { width: 100%; height: 180px; }
-.map-panel { flex: 1; display: flex; flex-direction: column; }
-.scene3d-wrapper { flex: 1; min-height: 320px; }
+.map-panel { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+.scene3d-wrapper { flex: 1; min-height: 320px; position: relative; }
 
 /* 告警列表 */
 .alarm-scroll {
