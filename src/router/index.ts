@@ -331,25 +331,24 @@ router.beforeEach(async (to, _from, next) => {
     return next('/login')
   }
 
-  // 如果是超级管理员，直接放行
-  if (userStore.roles.includes('admin')) {
-    return next()
-  }
-
-  // 动态添加路由（如果还没有）
+  // 动态添加异步路由（所有角色都需要，只添加一次）
   if (permissionStore.routes.length === 0) {
     try {
       await permissionStore.generateRoutes()
-      // 添加新路由后重新导航
       for (const route of permissionStore.routes) {
         router.addRoute(route)
       }
-      // 重新触发导航
+      // 重新触发导航以匹配新添加的路由
       return next({ ...to, replace: true })
     } catch (error) {
       console.error('[Router] 生成路由失败:', error)
       return next('/login')
     }
+  }
+
+  // 如果是超级管理员，直接放行
+  if (userStore.roles.includes('admin')) {
+    return next()
   }
 
   // 检查角色权限
