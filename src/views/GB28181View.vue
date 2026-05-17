@@ -10,9 +10,17 @@
             <el-tag v-if="config.sipServerRunning" type="success" size="small" effect="dark">运行中</el-tag>
             <el-tag v-else type="danger" size="small" effect="dark">已停止</el-tag>
           </div>
-          <el-button type="primary" :loading="saving" @click="saveConfig">
-            <el-icon><Check /></el-icon>保存配置
-          </el-button>
+          <div style="display:flex;gap:8px">
+            <el-button v-if="!config.sipServerRunning" type="success" :loading="toggleLoading" @click="toggleServer(true)">
+              <el-icon><VideoPlay /></el-icon>启动服务
+            </el-button>
+            <el-button v-else type="danger" :loading="toggleLoading" @click="toggleServer(false)">
+              <el-icon><VideoPause /></el-icon>停止服务
+            </el-button>
+            <el-button type="primary" :loading="saving" @click="saveConfig">
+              <el-icon><Check /></el-icon>保存配置
+            </el-button>
+          </div>
         </div>
       </template>
 
@@ -117,6 +125,74 @@
       </el-form>
     </el-card>
 
+    <!-- 设备发现/扫描 -->
+    <el-card style="margin-top:16px">
+      <template #header>
+        <div style="display:flex;align-items:center;justify-content:space-between">
+          <div style="display:flex;align-items:center;gap:8px">
+            <el-icon :size="20" style="color:#409EFF"><Search /></el-icon>
+            <span style="font-weight:600">设备发现</span>
+            <el-tag v-if="discoveredDevices.length > 0" size="small" type="success" effect="dark">
+              发现 {{ discoveredDevices.length }} 台设备
+            </el-tag>
+          </div>
+          <div style="display:flex;gap:8px">
+            <el-button type="primary" :loading="scanning" @click="startScan('gb28181')">
+              <el-icon><Search /></el-icon>GB28181 扫描
+            </el-button>
+            <el-button :loading="scanning" @click="startScan('onvif')">
+              <el-icon><Search /></el-icon>ONVIF 扫描
+            </el-button>
+          </div>
+        </div>
+      </template>
+
+      <!-- 扫描进度 -->
+      <div v-if="scanning" style="padding:8px 0">
+        <el-progress :percentage="scanProgress" :stroke-width="6" :format="() => scanStatusText" />
+        <div style="margin-top:8px;font-size:12px;color:#8c8c8c">
+          {{ scanStatusText }}
+        </div>
+      </div>
+
+      <!-- 扫描结果 -->
+      <el-table
+        v-if="discoveredDevices.length > 0"
+        :data="discoveredDevices"
+        stripe
+        style="margin-top:12px"
+        empty-text="未发现新设备"
+      >
+        <el-table-column type="selection" width="50" />
+        <el-table-column prop="name" label="设备名称" min-width="140" show-overflow-tooltip />
+        <el-table-column prop="id" label="设备 ID" min-width="180" show-overflow-tooltip />
+        <el-table-column prop="ip" label="IP 地址" width="140" />
+        <el-table-column prop="port" label="端口" width="80" />
+        <el-table-column prop="protocol" label="协议" width="100">
+          <template #default="{ row }">
+            <el-tag :type="row.protocol === 'GB28181' ? 'primary' : 'warning'" size="small">
+              {{ row.protocol }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="vendor" label="厂商" width="100" show-overflow-tooltip />
+        <el-table-column prop="model" label="型号" width="120" show-overflow-tooltip />
+        <el-table-column prop="channels" label="通道数" width="80" />
+        <el-table-column label="操作" width="100" fixed="right">
+          <template #default="{ row }">
+            <el-button size="small" type="primary" @click="addDiscoveredDevice(row)">接入</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+
+      <!-- 空状态 -->
+      <el-empty
+        v-if="!scanning && discoveredDevices.length === 0"
+        description="点击上方按钮开始扫描局域网内的 GB28181 / ONVIF 设备"
+        :image-size="80"
+      />
+    </el-card>
+
     <!-- 已注册设备列表 -->
     <el-card style="margin-top:16px">
       <template #header>
@@ -166,10 +242,22 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { Search, VideoPlay, VideoPause, Check, Refresh } from '@element-plus/icons-vue'
 import { http } from '@/api/http'
 import type { ApiResponse } from '@/types/common'
 
 // ===== 类型定义 =====
+interface DiscoveredDevice {
+  id: string
+  name: string
+  ip: string
+  port: number
+  vendor: string
+  model: string
+  device_type: string
+  protocol: string
+  channels: number
+}
 interface GB28181ConfigForm {
   sipServerId: string
   sipServerDomain: string
@@ -204,6 +292,13 @@ interface RegisteredDevice {
 const loading = ref(false)
 const saving = ref(false)
 const devicesLoading = ref(false)
+const toggleLoading = ref(false)
+
+// 设备发现
+const scanning = ref(false)
+const scanProgress = ref(0)
+const scanStatusText = ref('准备扫描...')
+const discoveredDevices = ref<DiscoveredDevice[]>([])
 
 const config = reactive<GB28181ConfigForm>({
   sipServerId: '',
@@ -273,6 +368,84 @@ async function fetchDevices() {
     devices.value = []
   } finally {
     devicesLoading.value = false
+  }
+}
+
+// ===== 设备发现/扫描 =====
+async function startScan(method: 'gb28181' | 'onvif') {
+  scanning.value = true
+  scanProgress.value = 0
+  scanStatusText.value = method === 'gb28181' ? '正在发送 SIP SEARCH 广播...' : '正在发送 ONVIF Probe...'
+  discoveredDevices.value = []
+
+  // 模拟扫描进度
+  const progressTimer = setInterval(() => {
+    if (scanProgress.value < 90) {
+      scanProgress.value += Math.random() * 15
+      scanStatusText.value = `正在扫描子网 ${method === 'gb28181' ? 'SIP' : 'WS-Discovery'} 协议设备...`
+    }
+  }, 500)
+
+  try {
+    const res = await http.post<ApiResponse<any>>('/devices/discover', { method })
+    const data = res.data?.data
+    discoveredDevices.value = data?.devices ?? []
+    scanProgress.value = 100
+    scanStatusText.value = `扫描完成，发现 ${discoveredDevices.value.length} 台设备`
+
+    if (discoveredDevices.value.length === 0) {
+      ElMessage.info('未发现新设备，请确认设备已通电并接入同一局域网')
+    } else {
+      ElMessage.success(`发现 ${discoveredDevices.value.length} 台设备`)
+    }
+  } catch {
+    // 尝试 GET 方式的备用 API
+    try {
+      const res = await http.get<ApiResponse<any>>(`/devices/discover/${method}`)
+      const data = res.data?.data
+      discoveredDevices.value = data?.devices ?? []
+      scanProgress.value = 100
+      scanStatusText.value = `扫描完成，发现 ${discoveredDevices.value.length} 台设备`
+    } catch {
+      ElMessage.error('设备扫描失败，请检查 SIP 服务是否已启动')
+      scanStatusText.value = '扫描失败'
+    }
+  } finally {
+    clearInterval(progressTimer)
+    scanning.value = false
+  }
+}
+
+async function addDiscoveredDevice(device: DiscoveredDevice) {
+  try {
+    await http.post('/devices', {
+      name: device.name,
+      ip: device.ip,
+      port: device.port,
+      protocol: device.protocol.toLowerCase(),
+      device_id: device.id,
+      channels: device.channels,
+    })
+    ElMessage.success(`设备 "${device.name}" 已接入`)
+    // 从发现列表移除
+    discoveredDevices.value = discoveredDevices.value.filter(d => d.id !== device.id)
+    // 刷新已注册列表
+    fetchDevices()
+  } catch {
+    ElMessage.error('设备接入失败')
+  }
+}
+
+async function toggleServer(start: boolean) {
+  toggleLoading.value = true
+  try {
+    await http.post('/system/gb28181/server', { action: start ? 'start' : 'stop' })
+    config.sipServerRunning = start
+    ElMessage.success(start ? 'SIP 服务已启动' : 'SIP 服务已停止')
+  } catch {
+    ElMessage.error(start ? '启动 SIP 服务失败' : '停止 SIP 服务失败')
+  } finally {
+    toggleLoading.value = false
   }
 }
 
