@@ -378,7 +378,6 @@ async function startScan(method: 'gb28181' | 'onvif') {
   scanStatusText.value = method === 'gb28181' ? '正在发送 SIP SEARCH 广播...' : '正在发送 ONVIF Probe...'
   discoveredDevices.value = []
 
-  // 模拟扫描进度
   const progressTimer = setInterval(() => {
     if (scanProgress.value < 90) {
       scanProgress.value += Math.random() * 15
@@ -387,9 +386,10 @@ async function startScan(method: 'gb28181' | 'onvif') {
   }, 500)
 
   try {
-    const res = await http.post<ApiResponse<any>>('/devices/discover', { method })
-    const data = res.data?.data
-    discoveredDevices.value = data?.devices ?? []
+    // 直接用 GET 端点（POST /devices/discover 不按method过滤）
+    const res = await http.get(`/devices/discover/${method}`)
+    const payload = res.data?.data ?? res.data
+    discoveredDevices.value = payload?.devices ?? (Array.isArray(payload) ? payload : [])
     scanProgress.value = 100
     scanStatusText.value = `扫描完成，发现 ${discoveredDevices.value.length} 台设备`
 
@@ -399,17 +399,8 @@ async function startScan(method: 'gb28181' | 'onvif') {
       ElMessage.success(`发现 ${discoveredDevices.value.length} 台设备`)
     }
   } catch {
-    // 尝试 GET 方式的备用 API
-    try {
-      const res = await http.get<ApiResponse<any>>(`/devices/discover/${method}`)
-      const data = res.data?.data
-      discoveredDevices.value = data?.devices ?? []
-      scanProgress.value = 100
-      scanStatusText.value = `扫描完成，发现 ${discoveredDevices.value.length} 台设备`
-    } catch {
-      ElMessage.error('设备扫描失败，请检查 SIP 服务是否已启动')
-      scanStatusText.value = '扫描失败'
-    }
+    ElMessage.error('设备扫描失败，请检查 SIP 服务是否已启动')
+    scanStatusText.value = '扫描失败'
   } finally {
     clearInterval(progressTimer)
     scanning.value = false
