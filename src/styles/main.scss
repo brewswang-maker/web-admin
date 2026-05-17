@@ -85,7 +85,7 @@ a {
   transition: color 0.2s;
 
   &:hover {
-    color: lighten(#409eff, 10%);
+    color: #73b8ff; // lighten(#409eff, 10%) — precomputed to avoid Sass deprecation
   }
 }
 
