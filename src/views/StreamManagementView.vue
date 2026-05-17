@@ -86,11 +86,12 @@
     <!-- ZLMediaKit 状态面板 -->
     <el-card style="margin-top:16px">
       <template #header>
-        <div style="display:flex;align-items:center;gap:8px">
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
           <span style="font-weight:600">ZLMediaKit 状态</span>
           <el-tag :type="zlmOnline ? 'success' : 'danger'" size="small" effect="dark">
             {{ zlmOnline ? '在线' : '离线' }}
           </el-tag>
+          <span v-if="!zlmOnline && zlmMessage" style="color:#909399;font-size:12px">{{ zlmMessage }}</span>
         </div>
       </template>
       <el-row :gutter="24" v-loading="zlmLoading">
@@ -211,6 +212,7 @@ async function fetchStreams() {
 // ===== ZLM 状态 =====
 const zlmStatus = reactive<ZlmStatus>({ cpu: 0, memory: 0, threads: 0, streamCount: 0, online: false })
 const zlmLoading = ref(false)
+const zlmMessage = ref('')
 const zlmOnline = computed(() => zlmStatus.online)
 
 const cpuColor = computed(() => zlmStatus.cpu > 80 ? '#ff4d4f' : zlmStatus.cpu > 60 ? '#faad14' : '#52c41a')
@@ -227,9 +229,11 @@ async function fetchZlmStatus() {
       zlmStatus.threads = d.threads ?? 0
       zlmStatus.streamCount = d.stream_count ?? d.streamCount ?? 0
       zlmStatus.online = d.online ?? true
+      zlmMessage.value = d.message ?? ''
     }
   } catch {
     zlmStatus.online = false
+    zlmMessage.value = '请求失败'
   } finally {
     zlmLoading.value = false
   }
