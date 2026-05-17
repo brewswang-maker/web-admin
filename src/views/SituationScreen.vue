@@ -143,8 +143,9 @@ let charts: any[] = []
 function initCharts() {
   // 安全评分仪表盘
   if (scoreGaugeRef.value) {
-    const c = echarts.init(scoreGaugeRef.value, 'dark')
+    const c = echarts.init(scoreGaugeRef.value)
     c.setOption({
+      backgroundColor: 'transparent',
       series: [{
         type: 'gauge', startAngle: 200, endAngle: -20,
         pointer: { show: true, length: '60%', width: 4 },
@@ -160,7 +161,7 @@ function initCharts() {
 
   // 告警趋势
   if (alarmTrendRef.value) {
-    const c = echarts.init(alarmTrendRef.value, 'dark')
+    const c = echarts.init(alarmTrendRef.value)
     const hours = Array.from({ length: 24 }, (_, i) => `${String(i).padStart(2, '0')}:00`)
     const data = [2, 1, 0, 1, 0, 3, 5, 8, 12, 9, 7, 6, 8, 10, 11, 9, 6, 4, 7, 8, 5, 3, 2, 1]
     c.setOption({
@@ -180,7 +181,7 @@ function initCharts() {
 
   // 设备饼图
   if (devicePieRef.value) {
-    const c = echarts.init(devicePieRef.value, 'dark')
+    const c = echarts.init(devicePieRef.value)
     c.setOption({
       backgroundColor: 'transparent',
       series: [{
@@ -198,7 +199,7 @@ function initCharts() {
 
   // 告警类型分布
   if (alarmTypeRef.value) {
-    const c = echarts.init(alarmTypeRef.value, 'dark')
+    const c = echarts.init(alarmTypeRef.value)
     c.setOption({
       backgroundColor: 'transparent',
       series: [{
@@ -218,7 +219,7 @@ function initCharts() {
 
   // Agent活跃度柱状图
   if (agentBarRef.value) {
-    const c = echarts.init(agentBarRef.value, 'dark')
+    const c = echarts.init(agentBarRef.value)
     c.setOption({
       backgroundColor: 'transparent',
       grid: { left: 80, right: 12, top: 12, bottom: 24 },
