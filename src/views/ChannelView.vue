@@ -221,7 +221,7 @@ const route = useRoute()
 const router = useRouter()
 const deviceStore = useDeviceStore()
 
-const deviceId = computed(() => route.params.deviceId as string)
+const deviceId = computed(() => route.params.id as string)
 const device = computed(() => deviceStore.currentDevice)
 const deviceOnline = computed(() => device.value?.status === 'online')
 
