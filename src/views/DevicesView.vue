@@ -398,7 +398,8 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useDeviceStore } from '@/stores/device'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { discoverDevices, getGB28181Config } from '@/api/devices'
+import { discoverGB28181, getGB28181Config } from '@/api/devices'
+import { deviceApi } from '@/api/device'
 import type { DeviceItem, ProtocolType, DiscoveredDevice } from '@/types/device'
 import type { GB28181Config } from '@/api/devices'
 import { PROTOCOL_OPTIONS } from '@/types/device'
@@ -467,8 +468,11 @@ async function runDiscoverScan() {
   discoverLoading.value = true
   discoveredDevices.value = []
   try {
-    const res = await discoverDevices(discoverMethod.value) as any
-    const list: DiscoveredDevice[] = res?.data?.data ?? res?.data ?? res
+    const method = discoverMethod.value
+    const res = method === 'gb28181'
+      ? await discoverGB28181()
+      : await deviceApi.discoverOnvif()
+    const list: DiscoveredDevice[] = res?.data?.data ?? []
     discoveredDevices.value = list
     discoverFinished.value = true
     if (list.length) ElMessage.success(`发现 ${list.length} 台设备`)
@@ -556,8 +560,10 @@ async function handleDiscover(method: 'onvif' | 'gb28181') {
   discovering.value = true
   discoveredList.value = []
   try {
-    const res = await discoverDevices(method) as any
-    const list: DiscoveredDevice[] = res?.data?.data ?? res?.data ?? res
+    const res = method === 'gb28181'
+      ? await discoverGB28181()
+      : await deviceApi.discoverOnvif()
+    const list: DiscoveredDevice[] = res?.data?.data ?? []
     discoveredList.value = list
     if (list.length) ElMessage.success(`发现 ${list.length} 台设备`)
     else ElMessage.info('未发现设备')
