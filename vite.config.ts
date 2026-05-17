@@ -8,21 +8,25 @@ import { ElementPlusResolver } from 'unplugin-vue-components/resolvers'
 import viteCompression from 'vite-plugin-compression'
 
 /**
- * 华盾AI Web管理后台 — 生产级 Vite 构建配置 v7.2
+ * 华盾AI Web管理后台 — 生产级 Vite 构建配置 v7.3
+ *
+ * 🆕 v7.3 修复：
+ * - FIX: ECharts 分包策略导致循环 chunk 警告（core ↔ charts ↔ components）
+ *        原因：echarts 的 charts/components 内部 import core，core 又通过
+ *        zrender 间接依赖这些模块，三者不可分离。统一归入 vendor-echarts。
+ * - FIX: chunkSizeWarningLimit 调高到 900KB（ECharts 整包 ~870KB 不可拆分）
+ * - FIX: 压缩插件日志路径异常 — 已确认是 vite-plugin-compression@0.5.1 已知
+ *        显示 bug，不影响实际 .gz/.br 文件输出（文件路径正确）
  *
  * 🆕 v7.2 修复：
  * - FIX: lodash-es 自动分包策略导致 427 个空 chunk + 大量循环依赖警告
  * - FIX: ECharts/Three/lodash-es 整包优先匹配，防止被 L6 碎片化规则拆散
- * - FIX: 移除 getModuleInfo 动态分包逻辑（对 lodash-es/echarts 的 tree-shaking 产物有害）
- *
- * 🆕 v7.1 修复：
- * - FIX: conditionalPlugins 未合并到插件数组，导致 visualizer 分析永不被加载
+ * - FIX: 移除 getModuleInfo 动态分包逻辑
  *
  * 🆕 v7.0 升级（构建耗时 -40% / 包体积 -25%）：
  * 1️⃣ 压缩引擎升级：Terser → esbuild / lightningcss
  * 2️⃣ 代码拆分精细化：Element Plus / ECharts 按需子包隔离
  * 3️⃣ 构建管线加速：sourcemap 仅 analyze 模式、关闭 reportCompressedSize
- * 4️⃣ ECharts 按需加载：核心渲染器 ~300KB → 按需 ~80KB
  */
 
 // ─── 环境判断 ───────────────────────────────────────────
@@ -44,7 +48,7 @@ export default defineConfig(async () => {
         gzipSize: true,
         brotliSize: true,
         filename: 'dist/stats.html',
-        title: '华盾AI Web - 包体积分析 v7.2',
+        title: '华盾AI Web - 包体积分析 v7.3',
       }) as Plugin
     )
   }
@@ -143,18 +147,25 @@ export default defineConfig(async () => {
       // JS 压缩：esbuild（原生速度）
       minify: 'esbuild',
 
-      chunkSizeWarningLimit: 500,
+      // v7.3: ECharts 整包 ~870KB、Element Plus ~766KB、Three.js ~531KB
+      // 这些大型库无法进一步拆分（内部交叉引用），调高阈值消除误导性警告
+      chunkSizeWarningLimit: 900,
 
       // 关闭压缩体积报告（节省 ~2-5s）
       reportCompressedSize: false,
 
       // ============================================
-      // Rollup 精细代码分割 v7.2
+      // Rollup 精细代码分割 v7.3
       // ============================================
       rollupOptions: {
         output: {
           /**
-           * 分包策略 — 6 层递进
+           * 分包策略 — 7 层递进
+           *
+           * v7.3 关键修复：
+           * - ECharts 不再拆分为 core/charts/components 三个 chunk
+           *   因为它们之间存在循环 import，拆分导致 Rollup 循环 chunk 警告
+           * - 统一归入 vendor-echarts，按需加载仍然有效（tree-shaking 在 chunk 内完成）
            *
            * v7.2 关键修复：
            * - L1~L5 整包匹配优先，防止 lodash-es / echarts / three 被碎片化
@@ -173,35 +184,18 @@ export default defineConfig(async () => {
               return 'vendor-vue-ecosystem'
             }
 
-            // L2: Element Plus 分包 — UI 核心 / Icons 分离
+            // L2: Element Plus — UI 框架整包归入（内部交叉引用多）
             if (/\/node_modules\/element-plus/.test(id)) {
-              // 样式文件单独归入 UI chunk
-              if (/\/es\/(components|hooks|utils|directives|locale)/.test(id) || /\.css/.test(id)) {
-                return 'vendor-element-ui'
-              }
               return 'vendor-element-ui'
             }
             if (/\/node_modules\/@element-plus\/icons-vue/.test(id)) {
               return 'vendor-element-icons'
             }
 
-            // L3: ECharts 分包 — 整包优先，避免碎片化
-            if (/\/node_modules\/echarts\//.test(id)) {
-              if (/\/lib\/(core|util|model|coord|scale|data)/.test(id)) {
-                return 'vendor-echarts-core'
-              }
-              if (/\/lib\/component/.test(id)) {
-                return 'vendor-echarts-components'
-              }
-              if (/\/lib\/chart/.test(id)) {
-                return 'vendor-echarts-charts'
-              }
-              // echarts 其他（含 lib 根文件、renderers 等）
-              return 'vendor-echarts-core'
-            }
-            // zrender（ECharts 底层渲染器）统一归入 echarts-core
-            if (/\/node_modules\/zrender\//.test(id)) {
-              return 'vendor-echarts-core'
+            // L3: ECharts + zrender — 整包归入（core/charts/components 之间存在循环 import）
+            // v7.3: 不再拆分 sub-chunks，避免 Rollup 循环依赖警告
+            if (/\/node_modules\/(echarts|zrender)\//.test(id)) {
+              return 'vendor-echarts'
             }
 
             // L4: Three.js — 整包归入一个 chunk（3D 库内部交叉引用多，不可拆碎）
@@ -223,7 +217,6 @@ export default defineConfig(async () => {
             }
 
             // L7: 未匹配的 node_modules 统一归入 vendor-misc
-            // (不再使用 getModuleInfo 动态分包，避免 lodash-es 碎片化)
             return 'vendor-misc'
           },
 
