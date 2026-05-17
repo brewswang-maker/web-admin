@@ -93,17 +93,16 @@ const CHART_TYPE_MAP: Record<string, string> = {
 /**
  * 初始化 ECharts 单例（全局仅执行一次）
  */
-async function initEChartsSingleton(neededTypes: string[]): Promise<void> {
+async function initEChartsSingleton(_neededTypes?: string[]): Promise<void> {
   // 已初始化 → 仅补充加载新图表类型
   if (echartsReady) {
-    await loadMissingChartTypes(neededTypes)
     return
   }
 
   // 正在初始化 → 等待完成后补充
   if (echartsInitPromise) {
     await echartsInitPromise
-    await loadMissingChartTypes(neededTypes)
+    await loadMissingChartTypes(_neededTypes || [])
     return
   }
 
@@ -116,23 +115,24 @@ async function initEChartsSingleton(neededTypes: string[]): Promise<void> {
     const { use } = echartsMod
     const { CanvasRenderer } = await import('echarts/renderers')
 
-    // 基础组件（几乎所有图表都需要）
-    const { GridComponent, TooltipComponent, LegendComponent, TitleComponent, ToolboxComponent } =
+    // 基础组件
+    const { GridComponent, TooltipComponent, LegendComponent, TitleComponent, ToolboxComponent, DataZoomComponent } =
       await import('echarts/components')
 
-    const chartsToRegister: any[] = [CanvasRenderer]
-    const componentsToRegister: any[] = [
-      GridComponent, TooltipComponent, LegendComponent, TitleComponent, ToolboxComponent,
-    ]
+    // 一次性注册所有常用图表类型，避免按需加载的竞态问题
+    const chartsMod = await import('echarts/charts')
+    const { LineChart, BarChart, PieChart, ScatterChart, RadarChart, GaugeChart,
+            FunnelChart, HeatmapChart, CandlestickChart, CustomChart } = chartsMod
 
-    // 加载检测到的图表类型
-    const chartModules = await loadChartModules(neededTypes)
-    chartsToRegister.push(...chartModules)
-
-    use([...chartsToRegister, ...componentsToRegister])
+    use([
+      CanvasRenderer,
+      GridComponent, TooltipComponent, LegendComponent, TitleComponent, ToolboxComponent, DataZoomComponent,
+      LineChart, BarChart, PieChart, ScatterChart, RadarChart, GaugeChart,
+      FunnelChart, HeatmapChart, CandlestickChart, CustomChart,
+    ])
 
     // 记录已注册
-    for (const t of neededTypes) registeredCharts.add(t)
+    for (const t of Object.keys(CHART_TYPE_MAP)) registeredCharts.add(t)
     registeredComponents.add('grid')
     registeredComponents.add('tooltip')
     registeredComponents.add('legend')
