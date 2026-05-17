@@ -83,6 +83,13 @@ export const asyncRoutes: RouteRecordRaw[] = [
         props: true
       },
       {
+        path: 'devices/:id/channels',
+        name: 'DeviceChannels',
+        component: ChannelView,
+        meta: { title: '设备通道', icon: 'Grid', hidden: true, roles: ['admin', 'user'] },
+        props: true
+      },
+      {
         path: 'live',
         name: 'Live',
         component: LiveView,
