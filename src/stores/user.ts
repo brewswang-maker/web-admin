@@ -34,14 +34,23 @@ export const useUserStore = defineStore('user', () => {
       const response = await userApi.login(loginForm)
       const resData = response.data as any
       const authData: AuthResponse = resData.data ?? resData
-      const { token: newToken, user } = authData
+      let { token: newToken, user } = authData
+
+      // 后端返回 roleIds 而非 roles，做字段映射
+      if (!user.roles && (user as any).roleIds) {
+        (user as any).roles = (user as any).roleIds
+      }
+      if (!user.name && (user as any).displayName) {
+        (user as any).name = (user as any).displayName
+      }
 
       token.value = newToken
       setAuthToken(newToken)
       Cookies.set(TOKEN_KEY, newToken, { expires: 7 })
 
       userInfo.value = user
-      roles.value = user.roles || []
+      // 后端返回 roleIds，前端统一为 roles
+      roles.value = user.roles || (user as any).roleIds || []
       permissions.value = user.permissions || []
       localStorage.setItem(USER_KEY, JSON.stringify(user))
 
@@ -78,7 +87,7 @@ export const useUserStore = defineStore('user', () => {
       const resData = response.data as any
       const info: UserInfo = resData.data ?? resData
       userInfo.value = info
-      roles.value = info.roles || []
+      roles.value = info.roles || (info as any).roleIds || []
       permissions.value = info.permissions || []
       return userInfo.value
     } catch (error) {
