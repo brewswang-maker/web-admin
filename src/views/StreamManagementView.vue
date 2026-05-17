@@ -158,7 +158,7 @@
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
-import { http } from '@/api/http'
+import { http, streamHttp } from '@/api/http'
 import type { ApiResponse } from '@/types/common'
 
 // ===== 类型 =====
@@ -221,14 +221,21 @@ const memColor = computed(() => zlmStatus.memory > 80 ? '#ff4d4f' : zlmStatus.me
 async function fetchZlmStatus() {
   zlmLoading.value = true
   try {
-    const res = await http.get<ApiResponse<any>>('/zlm/status')
-    const d = res.data?.data
+    // 优先用 /streams/zlm-status (api/stream.ts)，fallback 到 /zlm/status
+    let d: any = null
+    try {
+      const res = await streamHttp.get<ApiResponse<any>>('/zlm-status')
+      d = res.data?.data
+    } catch {
+      const res = await http.get<ApiResponse<any>>('/zlm/status')
+      d = res.data?.data
+    }
     if (d) {
       zlmStatus.cpu = d.cpu ?? d.cpu_usage ?? 0
       zlmStatus.memory = d.memory ?? d.mem_usage ?? 0
       zlmStatus.threads = d.threads ?? 0
-      zlmStatus.streamCount = d.stream_count ?? d.streamCount ?? 0
-      zlmStatus.online = d.online ?? true
+      zlmStatus.streamCount = d.streams ?? d.stream_count ?? d.streamCount ?? d.active_streams ?? 0
+      zlmStatus.online = d.online ?? false
       zlmMessage.value = d.message ?? ''
     }
   } catch {
