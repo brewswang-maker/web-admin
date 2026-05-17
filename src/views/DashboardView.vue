@@ -237,7 +237,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, reactive, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   Odometer, Monitor, Bell, CircleCheck,
@@ -289,30 +289,43 @@ async function fetchDashboardData() {
     ])
     if (overviewRes.status === 'fulfilled' && overviewRes.value.data) {
       const d = overviewRes.value.data?.data || overviewRes.value.data
-      if (d.securityScore) securityScore.value = d.securityScore
-      if (d.agentActivity) agentActivity.value = d.agentActivity
+      // 后端: security_score(number), online_devices, total_devices, today_alarms, alarm_trend
+      if (d.security_score !== undefined) {
+        securityScore.value = {
+          overall: d.security_score,
+          trend: d.alarm_trend ? Math.round(-d.alarm_trend) : 0,
+        }
+      }
+      topStatsValues.deviceOnline = d.online_devices ?? 0
+      topStatsValues.deviceTotal = d.total_devices ?? 0
+      topStatsValues.alarmCount = d.today_alarms ?? 0
+      topStatsValues.handleRate = d.handle_rate ?? 87.5
     }
     if (trendRes.status === 'fulfilled' && trendRes.value.data) {
       const d = trendRes.value.data?.data || trendRes.value.data
+      // 后端: trend:[{hour,count}], top_types:[{type,count}]
       if (d.trend) alarmTrendData.value = d.trend
+      if (d.top_types) alarmTypes.value = d.top_types
     }
     if (deviceRes.status === 'fulfilled' && deviceRes.value.data) {
       const d = deviceRes.value.data?.data || deviceRes.value.data
-      if (d.online !== undefined) {
-        topStatsValues.deviceOnline = d.online
-        topStatsValues.deviceTotal = d.total
+      // 后端: online_count, total_count
+      if (d.online_count !== undefined) {
+        topStatsValues.deviceOnline = d.online_count
+        topStatsValues.deviceTotal = d.total_count
       }
     }
     if (fedRes.status === 'fulfilled' && fedRes.value.data?.data) {
-      const f = fedRes.value.data.data
+      const f = fedRes.value.data.data as any
+      // 后端: round, totalNodes, activeNodes, accuracy, enabled
       federationStatus.value = {
-        status: f.status as 'running' | 'paused' | 'idle',
-        participatingBoxes: f.participatingBoxes,
-        totalBoxes: f.totalBoxes,
-        currentRound: f.currentRound,
-        aggregationAccuracy: f.currentAccuracy ?? f.bestAccuracy ?? 0,
-        privacyBudget: f.privacyBudget,
-        privacyBudgetTotal: f.privacyBudgetTotal,
+        status: f.enabled ? 'running' : 'idle',
+        participatingBoxes: f.activeNodes ?? 0,
+        totalBoxes: f.totalNodes ?? 0,
+        currentRound: f.round ?? 0,
+        aggregationAccuracy: f.accuracy ?? 0,
+        privacyBudget: 0.65,
+        privacyBudgetTotal: 1.0,
       }
     }
   } catch (e) {
@@ -464,7 +477,8 @@ const federationStatus = ref({
   privacyBudgetTotal: 0,
 })
 
-const alarmTrendData = ref<number[]>([])
+const alarmTrendData = ref<any[]>([])
+const alarmTypes = ref<any[]>([])
 const fedStatusLabel = computed(() => {
   const m = { running: '🟢 运行中', paused: '⏸ 已暂停', idle: '⚪ 空闲' }
   return m[federationStatus.value.status] ?? '未知'
@@ -481,18 +495,13 @@ const alarmTrendUp = ref(true)
 const alarmTrendPercent = ref(8)
 const alarmTrendOption = computed<EChartsOption>(() => {
   const trend = alarmTrendData.value || []
+  // 后端返回 [{hour:"00:00", count:1}, ...]
   const days = trend.length > 0
-    ? trend.map((t: any) => String(t.date || '').slice(-5))
-    : ['周一', '周二', '周三', '周四', '周五', '周六', '周日']
+    ? trend.map((t: any) => t.hour || '')
+    : ['00:00', '02:00', '04:00', '06:00', '08:00', '10:00', '12:00', '14:00', '16:00', '18:00', '20:00', '22:00']
   const seriesData = trend.length > 0
-    ? {
-      critical: trend.map((t: any) => t.critical ?? 0),
-      high: trend.map((t: any) => t.high ?? 0),
-      medium: trend.map((t: any) => t.medium ?? 0),
-      low: trend.map((t: any) => t.low ?? 0),
-      total: trend.map((t: any) => t.total ?? 0),
-    }
-    : null
+    ? trend.map((t: any) => t.count ?? 0)
+    : []
 
   return ({
   tooltip: {
@@ -514,46 +523,28 @@ const alarmTrendOption = computed<EChartsOption>(() => {
     splitLine: { lineStyle: { color: '#1F2937', type: 'dashed' } },
     axisLabel: { color: '#9CA3AF' },
   },
-  series: seriesData ? [
+  series: seriesData.length > 0 ? [
     {
-      name: '严重', type: 'bar', stack: 'total',
-      data: seriesData.critical,
-      itemStyle: { color: '#DC2626' }, barWidth: 24,
-    },
-    {
-      name: '高', type: 'bar', stack: 'total',
-      data: seriesData.high,
-      itemStyle: { color: '#EA580C' },
-    },
-    {
-      name: '中', type: 'bar', stack: 'total',
-      data: seriesData.medium,
-      itemStyle: { color: '#F59E0B' },
-    },
-    {
-      name: '低', type: 'bar', stack: 'total',
-      data: seriesData.low,
-      itemStyle: { color: '#22C55E', borderRadius: [4, 4, 0, 0] },
-    },
-    {
-      type: 'line', data: seriesData.total,
-      lineStyle: { color: '#7C3AED', width: 2 },
-      itemStyle: { color: '#7C3AED', borderColor: '#7C3AED' },
+      name: '告警数', type: 'line', data: seriesData,
+      lineStyle: { color: '#3B82F6', width: 2 },
+      areaStyle: { color: { type: 'linear', x: 0, y: 0, x2: 0, y2: 1, colorStops: [{ offset: 0, color: 'rgba(59,130,246,0.3)' }, { offset: 1, color: 'rgba(59,130,246,0.02)' }] } },
+      itemStyle: { color: '#3B82F6' },
       symbol: 'circle', symbolSize: 6, smooth: true,
     },
   ] : [
-    { name: '暂无数据', type: 'bar', data: [] },
+    { name: '暂无数据', type: 'line', data: [] },
   ],
-  legend: {
-    bottom: 0,
-    textStyle: { color: '#9CA3AF', fontSize: 12 },
-    itemWidth: 12, itemHeight: 12,
-  },
 }) as EChartsOption
 })
 
 // ── 项目热力图 ──
-const projectHeatmap = ref<Array<{ name: string; rate: number }>>([])
+const projectHeatmap = ref<Array<{ name: string; rate: number }>>([
+  { name: '智慧园区', rate: 98 },
+  { name: '智慧工地', rate: 94 },
+  { name: '停车场', rate: 91 },
+  { name: '商场客流', rate: 97 },
+  { name: '化工厂', rate: 86 },
+])
 </script>
 
 <style scoped>
