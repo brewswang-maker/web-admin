@@ -23,6 +23,12 @@
           <el-form-item label="NTP时间服务器">
             <el-input v-model="basic.ntpServer" style="width: 300px" placeholder="ntp.aliyun.com" />
           </el-form-item>
+          <el-form-item label="数据保留天数">
+            <el-input-number v-model="basic.dataRetentionDays" :min="1" :max="365" />
+          </el-form-item>
+          <el-form-item label="异常自动重启">
+            <el-switch v-model="basic.autoRestart" />
+          </el-form-item>
           <el-form-item>
             <el-button type="primary" @click="saveBasic" :loading="basicSaving">保存</el-button>
             <el-button @click="resetBasic">重置</el-button>
@@ -31,6 +37,42 @@
       </el-tab-pane>
 
       <el-tab-pane label="网络 & 云端">
+        <!-- 网络配置 -->
+        <h4 style="margin-bottom:16px;color:#303133">网络配置</h4>
+        <el-form :model="network" label-width="130px" style="max-width:680px;margin-bottom:24px">
+          <el-form-item label="主机名">
+            <el-input v-model="network.hostname" style="width:300px" />
+          </el-form-item>
+          <el-form-item label="IP 模式">
+            <el-radio-group v-model="network.ipMode">
+              <el-radio value="dhcp">DHCP</el-radio>
+              <el-radio value="static">静态 IP</el-radio>
+            </el-radio-group>
+          </el-form-item>
+          <template v-if="network.ipMode === 'static'">
+            <el-form-item label="IP 地址">
+              <el-input v-model="network.ipAddress" style="width:300px" />
+            </el-form-item>
+            <el-form-item label="子网掩码">
+              <el-input v-model="network.subnetMask" style="width:300px" />
+            </el-form-item>
+            <el-form-item label="网关">
+              <el-input v-model="network.gateway" style="width:300px" />
+            </el-form-item>
+          </template>
+          <el-form-item label="DNS 服务器">
+            <div v-for="(dns, idx) in network.dns" :key="idx" style="display:flex;gap:8px;margin-bottom:8px;width:100%">
+              <el-input :model-value="dns" @update:model-value="(v: string) => network.dns[idx] = v" style="flex:1" />
+              <el-button type="danger" circle size="small" @click="network.dns.splice(idx, 1)">-</el-button>
+            </div>
+            <el-button size="small" @click="network.dns.push('')">添加 DNS</el-button>
+          </el-form-item>
+        </el-form>
+
+        <el-divider />
+
+        <!-- MQTT & 云端 -->
+        <h4 style="margin-bottom:16px;color:#303133">云端连接</h4>
         <el-form :model="cloud" label-width="130px">
           <el-form-item label="MQTT Broker">
             <el-input v-model="cloud.mqttBroker" style="width: 400px" />
@@ -63,6 +105,7 @@
 
       <el-tab-pane label="告警策略">
         <el-form :model="alarm" label-width="150px">
+          <el-divider content-position="left">告警规则</el-divider>
           <el-form-item label="告警去重窗口(秒)">
             <el-input-number v-model="alarm.dedupWindow" :min="1" :max="60" />
           </el-form-item>
@@ -86,9 +129,64 @@
             <el-button type="primary" @click="saveAlarm" :loading="alarmSaving">保存</el-button>
           </el-form-item>
         </el-form>
+
+        <el-divider />
+
+        <!-- 邮件/Webhook 告警通知（来自 web-console） -->
+        <h4 style="margin-bottom:16px;color:#303133">告警通知</h4>
+        <el-form :model="alertNotify" label-width="150px" style="max-width:680px">
+          <el-form-item label="邮件告警">
+            <el-switch v-model="alertNotify.emailEnabled" />
+          </el-form-item>
+          <el-form-item v-if="alertNotify.emailEnabled" label="收件人">
+            <div v-for="(email, idx) in alertNotify.emailRecipients" :key="idx" style="display:flex;gap:8px;margin-bottom:8px;width:100%">
+              <el-input :model-value="email" @update:model-value="(v: string) => alertNotify.emailRecipients[idx] = v" style="flex:1" />
+              <el-button type="danger" circle size="small" @click="alertNotify.emailRecipients.splice(idx, 1)">-</el-button>
+            </div>
+            <el-button size="small" @click="alertNotify.emailRecipients.push('')">添加收件人</el-button>
+          </el-form-item>
+          <el-form-item label="Webhook 告警">
+            <el-switch v-model="alertNotify.webhookEnabled" />
+          </el-form-item>
+          <el-form-item v-if="alertNotify.webhookEnabled" label="Webhook URL">
+            <el-input v-model="alertNotify.webhookUrl" style="width:400px" placeholder="https://..." />
+          </el-form-item>
+          <el-divider content-position="left">资源阈值</el-divider>
+          <el-form-item label="CPU 告警阈值 (%)">
+            <el-slider v-model="alertNotify.cpuThreshold" :min="50" :max="100" show-input />
+          </el-form-item>
+          <el-form-item label="内存告警阈值 (%)">
+            <el-slider v-model="alertNotify.memThreshold" :min="50" :max="100" show-input />
+          </el-form-item>
+          <el-form-item label="磁盘告警阈值 (%)">
+            <el-slider v-model="alertNotify.diskThreshold" :min="50" :max="100" show-input />
+          </el-form-item>
+        </el-form>
       </el-tab-pane>
 
       <el-tab-pane label="AI模型管理">
+        <!-- AI Agent 开关与置信度（来自 web-console AgentPanel） -->
+        <h4 style="margin-bottom:16px;color:#303133">AI Agent 配置</h4>
+        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:16px;margin-bottom:24px">
+          <el-card v-for="agent in aiAgents" :key="agent.id" :class="{ 'opacity-60': !agent.enabled }" shadow="hover">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+              <span style="font-size:15px;font-weight:600">{{ agent.name }}</span>
+              <el-switch :model-value="agent.enabled" @change="(v: string | number | boolean) => agent.enabled = !!v" active-text="启用" inactive-text="停用" />
+            </div>
+            <el-form label-width="80px" size="small">
+              <el-form-item label="模型"><el-tag>{{ agent.model }}</el-tag></el-form-item>
+              <el-form-item label="置信度">
+                <el-slider :model-value="agent.confidence" :min="0" :max="1" :step="0.05" :format-tooltip="(v: number | number[]) => `${Math.round((Array.isArray(v) ? v[0] : v) * 100)}%`" @change="(v: number | number[]) => agent.confidence = Array.isArray(v) ? v[0] : v" :disabled="!agent.enabled" />
+              </el-form-item>
+              <el-form-item label="帧率"><el-tag type="info">{{ agent.fps }} FPS</el-tag></el-form-item>
+            </el-form>
+          </el-card>
+        </div>
+
+        <el-divider />
+
+        <!-- 模型列表（原有） -->
+        <h4 style="margin-bottom:16px;color:#303133">已部署模型</h4>
         <el-table :data="aiModels" stripe v-loading="modelsLoading">
           <el-table-column prop="name" label="模型名称" width="180" />
           <el-table-column prop="version" label="版本" width="80" />
@@ -141,7 +239,8 @@ import { getModels, activateModel, deactivateModel, type ModelInfo } from '@/api
 const loading = ref(true)
 const basicSaving = ref(false)
 const basicDefaults: BasicSettings = {
-  deviceName: '', logLevel: 'info', maxChannels: 16, recordRetentionDays: 30, ntpServer: 'ntp.aliyun.com'
+  deviceName: '', logLevel: 'info', maxChannels: 16, recordRetentionDays: 30, ntpServer: 'ntp.aliyun.com',
+  dataRetentionDays: 30, autoRestart: true
 }
 const basic = reactive<BasicSettings>({ ...basicDefaults })
 
@@ -164,6 +263,16 @@ function resetBasic() {
       ElMessage.success('已重置')
     })
 }
+
+// ---- 网络配置（来自 web-console ConfigPanel） ----
+const network = reactive({
+  hostname: 'SmartGateway-01',
+  ipMode: 'static' as 'dhcp' | 'static',
+  ipAddress: '192.168.1.1',
+  subnetMask: '255.255.255.0',
+  gateway: '192.168.1.254',
+  dns: ['8.8.8.8', '114.114.114.114'],
+})
 
 // ---- 云端连接 ----
 const cloudSaving = ref(false)
@@ -222,6 +331,24 @@ async function saveAlarm() {
     alarmSaving.value = false
   }
 }
+
+// ---- 告警通知（来自 web-console ConfigPanel） ----
+const alertNotify = reactive({
+  emailEnabled: true,
+  emailRecipients: ['admin@shieldbox.com'],
+  webhookEnabled: false,
+  webhookUrl: '',
+  cpuThreshold: 90,
+  memThreshold: 85,
+  diskThreshold: 80,
+})
+
+// ---- AI Agent 配置（来自 web-console AgentPanel） ----
+const aiAgents = reactive([
+  { id: 'agent-detect', name: '目标检测', model: 'YOLOv8n', enabled: true, confidence: 0.75, fps: 15 },
+  { id: 'agent-face', name: '人脸识别', model: 'ArcFace-R50', enabled: false, confidence: 0.85, fps: 10 },
+  { id: 'agent-anomaly', name: '异常行为检测', model: 'ST-GCN', enabled: true, confidence: 0.70, fps: 12 },
+])
 
 // ---- AI模型 ----
 const modelsLoading = ref(false)
@@ -288,4 +415,5 @@ onMounted(async () => {
 
 <style scoped>
 .settings-page { max-width: 900px; }
+.opacity-60 { opacity: 0.6; }
 </style>

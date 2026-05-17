@@ -198,6 +198,24 @@ export const asyncRoutes: RouteRecordRaw[] = [
         meta: { title: '模型管理', icon: 'Cpu', roles: ['admin'] }
       },
       {
+        path: 'algorithm-store',
+        name: 'AlgorithmStore',
+        component: () => import('@/views/AlgorithmStoreView.vue'),
+        meta: { title: '算法商城', icon: 'ShoppingCart', roles: ['admin'] }
+      },
+      {
+        path: 'billing',
+        name: 'Billing',
+        component: () => import('@/views/BillingView.vue'),
+        meta: { title: '账单查看', icon: 'Wallet', roles: ['admin'] }
+      },
+      {
+        path: 'topology',
+        name: 'Topology',
+        component: () => import('@/views/TopologyView.vue'),
+        meta: { title: '设备拓扑', icon: 'Connection', roles: ['admin', 'viewer'] }
+      },
+      {
         path: 'recordings',
         name: 'Recording',
         component: RecordingView,

@@ -13,6 +13,8 @@ export interface BasicSettings {
   maxChannels: number
   recordRetentionDays: number
   ntpServer: string
+  dataRetentionDays?: number
+  autoRestart?: boolean
 }
 
 /** 云端连接设置 */
