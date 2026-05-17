@@ -300,7 +300,11 @@ onUnmounted(() => {
 
 <style scoped>
 .situation-screen {
-  height: 100vh;
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
   background: #0D0F12;
   color: #E8EAED;
   display: flex;

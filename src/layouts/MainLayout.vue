@@ -705,6 +705,10 @@ function handleUserCommand(command: string) {
   overflow-x: hidden;
   padding: 0;
   background: var(--app-bg);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  position: relative;
 }
 
 /* ── 页面过渡动画 ── */
