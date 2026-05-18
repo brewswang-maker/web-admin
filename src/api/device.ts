@@ -63,6 +63,11 @@ export const deviceApi = {
     return deviceHttp.post<ApiResponse<{ message: string; deviceId: string }>>(`/${id}/sync-time`)
   },
 
+  /** 获取设备通道列表 */
+  getChannels(id: string) {
+    return http.get<ApiResponse<any>>(`/devices/${id}/channels`)
+  },
+
   /** 获取设备配置 */
   getConfig(id: string) {
     return deviceHttp.get<ApiResponse<DeviceConfig>>(`/${id}/config`)

@@ -63,7 +63,57 @@
 
     <!-- 设备表格 -->
     <el-card style="margin-top:12px">
-      <el-table :data="deviceStore.devices" stripe @selection-change="(rows: DeviceItem[]) => selected = rows" v-loading="deviceStore.loading">
+      <el-table :data="deviceStore.devices" stripe row-key="id" v-loading="deviceStore.loading"
+                @selection-change="(rows: DeviceItem[]) => selected = rows"
+                @expand-change="handleExpandChange">
+        <el-table-column type="expand">
+          <template #default="{ row }">
+            <div class="channel-expand">
+              <div v-if="channelLoading === row.id" style="padding:12px;text-align:center">
+                <el-icon class="is-loading"><Loading /></el-icon> 加载中...
+              </div>
+              <div v-else-if="!channelMap[row.id] || channelMap[row.id].length === 0" style="padding:12px;color:#8c8c8c">
+                暂无通道数据
+              </div>
+              <el-table v-else :data="channelMap[row.id]" size="small" style="margin:8px 0">
+                <el-table-column prop="name" label="通道名称" min-width="140" show-overflow-tooltip>
+                  <template #default="{ row: ch }">
+                    <span style="color:var(--el-color-primary)">{{ ch.name }}</span>
+                  </template>
+                </el-table-column>
+                <el-table-column prop="id" label="通道ID" min-width="180" show-overflow-tooltip />
+                <el-table-column prop="deviceType" label="类型" width="100">
+                  <template #default="{ row: ch }">
+                    <el-tag size="small" type="info">{{ ch.deviceType || 'IPCamera' }}</el-tag>
+                  </template>
+                </el-table-column>
+                <el-table-column prop="vendor" label="厂商" width="90" show-overflow-tooltip />
+                <el-table-column prop="model" label="型号" width="90" show-overflow-tooltip />
+                <el-table-column prop="status" label="状态" width="80">
+                  <template #default="{ row: ch }">
+                    <el-tag :type="ch.status === 'streaming' ? 'success' : 'info'" size="small">
+                      {{ ch.status === 'streaming' ? '在线' : '离线' }}
+                    </el-tag>
+                  </template>
+                </el-table-column>
+                <el-table-column label="位置" width="140">
+                  <template #default="{ row: ch }">
+                    <span v-if="ch.longitude && ch.latitude" style="font-size:12px;color:#8c8c8c">
+                      {{ ch.longitude.toFixed(4) }}, {{ ch.latitude.toFixed(4) }}
+                    </span>
+                    <span v-else style="color:#ccc">-</span>
+                  </template>
+                </el-table-column>
+                <el-table-column label="操作" width="120" fixed="right">
+                  <template #default="{ row: ch }">
+                    <el-button size="small" link type="success" @click="handleChannelLive(row, ch)">预览</el-button>
+                    <el-button size="small" link type="primary" @click="handleChannelDetail(ch)">详情</el-button>
+                  </template>
+                </el-table-column>
+              </el-table>
+            </div>
+          </template>
+        </el-table-column>
         <el-table-column type="selection" width="45" />
         <el-table-column prop="name" label="设备名称" min-width="150" show-overflow-tooltip />
         <el-table-column prop="deviceType" label="类型" width="100">
@@ -77,11 +127,13 @@
             <el-tag :type="statusTagType(row.status) as any" size="small">{{ statusLabel(row.status) }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="channelCount" label="通道数" width="85">
+        <el-table-column prop="channelCount" label="通道" width="100">
           <template #default="{ row }">
-            <el-button size="small" link type="primary" @click="$router.push(`/devices/${row.id}/channels`)">
-              {{ row.channelCount }}
-            </el-button>
+            <span v-if="row.channelCount > 0" class="channel-badge">
+              <span class="channel-total">{{ row.channelCount }}</span>
+              <span v-if="row.onlineChannels" class="channel-online"> ({{ row.onlineChannels }}在线)</span>
+            </span>
+            <span v-else style="color:#8c8c8c">0</span>
           </template>
         </el-table-column>
         <el-table-column prop="algoPlugin" label="算法插件" width="110">
@@ -99,7 +151,6 @@
         <el-table-column label="操作" width="270" fixed="right">
           <template #default="{ row }">
             <el-button size="small" link type="primary" @click="$router.push(`/devices/${row.id}`)">详情</el-button>
-            <el-button size="small" link type="success" @click="$router.push(`/devices/${row.id}/channels`)">通道</el-button>
             <el-button size="small" link type="success" @click="handleLive(row)">预览</el-button>
             <el-button size="small" link @click="handleSync(row)">同步</el-button>
             <el-button size="small" link type="warning" @click="handleSyncTime(row)">校时</el-button>
@@ -417,6 +468,31 @@ const page = ref(1)
 const pageSize = ref(10)
 const selected = ref<DeviceItem[]>([])
 
+// ---- 通道展开 ----
+const channelMap = ref<Record<string, any[]>>({})
+const channelLoading = ref('')
+
+async function handleExpandChange(row: DeviceItem, expandedRows: DeviceItem[]) {
+  if (expandedRows.find((r: DeviceItem) => r.id === row.id)) {
+    // 展开：加载通道
+    channelLoading.value = row.id
+    try {
+      const res = await deviceApi.getChannels(row.id) as any
+      const data = res?.data?.data ?? res?.data ?? []
+      channelMap.value[row.id] = Array.isArray(data) ? data : (data.channels || [])
+    } catch { channelMap.value[row.id] = [] }
+    finally { channelLoading.value = '' }
+  }
+}
+
+function handleChannelLive(device: DeviceItem, channel: any) {
+  router.push(`/live?deviceId=${channel.id || channel.device_id}`)
+}
+
+function handleChannelDetail(channel: any) {
+  router.push(`/devices/${channel.deviceId || channel.device_id}?channelId=${channel.id || channel.device_id}`)
+}
+
 // ---- 添加对话框 ----
 const showAddDialog = ref(false)
 const addLoading = ref(false)
@@ -718,4 +794,21 @@ onMounted(() => {
 .stat-card { text-align: center; }
 .stat-value { font-size: 28px; font-weight: 700; }
 .stat-label { font-size: 13px; color: #8c8c8c; margin-top: 4px; }
+
+/* 通道展开区 */
+.channel-expand {
+  padding: 4px 20px 4px 60px;
+}
+.channel-badge {
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+.channel-total {
+  font-weight: 600;
+  color: var(--el-color-primary);
+}
+.channel-online {
+  font-size: 11px;
+  color: var(--el-color-success);
+}
 </style>
