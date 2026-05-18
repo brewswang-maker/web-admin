@@ -39,6 +39,10 @@ const FederationDashboard = () => import('@/views/FederationDashboard.vue')
 const PermissionManagementView = () => import('@/views/rbac/PermissionManagementView.vue')
 const RoleManagementView = () => import('@/views/rbac/RoleManagementView.vue')
 const UserManagementView = () => import('@/views/rbac/UserManagementView.vue')
+const LocationTrackView = () => import('@/views/LocationTrackView.vue')
+const TopologyView = () => import('@/views/TopologyView.vue')
+const AlgorithmStoreView = () => import('@/views/AlgorithmStoreView.vue')
+const BillingView = () => import('@/views/BillingView.vue')
 
 // 基础路由（无需权限）
 export const constantRoutes: RouteRecordRaw[] = [
@@ -200,20 +204,26 @@ export const asyncRoutes: RouteRecordRaw[] = [
       {
         path: 'algorithm-store',
         name: 'AlgorithmStore',
-        component: () => import('@/views/AlgorithmStoreView.vue'),
+        component: AlgorithmStoreView,
         meta: { title: '算法商城', icon: 'ShoppingCart', roles: ['admin'] }
       },
       {
         path: 'billing',
         name: 'Billing',
-        component: () => import('@/views/BillingView.vue'),
+        component: BillingView,
         meta: { title: '账单查看', icon: 'Wallet', roles: ['admin'] }
       },
       {
         path: 'topology',
         name: 'Topology',
-        component: () => import('@/views/TopologyView.vue'),
+        component: TopologyView,
         meta: { title: '设备拓扑', icon: 'Connection', roles: ['admin', 'viewer'] }
+      },
+      {
+        path: 'location',
+        name: 'LocationTrack',
+        component: LocationTrackView,
+        meta: { title: '定位与轨迹', icon: 'Location', roles: ['admin', 'user', 'viewer'] }
       },
       {
         path: 'recordings',

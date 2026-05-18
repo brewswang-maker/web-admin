@@ -73,6 +73,14 @@
             <el-icon><VideoPause /></el-icon>
             <template #title>录像回放</template>
           </el-menu-item>
+          <el-menu-item index="/location">
+            <el-icon><Location /></el-icon>
+            <template #title>定位与轨迹</template>
+          </el-menu-item>
+          <el-menu-item index="/topology">
+            <el-icon><Share /></el-icon>
+            <template #title>设备拓扑</template>
+          </el-menu-item>
           <el-menu-item index="/gb28181">
             <el-icon><Connection /></el-icon>
             <template #title>GB28181</template>
@@ -108,6 +116,10 @@
             <el-icon><Connection /></el-icon>
             <template #title>联邦学习</template>
           </el-menu-item>
+          <el-menu-item index="/algorithm-store">
+            <el-icon><ShoppingCart /></el-icon>
+            <template #title>算法商城</template>
+          </el-menu-item>
         </el-menu-item-group>
 
         <!-- ===== ⚙️ 管理 ===== -->
@@ -115,6 +127,10 @@
           <template #title v-if="!isCollapsed">
             <span class="group-title">管理</span>
           </template>
+          <el-menu-item index="/linkage">
+            <el-icon><Connection /></el-icon>
+            <template #title>联动规则</template>
+          </el-menu-item>
           <el-menu-item index="/projects" v-if="auth.can('projects', 'read')">
             <el-icon><FolderOpened /></el-icon>
             <template #title>项目管理</template>
@@ -157,6 +173,10 @@
           <el-menu-item index="/permissions">
             <el-icon><Lock /></el-icon>
             <template #title>权限列表</template>
+          </el-menu-item>
+          <el-menu-item index="/billing">
+            <el-icon><Wallet /></el-icon>
+            <template #title>账单查看</template>
           </el-menu-item>
         </el-menu-item-group>
       </el-menu>
@@ -281,6 +301,7 @@ import {
   DocumentChecked, Link, User, Avatar, Lock, Search,
   Sunny, Moon, Cpu, UserFilled, ArrowDown, SwitchButton,
   DArrowLeft, DArrowRight, VideoPlay, Film, VideoPause, Camera, SetUp,
+  Location, Share, ShoppingCart, Wallet,
 } from '@element-plus/icons-vue'
 import { useAuthStore } from '@/stores/auth'
 import { useAlarmStore } from '@/stores/alarm'
@@ -365,6 +386,11 @@ watch(searchQuery, async (q) => {
       { type: 'page', title: 'Pipeline编辑', path: '/pipelines', desc: '算法管线' },
       { type: 'page', title: '模型管理', path: '/models', desc: 'BModel管理' },
       { type: 'page', title: 'AI助手', path: '/ai-chat', desc: 'AI对话' },
+      { type: 'page', title: '定位与轨迹', path: '/location', desc: '设备定位+轨迹回放' },
+      { type: 'page', title: '设备拓扑', path: '/topology', desc: '网络拓扑' },
+      { type: 'page', title: '算法商城', path: '/algorithm-store', desc: '算法下载' },
+      { type: 'page', title: '账单查看', path: '/billing', desc: '账单' },
+      { type: 'page', title: '联动规则', path: '/linkage', desc: '联动' },
       { type: 'page', title: 'GB28181', path: '/gb28181', desc: '国标设备' },
       { type: 'page', title: 'ONVIF发现', path: '/onvif', desc: '设备发现' },
       { type: 'page', title: '流管理', path: '/streams', desc: 'ZLM流' },
