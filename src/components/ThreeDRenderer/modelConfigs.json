@@ -1,0 +1,154 @@
+{
+  "version": "2.0.0",
+  "description": "华盾AI智能视频盒子 - 新工厂3D场景模型配置",
+
+  "scene": {
+    "background": "#0a0c10",
+    "fog": {
+      "type": "FogExp2",
+      "color": "#0a0c10",
+      "density": 0.008
+    },
+    "ground": {
+      "width": 120,
+      "height": 100,
+      "color": "#151820",
+      "roughness": 0.9,
+      "metalness": 0.1
+    },
+    "grid": {
+      "size": 120,
+      "divisions": 30,
+      "color1": "#1a1d23",
+      "color2": "#111318"
+    }
+  },
+
+  "camera": {
+    "fov": 50,
+    "near": 0.1,
+    "far": 500,
+    "defaultPosition": [60, 50, 70],
+    "defaultTarget": [0, 0, 0],
+    "maxPolarAngle": 1.428,
+    "minDistance": 20,
+    "maxDistance": 150,
+    "dampingFactor": 0.08
+  },
+
+  "renderer": {
+    "antialias": true,
+    "alpha": true,
+    "shadowMap": {
+      "enabled": true,
+      "type": "PCFShadowMap"
+    },
+    "pixelRatioCap": 2
+  },
+
+  "lighting": {
+    "ambient": {
+      "color": "#334455",
+      "intensity": 0.6
+    },
+    "directional": {
+      "color": "#ffffff",
+      "intensity": 0.8,
+      "position": [30, 40, 20],
+      "castShadow": true,
+      "shadowMapSize": 2048,
+      "shadowCamera": {
+        "left": -60,
+        "right": 60,
+        "top": 60,
+        "bottom": -60
+      }
+    },
+    "point": {
+      "color": "#1A73E8",
+      "intensity": 0.3,
+      "position": [0, 20, 0],
+      "distance": 100
+    }
+  },
+
+  "walls": {
+    "color": "#1a2040",
+    "opacity": 0.4,
+    "edgeColor": "#1A73E8",
+    "edgeOpacity": 0.3,
+    "segments": [
+      { "x": -55, "y": 0, "z": 0, "width": 0.3, "height": 3, "depth": 100 },
+      { "x": 55,  "y": 0, "z": 0, "width": 0.3, "height": 3, "depth": 100 },
+      { "x": 0,   "y": 0, "z": -48, "width": 110, "height": 3, "depth": 0.3 },
+      { "x": 0,   "y": 0, "z": 48,  "width": 110, "height": 3, "depth": 0.3 }
+    ]
+  },
+
+  "materials": {
+    "building": {
+      "opacity": 0.35,
+      "roughness": 0.7,
+      "metalness": 0.2,
+      "edgeOpacity": 0.6
+    },
+    "deviceBody": {
+      "color": "#2a2d35",
+      "roughness": 0.5,
+      "metalness": 0.6
+    },
+    "deviceLens": {
+      "roughness": 0.3,
+      "emissiveIntensity": 0.5
+    },
+    "fovCone": {
+      "opacity": 0.08,
+      "side": "DoubleSide"
+    },
+    "alarmPulse": {
+      "color": "#DB4437",
+      "opacity": 0.25,
+      "radius": 1.5,
+      "segments": 16
+    }
+  },
+
+  "statusColors": {
+    "online": "#0F9D58",
+    "alarm": "#DB4437",
+    "offline": "#555555",
+    "maintenance": "#F4B400"
+  },
+
+  "defaults": {
+    "device": {
+      "fov": 60,
+      "viewDistance": 12,
+      "bodyRadius": 0.3,
+      "bodyHeight": 1.2,
+      "lensRadius": 0.35
+    }
+  },
+
+  "buildings": [
+    { "name": "1号车间", "x": -20, "z": -15, "w": 24, "d": 16, "h": 8, "color": "#1A73E8", "type": "workshop" },
+    { "name": "2号车间", "x": 15,  "z": -15, "w": 20, "d": 14, "h": 7, "color": "#0F9D58", "type": "workshop" },
+    { "name": "仓库",    "x": -25, "z": 15,  "w": 18, "d": 12, "h": 6, "color": "#F4B400", "type": "warehouse" },
+    { "name": "办公楼",  "x": 20,  "z": 15,  "w": 16, "d": 12, "h": 12,"color": "#7C3AED", "type": "office" },
+    { "name": "配电房",  "x": 35,  "z": -5,  "w": 8,  "d": 8,  "h": 4, "color": "#666666", "type": "powerhouse" },
+    { "name": "门卫室",  "x": 0,   "z": 42,  "w": 6,  "d": 4,  "h": 3, "color": "#888888", "type": "guardhouse" }
+  ],
+
+  "devices": [
+    { "id": "cam1",  "name": "CAM_01 东门",   "x": -40, "y": 4,  "z": -35, "status": "online",      "location": "1号厂区东门",    "fov": 60, "rotation": 0 },
+    { "id": "cam2",  "name": "CAM_02 围墙北", "x": 20,  "y": 4,  "z": -38, "status": "online",      "location": "北围墙",         "fov": 75, "rotation": 0.785 },
+    { "id": "cam3",  "name": "CAM_03 车间A",  "x": -15, "y": 5,  "z": 5,   "status": "online",      "location": "2号车间入口",    "fov": 60, "rotation": 1.571 },
+    { "id": "cam4",  "name": "CAM_04 车间B",  "x": 25,  "y": 5,  "z": 10,  "status": "alarm",       "location": "3号厂区东围墙",  "alarmType": "周界入侵", "fov": 65, "rotation": -1.047 },
+    { "id": "cam5",  "name": "CAM_05 仓库",   "x": -30, "y": 4,  "z": 20,  "status": "online",      "location": "仓库区域",       "fov": 70, "rotation": 3.14159 },
+    { "id": "cam6",  "name": "CAM_06 停车场", "x": 35,  "y": 4,  "z": 25,  "status": "online",      "location": "停车场B区",      "fov": 80, "rotation": 0.524 },
+    { "id": "cam7",  "name": "CAM_07 大门",   "x": 0,   "y": 5,  "z": 40,  "status": "online",      "location": "1号大门",        "fov": 60, "rotation": 3.14159 },
+    { "id": "cam8",  "name": "CAM_08 办公楼", "x": -35, "y": 6,  "z": -10, "status": "maintenance", "location": "办公楼",         "fov": 55, "rotation": -1.571 },
+    { "id": "cam9",  "name": "CAM_09 配电房", "x": 40,  "y": 4,  "z": -15, "status": "offline",     "location": "配电房",         "fov": 60, "rotation": 0 },
+    { "id": "cam10", "name": "CAM_10 围墙南", "x": -10, "y": 4,  "z": 38,  "status": "online",      "location": "南围墙",         "fov": 75, "rotation": 3.14159 }
+  ]
+}

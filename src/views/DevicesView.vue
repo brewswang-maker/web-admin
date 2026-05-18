@@ -96,12 +96,13 @@
           </template>
         </el-table-column>
         <el-table-column prop="location" label="位置" width="100" show-overflow-tooltip />
-        <el-table-column label="操作" width="210" fixed="right">
+        <el-table-column label="操作" width="270" fixed="right">
           <template #default="{ row }">
             <el-button size="small" link type="primary" @click="$router.push(`/devices/${row.id}`)">详情</el-button>
             <el-button size="small" link type="success" @click="$router.push(`/devices/${row.id}/channels`)">通道</el-button>
             <el-button size="small" link type="success" @click="handleLive(row)">预览</el-button>
             <el-button size="small" link @click="handleSync(row)">同步</el-button>
+            <el-button size="small" link type="warning" @click="handleSyncTime(row)">校时</el-button>
             <el-button size="small" link type="danger" @click="handleDelete(row)">删除</el-button>
           </template>
         </el-table-column>
@@ -600,6 +601,19 @@ function handleLive(row: DeviceItem) {
 async function handleSync(row: DeviceItem) {
   try { await deviceStore.syncDevice(row.id); ElMessage.success(`设备 ${row.name} 同步指令已发送`) }
   catch { ElMessage.error('同步失败') }
+}
+async function handleSyncTime(row: DeviceItem) {
+  try {
+    const res = await deviceApi.syncTime(row.id) as any
+    const d = res?.data?.data ?? res?.data ?? res
+    if (d?.code === 0 || d?.message) {
+      ElMessage.success(`设备 ${row.name} 校时指令已发送`)
+    } else {
+      ElMessage.warning(d?.message || '校时失败')
+    }
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.message || '校时失败')
+  }
 }
 async function handleDelete(row: DeviceItem) {
   try {

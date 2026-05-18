@@ -58,6 +58,11 @@ export const deviceApi = {
     return deviceHttp.post<ApiResponse<void>>(`/${id}/reboot`)
   },
 
+  /** NTP 校时（GB28181 设备校时） */
+  syncTime(id: string) {
+    return deviceHttp.post<ApiResponse<{ message: string; deviceId: string }>>(`/${id}/sync-time`)
+  },
+
   /** 获取设备配置 */
   getConfig(id: string) {
     return deviceHttp.get<ApiResponse<DeviceConfig>>(`/${id}/config`)

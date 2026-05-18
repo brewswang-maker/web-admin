@@ -157,16 +157,20 @@ import { streamHttp } from '@/api/http'
 import { ptzControl as ptzApi } from '@/api/ptz'
 import { ElMessage } from 'element-plus'
 import type { Channel, DeviceItem } from '@/types/device'
+import Hls from 'hls.js'
+import flvjs from 'flv.js'
 
 interface GridSlot {
   channelId: string
   name: string
   status: string
   hlsUrl: string
+  flvUrl: string
   playing: boolean
   loading: boolean
   muted: boolean
   deviceId: string
+  playerInstance: Hls | flvjs.Player | null
 }
 
 const route = useRoute()
@@ -178,7 +182,7 @@ const layout = ref(4)
 const activeSlotIdx = ref(0)
 const gridSlots = reactive<GridSlot[]>(
   Array.from({ length: 16 }, () => ({
-    channelId: '', name: '', status: '', hlsUrl: '', playing: false, loading: false, muted: true, deviceId: ''
+    channelId: '', name: '', status: '', hlsUrl: '', flvUrl: '', playing: false, loading: false, muted: true, deviceId: '', playerInstance: null
   }))
 )
 const videoRefs = ref<Record<number, HTMLVideoElement>>({})
@@ -245,12 +249,14 @@ function assignChannel(slotIdx: number, ch: Channel) {
   slot.loading = true
   slot.muted = true
 
-  // 获取HLS播放地址
-  fetchStreamUrl(ch).then(url => {
-    if (url) {
-      slot.hlsUrl = url
+  // 获取播放地址并播放
+  fetchStreamUrls(ch).then(urls => {
+    if (urls) {
+      slot.hlsUrl = urls.hlsUrl || ''
+      slot.flvUrl = urls.flvUrl || ''
       slot.playing = true
       slot.status = 'streaming'
+      nextTick(() => attachPlayer(slotIdx))
     }
     slot.loading = false
   }).catch(() => { slot.loading = false })
@@ -262,47 +268,119 @@ function assignToActive(ch: Channel) {
 
 function closeSlot(idx: number) {
   const slot = gridSlots[idx]
+  // 销毁播放器实例
+  if (slot.playerInstance) {
+    if ('destroy' in slot.playerInstance) slot.playerInstance.destroy()
+    slot.playerInstance = null
+  }
   if (slot.playing) {
     const video = videoRefs.value[idx]
-    if (video) { video.pause(); video.src = '' }
-    // 停止国标推流 (BYE)
+    if (video) { video.pause(); video.removeAttribute('src'); video.load() }
     if (slot.channelId) {
       streamHttp.post(`/${slot.channelId}/stop`).catch(() => {})
     }
   }
-  Object.assign(slot, { channelId: '', name: '', status: '', hlsUrl: '', playing: false, loading: false, muted: true, deviceId: '' })
+  Object.assign(slot, { channelId: '', name: '', status: '', hlsUrl: '', flvUrl: '', playing: false, loading: false, muted: true, deviceId: '', playerInstance: null })
 }
 
-// 获取流地址 — 先启动国标 INVITE, 再取 HLS 地址
-async function fetchStreamUrl(ch: Channel): Promise<string | null> {
+// 优先 HTTP-FLV（~0.5s延迟），备选 HLS（~3s延迟）
+function attachPlayer(slotIdx: number) {
+  const slot = gridSlots[slotIdx]
+  const video = videoRefs.value[slotIdx]
+  if (!video) return
+
+  // 清理旧实例
+  if (slot.playerInstance) {
+    if ('destroy' in slot.playerInstance) slot.playerInstance.destroy()
+    slot.playerInstance = null
+  }
+
+  // 优先 HTTP-FLV
+  if (slot.flvUrl && flvjs.isSupported()) {
+    const player = flvjs.createPlayer({
+      type: 'flv', url: slot.flvUrl, isLive: true,
+      hasAudio: true, hasVideo: true,
+    }, {
+      enableStashBuffer: false,
+      stashInitialSize: 128,
+      autoCleanupSourceBuffer: true,
+      lazyLoad: false,
+    })
+    player.attachMediaElement(video)
+    player.load()
+    player.play()
+    player.on(flvjs.Events.ERROR, (_errorType, _errorDetail, errorInfo) => {
+      console.error('FLV error:', errorInfo)
+      // FLV 失败，降级到 HLS
+      if (slot.hlsUrl) {
+        player.destroy()
+        slot.playerInstance = null
+        attachHls(slotIdx)
+      }
+    })
+    slot.playerInstance = player
+    return
+  }
+
+  // 备选 HLS
+  if (slot.hlsUrl) attachHls(slotIdx)
+}
+
+// hls.js 播放 HLS 流
+function attachHls(slotIdx: number) {
+  const slot = gridSlots[slotIdx]
+  const video = videoRefs.value[slotIdx]
+  if (!video || !slot.hlsUrl) return
+
+  if (Hls.isSupported()) {
+    const hls = new Hls({
+      enableWorker: true,
+      lowLatencyMode: true,
+      maxBufferLength: 5,
+      maxMaxBufferLength: 10,
+      liveSyncDurationCount: 1,
+    })
+    hls.loadSource(slot.hlsUrl)
+    hls.attachMedia(video)
+    hls.on(Hls.Events.MANIFEST_PARSED, () => {
+      video.play().catch(() => {})
+    })
+    hls.on(Hls.Events.ERROR, (_event, data) => {
+      if (data.fatal) {
+        if (data.type === Hls.ErrorTypes.NETWORK_ERROR) hls.startLoad()
+        else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) hls.recoverMediaError()
+      }
+    })
+    slot.playerInstance = hls
+  } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+    video.src = slot.hlsUrl
+    video.addEventListener('loadedmetadata', () => video.play().catch(() => {}))
+  }
+}
+
+// 获取流地址 — 优先 FLV（低延迟），备选 HLS
+async function fetchStreamUrls(ch: Channel): Promise<{ flvUrl: string; hlsUrl: string } | null> {
   try {
     // 1. 启动国标设备推流 (GB28181 INVITE)
-    try {
-      await streamHttp.post(`/${ch.id}/start`)
-    } catch {
-      // start 可能已在推流，忽略错误继续
+    try { await streamHttp.post(`/${ch.id}/start`) } catch { /* 可能已在推流 */ }
+
+    // 2. 快速轮询获取播放地址（最多 3 秒，每次间隔 300ms）
+    for (let attempt = 0; attempt < 10; attempt++) {
+      try {
+        const { data } = await streamHttp.get(`/${ch.id}/hls-url`)
+        const d = data?.data || data
+        if (d?.flvUrl || d?.hlsUrl) {
+          return {
+            flvUrl: d?.flvUrl || '',
+            hlsUrl: d?.hlsUrl || '',
+          }
+        }
+      } catch { /* 流可能还未就绪 */ }
+      await new Promise(r => setTimeout(r, 300))
     }
-
-    // 2. 等待流就绪
-    await new Promise(r => setTimeout(r, 1500))
-
-    // 3. 获取 HLS/FLV 播放地址
-    const { data } = await streamHttp.get(`/${ch.id}/hls-url`)
-    const d = data?.data || data
-    if (d?.hlsUrl) return d.hlsUrl
-    if (d?.flvUrl) return d.flvUrl
-    if (d?.rtspUrl) return d.rtspUrl
     return null
   } catch {
-    // Fallback: 尝试 WebRTC SDP 交换
-    try {
-      const { data: sdp } = await streamHttp.post(`/${ch.id}/webrtc-sdp`, {
-        offer: ''
-      })
-      return sdp?.url || null
-    } catch {
-      return null
-    }
+    return null
   }
 }
 

@@ -6,6 +6,7 @@
  * - ApiErrorCode, ApiError, getErrorMessage — 统一错误处理
  * - TIMEOUT_PRESETS, API_VERSION — 超时预设与版本号
  * - streamHttp, recordingHttp, modelHttp, pipelineHttp, ptzHttp — 新客户端
+ * - scene3dModelHttp, scene3d 模型 CRUD — 3D 场景模型资源
  */
 
 // ── HTTP 客户端 ──
@@ -26,6 +27,7 @@ export {
   modelHttp,
   pipelineHttp,
   ptzHttp,
+  scene3dModelHttp,
   // 错误处理
   ApiError,
   ApiErrorCode,
@@ -86,6 +88,36 @@ export type { PTZParams } from './ptz'
 
 export { linkageApi } from './linkage'
 export type { LinkageRule, LinkageCondition, LinkageAction, LinkageLog, LinkageRuleQuery, LinkageLogQuery } from './linkage'
+
+// ── 3D 场景模型资源 ──
+export {
+  getScene3DModels,
+  getScene3DModelById,
+  uploadScene3DModel,
+  updateScene3DModel,
+  deleteScene3DModel,
+  getScene3DModelDownload,
+  getScene3DModelCachePolicy,
+  invalidateScene3DModelCache,
+  getScene3DModelLodChain,
+  getBestLodModel,
+  batchDeleteScene3DModels,
+  batchUpdateCachePolicy,
+} from './scene3d-model'
+export type {
+  Scene3DModelMeta,
+  GetScene3DModelsParams,
+  UploadScene3DModelParams,
+  UpdateScene3DModelParams,
+  Scene3DModelDownload,
+  Model3DCachePolicy,
+  Model3DFormat,
+  Model3DCompression,
+  Model3DCategory,
+  Model3DStatus,
+  Model3DCacheStrategy,
+  Model3DCacheHeaders,
+} from '@/types/scene3d-model'
 
 // ── 兼容层 ──
 import { alarmApi } from './alarm'

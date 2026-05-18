@@ -28,3 +28,6 @@ export * from './notification'
 
 // analytics — 包含 AlarmStats/AuditLog/SecurityScore 的扩展版本
 export * from './analytics'
+
+// scene3d-model — 3D 场景模型资源类型（glTF/GLB，非 AI 推理模型）
+export * from './scene3d-model'

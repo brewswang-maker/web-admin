@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { ref, onMounted, computed, watch, nextTick } from 'vue'
 import { ElMessage } from 'element-plus'
-import { deviceHttp } from '@/api/http'
-import { getRecordings, type RecordingSegment as ApiRecordingSeg } from '@/api/recording'
+import { deviceHttp, recordingHttp } from '@/api/http'
+import { getRecordings, playRecording, stopPlayback as stopRecordingPlayback, controlPlayback, type RecordingSegment as ApiRecordingSeg } from '@/api/recording'
 
 interface Device {
   id: string
@@ -26,6 +26,10 @@ const recordings = ref<RecordingSegment[]>([])
 const loading = ref(false)
 const playingUrl = ref('')
 const isPlaying = ref(false)
+const isPaused = ref(false)
+const playbackSpeed = ref(1)
+const currentSessionId = ref('')
+const videoRef = ref<HTMLVideoElement>()
 const canvasRef = ref<HTMLCanvasElement>()
 
 const channels = computed(() => {
@@ -63,13 +67,14 @@ async function fetchRecordings() {
   }
   loading.value = true
   try {
-    const { data } = await getRecordings({
-      deviceId: selectedDeviceId.value,
-      channelNo: selectedChannelId.value ? Number(selectedChannelId.value) : undefined,
-      startTime: selectedDate.value ? selectedDate.value + 'T00:00:00' : undefined,
-      endTime: selectedDate.value ? selectedDate.value + 'T23:59:59' : undefined,
+    // 使用 POST /api/v1/recordings/query 查询GB28181设备录像
+    const { data } = await recordingHttp.post('/query', {
+      device_id: selectedDeviceId.value,
+      channel_id: selectedChannelId.value,
+      start_time: selectedDate.value + 'T00:00:00',
+      end_time: selectedDate.value + 'T23:59:59',
     })
-    recordings.value = data?.data || data || []
+    recordings.value = data?.data?.recordings || data?.data || []
     await nextTick()
     drawTimeline()
   } catch (e: any) {
@@ -130,13 +135,68 @@ function timeToPercent(timeStr: string): number {
   return (parseInt(parts[1]) + parseInt(parts[2]) / 60 + parseInt(parts[3]) / 3600) / 24
 }
 
-function playSegment(rec: RecordingSegment) {
-  playingUrl.value = `/api/v1/recordings/${rec.id}/play`
-  isPlaying.value = true
+async function playSegment(rec: RecordingSegment) {
+  try {
+    // 调用后端 API 启动回放，获取流地址
+    const { data } = await recordingHttp.post(`/${rec.id}/play`, {
+      device_id: selectedDeviceId.value,
+      channel_id: selectedChannelId.value,
+      start_time: rec.startTime,
+      end_time: rec.endTime,
+    })
+    const result = data?.data || data
+    if (result?.urls?.hls) {
+      playingUrl.value = result.urls.hls
+      isPlaying.value = true
+      currentSessionId.value = result.call_id || ''
+    } else if (result?.urls?.flv) {
+      playingUrl.value = result.urls.flv
+      isPlaying.value = true
+      currentSessionId.value = result.call_id || ''
+    } else if (result?.urls?.rtsp) {
+      playingUrl.value = result.urls.rtsp
+      isPlaying.value = true
+      currentSessionId.value = result.call_id || ''
+    } else {
+      ElMessage.warning('未获取到播放地址，设备可能不支持回放')
+    }
+  } catch (e: any) {
+    ElMessage.error('回放失败: ' + (e.message || ''))
+  }
 }
 
 function downloadSegment(rec: RecordingSegment) {
   window.open(`/api/v1/recordings/${rec.id}/download`, '_blank')
+}
+
+async function togglePause() {
+  if (!currentSessionId.value) return
+  try {
+    const action = isPaused.value ? 'resume' : 'pause'
+    await recordingHttp.post(`/${currentSessionId.value}/control`, { action })
+    isPaused.value = !isPaused.value
+  } catch (e: any) {
+    ElMessage.error('控制失败: ' + (e.message || ''))
+  }
+}
+
+async function changeSpeed(speed: number) {
+  if (!currentSessionId.value) return
+  try {
+    await recordingHttp.post(`/${currentSessionId.value}/control`, { action: 'speed', speed })
+  } catch (e: any) {
+    ElMessage.error('倍速切换失败: ' + (e.message || ''))
+  }
+}
+
+async function stopPlay() {
+  if (currentSessionId.value) {
+    try { await recordingHttp.post(`/${currentSessionId.value}/stop`) } catch { /* ignore */ }
+  }
+  isPlaying.value = false
+  isPaused.value = false
+  playingUrl.value = ''
+  currentSessionId.value = ''
 }
 
 function handleTimelineClick(e: MouseEvent) {
@@ -228,10 +288,21 @@ onMounted(fetchDevices)
           <template #header>
             <div style="display:flex;justify-content:space-between;align-items:center">
               <span>回放播放</span>
-              <el-button size="small" @click="isPlaying = false; playingUrl = ''">关闭</el-button>
+              <div style="display:flex;gap:8px">
+                <el-button size="small" @click="togglePause">
+                  {{ isPaused ? '恢复' : '暂停' }}
+                </el-button>
+                <el-select v-model="playbackSpeed" size="small" style="width:100px" @change="changeSpeed">
+                  <el-option :value="0.5" label="0.5x" />
+                  <el-option :value="1" label="1x" />
+                  <el-option :value="2" label="2x" />
+                  <el-option :value="4" label="4x" />
+                </el-select>
+                <el-button size="small" @click="stopPlay">停止</el-button>
+              </div>
             </div>
           </template>
-          <video :src="playingUrl" controls autoplay style="width:100%;max-height:360px;background:#000" />
+          <video ref="videoRef" :src="playingUrl" controls autoplay style="width:100%;max-height:360px;background:#000" />
         </el-card>
       </div>
     </div>

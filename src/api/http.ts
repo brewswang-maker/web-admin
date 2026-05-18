@@ -468,3 +468,9 @@ export const pipelineHttp = createHttpClient('/pipelines')
 
 /** PTZ 云台客户端 */
 export const ptzHttp = createHttpClient('/ptz')
+
+/** 3D 场景模型资源客户端 (glTF/GLB 场景模型，非 AI 推理模型) */
+export const scene3dModelHttp = createHttpClient('/scene3d/models', {
+  maxRetries: 2,
+  baseDelay: 1000,
+})
