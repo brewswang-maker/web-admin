@@ -190,7 +190,8 @@
     </el-row>
 
     <!-- 对讲弹窗 -->
-    <el-dialog v-model="talkDialogVisible" title="语音对讲" width="400px" :append-to-body="true" @close="stopTalk">
+    <el-dialog v-model="talkDialogVisible" title="语音对讲" width="400px" :append-to-body="true"
+      :close-on-click-modal="false" :close-on-press-escape="false" @close="stopTalk">
       <div style="text-align:center;padding:20px">
         <el-icon :size="48" :color="isTalking ? '#0F9D58' : '#9AA0A6'"><Microphone /></el-icon>
         <p style="margin:12px 0">{{ talkSlotName }} — {{ isTalking ? '对讲中...' : '点击开始对讲' }}</p>
@@ -692,6 +693,7 @@ async function toggleTalk() {
     if (!talkCallId) {
       ElMessage.error('对讲邀请失败：设备无响应')
       cleanupTalk()
+      talkDialogVisible.value = false
       return
     }
 
@@ -781,10 +783,12 @@ async function toggleTalk() {
       ElMessage.error('对讲失败: ' + (e.message || '未知错误'))
     }
     cleanupTalk()
+    talkDialogVisible.value = false
   }
 }
 
 function stopTalk() {
+  talkDialogVisible.value = false
   const slot = talkSlotIdx.value >= 0 ? gridSlots[talkSlotIdx.value] : null
 
   // 通知后端停止对讲
@@ -799,7 +803,6 @@ function stopTalk() {
 
 function cleanupTalk() {
   isTalking.value = false
-  talkDialogVisible.value = false
 
   const slot = talkSlotIdx.value >= 0 ? gridSlots[talkSlotIdx.value] : null
   if (slot) slot.talking = false
