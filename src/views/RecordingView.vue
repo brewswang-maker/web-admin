@@ -1,8 +1,10 @@
 <script setup lang="ts">
-import { ref, onMounted, computed, watch, nextTick } from 'vue'
+import { ref, onMounted, computed, watch, nextTick, onUnmounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { deviceHttp, recordingHttp } from '@/api/http'
 import { getRecordings, playRecording, stopPlayback as stopRecordingPlayback, controlPlayback, type RecordingSegment as ApiRecordingSeg } from '@/api/recording'
+import Hls from 'hls.js'
+import flvjs from 'flv.js'
 
 interface Device {
   id: string
@@ -31,6 +33,15 @@ const playbackSpeed = ref(1)
 const currentSessionId = ref('')
 const videoRef = ref<HTMLVideoElement>()
 const canvasRef = ref<HTMLCanvasElement>()
+let playerInstance: Hls | flvjs.Player | null = null
+
+type PlaybackFormat = 'flv' | 'ws-flv' | 'hls'
+const FORMAT_OPTIONS: { value: PlaybackFormat; label: string }[] = [
+  { value: 'flv', label: 'HTTP-FLV' },
+  { value: 'ws-flv', label: 'WS-FLV' },
+  { value: 'hls', label: 'HLS' },
+]
+const playbackFormat = ref<PlaybackFormat>('flv')
 
 const channels = computed(() => {
   const dev = devices.value.find(d => d.id === selectedDeviceId.value)
@@ -137,7 +148,6 @@ function timeToPercent(timeStr: string): number {
 
 async function playSegment(rec: RecordingSegment) {
   try {
-    // 调用后端 API 启动回放，获取流地址
     const { data } = await recordingHttp.post(`/${rec.id}/play`, {
       device_id: selectedDeviceId.value,
       channel_id: selectedChannelId.value,
@@ -145,23 +155,94 @@ async function playSegment(rec: RecordingSegment) {
       end_time: rec.endTime,
     })
     const result = data?.data || data
-    if (result?.urls?.hls) {
-      playingUrl.value = result.urls.hls
-      isPlaying.value = true
-      currentSessionId.value = result.call_id || ''
-    } else if (result?.urls?.flv) {
-      playingUrl.value = result.urls.flv
-      isPlaying.value = true
-      currentSessionId.value = result.call_id || ''
-    } else if (result?.urls?.rtsp) {
-      playingUrl.value = result.urls.rtsp
-      isPlaying.value = true
-      currentSessionId.value = result.call_id || ''
-    } else {
+    if (!result?.urls) {
       ElMessage.warning('未获取到播放地址，设备可能不支持回放')
+      return
+    }
+    const urls = result.urls
+    currentSessionId.value = result.call_id || ''
+
+    // 清理旧播放器
+    if (playerInstance) {
+      if ('destroy' in playerInstance) playerInstance.destroy()
+      playerInstance = null
+    }
+
+    isPlaying.value = true
+    isPaused.value = false
+    await nextTick()
+
+    const video = videoRef.value
+    if (!video) return
+
+    // 按选定格式播放，不可用时降级
+    const fmt = playbackFormat.value
+    const urlMap: Record<string, string> = {
+      'flv': urls.flv,
+      'ws-flv': urls.wsFlv,
+      'hls': urls.hls,
+    }
+
+    let playUrl = urlMap[fmt] || ''
+    if (!playUrl) {
+      // 降级链
+      for (const fb of ['flv', 'hls', 'ws-flv']) {
+        if (urlMap[fb]) { playUrl = urlMap[fb]; break }
+      }
+    }
+    if (!playUrl) { ElMessage.warning('无可用的播放格式'); return }
+
+    // RTSP 浏览器不支持，强制降级
+    if (playUrl.startsWith('rtsp://') || playUrl.startsWith('rtmp://')) {
+      ElMessage.warning({ message: '浏览器不支持 RTSP/RTMP 播放，已切换为 HTTP-FLV', duration: 3000 })
+      const fbUrl = urlMap['flv'] || urlMap['hls'] || ''
+      if (!fbUrl) { ElMessage.warning('无可用的播放格式'); return }
+      playUrl = fbUrl
+    }
+
+    if (playUrl.endsWith('.flv') && flvjs.isSupported()) {
+      const player = flvjs.createPlayer({
+        type: 'flv', url: playUrl, isLive: false,
+        hasAudio: true, hasVideo: true,
+      }, { enableStashBuffer: false })
+      player.attachMediaElement(video)
+      player.load()
+      player.play()
+      player.on(flvjs.Events.ERROR, () => {
+        player.destroy()
+        playerInstance = null
+        if (urls.hls) attachHls(urls.hls)
+      })
+      playerInstance = player
+    } else if (playUrl.includes('.m3u8') || playUrl.includes('hls')) {
+      attachHls(playUrl)
+    } else {
+      video.src = playUrl
+      video.play().catch(() => {})
     }
   } catch (e: any) {
     ElMessage.error('回放失败: ' + (e.message || ''))
+  }
+}
+
+function attachHls(hlsUrl: string) {
+  const video = videoRef.value
+  if (!video) return
+  if (Hls.isSupported()) {
+    const hls = new Hls({ enableWorker: true, maxBufferLength: 30 })
+    hls.loadSource(hlsUrl)
+    hls.attachMedia(video)
+    hls.on(Hls.Events.MANIFEST_PARSED, () => video.play().catch(() => {}))
+    hls.on(Hls.Events.ERROR, (_e, data) => {
+      if (data.fatal) {
+        if (data.type === Hls.ErrorTypes.NETWORK_ERROR) hls.startLoad()
+        else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) hls.recoverMediaError()
+      }
+    })
+    playerInstance = hls
+  } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+    video.src = hlsUrl
+    video.addEventListener('loadedmetadata', () => video.play().catch(() => {}))
   }
 }
 
@@ -193,6 +274,12 @@ async function stopPlay() {
   if (currentSessionId.value) {
     try { await recordingHttp.post(`/${currentSessionId.value}/stop`) } catch { /* ignore */ }
   }
+  if (playerInstance) {
+    if ('destroy' in playerInstance) playerInstance.destroy()
+    playerInstance = null
+  }
+  const video = videoRef.value
+  if (video) { video.pause(); video.removeAttribute('src'); video.load() }
   isPlaying.value = false
   isPaused.value = false
   playingUrl.value = ''
@@ -225,6 +312,7 @@ function formatSize(bytes: number): string {
 }
 
 onMounted(fetchDevices)
+onUnmounted(stopPlay)
 </script>
 
 <template>
@@ -287,7 +375,12 @@ onMounted(fetchDevices)
         <el-card v-if="isPlaying" shadow="never">
           <template #header>
             <div style="display:flex;justify-content:space-between;align-items:center">
-              <span>回放播放</span>
+              <div style="display:flex;align-items:center;gap:8px">
+                <span>回放播放</span>
+                <el-select v-model="playbackFormat" size="small" style="width:110px">
+                  <el-option v-for="f in FORMAT_OPTIONS" :key="f.value" :label="f.label" :value="f.value" />
+                </el-select>
+              </div>
               <div style="display:flex;gap:8px">
                 <el-button size="small" @click="togglePause">
                   {{ isPaused ? '恢复' : '暂停' }}
@@ -302,7 +395,7 @@ onMounted(fetchDevices)
               </div>
             </div>
           </template>
-          <video ref="videoRef" :src="playingUrl" controls autoplay style="width:100%;max-height:360px;background:#000" />
+          <video ref="videoRef" autoplay muted playsinline style="width:100%;max-height:360px;background:#000" />
         </el-card>
       </div>
     </div>

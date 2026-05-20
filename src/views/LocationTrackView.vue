@@ -136,6 +136,9 @@
             <el-button size="small" @click="goToLive(selectedDevice.deviceId)">
               实时预览
             </el-button>
+            <el-button size="small" @click="openLocationDialog(selectedDevice)">
+              {{ selectedDevice.longitude ? '修改位置' : '设置位置' }}
+            </el-button>
           </div>
         </div>
       </div>
@@ -208,6 +211,28 @@
         <el-button type="primary" @click="queryTrack" :loading="trackLoading">查询</el-button>
       </template>
     </el-dialog>
+
+    <!-- 设置位置对话框 -->
+    <el-dialog v-model="showLocationDialog" title="设置设备位置" width="420px" :close-on-click-modal="false">
+      <el-form label-width="80px">
+        <el-form-item label="设备">
+          <el-input :value="locationDevice?.deviceId" disabled />
+        </el-form-item>
+        <el-form-item label="经度">
+          <el-input v-model="locationForm.longitude" placeholder="如 108.908623" />
+        </el-form-item>
+        <el-form-item label="纬度">
+          <el-input v-model="locationForm.latitude" placeholder="如 34.260803" />
+        </el-form-item>
+        <el-form-item label="地址">
+          <el-input v-model="locationForm.address" placeholder="如 西安市雁塔区" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showLocationDialog = false">取消</el-button>
+        <el-button type="primary" @click="saveLocation" :loading="locationSaving">保存</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -217,6 +242,7 @@ import { useRouter } from 'vue-router'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { locationApi, type DeviceLocation, type TrackPoint } from '@/api/location'
+import { http } from '@/api/http'
 
 // ── 修复 Leaflet 默认图标路径问题 ──
 delete (L.Icon.Default.prototype as any)._getIconUrl
@@ -247,6 +273,12 @@ const trackLoading = ref(false)
 const playProgress = ref(0)
 const playSpeed = ref(1)
 const isPlaying = ref(false)
+
+// 位置设置
+const showLocationDialog = ref(false)
+const locationDevice = ref<DeviceLocation | null>(null)
+const locationSaving = ref(false)
+const locationForm = ref({ longitude: '', latitude: '', address: '' })
 
 let map: L.Map | null = null
 let deviceMarkers: Map<string, L.Marker> = new Map()
@@ -356,7 +388,7 @@ async function refreshLocations() {
     const raw = (data as any)?.data || data || []
     // 从 REST 响应中提取位置信息
     devices.value = raw.map((d: any) => ({
-      deviceId: d.deviceId || d.device_id,
+      deviceId: d.deviceId || d.device_id || d.id,
       name: d.name || d.deviceId,
       longitude: parseFloat(d.longitude) || 0,
       latitude: parseFloat(d.latitude) || 0,
@@ -371,6 +403,13 @@ async function refreshLocations() {
       model: d.model,
     }))
     updateMarkers()
+    // 自动选中第一个有坐标的设备
+    if (!selectedDeviceId.value && devices.value.length) {
+      const first = devices.value.find(d => d.longitude && d.latitude)
+      if (first) {
+        selectedDeviceId.value = first.deviceId
+      }
+    }
   } catch (e) {
     console.error('[LocationTrack] 加载设备位置失败:', e)
   } finally {
@@ -567,6 +606,35 @@ function formatDuration(ms: number) {
 
 function goToLive(deviceId: string) {
   router.push({ path: '/live', query: { device: deviceId } })
+}
+
+// ── 位置设置 ──
+function openLocationDialog(d: DeviceLocation) {
+  locationDevice.value = d
+  locationForm.value = {
+    longitude: d.longitude ? String(d.longitude) : '',
+    latitude: d.latitude ? String(d.latitude) : '',
+    address: (d as any).address || '',
+  }
+  showLocationDialog.value = true
+}
+
+async function saveLocation() {
+  if (!locationDevice.value) return
+  locationSaving.value = true
+  try {
+    await http.put(`/system/gb28181/devices/${locationDevice.value.deviceId}/location`, {
+      longitude: locationForm.value.longitude,
+      latitude: locationForm.value.latitude,
+      address: locationForm.value.address,
+    })
+    showLocationDialog.value = false
+    await refreshLocations()
+  } catch (e) {
+    console.error('[LocationTrack] 保存位置失败:', e)
+  } finally {
+    locationSaving.value = false
+  }
 }
 
 // ── 生命周期 ──

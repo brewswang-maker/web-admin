@@ -5,6 +5,7 @@ import { resolve } from 'path'
 import AutoImport from 'unplugin-auto-import/vite'
 import Components from 'unplugin-vue-components/vite'
 import { ElementPlusResolver } from 'unplugin-vue-components/resolvers'
+import * as ElementPlusIconsVue from '@element-plus/icons-vue'
 import viteCompression from 'vite-plugin-compression'
 
 /**
@@ -66,7 +67,7 @@ export default defineConfig(async () => {
       // ── Element Plus 按需导入 ──
       AutoImport({
         resolvers: [ElementPlusResolver()],
-        imports: ['vue', 'vue-router', 'pinia'],
+        imports: ['vue', 'vue-router', 'pinia', '@vueuse/core'],
         dts: 'src/auto-imports.d.ts',
       }),
       Components({
@@ -74,6 +75,12 @@ export default defineConfig(async () => {
           ElementPlusResolver({
             importStyle: 'css',
           }),
+          // Element Plus 图标自动导入
+          (componentName) => {
+            if (componentName in ElementPlusIconsVue) {
+              return { name: componentName, from: '@element-plus/icons-vue' }
+            }
+          },
         ],
         dts: 'src/components.d.ts',
         dirs: ['src/components'],
@@ -121,6 +128,11 @@ export default defineConfig(async () => {
       proxy: {
         '/api': {
           target: 'http://127.0.0.1:8080',
+          changeOrigin: true,
+        },
+        '/ws': {
+          target: 'ws://127.0.0.1:8080',
+          ws: true,
           changeOrigin: true,
         },
       },

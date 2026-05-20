@@ -114,10 +114,14 @@ export function useWebSocket(path?: string) {
 
 /** 告警推送专用 */
 export function useAlarmStream() {
-  const { connected, lastMessage, messages, send, subscribe } = useWebSocket('/ws/alarms')
+  const { connected, lastMessage, messages, send, subscribe } = useWebSocket('/ws')
   const newAlarms = reactive<unknown[]>([])
 
   subscribe('alarm', (data: unknown) => {
+    newAlarms.push(data)
+  })
+  // Also handle alarm.new from pushAlarm
+  subscribe('alarm.new', (data: unknown) => {
     newAlarms.push(data)
   })
 

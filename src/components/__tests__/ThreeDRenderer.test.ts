@@ -594,12 +594,9 @@ describe('ThreeDRenderer 模块', () => {
 
     it('animate 返回有效的 animationFrame id', () => {
       builder.init(container)
-      const cancelSpy = vi.spyOn(globalThis, 'cancelAnimationFrame').mockImplementation(() => {})
       const id = builder.animate()
-      // happy-dom 的 requestAnimationFrame 返回 number 或 object，都可用于 cancelAnimationFrame
       expect(id).toBeDefined()
-      (cancelSpy as unknown as (id: number) => void)(id as number)
-      cancelSpy.mockRestore()
+      cancelAnimationFrame(id as number)
     })
 
     it('raycastDevice 返回 null（无命中时）', () => {

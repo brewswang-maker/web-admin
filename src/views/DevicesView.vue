@@ -486,7 +486,7 @@ async function handleExpandChange(row: DeviceItem, expandedRows: DeviceItem[]) {
 }
 
 function handleChannelLive(device: DeviceItem, channel: any) {
-  router.push(`/live?deviceId=${channel.id || channel.device_id}`)
+  router.push(`/live?deviceId=${device.id}&channelId=${channel.id || channel.channel_id}`)
 }
 
 function handleChannelDetail(channel: any) {
