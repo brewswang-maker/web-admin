@@ -124,13 +124,26 @@
       </el-row>
     </el-card>
 
-    <!-- WebRTC 播放弹窗 -->
+    <!-- 播放弹窗（默认WebRTC超低延迟，H264/H265均支持，失败自动降级HTTP-FLV） -->
     <el-dialog v-model="showPlayer" title="流播放" width="720px" @closed="stopPlayer">
-      <div style="background:#000;border-radius:6px;overflow:hidden">
-        <video ref="videoRef" autoplay controls style="width:100%;max-height:450px" />
+      <div style="background:#000;border-radius:6px;overflow:hidden;position:relative">
+        <video ref="videoRef" autoplay controls muted style="width:100%;max-height:450px" />
+        <div v-if="playerLoading" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.5);color:#fff">
+          <el-icon class="is-loading" style="font-size:32px"><Loading /></el-icon>
+        </div>
       </div>
-      <div style="margin-top:8px;color:#8c8c8c;font-size:12px">
-        流：{{ playingStream?.app }}/{{ playingStream?.stream }}
+      <div style="margin-top:10px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
+        <div style="color:#8c8c8c;font-size:12px">
+          流：{{ playingStream?.app }}/{{ playingStream?.stream }}
+          &nbsp;
+          <el-tag size="small" :type="playerMode === 'flv' ? 'success' : 'primary'" effect="plain">
+            {{ playerMode === 'flv' ? 'HTTP-FLV (低延迟)' : 'WebRTC (超低延迟)' }}
+          </el-tag>
+        </div>
+        <div style="display:flex;gap:6px">
+          <el-button size="small" :type="playerMode === 'flv' ? 'success' : ''" @click="switchToFlv">HTTP-FLV</el-button>
+          <el-button size="small" :type="playerMode === 'webrtc' ? 'primary' : ''" @click="switchToWebRTC">WebRTC</el-button>
+        </div>
       </div>
     </el-dialog>
 
@@ -266,26 +279,86 @@ async function screenshot(row: StreamInfo) {
   }
 }
 
-// ===== WebRTC 播放 =====
+// ===== 播放器（默认WebRTC超低延迟，失败降级HTTP-FLV）=====
 const showPlayer = ref(false)
 const videoRef = ref<HTMLVideoElement | null>(null)
 const playingStream = ref<StreamInfo | null>(null)
+// 默认 WebRTC（H264/H265均支持，失败自动降级HTTP-FLV）
+const playerMode = ref<'flv' | 'webrtc'>('webrtc')
+const playerLoading = ref(false)
 let peerConnection: RTCPeerConnection | null = null
 
 async function playStream(row: StreamInfo) {
   playingStream.value = row
   showPlayer.value = true
-  // 等待 DOM 渲染
-  setTimeout(() => startWebRTC(row), 100)
+  playerLoading.value = true
+
+  // 调用智能协议选择API，根据设备编码和网络状况自动选择最优播放协议
+  try {
+    // 测量RTT（简化版：用整体响应时间作为估算）
+    const rttStart = Date.now()
+    let estimatedRtt = 0
+    try {
+      await http.get('/health')
+      estimatedRtt = Date.now() - rttStart
+    } catch {
+      estimatedRtt = 200 // 请求失败假设高RTT
+    }
+
+    const res = await http.post<any>('/streams/playback-optimize', {
+      stream_id: row.stream,
+      client_rtt_ms: estimatedRtt,
+    })
+    const optData = res.data?.data ?? res.data
+    // 服务端根据设备和网络状况返回最优协议
+    const protocol = optData?.protocol ?? 'webrtc'
+
+    // 根据推荐协议启动播放
+    if (protocol === 'webrtc') {
+      playerMode.value = 'webrtc'
+      setTimeout(() => startWebRTC(row), 100)
+    } else {
+      playerMode.value = 'flv'
+      setTimeout(() => startFlvPlay(row), 100)
+    }
+  } catch {
+    // API调用失败，默认尝试WebRTC
+    playerMode.value = 'webrtc'
+    setTimeout(() => startWebRTC(row), 100)
+  }
 }
 
+// HTTP-FLV 播放（降级备用，延迟 150-350ms）
+function startFlvPlay(row: StreamInfo) {
+  if (!videoRef.value) return
+  stopWebRTC()
+  playerLoading.value = true
+  playerMode.value = 'flv'
+
+  // ZLM HTTP-FLV 地址
+  const flvUrl = `/rtp/${row.stream}.live.flv`
+
+  const video = videoRef.value
+  video.srcObject = null
+  video.src = flvUrl
+  video.onloadeddata = () => { playerLoading.value = false }
+  video.onerror = () => {
+    playerLoading.value = false
+    ElMessage.warning('HTTP-FLV 播放失败，请尝试切换到 WebRTC')
+  }
+  video.load()
+}
+
+// WebRTC 播放（超低延迟，默认首选）
 async function startWebRTC(row: StreamInfo) {
   if (!videoRef.value) return
+  playerLoading.value = true
   try {
     peerConnection = new RTCPeerConnection()
     peerConnection.ontrack = (event) => {
       if (videoRef.value && event.streams[0]) {
         videoRef.value.srcObject = event.streams[0]
+        playerLoading.value = false
       }
     }
     peerConnection.addTransceiver('video', { direction: 'recvonly' })
@@ -294,37 +367,59 @@ async function startWebRTC(row: StreamInfo) {
     const offer = await peerConnection.createOffer()
     await peerConnection.setLocalDescription(offer)
 
-    const res = await http.post('/zlm/webrtc/play', {
-      app: row.app,
-      stream: row.stream,
+    const res = await http.post('/api/v1/webrtc/exchange', {
+      stream_id: `${row.app}/${row.stream}`,
       sdp: offer.sdp,
       type: 'offer',
     })
     const data = res.data?.data ?? res.data
     if (data?.sdp) {
       await peerConnection.setRemoteDescription(new RTCSessionDescription({ type: 'answer', sdp: data.sdp }))
+    } else {
+      throw new Error('no sdp')
     }
   } catch {
-    // WebRTC 不可用时，尝试直接 HLS/FLV 播放
-    try {
-      const hlsUrl = `/api/v1/zlm/${row.app}/${row.stream}/hls/live/index.m3u8`
-      if (videoRef.value) videoRef.value.src = hlsUrl
-    } catch {
-      ElMessage.error('播放失败')
-    }
+    playerLoading.value = false
+    ElMessage.error('WebRTC 连接失败，已自动回退到 HTTP-FLV')
+    switchToFlv()
   }
 }
 
-function stopPlayer() {
+function stopWebRTC() {
   if (peerConnection) {
     peerConnection.close()
     peerConnection = null
   }
   if (videoRef.value) {
     videoRef.value.srcObject = null
+  }
+}
+
+function switchToFlv() {
+  if (!playingStream.value) return
+  playerMode.value = 'flv'
+  stopWebRTC()
+  startFlvPlay(playingStream.value)
+}
+
+function switchToWebRTC() {
+  if (!playingStream.value) return
+  playerMode.value = 'webrtc'
+  if (videoRef.value) {
     videoRef.value.src = ''
+    videoRef.value.load()
+  }
+  startWebRTC(playingStream.value)
+}
+
+function stopPlayer() {
+  stopWebRTC()
+  if (videoRef.value) {
+    videoRef.value.src = ''
+    videoRef.value.load()
   }
   playingStream.value = null
+  playerLoading.value = false
 }
 
 // ===== 拉流代理 =====
@@ -376,6 +471,10 @@ function formatTime(ts: string): string {
 onMounted(() => {
   fetchStreams()
   fetchZlmStatus()
+})
+
+onUnmounted(() => {
+  stopPlayer()
 })
 </script>
 

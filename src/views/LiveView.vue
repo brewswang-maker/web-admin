@@ -31,6 +31,10 @@
               <el-button size="small" @click="toggleFullscreen">
                 <el-icon><FullScreen /></el-icon>
               </el-button>
+              <el-divider direction="vertical" />
+              <el-button size="small" @click="statsPanelVisible = true">
+                <el-icon><DataAnalysis /></el-icon>统计
+              </el-button>
             </div>
           </div>
           <div class="video-grid" :class="`grid-${layout}`" ref="gridRef">
@@ -44,6 +48,10 @@
                      :ref="el => setVideoRef(el, idx)"
                      class="video-player"
                      muted autoplay playsinline />
+              <!-- 检测框 Canvas 叠加层 -->
+              <canvas v-if="slot.playing"
+                      :ref="el => setOverlayRef(idx, el)"
+                      class="detection-overlay" />
               <div v-else-if="slot.loading" class="video-loading">
                 <el-icon class="spin"><Loading /></el-icon>
                 <span>连接中...</span>
@@ -52,12 +60,31 @@
                 <el-icon :size="32"><VideoCamera /></el-icon>
                 <span>拖拽通道到此处</span>
               </div>
+              <!-- 安全加密指示器 -->
+              <div class="slot-security-badge" v-if="slot.playing">
+                <el-icon :color="slot.encrypted ? '#67c23a' : '#909399'" :size="14">
+                  <Lock v-if="slot.encrypted" />
+                  <Unlock v-else />
+                </el-icon>
+              </div>
+              <!-- 检测计数徽章 -->
+              <div v-if="slot.playing && slot.detections && slot.detections.length > 0" class="detection-badge">
+                {{ slot.detections.length }} 检测
+              </div>
+              <!-- 健康状态指示灯 -->
+              <div v-if="slot.playing" class="health-indicator" :class="streamHealth.getHealth(idx).status"></div>
+              <!-- 质量等级标签 -->
+              <div v-if="slot.playing && adaptiveBitrate.qualityLevels[idx]" class="quality-badge">
+                {{ adaptiveBitrate.getQualityInfo(idx).labelShort }}
+              </div>
               <!-- 视频叠加层(仅无流时隐藏，有流时信息在底部栏) -->
               <!-- 海康风格底部工具条 -->
               <div v-if="slot.channelId" class="video-bottom-bar">
                 <div class="bottom-left">
                   <span class="bl-name">{{ slot.name || `CH${idx + 1}` }}</span>
                   <span class="bl-badge" :class="slot.status === 'streaming' ? 'on' : 'off'">{{ slot.status === 'streaming' ? 'LIVE' : 'OFF' }}</span>
+                  <span v-if="slot.codec" class="bl-codec">{{ slot.codec }}</span>
+                  <span v-if="slot.currentFormat && slot.status === 'streaming'" class="bl-latency">{{ FORMAT_LATENCY_INFO[slot.currentFormat] }}</span>
                   <span class="bl-time">{{ currentTime }}</span>
                 </div>
                 <div class="bottom-actions">
@@ -189,6 +216,13 @@
       </el-col>
     </el-row>
 
+    <!-- 统计面板 -->
+    <StreamStatsPanel
+      v-model="statsPanelVisible"
+      :slots="activeSlotList"
+      :health-states="streamHealth.healthStates"
+    />
+
     <!-- 对讲弹窗 -->
     <el-dialog v-model="talkDialogVisible" title="语音对讲" width="400px" :append-to-body="true"
       :close-on-click-modal="false" :close-on-press-escape="false" @close="stopTalk">
@@ -211,10 +245,16 @@ import { useDeviceStore } from '@/stores/device'
 import { getDeviceChannels } from '@/api/devices'
 import { streamHttp, deviceHttp } from '@/api/http'
 import { ptzControl as ptzApi } from '@/api/ptz'
+import { detectFromBase64, getInferenceStatus } from '@/api/inference'
+import type { DetectionResult } from '@/api/inference'
 import { ElMessage } from 'element-plus'
+import { Lock, Unlock } from '@element-plus/icons-vue'
 import type { Channel, DeviceItem } from '@/types/device'
 import Hls from 'hls.js'
 import flvjs from 'flv.js'
+import { useStreamHealth } from '@/composables/useStreamHealth'
+import { useAdaptiveBitrate } from '@/composables/useAdaptiveBitrate'
+import StreamStatsPanel from '@/components/StreamStatsPanel.vue'
 
 type PlayerFormat = 'flv' | 'ws-flv' | 'hls' | 'webrtc'
 
@@ -225,11 +265,19 @@ const FORMAT_LABELS: Record<PlayerFormat, string> = {
   'webrtc': 'WebRTC',
 }
 
+const FORMAT_LATENCY_INFO: Record<PlayerFormat, string> = {
+  'webrtc': '超低延迟 (<500ms)',
+  'flv': '低延迟 (<1s)',
+  'ws-flv': '低延迟 (<1s)',
+  'hls': '标准延迟 (3-5s)',
+}
+
 interface GridSlot {
   channelId: string
   name: string
   status: string
   urls: Partial<Record<PlayerFormat, string>>
+  codec: string  // 视频编码格式（H.264/H.265/HEVC，用于播放器选择）
   playing: boolean
   loading: boolean
   muted: boolean
@@ -237,6 +285,13 @@ interface GridSlot {
   playerInstance: Hls | flvjs.Player | null
   recording: boolean
   talking: boolean
+  currentFormat: PlayerFormat | ''
+  webrtcRetryCount: number
+  reconnectCount: number
+  encrypted: boolean
+  detections: DetectionResult[]
+  detectionTime: number
+  _lastReconnectTime: number
 }
 
 const route = useRoute()
@@ -248,13 +303,87 @@ const layout = ref(4)
 const activeSlotIdx = ref(0)
 const gridSlots = reactive<GridSlot[]>(
   Array.from({ length: 16 }, () => ({
-    channelId: '', name: '', status: '', urls: {}, playing: false, loading: false, muted: true, deviceId: '', playerInstance: null, recording: false, talking: false
+    channelId: '', name: '', status: '', urls: {}, codec: '', playing: false, loading: false, muted: true, deviceId: '', playerInstance: null, recording: false, talking: false, currentFormat: '', webrtcRetryCount: 0, reconnectCount: 0, encrypted: false, detections: [] as DetectionResult[], detectionTime: 0, _lastReconnectTime: 0
   }))
 )
 const preferredFormat = ref<PlayerFormat>('flv')
 const videoRefs = ref<Record<number, HTMLVideoElement>>({})
+const overlayRefs = ref<Record<number, HTMLCanvasElement | null>>({})
 const gridRef = ref<HTMLElement>()
 const logRef = ref<HTMLElement>()
+
+function setOverlayRef(idx: number, el: any) {
+  if (el) overlayRefs.value[idx] = el as HTMLCanvasElement
+}
+
+// 检测框颜色映射
+const CLASS_COLORS: Record<string, string> = {
+  person: '#EF4444', bicycle: '#F59E0B', car: '#3B82F6', motorcycle: '#3B82F6',
+  bus: '#3B82F6', truck: '#3B82F6', dog: '#22C55E', cat: '#22C55E',
+}
+
+// 流健康监测（传入卡顿回调用于强制刷新）
+const streamHealth = useStreamHealth((slotIdx, stallCount) => {
+  // 检测到卡顿，强制刷新视频元素
+  const slot = gridSlots[slotIdx]
+  const video = videoRefs.value[slotIdx]
+  if (!slot || !video) return
+
+  console.warn(`[LiveView] slot${slotIdx} 卡顿检测触发（stallCount=${stallCount}），强制刷新视频`)
+
+  // 尝试通过跳帧方式恢复（不重建播放器）
+  if (slot.currentFormat === 'flv' || slot.currentFormat === 'ws-flv') {
+    const player = slot.playerInstance as any
+    if (player && typeof player.refreshLogo === 'function') {
+      // flv.js 提供 refreshLogo 方法强制刷新画面
+      player.refreshLogo()
+    }
+  }
+
+  // [关键修复] 仅在启用了自动重连时才自动重建播放器
+  // 禁用时只刷新画面，不重建播放器，避免画面闪烁
+  if (AUTO_RECONNECT_ENABLED && stallCount >= 2 && slot.channelId && !formatSwitching.has(slotIdx)) {
+    console.warn(`[LiveView] slot${slotIdx} 连续卡顿 ${stallCount} 次，重建播放器`)
+    formatSwitching.add(slotIdx)
+    const fmt = slot.currentFormat as PlayerFormat
+    if (fmt && slot.urls[fmt]) {
+      // 延迟 300ms 重建，避免频繁重建
+      setTimeout(() => {
+        destroyPlayer(slot, slotIdx)
+        attachPlayerByFormat(slotIdx, fmt)
+        setTimeout(() => formatSwitching.delete(slotIdx), 3000)
+      }, 300)
+    }
+  }
+})
+
+// 码率自适应
+const adaptiveBitrate = useAdaptiveBitrate()
+
+// 统计面板
+const statsPanelVisible = ref(false)
+
+// 用于统计面板的活跃 slot 列表
+const activeSlotList = computed(() =>
+  gridSlots
+    .map((slot, idx) => ({ slotIdx: idx, channelId: slot.channelId, name: slot.name }))
+    .filter(s => !!s.channelId)
+)
+
+// 重连锁（防止并发重连）
+const reconnecting = new Set<number>()
+// 格式切换锁（防止 format watcher 和 health watcher 竞争）
+const formatSwitching = new Set<number>()
+// 重连防抖（防止快速重复触发）
+const reconnectDebounce = new Map<number, number>() // slotIdx -> lastTriggerTime
+// 协议降级冷却时间（防止频繁切换导致的闪烁）
+const formatCooldown = new Map<number, number>() // slotIdx -> lastSwitchTime
+const FORMAT_COOLDOWN_MS = 15000  // 15 秒内不允许再次降级
+
+// P2-4: 安全自动重连 — 启用但限制为同格式重连，不自动降级协议
+// 同格式最多重试 3 次，超过后停止自动重连
+const AUTO_RECONNECT_ENABLED = true
+const MAX_SAME_FORMAT_RETRIES = 3
 
 const setVideoRef = (el: any, idx: number) => {
   if (el) videoRefs.value[idx] = el as HTMLVideoElement
@@ -345,26 +474,65 @@ async function loadData() {
 // 分配通道到视频格
 function assignChannel(slotIdx: number, ch: Channel) {
   const slot = gridSlots[slotIdx]
-  // 先关闭旧的
-  closeSlot(slotIdx)
+  // 先关闭旧的播放器（不重置 slot 状态，避免闪烁）
+  if (slot.playerInstance) {
+    if ('destroy' in slot.playerInstance) slot.playerInstance.destroy()
+    slot.playerInstance = null
+  }
+  if (slot.playing) {
+    const video = videoRefs.value[slotIdx]
+    if (video) { video.pause(); video.removeAttribute('src'); video.load() }
+  }
+  streamHealth.stopMonitoring(slotIdx)
+  adaptiveBitrate.deactivate(slotIdx)
+
+  // 保留旧画面直到新流就绪（避免黑屏闪烁）
+  const wasPlaying = slot.playing
 
   slot.channelId = ch.id
   slot.name = ch.name
   slot.deviceId = ch.deviceId || ''
   slot.status = ch.status
-  slot.loading = true
   slot.muted = true
+  // 仅在之前未播放时显示 loading，避免闪烁
+  if (!wasPlaying) {
+    slot.loading = true
+  }
 
-  // 获取播放地址并播放
-  fetchStreamUrls(ch).then(urls => {
-    if (urls) {
-      slot.urls = urls
+  // 获取播放地址并播放（智能选择低延迟格式）
+  fetchStreamUrls(ch).then(result => {
+    if (result && result.urls) {
+      slot.urls = result.urls
+      slot.codec = result.codec || ''  // 保存编码格式用于播放策略选择
       slot.playing = true
+      slot.loading = false
       slot.status = 'streaming'
-      nextTick(() => attachPlayerByFormat(slotIdx, preferredFormat.value))
+      // 根据编码格式智能选择播放格式：H.265 优先 WebRTC/HLS，H.264 使用 FLV
+      const bestFmt = selectBestFormat(result.urls, result.codec)
+      console.log(`[LiveView] slot${slotIdx} 播放格式选择: codec=${result.codec || 'unknown'}, format=${bestFmt}, flv=${!!result.urls.flv}, webrtc=${!!result.urls.webrtc}, hls=${!!result.urls.hls}`)
+      // 不更新 preferredFormat.value，避免触发 watcher 连锁重建其他 slot
+      nextTick(() => {
+          attachPlayerByFormat(slotIdx, bestFmt)
+          // 激活码率自适应
+          adaptiveBitrate.activate(
+            slotIdx,
+            ch.id,
+            () => streamHealth.getHealth(slotIdx),
+          )
+        })
+    } else {
+      slot.loading = false
+      // 流获取失败，清除旧画面
+      if (wasPlaying) {
+        slot.playing = false
+      }
     }
+  }).catch(() => {
     slot.loading = false
-  }).catch(() => { slot.loading = false })
+    if (wasPlaying) {
+      slot.playing = false
+    }
+  })
 }
 
 function assignToActive(ch: Channel) {
@@ -385,7 +553,9 @@ function closeSlot(idx: number) {
       streamHttp.post(`/${slot.channelId}/stop`).catch(() => {})
     }
   }
-  Object.assign(slot, { channelId: '', name: '', status: '', urls: {}, playing: false, loading: false, muted: true, deviceId: '', playerInstance: null })
+  Object.assign(slot, { channelId: '', name: '', status: '', urls: {}, playing: false, loading: false, muted: true, deviceId: '', playerInstance: null, currentFormat: '', webrtcRetryCount: 0, reconnectCount: 0, encrypted: false, _lastReconnectTime: 0 })
+  streamHealth.stopMonitoring(idx)
+  adaptiveBitrate.deactivate(idx)
 }
 
 // 根据选定格式播放
@@ -400,10 +570,17 @@ function attachPlayerByFormat(slotIdx: number, fmt: PlayerFormat) {
   video.removeAttribute('src')
   video.load()
 
+  // 记录当前格式
+  slot.currentFormat = fmt
+
   const url = slot.urls[fmt]
   if (!url) {
     // 当前格式不可用，尝试降级链
-    const fallbackOrder: PlayerFormat[] = ['flv', 'ws-flv', 'hls', 'webrtc']
+    // 注意：H.265 编码时 FLV 会失败，应该跳过
+    const isH265 = slot.codec && (slot.codec.toUpperCase().includes('H265') || slot.codec.toUpperCase().includes('HEVC'))
+    const fallbackOrder: PlayerFormat[] = isH265
+      ? ['hls', 'ws-flv', 'webrtc', 'flv']  // H.265: HLS > ws-flv > WebRTC > FLV
+      : ['flv', 'webrtc', 'ws-flv', 'hls']  // H.264: FLV > WebRTC > ws-flv > HLS
     for (const fb of fallbackOrder) {
       if (slot.urls[fb]) {
         fmt = fb
@@ -420,22 +597,80 @@ function attachPlayerByFormat(slotIdx: number, fmt: PlayerFormat) {
       if (flvjs.isSupported()) {
         const player = flvjs.createPlayer({
           type: 'flv', url, isLive: true,
-          hasAudio: true, hasVideo: true,
+          hasAudio: false, hasVideo: true,
         }, {
           enableStashBuffer: false,
-          stashInitialSize: 128,
-          autoCleanupSourceBuffer: true,
+          stashInitialSize: 64,                     // P1-3: 128→64 更快首帧
+          // GB28181 PS 封装流时间戳可能不连续，autoCleanup 会因负值 DTS 崩溃
+          autoCleanupSourceBuffer: false,
           lazyLoad: false,
-        })
+          // P1-3: 局域网低延迟配置（autoCleanupSourceBuffer=false 已防崩溃）
+          liveBufferLatencyChasing: true,
+          liveBufferLatencyChasingOnPaused: true,
+          liveSyncDurationCount: 1,
+          liveMaxLatencyDurationCount: 1.0,         // P1-3: 1.5→1.0 严格 1 GOP 延迟容忍
+          liveSyncMaxLatencyDurationCount: 0.8,     // P1-3: 1.0→0.8 更早触发延迟追赶
+        } as any)
+
         player.attachMediaElement(video)
         player.load()
-        player.play()
-        player.on(flvjs.Events.ERROR, () => {
+
+        // 首帧显示事件
+        let firstFramePlayed = false
+        let firstFrameTimeout: ReturnType<typeof setTimeout> | null = null
+
+        // 如果 5 秒内没有收到 playing 事件，发送 I 帧请求
+        firstFrameTimeout = setTimeout(() => {
+          if (!firstFramePlayed && slot.channelId) {
+            console.warn(`[LiveView] slot${slotIdx} 5秒内未收到首帧，发送I帧请求`)
+            streamHttp.post(`/${slot.channelId}/quality`, {
+              id: slot.channelId,
+              quality: 'high'
+            }).catch(() => {})
+          }
+        }, 5000)
+
+        video.addEventListener('playing', () => {
+          if (!firstFramePlayed) {
+            firstFramePlayed = true
+            if (firstFrameTimeout) {
+              clearTimeout(firstFrameTimeout)
+              firstFrameTimeout = null
+            }
+            console.log(`[LiveView] slot${slotIdx} 首帧已显示`)
+          }
+        })
+
+        const playPromise = player.play()
+        if (playPromise && typeof playPromise.catch === 'function') {
+          playPromise.catch((e: any) => {
+            console.warn('[LiveView] flv play() rejected (autoplay policy):', e?.message || e)
+          })
+        }
+        player.on(flvjs.Events.ERROR, (errorType: any, errorDetail: any, errorInfo: any) => {
+          console.error('[LiveView] flv.js ERROR:', errorType, errorDetail, errorInfo)
           player.destroy()
           slot.playerInstance = null
-          attachPlayerByFormat(slotIdx, 'hls')
+          // 降级顺序：HLS > WS-FLV > WebRTC > FLV
+          // 注意：CodecUnsupported 说明流是 H.265/H.266 编码，FLV MSE 不支持
+          // HLS 有更好的 H.265 支持，优先使用；WebRTC 需要 ZLM SDP 交换可能失败
+          if (slot.urls['hls']) {
+            console.log('[LiveView] FLV 失败，降级到 HLS（优先）')
+            attachPlayerByFormat(slotIdx, 'hls')
+          } else if (slot.urls['ws-flv']) {
+            console.log('[LiveView] FLV 失败，降级到 WS-FLV')
+            attachPlayerByFormat(slotIdx, 'ws-flv')
+          } else if (slot.urls['webrtc']) {
+            console.log('[LiveView] FLV/HLS 失败，降级到 WebRTC')
+            attachPlayerByFormat(slotIdx, 'webrtc')
+          } else {
+            ElMessage.warning('视频播放失败（不支持此编码格式），请刷新重试')
+          }
         })
+
+
         slot.playerInstance = player
+        streamHealth.startMonitoring(slotIdx, player, video)
       } else {
         attachPlayerByFormat(slotIdx, 'hls')
       }
@@ -445,12 +680,51 @@ function attachPlayerByFormat(slotIdx: number, fmt: PlayerFormat) {
       if (flvjs.isSupported()) {
         const player = flvjs.createPlayer({
           type: 'flv', url, isLive: true,
-          hasAudio: true, hasVideo: true,
-        }, { enableStashBuffer: false })
+          hasAudio: false, hasVideo: true,
+        }, {
+          enableStashBuffer: false,
+          stashInitialSize: 64,                     // P1-3: 128→64 更快首帧
+          // GB28181 PS 封装流时间戳可能不连续，autoCleanup 会因负值 DTS 崩溃
+          autoCleanupSourceBuffer: false,
+          lazyLoad: false,
+          liveBufferLatencyChasing: true,
+          liveBufferLatencyChasingOnPaused: true,
+          liveSyncDurationCount: 1,
+          liveMaxLatencyDurationCount: 1.0,         // P1-3: 1.5→1.0
+          liveSyncMaxLatencyDurationCount: 0.8,     // P1-3: 1.0→0.8
+        } as any)
+
+        // 首帧显示事件
+        let wsFirstFramePlayed = false
+        video.addEventListener('playing', () => {
+          if (!wsFirstFramePlayed) {
+            wsFirstFramePlayed = true
+            console.log(`[LiveView] slot${slotIdx} WS-FLV 首帧已显示`)
+          }
+        })
+
+        // H.265/编码错误降级（flv.js 不支持 H.265 MSE 解码）
+        player.on(flvjs.Events.ERROR, (_errorType: string, _errorDetail: string, _errorInfo: any) => {
+          console.error(`[LiveView] ws-flv ERROR:`, _errorType, _errorDetail, _errorInfo)
+          player.destroy()
+          slot.playerInstance = null
+          if (slot.urls['hls']) {
+            attachPlayerByFormat(slotIdx, 'hls')
+          } else if (slot.urls['webrtc']) {
+            attachPlayerByFormat(slotIdx, 'webrtc')
+          }
+        })
+
         player.attachMediaElement(video)
         player.load()
-        player.play()
+        const wsPlayPromise = player.play()
+        if (wsPlayPromise && typeof wsPlayPromise.catch === 'function') {
+          wsPlayPromise.catch((e: any) => {
+            console.warn('[LiveView] ws-flv play() rejected (autoplay policy):', e?.message || e)
+          })
+        }
         slot.playerInstance = player
+        streamHealth.startMonitoring(slotIdx, player, video)
       } else {
         attachPlayerByFormat(slotIdx, 'hls')
       }
@@ -459,12 +733,29 @@ function attachPlayerByFormat(slotIdx: number, fmt: PlayerFormat) {
     case 'hls':
       if (Hls.isSupported()) {
         const hls = new Hls({
-          enableWorker: true, lowLatencyMode: true,
-          maxBufferLength: 5, maxMaxBufferLength: 10, liveSyncDurationCount: 1,
+          enableWorker: true,
+          // 低延迟模式核心配置
+          lowLatencyMode: true,
+          // P1-4: 局域网低延迟缓冲区配置
+          maxBufferLength: 0.3,                   // P1-4: 0.5→0.3 更激进
+          maxMaxBufferLength: 0.8,                // P1-4: 1→0.8 限制缓冲增长
+          maxBufferSize: 1 * 1000 * 1000,         // 1MB 缓冲区上限
+          maxBufferHole: 0.1,                      // 缓冲区缺口容忍度
+          // 直播同步参数（控制延迟）
+          liveSyncDurationCount: 0.5,              // P1-4: 1→0.5 更积极同步到最新
+          liveMaxLatencyDurationCount: 1.5,        // P1-4: 2→1.5 最大延迟容忍 1.5s
+          liveDurationInfinity: true,
+          highBufferWatchdogPeriod: 1,
         })
         hls.loadSource(url)
         hls.attachMedia(video)
-        hls.on(Hls.Events.MANIFEST_PARSED, () => video.play().catch(() => {}))
+        hls.on(Hls.Events.MANIFEST_PARSED, () => {
+          console.log(`[LiveView] slot${slotIdx} HLS MANIFEST_PARSED，开始播放`)
+          video.play().catch(() => {})
+        })
+        hls.on(Hls.Events.LEVEL_SWITCHED, (_event, data) => {
+          console.debug(`[LiveView] slot${slotIdx} HLS 切换到级别 ${data.level}`)
+        })
         hls.on(Hls.Events.ERROR, (_e, data) => {
           if (data.fatal) {
             if (data.type === Hls.ErrorTypes.NETWORK_ERROR) hls.startLoad()
@@ -472,6 +763,8 @@ function attachPlayerByFormat(slotIdx: number, fmt: PlayerFormat) {
           }
         })
         slot.playerInstance = hls
+        // HLS 健康监测：传入 Hls 实例和 video 元素
+        streamHealth.startMonitoring(slotIdx, hls, video)
       } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
         video.src = url
         video.addEventListener('loadedmetadata', () => video.play().catch(() => {}))
@@ -485,42 +778,97 @@ function attachPlayerByFormat(slotIdx: number, fmt: PlayerFormat) {
   }
 }
 
-function destroyPlayer(slot: GridSlot) {
-  const p = toRaw(slot).playerInstance
+function destroyPlayer(slot: any, slotIdx?: number) {
+  const slotOrIdx = slotIdx ?? gridSlots.indexOf(slot)
+  if (slotOrIdx < 0) return
+
+  // 获取原始对象（避免响应式代理导致的 undefined）
+  const rawSlot = toRaw(gridSlots[slotOrIdx])
+  const p = rawSlot?.playerInstance
   if (p) {
-    if ('destroy' in p) p.destroy()
-    slot.playerInstance = null
+    // 停止健康监测
+    streamHealth.stopMonitoring(slotOrIdx)
+    if ('destroy' in p) {
+      try { p.destroy() } catch (e) { console.warn('[LiveView] destroy player error:', e) }
+    }
+    rawSlot.playerInstance = null
   }
 }
 
-// WebRTC 播放：通过 ZLM 信令交换
-async function attachWebRtc(slotIdx: number, _webrtcUrl: string) {
+// 智能选择最佳播放格式（根据编码格式选择兼容的播放器）
+// H.265/HEVC：flv.js 无法通过 MSE 解码，需要使用 WebRTC 或 HLS
+// H.264：优先 FLV（低延迟），WebRTC 不稳定时降级
+function selectBestFormat(urls: Partial<Record<PlayerFormat, string>>, codec?: string): PlayerFormat {
+  const isH265 = codec && (codec.toUpperCase().includes('H265') || codec.toUpperCase().includes('HEVC'))
+  
+  if (isH265) {
+    // H.265 编码：优先 HLS（低延迟配置 segDur=1 segNum=1）
+    // 注意：WebRTC 需 ZLM enable_fmp4=1，当前未启用，会浪费 3 秒超时
+    // FLV/WS-FLV 不支持 H.265 MSE 解码
+    console.log(`[LiveView] 检测到 H.265 编码，直接使用 HLS: codec=${codec}`)
+    if (urls.hls) return 'hls'
+    if (urls.webrtc) return 'webrtc'
+    if (urls['ws-flv']) return 'ws-flv'
+    if (urls.flv) return 'flv'  // 最终兜底
+    return 'hls'
+  }
+  
+  // H.264 编码：优先 HTTP-FLV（低延迟），WebRTC 当前环境不稳定
+  if (urls.flv) return 'flv'
+  if (urls.webrtc) return 'webrtc'
+  if (urls['ws-flv']) return 'ws-flv'
+  if (urls.hls) return 'hls'
+  return 'flv' // 默认
+}
+
+// WebRTC 播放：通过 ZLM 后端 SDP 交换
+async function attachWebRtc(slotIdx: number, webrtcUrl: string) {
   const slot = gridSlots[slotIdx] as GridSlot
   const video = videoRefs.value[slotIdx]
   if (!video || !slot.channelId) {
-    attachPlayerByFormat(slotIdx, 'flv')
+    console.warn(`[WebRTC] slot${slotIdx} 缺少 video 或 channelId，降级到 HLS`)
+    if (slot.urls['hls']) {
+      attachPlayerByFormat(slotIdx, 'hls')
+    } else if (slot.urls['ws-flv']) {
+      attachPlayerByFormat(slotIdx, 'ws-flv')
+    } else if (slot.urls.flv) {
+      attachPlayerByFormat(slotIdx, 'flv')
+    }
     return
   }
 
+  // 连续失败 2 次后该 slot 直接走 HLS
+  if (slot.webrtcRetryCount >= 2) {
+    console.warn(`[WebRTC] slot${slotIdx} 已连续失败 ${slot.webrtcRetryCount} 次，直接使用 HLS`)
+    if (slot.urls['hls']) {
+      attachPlayerByFormat(slotIdx, 'hls')
+    } else if (slot.urls['ws-flv']) {
+      attachPlayerByFormat(slotIdx, 'ws-flv')
+    } else {
+      attachPlayerByFormat(slotIdx, 'flv')
+    }
+    return
+  }
+
+  // ICE candidate 质量检测变量
+  let hasSrflxOrRelay = false
+  let candidateCheckTimer: ReturnType<typeof setTimeout> | null = null
+
+  // ICE 超时检测定时器
+  let iceTimeoutTimer: ReturnType<typeof setTimeout> | null = null
+
   try {
-    const pc = new RTCPeerConnection({ iceServers: [] })
+    const pc = new RTCPeerConnection({
+      // 公共 STUN 服务器列表（改善 NAT 穿透）
+      iceServers: [
+        { urls: 'stun:stun.l.google.com:19302' },
+        { urls: 'stun:stun1.l.google.com:19302' },
+        { urls: 'stun:stun.stunprotocol.org:3478' },
+      ],
+      bundlePolicy: 'max-bundle',
+    })
     pc.addTransceiver('video', { direction: 'recvonly' })
     pc.addTransceiver('audio', { direction: 'recvonly' })
-
-    const offer = await pc.createOffer()
-    await pc.setLocalDescription(offer)
-
-    // 走后端 API 交换 SDP（后端转发到 ZLM）
-    const resp = await streamHttp.post(`/${slot.channelId}/webrtc-sdp`, {
-      offer: offer.sdp,
-    })
-    const answer = resp.data?.data?.answer
-    if (!answer) throw new Error('WebRTC SDP exchange failed')
-
-    await pc.setRemoteDescription(new RTCSessionDescription({
-      type: 'answer',
-      sdp: answer,
-    }))
 
     pc.ontrack = (ev) => {
       if (ev.streams && ev.streams[0]) {
@@ -529,61 +877,290 @@ async function attachWebRtc(slotIdx: number, _webrtcUrl: string) {
       }
     }
 
-    pc.oniceconnectionstatechange = () => {
-      if (pc.iceConnectionState === 'failed' || pc.iceConnectionState === 'disconnected') {
+    // ICE candidate 质量检测：检查是否收到 srflx/relay 候选
+    pc.onicecandidate = (ev) => {
+      if (!ev.candidate) return
+      const candidateType = ev.candidate.type
+      if (candidateType === 'srflx' || candidateType === 'relay') {
+        hasSrflxOrRelay = true
+      }
+    }
+
+    // 启动 ICE candidate 质量检测定时器：3 秒内仅收到 host 候选则发出警告
+    candidateCheckTimer = setTimeout(() => {
+      if (!hasSrflxOrRelay) {
+        console.warn(`[WebRTC] slot${slotIdx} 3秒内未收到 srflx/relay 候选，可能存在 NAT 穿透问题`)
+        ElMessage.warning('WebRTC 仅收到本地候选，可能存在 NAT 穿透问题')
+      }
+    }, 3000)
+
+    const offer = await pc.createOffer()
+    await pc.setLocalDescription(offer)
+
+    // ZLM 模式 - 通过后端 API 交换 SDP
+    await exchangeSdpViaBackend(pc, slot.channelId, offer)
+
+    // ICE 超时检测：创建 offer 后启动 3 秒定时器
+    iceTimeoutTimer = setTimeout(() => {
+      const state = pc.iceConnectionState
+      if (state === 'new' || state === 'checking') {
+        console.warn(`[WebRTC] slot${slotIdx} ICE 超时（状态=${state}），降级到 HLS`)
+        slot.webrtcRetryCount++
         pc.close()
         slot.playerInstance = null
-        ElMessage.warning('WebRTC 连接断开，已切换为 HTTP-FLV')
-        attachPlayerByFormat(slotIdx, 'flv')
+        ElMessage.warning('WebRTC 连接超时，已切换为 HLS')
+        // WebRTC 失败后降级到 HLS（HLS 支持 H.265）
+        if (slot.urls['hls']) {
+          attachPlayerByFormat(slotIdx, 'hls')
+        } else {
+          ElMessage.error('WebRTC 和 HLS 均不可用，视频播放失败')
+        }
+      }
+    }, 3000)
+
+    pc.oniceconnectionstatechange = () => {
+      if (pc.iceConnectionState === 'failed' || pc.iceConnectionState === 'disconnected') {
+        slot.webrtcRetryCount++
+        // 清理定时器
+        if (iceTimeoutTimer) { clearTimeout(iceTimeoutTimer); iceTimeoutTimer = null }
+        if (candidateCheckTimer) { clearTimeout(candidateCheckTimer); candidateCheckTimer = null }
+        pc.close()
+        slot.playerInstance = null
+        ElMessage.warning('WebRTC 连接断开，已切换为 HLS')
+        // WebRTC 失败后降级到 HLS（HLS 支持 H.265）
+        if (slot.urls['hls']) {
+          attachPlayerByFormat(slotIdx, 'hls')
+        } else if (slot.urls['ws-flv']) {
+          attachPlayerByFormat(slotIdx, 'ws-flv')
+        } else {
+          ElMessage.error('WebRTC、HLS 均不可用，视频播放失败')
+        }
+      } else if (pc.iceConnectionState === 'connected') {
+        // 连接成功：重置重试计数器
+        slot.webrtcRetryCount = 0
+        // 清理定时器
+        if (iceTimeoutTimer) { clearTimeout(iceTimeoutTimer); iceTimeoutTimer = null }
+        if (candidateCheckTimer) { clearTimeout(candidateCheckTimer); candidateCheckTimer = null }
+        // 验证 DTLS-SRTP 加密状态
+        pc.getStats().then(stats => {
+          stats.forEach(report => {
+            if (report.type === 'transport') {
+              slot.encrypted = report.dtlsState === 'connected'
+            }
+          })
+        }).catch(() => {})
       }
     }
 
     // 包装 pc 为可销毁对象
     slot.playerInstance = {
       destroy() {
+        if (iceTimeoutTimer) { clearTimeout(iceTimeoutTimer); iceTimeoutTimer = null }
+        if (candidateCheckTimer) { clearTimeout(candidateCheckTimer); candidateCheckTimer = null }
+        streamHealth.stopMonitoring(slotIdx)
         pc.close()
         video.srcObject = null
       },
     } as any
+    // WebRTC 健康监测
+    streamHealth.startMonitoring(slotIdx, pc)
   } catch (e: any) {
+    slot.webrtcRetryCount++
+    if (iceTimeoutTimer) { clearTimeout(iceTimeoutTimer); iceTimeoutTimer = null }
+    if (candidateCheckTimer) { clearTimeout(candidateCheckTimer); candidateCheckTimer = null }
     console.error('WebRTC failed:', e)
-    ElMessage.warning(`WebRTC 连接失败(${e.message || '未知'})，已切换为 HTTP-FLV`)
-    attachPlayerByFormat(slotIdx, 'flv')
+    ElMessage.warning(`WebRTC 连接失败(${e.message || '未知'})，已切换为 HLS`)
+    // WebRTC 失败后降级到 HLS（HLS 支持 H.265）
+    if (slot.urls['hls']) {
+      attachPlayerByFormat(slotIdx, 'hls')
+    } else if (slot.urls['ws-flv']) {
+      attachPlayerByFormat(slotIdx, 'ws-flv')
+    } else {
+      ElMessage.error('WebRTC、HLS 均不可用，视频播放失败')
+    }
   }
+}
+
+// 后端 SDP 交换（ZLM 模式）
+async function exchangeSdpViaBackend(pc: RTCPeerConnection, channelId: string, offer: RTCSessionDescriptionInit) {
+  const resp = await streamHttp.post(`/${channelId}/webrtc-sdp`, {
+    offer: offer.sdp,
+  })
+  const answer = resp.data?.data?.answer || resp.data?.data?.sdp
+  if (!answer) throw new Error('WebRTC backend SDP exchange failed')
+  await pc.setRemoteDescription(new RTCSessionDescription({
+    type: 'answer',
+    sdp: answer,
+  }))
 }
 
 // 切换格式时重新播放所有活跃 slot
 watch(preferredFormat, (fmt) => {
   for (let i = 0; i < 16; i++) {
     if (gridSlots[i].playing) {
-      nextTick(() => attachPlayerByFormat(i, fmt))
+      formatSwitching.add(i)
+      nextTick(() => {
+        attachPlayerByFormat(i, fmt)
+        // 格式切换完成后解除锁定
+        setTimeout(() => formatSwitching.delete(i), 3000)
+      })
     }
   }
 })
 
-async function fetchStreamUrls(ch: Channel): Promise<Partial<Record<PlayerFormat, string>> | null> {
-  try {
-    // 1. 启动国标设备推流 (GB28181 INVITE)
-    try { await streamHttp.post(`/${ch.id}/start`) } catch { /* 可能已在推流 */ }
+// 自动重连逻辑：watch healthStates，当某 slot status 变为 error 时触发重连
+watch(
+  () => ({ ...streamHealth.healthStates }),
+  (newStates) => {
+    for (const [idxStr, health] of Object.entries(newStates)) {
+      const idx = Number(idxStr)
+      if (isNaN(idx)) continue
 
-    // 2. 快速轮询获取播放地址（最多 3 秒，每次间隔 300ms）
-    for (let attempt = 0; attempt < 10; attempt++) {
+      const slot = gridSlots[idx]
+
+      // 连接恢复时重置重连计数器
+      // 防止重连后短暂 good 立即重置计数器导致无限循环：
+      // 必须持续 good 状态超过 10 秒才重置（确保真正有视频数据在播放）
+      if (health.status === 'good' && slot) {
+        const now = Date.now()
+        const lastReconnectTime = slot._lastReconnectTime || 0
+        if (lastReconnectTime === 0 || (now - lastReconnectTime) > 10000) {
+          slot.reconnectCount = 0
+          reconnectDebounce.delete(idx)
+        }
+      }
+
+      if (health.status !== 'error') continue
+      if (!AUTO_RECONNECT_ENABLED) continue  // [关键修复] 禁用自动重连，防止画面闪烁
+      if (reconnecting.has(idx)) continue
+      // 格式切换中跳过（避免格式切换触发时又重建播放器）
+      if (formatSwitching.has(idx)) continue
+
+      // 协议降级冷却期：15 秒内不允许再次降级（防止频繁切换导致的闪烁）
+      const now = Date.now()
+      const lastSwitch = formatCooldown.get(idx) || 0
+      if (now - lastSwitch < FORMAT_COOLDOWN_MS) {
+        console.warn(`[StreamHealth] slot${idx} 在降级冷却期内，跳过`)
+        continue
+      }
+
+      // 重连防抖：距离上次重连不足 1 秒则跳过
+      const lastTrigger = reconnectDebounce.get(idx) || 0
+      if (now - lastTrigger < 1000) continue
+
+      if (!slot?.channelId || !slot.playing) continue
+
+      // P2-4: 安全重连 — 同格式重试，不自动降级协议
+      if (slot.reconnectCount > MAX_SAME_FORMAT_RETRIES) {
+        console.warn(`[StreamHealth] slot${idx} 已达最大重连次数(${MAX_SAME_FORMAT_RETRIES})，停止自动重连`)
+        reconnecting.delete(idx)
+        continue
+      }
+
+      reconnecting.add(idx)
+      slot.reconnectCount++
+      slot._lastReconnectTime = Date.now()
+      reconnectDebounce.set(idx, now)
+
+      const currentFmt = slot.currentFormat as PlayerFormat
+      // P2-4: 始终使用同格式重连，不自动降级（避免画面闪烁）
+      let targetFmt = currentFmt
+
+      // WebRTC 特殊处理：回退到 FLV（WebRTC 不稳定时直接切换）
+      if (currentFmt === 'webrtc') {
+        targetFmt = slot.urls['flv'] ? 'flv' : (slot.urls['hls'] ? 'hls' : 'webrtc')
+        console.warn(`[StreamHealth] slot${idx} WebRTC 重连失败，切换到 ${targetFmt}`)
+      } else {
+        console.warn(`[StreamHealth] slot${idx} status=error, 同格式重连 ${targetFmt} (${slot.reconnectCount}/${MAX_SAME_FORMAT_RETRIES})`)
+      }
+
+      // 先停止监测
+      streamHealth.stopMonitoring(idx)
+
+      // 销毁当前播放器
+      destroyPlayer(slot, idx)
+      const video = videoRefs.value[idx]
+      if (video) { video.pause(); video.removeAttribute('src'); video.load() }
+
+      // 延迟 500ms 后重连
+      setTimeout(() => {
+        if (slot.channelId) {
+          formatSwitching.add(idx)
+          attachPlayerByFormat(idx, targetFmt)
+          setTimeout(() => formatSwitching.delete(idx), 3000)
+        }
+        reconnecting.delete(idx)
+      }, 500)
+    }
+  },
+  { deep: true }
+)
+
+async function fetchStreamUrls(ch: Channel): Promise<{urls: Partial<Record<PlayerFormat, string>>, codec: string} | null> {
+  try {
+    // 1. 启动国标设备推流 (GB28181 INVITE)，直接从响应中获取播放URL
+    let startData: any = null
+    let codec = ''
+    try {
+      const { data: startResp } = await streamHttp.post(`/${ch.id}/start`)
+      startData = startResp?.data || startResp
+    } catch (e: any) { console.warn('[LiveView] start stream failed (may already be streaming):', e?.message || e) }
+
+    // /start 响应已包含 flvUrl/webrtcUrl，zlmReady=true 时直接使用
+    if (startData && (startData.flvUrl || startData.webrtcUrl) && startData.zlmReady) {
+      // /start 响应中包含 codec（从 ZLM tracks 检测，或从设备配置缓存读取）
+      // 优先使用 /start 的 codec，避免 multi-urls 因时序问题返回空值
+      codec = startData.codec || ''
+      // 使用 /start 已有的 URL，不阻塞等待 multi-urls（后台已优化，大部分场景足够）
+      return {
+        urls: {
+          flv: startData.flvUrl || '',
+          webrtc: startData.webrtcUrl || '',
+          'ws-flv': startData.wsFlvUrl || '',
+          hls: startData.hlsUrl || '',
+        },
+        codec,
+      }
+    }
+
+    // 2. zlmReady=false 或 start 失败时，轮询 multi-urls 等待流就绪（5×100ms=500ms）
+    for (let attempt = 0; attempt < 5; attempt++) {
       try {
-        const { data } = await streamHttp.get(`/${ch.id}/hls-url`)
+        const { data } = await streamHttp.get(`/${ch.id}/multi-urls`)
         const d = data?.data || data
-        if (d?.flvUrl || d?.hlsUrl) {
+        if (d?.flvUrl || d?.webrtcUrl || d?.hlsUrl) {
           return {
-            flv: d.flvUrl || '',
-            'ws-flv': d.wsFlvUrl || '',
-            hls: d.hlsUrl || '',
-            webrtc: d.webrtcUrl || '',
+            urls: {
+              flv: d.flvUrl || '',
+              webrtc: d.webrtcUrl || '',
+              'ws-flv': d.wsFlvUrl || '',
+              hls: d.hlsUrl || '',
+            },
+            codec: d.codec || '',
           }
         }
-      } catch { /* 流可能还未就绪 */ }
-      await new Promise(r => setTimeout(r, 300))
+      } catch {
+        try {
+          const { data } = await streamHttp.get(`/${ch.id}/hls-url`)
+          const d = data?.data || data
+          if (d?.flvUrl || d?.hlsUrl) {
+            return {
+              urls: {
+                flv: d.flvUrl || '',
+                'ws-flv': d.wsFlvUrl || '',
+                hls: d.hlsUrl || '',
+                webrtc: d.webrtcUrl || '',
+              },
+              codec: d.codec || '',
+            }
+          }
+        } catch { /* 流可能还未就绪 */ }
+      }
+      await new Promise(r => setTimeout(r, 100))
     }
     return null
-  } catch {
+  } catch (e) {
+    console.error('[LiveView] fetchStreamUrls error:', e)
     return null
   }
 }
@@ -906,37 +1483,202 @@ function updateClock() {
   currentTime.value = new Date().toLocaleTimeString('zh-CN', { hour12: false })
 }
 
-function generateFakeLog() {
+// 推理引擎可用状态
+const inferenceAvailable = ref(false)
+
+// 检查推理引擎状态
+async function checkInferenceStatus() {
+  try {
+    const resp = await getInferenceStatus()
+    const data = resp.data?.data
+    inferenceAvailable.value = data?.engine_available ?? false
+    if (inferenceAvailable.value && data?.loaded_models?.length) {
+      const model = data.loaded_models[0]
+      console.log(`[Inference] 引擎就绪, 模型: ${model.name}, 输入: ${model.input_shape}`)
+    }
+  } catch {
+    inferenceAvailable.value = false
+  }
+}
+
+// 在 Canvas 上绘制检测结果
+function drawDetections(idx: number) {
+  const slot = gridSlots[idx]
+  const canvas = overlayRefs.value[idx]
+  const video = videoRefs.value[idx]
+  if (!canvas || !video || !slot.detections.length) {
+    if (canvas) {
+      const ctx = canvas.getContext('2d')
+      if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height)
+    }
+    return
+  }
+
+  // 5秒无新检测则清除
+  if (Date.now() - (slot.detectionTime || 0) > 5000) {
+    const ctx = canvas.getContext('2d')
+    if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height)
+    slot.detections = []
+    return
+  }
+
+  const videoW = video.videoWidth || 640
+  const videoH = video.videoHeight || 480
+  const displayW = video.clientWidth || canvas.clientWidth
+  const displayH = video.clientHeight || canvas.clientHeight
+
+  canvas.width = displayW
+  canvas.height = displayH
+
+  const ctx = canvas.getContext('2d')!
+  ctx.clearRect(0, 0, displayW, displayH)
+
+  // object-fit: contain 宽高比映射
+  const videoRatio = videoW / videoH
+  const displayRatio = displayW / displayH
+  let renderW: number, renderH: number, offsetX: number, offsetY: number
+  if (videoRatio > displayRatio) {
+    renderW = displayW
+    renderH = displayW / videoRatio
+    offsetX = 0
+    offsetY = (displayH - renderH) / 2
+  } else {
+    renderH = displayH
+    renderW = displayH * videoRatio
+    offsetX = (displayW - renderW) / 2
+    offsetY = 0
+  }
+
+  const scaleX = renderW
+  const scaleY = renderH
+
+  for (const det of slot.detections) {
+    if (!det.bbox) continue
+    const { x1, y1, x2, y2 } = det.bbox
+    const px = offsetX + x1 * scaleX
+    const py = offsetY + y1 * scaleY
+    const pw = (x2 - x1) * scaleX
+    const ph = (y2 - y1) * scaleY
+
+    const color = CLASS_COLORS[det.class_name] || '#A78BFA'
+
+    // 绘制矩形框
+    ctx.strokeStyle = color
+    ctx.lineWidth = 2
+    ctx.strokeRect(px, py, pw, ph)
+
+    // 绘制标签背景 + 文字
+    const label = `${det.class_name} ${Math.round(det.confidence * 100)}%`
+    ctx.font = 'bold 11px sans-serif'
+    const textW = ctx.measureText(label).width + 8
+    ctx.fillStyle = color
+    ctx.fillRect(px, py - 18, textW, 18)
+    ctx.fillStyle = '#fff'
+    ctx.fillText(label, px + 4, py - 5)
+  }
+}
+
+// 从视频帧捕获并执行推理
+async function runInferenceOnFrame() {
   const playingSlots = gridSlots.filter(s => s.playing)
   if (!playingSlots.length) return
+
+  // 随机选择一个正在播放的 slot
   const slot = playingSlots[Math.floor(Math.random() * playingSlots.length)]
-  const levels = [
-    { level: 'INFO', tagType: 'info' as const, msgs: ['目标跟踪中', '场景分析正常', '帧率稳定'] },
-    { level: 'WARN', tagType: 'warning' as const, msgs: ['检测到异常行为', '目标徘徊超时', '人员聚集告警'] },
-    { level: 'ALERT', tagType: 'danger' as const, msgs: ['周界入侵检测', '安全帽未佩戴', '烟火告警'] },
-  ]
-  const lvl = levels[Math.floor(Math.random() * levels.length)]
-  const msg = lvl.msgs[Math.floor(Math.random() * lvl.msgs.length)]
-  const conf = Math.floor(Math.random() * 25 + 75)
-  detectionLogs.value.unshift({
-    time: new Date().toLocaleTimeString('zh-CN', { hour12: false }),
-    level: lvl.level,
-    tagType: lvl.tagType,
-    msg: `[${slot.name}] ${msg} | 置信度${conf}%`
-  })
-  if (detectionLogs.value.length > 200) detectionLogs.value.length = 200
+  const idx = gridSlots.indexOf(slot)
+  const video = videoRefs.value[idx]
+  if (!video || video.videoWidth === 0) return
+
+  try {
+    // 捕获视频帧到 canvas 并转为 base64 JPEG
+    const canvas = document.createElement('canvas')
+    canvas.width = video.videoWidth || 640
+    canvas.height = video.videoHeight || 480
+    canvas.getContext('2d')!.drawImage(video, 0, 0)
+    const base64 = canvas.toDataURL('image/jpeg', 0.8).split(',')[1]
+
+    // 调用推理 API
+    const resp = await detectFromBase64(base64)
+    const result = resp.data?.data
+    if (!result) return
+
+    const time = new Date().toLocaleTimeString('zh-CN', { hour12: false })
+
+    if (result.detections.length === 0) {
+      detectionLogs.value.unshift({
+        time,
+        level: 'INFO',
+        tagType: 'info',
+        msg: `[${slot.name}] 帧分析完成, 无目标检测 | ${result.inference_time_ms.toFixed(0)}ms`
+      })
+    } else {
+      // 有检测结果 - 按类型分组
+      const classCounts: Record<string, { count: number; maxConf: number }> = {}
+      for (const det of result.detections) {
+        const name = det.class_name
+        if (!classCounts[name]) classCounts[name] = { count: 0, maxConf: 0 }
+        classCounts[name].count++
+        classCounts[name].maxConf = Math.max(classCounts[name].maxConf, det.confidence)
+      }
+
+      for (const [className, info] of Object.entries(classCounts)) {
+        const conf = Math.round(info.maxConf * 100)
+        let level: string
+        let tagType: string
+        if (['person', 'bicycle', 'car', 'motorcycle', 'bus', 'truck'].includes(className)) {
+          level = 'WARN'
+          tagType = 'warning'
+        } else {
+          level = 'INFO'
+          tagType = 'info'
+        }
+        detectionLogs.value.unshift({
+          time,
+          level,
+          tagType,
+          msg: `[${slot.name}] ${info.count}x ${className} | 置信度${conf}% | ${result.inference_time_ms.toFixed(0)}ms`
+        })
+      }
+    }
+    if (detectionLogs.value.length > 200) detectionLogs.value.length = 200
+
+    // 存储检测结果并绘制检测框
+    slot.detections = result.detections || []
+    slot.detectionTime = Date.now()
+    nextTick(() => drawDetections(idx))
+  } catch (e: any) {
+    if (inferenceAvailable.value) {
+      console.warn('[Inference] 推理请求失败:', e?.message || e)
+    }
+  }
 }
 
 onMounted(() => {
   loadData()
   updateClock()
   clockTimer = setInterval(updateClock, 1000)
-  logTimer = setInterval(generateFakeLog, 3000)
+  // 检查推理引擎状态，然后启动推理定时器
+  checkInferenceStatus().then(() => {
+    if (inferenceAvailable.value) {
+      logTimer = setInterval(runInferenceOnFrame, 3000)
+    } else {
+      // 推理引擎不可用时，5秒后重试一次
+      setTimeout(() => {
+        checkInferenceStatus().then(() => {
+          if (inferenceAvailable.value) {
+            logTimer = setInterval(runInferenceOnFrame, 3000)
+          }
+        })
+      }, 5000)
+    }
+  })
 })
 
 onUnmounted(() => {
   if (clockTimer) clearInterval(clockTimer)
   if (logTimer) clearInterval(logTimer)
+  // 清理健康监测
+  streamHealth.cleanup()
   // 关闭所有流
   for (let i = 0; i < 16; i++) closeSlot(i)
 })
@@ -960,6 +1702,68 @@ onUnmounted(() => {
 .video-cell.active { border-color: #1A73E8; }
 .video-cell.has-stream:hover .video-bottom-bar { opacity: 1; transform: translateY(0); }
 
+/* 检测框叠加 canvas */
+.detection-overlay {
+  position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+  pointer-events: none; z-index: 5;
+}
+
+/* 检测计数徽章 */
+.detection-badge {
+  position: absolute; top: 6px; right: 6px; z-index: 6;
+  background: rgba(46, 213, 115, 0.9); color: #fff;
+  font-size: 11px; font-weight: 600; padding: 2px 8px;
+  border-radius: 10px; pointer-events: none;
+}
+
+/* 健康状态指示灯 */
+.health-indicator {
+  position: absolute;
+  right: 8px;
+  bottom: 40px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  z-index: 10;
+  pointer-events: none;
+}
+.health-indicator.good { background: #0F9D58; box-shadow: 0 0 4px #0F9D58; }
+.health-indicator.warning { background: #F9AB00; box-shadow: 0 0 4px #F9AB00; }
+.health-indicator.error { background: #DB4437; box-shadow: 0 0 4px #DB4437; animation: blink-health 1s ease infinite; }
+@keyframes blink-health { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+
+/* 安全加密指示器 */
+.slot-security-badge {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  z-index: 10;
+  background: rgba(0,0,0,0.5);
+  border-radius: 50%;
+  padding: 3px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+/* 质量等级标签 */
+.quality-badge {
+  position: absolute;
+  top: 6px;
+  left: 8px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  background: rgba(26,115,232,0.75);
+  color: #fff;
+  pointer-events: none;
+  z-index: 10;
+  backdrop-filter: blur(2px);
+}
+
 .video-player { width: 100%; height: 100%; object-fit: contain; display: block; }
 .video-empty { width: 100%; height: 100%; min-height: 160px; display: flex; flex-direction: column; align-items: center; justify-content: center; color: #555; gap: 8px; font-size: 13px; }
 .video-loading { width: 100%; height: 100%; min-height: 160px; display: flex; flex-direction: column; align-items: center; justify-content: center; color: #1A73E8; gap: 8px; }
@@ -982,6 +1786,8 @@ onUnmounted(() => {
 .bl-badge { padding: 1px 6px; border-radius: 3px; font-size: 10px; font-weight: 700; letter-spacing: 0.5px; }
 .bl-badge.on { background: #0F9D58; color: #fff; }
 .bl-badge.off { background: #DB4437; color: #fff; }
+.bl-latency { padding: 1px 5px; border-radius: 3px; font-size: 10px; font-weight: 600; background: rgba(26,115,232,0.3); color: #8AB4F8; white-space: nowrap; }
+.bl-codec { padding: 1px 5px; border-radius: 3px; font-size: 10px; font-weight: 600; background: rgba(255,152,0,0.3); color: #FFB74D; white-space: nowrap; }
 .bl-time { font-family: 'Menlo', 'Consolas', monospace; font-size: 11px; color: #ccc; }
 .bottom-actions { display: flex; gap: 2px; align-items: center; }
 .va-btn {

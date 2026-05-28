@@ -28,6 +28,15 @@ export interface ZLMStatus {
   bandwidth: number
 }
 
+/** 多协议播放地址（ZLM 全协议） */
+export interface MultiPlayUrls {
+  /** ZLMediaKit 播放地址 */
+  flvUrl?: string
+  wsFlvUrl?: string
+  hlsUrl?: string
+  webrtcUrl?: string
+}
+
 /** 获取流列表 */
 export function getStreams(params?: { status?: string; protocol?: string }) {
   return streamHttp.get<ApiResponse<StreamInfo[]>>('', { params })
@@ -41,6 +50,11 @@ export function getStream(id: string) {
 /** 获取流播放地址 */
 export function getStreamPlayUrl(id: string, protocol: 'hls' | 'webrtc' | 'rtmp' = 'hls') {
   return streamHttp.get<ApiResponse<{ url: string }>>(`/${id}/${protocol}-url`)
+}
+
+/** 获取多协议播放地址（ZLM 全协议） */
+export function getMultiUrls(id: string) {
+  return streamHttp.get<ApiResponse<MultiPlayUrls>>(`/${id}/multi-urls`)
 }
 
 /** WebRTC SDP交换 */

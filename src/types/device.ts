@@ -66,6 +66,7 @@ export interface DeviceForm {
   projectId?: string
   location?: string
   description?: string
+  algoPlugin?: string
 }
 
 /** 设备发现结果 */

@@ -126,13 +126,40 @@ export default defineConfig(async () => {
         ],
       },
       proxy: {
-        '/api': {
-          target: 'http://127.0.0.1:8080',
+        // box-sdk 后端 API 代理（设备/系统/通道/流/告警等所有业务API）
+        '/api/v1': {
+          target: 'http://127.0.0.1:18080',
           changeOrigin: true,
+          // 优化代理性能
+          configure: (proxy) => {
+            proxy.on('proxyReq', (_proxyReq, _req, _res) => {
+              // no-op
+            })
+            proxy.options.timeout = 0
+            proxy.options.proxyTimeout = 30000
+          },
         },
         '/ws': {
-          target: 'ws://127.0.0.1:8080',
+          target: 'ws://127.0.0.1:18080',
           ws: true,
+          changeOrigin: true,
+        },
+        // ZLM HTTP-FLV 播放代理
+        '/rtp': {
+          target: 'http://127.0.0.1:9080',
+          changeOrigin: true,
+          // HTTP-FLV 是无限流式响应，必须禁用代理超时
+          configure: (proxy) => {
+            proxy.on('proxyReq', (_proxyReq, _req, _res) => {
+              // no-op: disable default timeout handling for streaming
+            })
+            proxy.options.timeout = 0
+            proxy.options.proxyTimeout = 0
+          },
+        },
+        // ZLM WebRTC 信令代理
+        '/index/api/webrtc': {
+          target: 'http://127.0.0.1:9080',
           changeOrigin: true,
         },
       },

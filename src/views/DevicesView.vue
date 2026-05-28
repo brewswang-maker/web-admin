@@ -148,12 +148,12 @@
           </template>
         </el-table-column>
         <el-table-column prop="location" label="位置" width="100" show-overflow-tooltip />
-        <el-table-column label="操作" width="270" fixed="right">
+        <el-table-column label="操作" width="300" fixed="right">
           <template #default="{ row }">
             <el-button size="small" link type="primary" @click="$router.push(`/devices/${row.id}`)">详情</el-button>
+            <el-button size="small" link type="warning" @click="openEditDialog(row)">编辑</el-button>
             <el-button size="small" link type="success" @click="handleLive(row)">预览</el-button>
             <el-button size="small" link @click="handleSync(row)">同步</el-button>
-            <el-button size="small" link type="warning" @click="handleSyncTime(row)">校时</el-button>
             <el-button size="small" link type="danger" @click="handleDelete(row)">删除</el-button>
           </template>
         </el-table-column>
@@ -440,6 +440,59 @@
       <template #footer>
         <el-button @click="showAddDialog = false">取消</el-button>
         <el-button type="primary" :loading="addLoading" @click="confirmAdd">确认添加</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 编辑设备对话框 -->
+    <el-dialog v-model="showEditDialog" title="编辑设备" width="640px" @closed="resetEditForm">
+      <el-form :model="editForm" label-width="110px">
+        <el-divider content-position="left">基本信息</el-divider>
+        <el-form-item label="设备 ID">
+          <el-input :model-value="editForm.deviceId" disabled />
+        </el-form-item>
+        <el-form-item label="设备名称" required>
+          <el-input v-model="editForm.name" placeholder="设备名称" />
+        </el-form-item>
+        <el-form-item label="设备类型">
+          <el-select v-model="editForm.deviceType" style="width:100%">
+            <el-option label="IPCamera" value="IPCamera" />
+            <el-option label="NVR" value="NVR" />
+            <el-option label="DVR" value="DVR" />
+            <el-option label="EdgeBox" value="EdgeBox" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="IP 地址">
+          <el-input v-model="editForm.ip" placeholder="192.168.1.100" />
+        </el-form-item>
+        <el-form-item label="端口">
+          <el-input-number v-model="editForm.rtspPort" :min="1" :max="65535" />
+        </el-form-item>
+        <el-divider content-position="left">通用配置</el-divider>
+        <el-form-item label="所属项目">
+          <el-select v-model="editForm.projectId" style="width:100%">
+            <el-option label="智慧园区" value="park" />
+            <el-option label="智慧工地" value="site" />
+            <el-option label="智慧社区" value="community" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="安装位置">
+          <el-input v-model="editForm.location" placeholder="e.g. 南门岗亭" />
+        </el-form-item>
+        <el-form-item label="算法插件">
+          <el-select v-model="editForm.algoPlugin" style="width:100%">
+            <el-option label="无" value="无" />
+            <el-option label="入侵检测" value="入侵检测" />
+            <el-option label="烟火检测" value="烟火检测" />
+            <el-option label="安全帽检测" value="安全帽检测" />
+            <el-option label="人脸检测" value="人脸检测" />
+            <el-option label="徘徊检测" value="徘徊检测" />
+            <el-option label="车牌识别" value="车牌识别" />
+          </el-select>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showEditDialog = false">取消</el-button>
+        <el-button type="primary" :loading="editLoading" @click="confirmEdit">保存修改</el-button>
       </template>
     </el-dialog>
   </div>
@@ -754,6 +807,14 @@ async function confirmAdd() {
         ),
       },
     }
+    // ONVIF/RTSP 设备自动生成 rtsp_url
+    if ((addForm.value.protocol === 'ONVIF' || addForm.value.protocol === 'onvif' ||
+         addForm.value.protocol === 'RTSP' || addForm.value.protocol === 'rtsp') && addForm.value.ip) {
+      const user = addForm.value.protocolConfig?.onvifUsername || addForm.value.protocolConfig?.rtspUsername || ''
+      const pass = addForm.value.protocolConfig?.onvifPassword || addForm.value.protocolConfig?.rtspPassword || ''
+      const auth = user && pass ? `${user}:${pass}@` : ''
+      data.config.rtsp_url = `rtsp://${auth}${addForm.value.ip}:${addForm.value.rtspPort || 554}/onvif1`
+    }
     await deviceStore.addDevice(data as any)
     ElMessage.success('设备添加成功')
     showAddDialog.value = false
@@ -771,6 +832,60 @@ function resetAddForm() {
   }
   discoveredList.value = []
   selectedDiscovered.value = ''
+}
+
+// ---- 编辑设备 ----
+const showEditDialog = ref(false)
+const editLoading = ref(false)
+const editForm = ref({
+  deviceId: '', name: '', deviceType: 'IPCamera' as string,
+  ip: '', rtspPort: 554, projectId: 'park', location: '', algoPlugin: '无',
+})
+
+function openEditDialog(row: DeviceItem) {
+  editForm.value = {
+    deviceId: row.id,
+    name: row.name,
+    deviceType: row.deviceType,
+    ip: row.ip,
+    rtspPort: row.rtspPort,
+    projectId: (row.metadata as any)?.project_id || (row.metadata as any)?.projectId || 'park',
+    location: (row.metadata as any)?.location || row.location || '',
+    algoPlugin: row.algoPlugin || '无',
+  }
+  showEditDialog.value = true
+}
+
+async function confirmEdit() {
+  if (!editForm.value.name) {
+    ElMessage.warning('请填写设备名称')
+    return
+  }
+  editLoading.value = true
+  try {
+    await deviceStore.updateDevice(editForm.value.deviceId, {
+      device_name: editForm.value.name,
+      device_type: editForm.value.deviceType,
+      ip_address: editForm.value.ip,
+      port: editForm.value.rtspPort,
+      config: {
+        project_id: editForm.value.projectId,
+        location: editForm.value.location,
+        algo_plugin: editForm.value.algoPlugin,
+      },
+    } as any)
+    ElMessage.success('设备更新成功')
+    showEditDialog.value = false
+    fetchData()
+  } catch { ElMessage.error('更新失败') }
+  finally { editLoading.value = false }
+}
+
+function resetEditForm() {
+  editForm.value = {
+    deviceId: '', name: '', deviceType: 'IPCamera',
+    ip: '', rtspPort: 554, projectId: 'park', location: '', algoPlugin: '无',
+  }
 }
 
 onMounted(() => {

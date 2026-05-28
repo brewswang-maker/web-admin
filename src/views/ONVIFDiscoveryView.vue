@@ -263,7 +263,10 @@ async function submitDevice() {
   submitting.value = true
   try {
     if (dialogMode.value === 'add') {
+      // 自动生成 device_id: onvif_{ip}_{timestamp}
+      const deviceId = `onvif_${form.ip.replace(/\./g, '')}_${Date.now()}`
       await http.post('/devices', {
+        device_id: deviceId,
         device_name: form.name,
         ip_address: form.ip,
         protocol: 'ONVIF',
@@ -271,6 +274,7 @@ async function submitDevice() {
           onvif_username: form.username,
           onvif_password: form.password,
           onvif_profile_token: form.profileToken,
+          rtsp_url: `rtsp://${form.username && form.password ? form.username + ':' + form.password + '@' : ''}${form.ip}:554/onvif1`,
         },
       })
       ElMessage.success('设备添加成功')

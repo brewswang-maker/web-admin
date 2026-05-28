@@ -224,6 +224,7 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useDeviceStore } from '@/stores/device'
+import { deviceApi } from '@/api/device'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import LazyChart from '@/components/LazyChart.vue'
 import { PROTOCOL_OPTIONS } from '@/types/device'
@@ -349,9 +350,19 @@ function handleChannelConfig(channel: any) {
 async function saveConfig() {
   saving.value = true
   try {
-    await new Promise(resolve => setTimeout(resolve, 600))
+    const deviceId = route.params.id as string
+    await deviceApi.updateConfig(deviceId, {
+      algo_plugin: configForm.value.algoPlugin,
+      record_days: configForm.value.recordDays,
+      sensitivity: configForm.value.sensitivity,
+      heartbeat_interval: configForm.value.heartbeatInterval,
+      scheduled_reboot: configForm.value.scheduledReboot,
+      reboot_time: configForm.value.rebootTime,
+    } as any)
     ElMessage.success('配置已保存')
     showConfigDrawer.value = false
+  } catch {
+    ElMessage.error('配置保存失败')
   } finally {
     saving.value = false
   }

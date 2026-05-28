@@ -53,7 +53,7 @@ export function deleteRecording(id: string) {
   return recordingHttp.delete<ApiResponse<void>>(`/${id}`)
 }
 
-/** 回放控制(暂停/恢复/倍速) */
-export function controlPlayback(id: string, action: 'pause' | 'resume' | 'seek', params?: { position?: number; speed?: number }) {
+/** 回放控制(暂停/恢复/跳转/倍速) */
+export function controlPlayback(id: string, action: 'pause' | 'resume' | 'seek' | 'speed', params?: { position?: number; speed?: number; scale?: number }) {
   return recordingHttp.post<ApiResponse<void>>(`/${id}/control`, { action, ...params })
 }

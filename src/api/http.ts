@@ -104,9 +104,9 @@ export interface RetryConfig {
 }
 
 const DEFAULT_RETRY_CONFIG: RetryConfig = {
-  maxRetries: 2,
-  baseDelay: 500,
-  maxDelay: 5000,
+  maxRetries: 1,  // 减少重试次数，之前是2
+  baseDelay: 300,  // 减少初始延迟，之前是500
+  maxDelay: 3000,  // 减少最大延迟，之前是5000
   retryableStatuses: [408, 429, 500, 502, 503, 504],
   retryableBizCodes: [],
 }
@@ -474,3 +474,6 @@ export const scene3dModelHttp = createHttpClient('/scene3d/models', {
   maxRetries: 2,
   baseDelay: 1000,
 })
+
+/** 推理服务客户端 */
+export const inferenceHttp = createHttpClient('/inference')

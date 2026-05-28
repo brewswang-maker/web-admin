@@ -71,8 +71,8 @@ export type { APIKeyItem, CreateAPIKeyRequest, WebhookItem, CreateWebhookRequest
 export { rbacApi } from './rbac'
 export type { Role, Permission, CreateRoleRequest, UpdateRoleRequest, Team, CreateTeamRequest } from './rbac'
 
-export { getStreams, getStream, getStreamPlayUrl, exchangeSDP, stopStream, addProxy, getZLMStatus } from './stream'
-export type { StreamInfo, ZLMStatus } from './stream'
+export { getStreams, getStream, getStreamPlayUrl, getMultiUrls, exchangeSDP, stopStream, addProxy, getZLMStatus } from './stream'
+export type { StreamInfo, ZLMStatus, MultiPlayUrls } from './stream'
 
 export { getRecordings, playRecording, stopPlayback, downloadRecording, deleteRecording, controlPlayback } from './recording'
 export type { RecordingSegment } from './recording'
