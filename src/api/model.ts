@@ -11,17 +11,25 @@ import { TIMEOUT_PRESETS } from './http'
 
 export interface ModelInfo {
   id: string
-  name: string
+  model_id?: string
+  name: string          // 显示用（中文优先）
+  name_zh?: string     // 中文名称
+  name_en?: string     // 英文名称
   version: string
-  type: 'detection' | 'classification' | 'segmentation' | 'recognition' | 'tracking'
+  type: 'detection' | 'classification' | 'segmentation' | 'recognition' | 'tracking' | 'YOLO' | 'ReID' | 'Classify' | 'TinyLLM' | 'MultiModal'
   framework: 'TPU-MLIR' | 'ONNX' | 'TensorFlow'
   precision: 'INT8' | 'FP16' | 'FP32' | 'MIXED'
-  inputShape: string
+  inputShape?: string
+  input_shape?: number[]
   tpuUsage: number
-  status: 'active' | 'inactive' | 'loading' | 'error'
+  tpu_usage?: number
+  status: 'active' | 'inactive' | 'loading' | 'error' | 'loaded' | 'unloaded'
   size: number
+  memory_mb?: number
   description?: string
+  priority?: string
   uploadedAt?: string
+  created_at?: string
   activatedAt?: string
 }
 

@@ -1,12 +1,14 @@
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { getModels, uploadModel as apiUploadModel, activateModel as apiActivateModel, deactivateModel as apiDeactivateModel, deleteModel as apiDeleteModel, getTpuUsage } from '@/api/model'
+import { getModels, uploadModel as apiUploadModel, activateModel as apiActivateModel, deactivateModel as apiDeactivateModel, deleteModel as apiDeleteModel } from '@/api/model'
 
 interface ModelInfo {
   id: string
   model_id?: string
   name: string
+  name_zh?: string
+  name_en?: string
   type: string
   precision: string
   status: 'loaded' | 'active' | 'error' | 'unloaded'
@@ -14,6 +16,8 @@ interface ModelInfo {
   inference_latency_ms: number
   description: string
   created_at: string
+  memory_mb?: number
+  priority?: string
 }
 
 const models = ref<ModelInfo[]>([])
@@ -22,6 +26,7 @@ const activeTab = ref('all')
 const uploadDialogVisible = ref(false)
 const detailDrawerVisible = ref(false)
 const selectedModel = ref<ModelInfo | null>(null)
+const isEnglish = ref(false)
 
 const uploadForm = ref({
   name: '',
@@ -38,6 +43,13 @@ const filteredModels = computed(() => {
   if (activeTab.value === 'all') return models.value
   return models.value.filter(m => m.type === activeTab.value)
 })
+
+function getModelDisplayName(model: ModelInfo): string {
+  if (isEnglish.value && model.name_en) {
+    return model.name_en
+  }
+  return model.name_zh || model.name
+}
 
 const totalTpuUsage = computed(() => models.value.reduce((sum, m) => sum + m.tpu_usage, 0))
 
@@ -57,7 +69,7 @@ async function fetchModels() {
 async function activateModel(model: ModelInfo) {
   try {
     await apiActivateModel(model.id)
-    ElMessage.success(`模型 ${model.name} 已激活`)
+    ElMessage.success(`模型 ${getModelDisplayName(model)} 已激活`)
     fetchModels()
   } catch (e: any) {
     ElMessage.error('激活失败: ' + e.message)
@@ -67,7 +79,7 @@ async function activateModel(model: ModelInfo) {
 async function deactivateModel(model: ModelInfo) {
   try {
     await apiDeactivateModel(model.id)
-    ElMessage.success(`模型 ${model.name} 已卸载`)
+    ElMessage.success(`模型 ${getModelDisplayName(model)} 已卸载`)
     fetchModels()
   } catch (e: any) {
     ElMessage.error('卸载失败: ' + e.message)
@@ -76,7 +88,7 @@ async function deactivateModel(model: ModelInfo) {
 
 async function deleteModel(model: ModelInfo) {
   try {
-    await ElMessageBox.confirm(`确定删除模型 ${model.name}?`, '删除确认', { type: 'warning' })
+    await ElMessageBox.confirm(`确定删除模型 ${getModelDisplayName(model)}?`, '删除确认', { type: 'warning' })
     await apiDeleteModel(model.id)
     ElMessage.success('已删除')
     fetchModels()
@@ -97,7 +109,6 @@ async function uploadModel() {
 
   try {
     await apiUploadModel(formData)
-    // headers handled by api module
     ElMessage.success('模型上传成功')
     uploadDialogVisible.value = false
     uploadForm.value = { name: '', type: 'YOLO', precision: 'INT8', description: '', file: null }
@@ -145,7 +156,12 @@ onMounted(fetchModels)
       </el-tabs>
 
       <el-table :data="filteredModels" v-loading="loading" stripe>
-        <el-table-column prop="name" label="模型名称" min-width="150" />
+        <el-table-column label="模型名称" min-width="180">
+          <template #default="{ row }">
+            <div>{{ getModelDisplayName(row) }}</div>
+            <div class="model-id">{{ row.id }}</div>
+          </template>
+        </el-table-column>
         <el-table-column prop="type" label="类型" width="120" />
         <el-table-column prop="precision" label="精度" width="80" />
         <el-table-column label="状态" width="100">
@@ -170,7 +186,6 @@ onMounted(fetchModels)
       </el-table>
     </el-card>
 
-    <!-- 上传对话框 -->
     <el-dialog v-model="uploadDialogVisible" title="上传模型" width="500px">
       <el-form :model="uploadForm" label-width="100px">
         <el-form-item label="模型名称" required>
@@ -199,11 +214,12 @@ onMounted(fetchModels)
       </template>
     </el-dialog>
 
-    <!-- 详情抽屉 -->
     <el-drawer v-model="detailDrawerVisible" title="模型详情" size="400px">
       <template v-if="selectedModel">
         <el-descriptions :column="1" border>
-          <el-descriptions-item label="名称">{{ selectedModel.name }}</el-descriptions-item>
+          <el-descriptions-item label="模型ID">{{ selectedModel.id }}</el-descriptions-item>
+          <el-descriptions-item label="中文名">{{ selectedModel.name_zh || selectedModel.name }}</el-descriptions-item>
+          <el-descriptions-item v-if="selectedModel.name_en" label="英文名">{{ selectedModel.name_en }}</el-descriptions-item>
           <el-descriptions-item label="类型">{{ selectedModel.type }}</el-descriptions-item>
           <el-descriptions-item label="精度">{{ selectedModel.precision }}</el-descriptions-item>
           <el-descriptions-item label="状态">
@@ -211,6 +227,8 @@ onMounted(fetchModels)
           </el-descriptions-item>
           <el-descriptions-item label="TPU占用">{{ selectedModel.tpu_usage }}%</el-descriptions-item>
           <el-descriptions-item label="推理延迟">{{ selectedModel.inference_latency_ms }}ms</el-descriptions-item>
+          <el-descriptions-item v-if="selectedModel.memory_mb" label="内存占用">{{ selectedModel.memory_mb }}MB</el-descriptions-item>
+          <el-descriptions-item v-if="selectedModel.priority" label="优先级">{{ selectedModel.priority }}</el-descriptions-item>
           <el-descriptions-item label="描述">{{ selectedModel.description || '-' }}</el-descriptions-item>
           <el-descriptions-item label="创建时间">{{ selectedModel.created_at || '-' }}</el-descriptions-item>
         </el-descriptions>
@@ -220,5 +238,12 @@ onMounted(fetchModels)
 </template>
 
 <style scoped>
-.model-management { padding: 20px; }
+.model-management {
+  padding: 20px;
+}
+.model-id {
+  font-size: 12px;
+  color: #909399;
+  margin-top: 2px;
+}
 </style>
