@@ -243,7 +243,7 @@ import { ref, computed, onMounted, onUnmounted, watch, reactive, nextTick, toRaw
 import { useRoute, useRouter } from 'vue-router'
 import { useDeviceStore } from '@/stores/device'
 import { getDeviceChannels } from '@/api/devices'
-import { streamHttp, deviceHttp } from '@/api/http'
+import { streamHttp, deviceHttp, http } from '@/api/http'
 import { ptzControl as ptzApi } from '@/api/ptz'
 import { detectFromBase64, getInferenceStatus } from '@/api/inference'
 import type { DetectionResult } from '@/api/inference'
@@ -323,39 +323,54 @@ const CLASS_COLORS: Record<string, string> = {
 }
 
 // 流健康监测（传入卡顿回调用于强制刷新）
-const streamHealth = useStreamHealth((slotIdx, stallCount) => {
-  // 检测到卡顿，强制刷新视频元素
-  const slot = gridSlots[slotIdx]
-  const video = videoRefs.value[slotIdx]
-  if (!slot || !video) return
+// onReconnectExhausted: 重连耗尽时停止监测，避免 setInterval 持续触发日志洪泛
+const streamHealth = useStreamHealth(
+  (slotIdx, stallCount) => {
+    // 检测到卡顿，强制刷新视频元素
+    const slot = gridSlots[slotIdx]
+    const video = videoRefs.value[slotIdx]
+    if (!slot || !video) return
 
-  console.warn(`[LiveView] slot${slotIdx} 卡顿检测触发（stallCount=${stallCount}），强制刷新视频`)
-
-  // 尝试通过跳帧方式恢复（不重建播放器）
-  if (slot.currentFormat === 'flv' || slot.currentFormat === 'ws-flv') {
-    const player = slot.playerInstance as any
-    if (player && typeof player.refreshLogo === 'function') {
-      // flv.js 提供 refreshLogo 方法强制刷新画面
-      player.refreshLogo()
+    // HLS 格式的卡顿：不重建播放器（HLS 重建不会改善流质量，反而引入黑屏闪烁）
+    // 让 hls.js 内置的 error recovery（startLoad / recoverMediaError）自行恢复
+    if (slot.currentFormat === 'hls') {
+      console.warn(`[LiveView] slot${slotIdx} HLS 卡顿（stallCount=${stallCount}），跳过重建（由 hls.js 自行恢复）`)
+      return
     }
-  }
 
-  // [关键修复] 仅在启用了自动重连时才自动重建播放器
-  // 禁用时只刷新画面，不重建播放器，避免画面闪烁
-  if (AUTO_RECONNECT_ENABLED && stallCount >= 2 && slot.channelId && !formatSwitching.has(slotIdx)) {
-    console.warn(`[LiveView] slot${slotIdx} 连续卡顿 ${stallCount} 次，重建播放器`)
-    formatSwitching.add(slotIdx)
-    const fmt = slot.currentFormat as PlayerFormat
-    if (fmt && slot.urls[fmt]) {
-      // 延迟 300ms 重建，避免频繁重建
-      setTimeout(() => {
-        destroyPlayer(slot, slotIdx)
-        attachPlayerByFormat(slotIdx, fmt)
-        setTimeout(() => formatSwitching.delete(slotIdx), 3000)
-      }, 300)
+    console.warn(`[LiveView] slot${slotIdx} 卡顿检测触发（stallCount=${stallCount}），强制刷新视频`)
+
+    // 尝试通过跳帧方式恢复（不重建播放器）
+    if (slot.currentFormat === 'flv' || slot.currentFormat === 'ws-flv') {
+      const player = slot.playerInstance as any
+      if (player && typeof player.refreshLogo === 'function') {
+        // flv.js 提供 refreshLogo 方法强制刷新画面
+        player.refreshLogo()
+      }
     }
+
+    // [关键修复] 仅在启用了自动重连时才自动重建播放器
+    // 禁用时只刷新画面，不重建播放器，避免画面闪烁
+    if (AUTO_RECONNECT_ENABLED && stallCount >= 2 && slot.channelId && !formatSwitching.has(slotIdx)) {
+      console.warn(`[LiveView] slot${slotIdx} 连续卡顿 ${stallCount} 次，重建播放器`)
+      formatSwitching.add(slotIdx)
+      const fmt = slot.currentFormat as PlayerFormat
+      if (fmt && slot.urls[fmt]) {
+        // 延迟 300ms 重建，避免频繁重建
+        setTimeout(() => {
+          destroyPlayer(slot, slotIdx)
+          attachPlayerByFormat(slotIdx, fmt)
+          setTimeout(() => formatSwitching.delete(slotIdx), 3000)
+        }, 300)
+      }
+    }
+  },
+  (slotIdx) => {
+    // 重连耗尽回调：停止该 slot 的健康监测，防止 setInterval 持续触发日志洪泛
+    console.warn(`[LiveView] slot${slotIdx} 重连耗尽，停止健康监测`)
+    streamHealth.stopMonitoring(slotIdx)
   }
-})
+)
 
 // 码率自适应
 const adaptiveBitrate = useAdaptiveBitrate()
@@ -600,16 +615,16 @@ function attachPlayerByFormat(slotIdx: number, fmt: PlayerFormat) {
           hasAudio: false, hasVideo: true,
         }, {
           enableStashBuffer: false,
-          stashInitialSize: 64,                     // P1-3: 128→64 更快首帧
+          stashInitialSize: 128,                    // 64→128 减少不完整帧送入MSE导致解码错误
           // GB28181 PS 封装流时间戳可能不连续，autoCleanup 会因负值 DTS 崩溃
           autoCleanupSourceBuffer: false,
           lazyLoad: false,
-          // P1-3: 局域网低延迟配置（autoCleanupSourceBuffer=false 已防崩溃）
+          // 局域网低延迟配置（autoCleanupSourceBuffer=false 已防崩溃）
           liveBufferLatencyChasing: true,
           liveBufferLatencyChasingOnPaused: true,
           liveSyncDurationCount: 1,
-          liveMaxLatencyDurationCount: 1.0,         // P1-3: 1.5→1.0 严格 1 GOP 延迟容忍
-          liveSyncMaxLatencyDurationCount: 0.8,     // P1-3: 1.0→0.8 更早触发延迟追赶
+          liveMaxLatencyDurationCount: 1.5,         // 1.0→1.5 放宽延迟追赶阈值，避免频繁跳帧闪烁
+          liveSyncMaxLatencyDurationCount: 1.2,     // 0.8→1.2 同上，减少 GB28181 低帧率设备误触发
         } as any)
 
         player.attachMediaElement(video)
@@ -619,16 +634,16 @@ function attachPlayerByFormat(slotIdx: number, fmt: PlayerFormat) {
         let firstFramePlayed = false
         let firstFrameTimeout: ReturnType<typeof setTimeout> | null = null
 
-        // 如果 5 秒内没有收到 playing 事件，发送 I 帧请求
+        // 如果 2 秒内没有收到 playing 事件，发送 I 帧请求
         firstFrameTimeout = setTimeout(() => {
           if (!firstFramePlayed && slot.channelId) {
-            console.warn(`[LiveView] slot${slotIdx} 5秒内未收到首帧，发送I帧请求`)
+            console.warn(`[LiveView] slot${slotIdx} 2秒内未收到首帧，发送I帧请求`)
             streamHttp.post(`/${slot.channelId}/quality`, {
               id: slot.channelId,
               quality: 'high'
             }).catch(() => {})
           }
-        }, 5000)
+        }, 2000)
 
         video.addEventListener('playing', () => {
           if (!firstFramePlayed) {
@@ -683,15 +698,16 @@ function attachPlayerByFormat(slotIdx: number, fmt: PlayerFormat) {
           hasAudio: false, hasVideo: true,
         }, {
           enableStashBuffer: false,
-          stashInitialSize: 64,                     // P1-3: 128→64 更快首帧
+          stashInitialSize: 128,                    // 64→128 减少不完整帧送入MSE导致解码错误
           // GB28181 PS 封装流时间戳可能不连续，autoCleanup 会因负值 DTS 崩溃
           autoCleanupSourceBuffer: false,
           lazyLoad: false,
+          // 局域网低延迟配置（autoCleanupSourceBuffer=false 已防崩溃）
           liveBufferLatencyChasing: true,
           liveBufferLatencyChasingOnPaused: true,
           liveSyncDurationCount: 1,
-          liveMaxLatencyDurationCount: 1.0,         // P1-3: 1.5→1.0
-          liveSyncMaxLatencyDurationCount: 0.8,     // P1-3: 1.0→0.8
+          liveMaxLatencyDurationCount: 1.5,         // 1.0→1.5 放宽延迟追赶阈值，避免频繁跳帧闪烁
+          liveSyncMaxLatencyDurationCount: 1.2,     // 0.8→1.2 同上，减少 GB28181 低帧率设备误触发
         } as any)
 
         // 首帧显示事件
@@ -983,15 +999,28 @@ async function attachWebRtc(slotIdx: number, webrtcUrl: string) {
 
 // 后端 SDP 交换（ZLM 模式）
 async function exchangeSdpViaBackend(pc: RTCPeerConnection, channelId: string, offer: RTCSessionDescriptionInit) {
-  const resp = await streamHttp.post(`/${channelId}/webrtc-sdp`, {
-    offer: offer.sdp,
-  })
-  const answer = resp.data?.data?.answer || resp.data?.data?.sdp
-  if (!answer) throw new Error('WebRTC backend SDP exchange failed')
-  await pc.setRemoteDescription(new RTCSessionDescription({
-    type: 'answer',
-    sdp: answer,
-  }))
+  try {
+    const resp = await streamHttp.post(`/${channelId}/webrtc-sdp`, {
+      offer: offer.sdp,
+    })
+    const answer = resp.data?.data?.answer || resp.data?.data?.sdp
+    if (!answer) {
+      console.error(`[WebRTC] SDP 交换返回空 answer: channelId=${channelId}, resp=`, resp.data)
+      throw new Error('WebRTC backend SDP exchange failed: empty answer')
+    }
+    await pc.setRemoteDescription(new RTCSessionDescription({
+      type: 'answer',
+      sdp: answer,
+    }))
+  } catch (e: any) {
+    // 增强诊断：区分后端错误和网络错误
+    if (e.code) {
+      console.error(`[WebRTC] SDP 交换业务错误: channelId=${channelId}, code=${e.code}, msg=${e.message}`)
+    } else {
+      console.error(`[WebRTC] SDP 交换网络/系统错误: channelId=${channelId}, msg=${e.message}`)
+    }
+    throw e
+  }
 }
 
 // 切换格式时重新播放所有活跃 slot
@@ -1123,8 +1152,8 @@ async function fetchStreamUrls(ch: Channel): Promise<{urls: Partial<Record<Playe
       }
     }
 
-    // 2. zlmReady=false 或 start 失败时，轮询 multi-urls 等待流就绪（5×100ms=500ms）
-    for (let attempt = 0; attempt < 5; attempt++) {
+    // 2. zlmReady=false 或 start 失败时，轮询 multi-urls 等待流就绪（8×80ms=640ms）
+    for (let attempt = 0; attempt < 8; attempt++) {
       try {
         const { data } = await streamHttp.get(`/${ch.id}/multi-urls`)
         const d = data?.data || data
@@ -1156,7 +1185,7 @@ async function fetchStreamUrls(ch: Channel): Promise<{urls: Partial<Record<Playe
           }
         } catch { /* 流可能还未就绪 */ }
       }
-      await new Promise(r => setTimeout(r, 100))
+      await new Promise(r => setTimeout(r, 80))
     }
     return null
   } catch (e) {
@@ -1330,6 +1359,8 @@ async function toggleTalk() {
     startTalkDownstream(talkCallId)
 
     // 4. 定时发送缓冲的 PCM 数据给后端（每20ms发一帧160样本）
+    let talkErrorCount = 0
+    const TALK_MAX_ERRORS = 3  // 连续失败3次后停止发送
     talkSendInterval = setInterval(async () => {
       if (talkPcmBuffer.length < 160 || !talkCallId) return
 
@@ -1345,11 +1376,18 @@ async function toggleTalk() {
       const b64 = btoa(binary)
 
       try {
-        await deviceHttp.post(`/talk/${talkCallId}/audio`, {
+        // 后端路由: POST /api/v1/talk/:call_id/audio（无 /devices 前缀）
+        await http.post(`/talk/${talkCallId}/audio`, {
           data: b64,
         })
+        talkErrorCount = 0
       } catch {
-        // 静默失败，避免打断对讲
+        talkErrorCount++
+        if (talkErrorCount >= TALK_MAX_ERRORS) {
+          console.error(`[Talk] 音频上行连续失败 ${TALK_MAX_ERRORS} 次，停止发送`)
+          stopTalk()
+          ElMessage.error('对讲音频发送失败，已停止对讲')
+        }
       }
     }, 20)
 

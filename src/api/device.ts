@@ -77,4 +77,11 @@ export const deviceApi = {
   updateConfig(id: string, config: Partial<DeviceConfig>) {
     return deviceHttp.put<ApiResponse<DeviceConfig>>(`/${id}/config`, config)
   },
+
+  /** 设置设备 RTP 传输模式 (GB28181 专用) */
+  setRtpTransport(id: string, mode: 'UDP' | 'TCP-PASSIVE' | 'TCP-ACTIVE') {
+    return http.post<ApiResponse<{ device_id: string; stream_mode: string }>>(
+      `/devices/${id}/rtp-transport`, { mode }
+    )
+  },
 }
