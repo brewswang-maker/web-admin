@@ -8,6 +8,7 @@ export { channelApi } from './channel'
 
 // 从 deviceApi 重新导出便捷函数
 import { deviceApi } from './device'
+import { http } from './http'
 export const discoverDevices = deviceApi.discoverOnvif
 export const discoverGB28181 = deviceApi.discoverGB28181
 
@@ -34,7 +35,7 @@ export interface GB28181Config {
   description?: string
 }
 
-export const getGB28181Config = () => deviceApi.getConfig('__gb28181__')
+export const getGB28181Config = () => http.get('/system/gb28181/config')
 
 // 从 channelApi 重新导出便捷函数
 import { channelApi } from './channel'

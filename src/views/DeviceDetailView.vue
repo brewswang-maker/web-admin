@@ -359,6 +359,10 @@ async function saveConfig() {
       scheduled_reboot: configForm.value.scheduledReboot,
       reboot_time: configForm.value.rebootTime,
     } as any)
+    // GB28181 设备：保存 RTP 传输模式
+    if (isGB28181Device.value) {
+      await deviceApi.setRtpTransport(deviceId, configForm.value.rtpTransportMode)
+    }
     ElMessage.success('配置已保存')
     showConfigDrawer.value = false
   } catch {
@@ -393,6 +397,23 @@ watch(() => route.params.id, loadData)
 .device-detail-page { padding: 0 4px; }
 .page-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
 .header-actions { display: flex; gap: 8px; }
+.info-card .info-row { display: flex; justify-content: space-between; align-items: center; padding: 6px 0; border-bottom: 1px solid #f0f0f0; }
+.info-card .info-row:last-child { border-bottom: none; }
+.info-row .label { color: #8c8c8c; font-size: 13px; }
+.info-row .value { font-weight: 500; font-size: 13px; }
+.metric-item { text-align: center; padding: 8px 4px; }
+.metric-value { font-size: 22px; font-weight: 700; }
+.metric-label { font-size: 12px; color: #8c8c8c; margin: 4px 0; }
+.sync-status { text-align: center; padding: 12px 0; }
+.sync-detail { margin-top: 12px; }
+</style>
+</style>
+.metric-item { text-align: center; padding: 8px 4px; }
+.metric-value { font-size: 22px; font-weight: 700; }
+.metric-label { font-size: 12px; color: #8c8c8c; margin: 4px 0; }
+.sync-status { text-align: center; padding: 12px 0; }
+.sync-detail { margin-top: 12px; }
+</style>
 .info-card .info-row { display: flex; justify-content: space-between; align-items: center; padding: 6px 0; border-bottom: 1px solid #f0f0f0; }
 .info-card .info-row:last-child { border-bottom: none; }
 .info-row .label { color: #8c8c8c; font-size: 13px; }

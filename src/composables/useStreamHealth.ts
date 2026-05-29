@@ -22,7 +22,7 @@ export interface StreamHealthState {
 
 type HealthStates = Record<number, StreamHealthState>
 
-// 每个 slot 的监测上下文
+  // 每个 slot 的监测上下文
 interface MonitorContext {
   player: RTCPeerConnection | flvjs.Player | Hls | null
   type: 'webrtc' | 'flv' | 'hls' | null
@@ -41,14 +41,20 @@ interface MonitorContext {
   videoElement: HTMLVideoElement | null
   // 上一次检测的视频时间（用于比较时间轴是否卡住）
   lastVideoTime: number
+  // 连续 error 评估次数（用于防误判：需连续 2 次才真正触发 error）
+  consecutiveErrorEvaluations: number
 }
 
 // 卡顿回调类型
 type StallCallback = (slotIdx: number, stallCount: number) => void
+// 重连耗尽回调类型：上层收到后可决定停止监测
+type ReconnectExhaustedCallback = (slotIdx: number) => void
 
-export function useStreamHealth(onStall?: StallCallback) {
+export function useStreamHealth(onStall?: StallCallback, onReconnectExhausted?: ReconnectExhaustedCallback) {
   const healthStates = reactive<HealthStates>({})
   const contexts = new Map<number, MonitorContext>()
+  // 连续 error 确认后是否已通知过上层（防止重复触发）
+  const reconnectExhaustedNotified = new Set<number>()
 
   function getDefaultState(): StreamHealthState {
     return {
@@ -89,6 +95,7 @@ export function useStreamHealth(onStall?: StallCallback) {
       createdAt: Date.now(),
       videoElement: videoEl || null,
       lastVideoTime: 0,
+      consecutiveErrorEvaluations: 0,
     }
 
     if (isWebRTC) {
@@ -204,6 +211,7 @@ export function useStreamHealth(onStall?: StallCallback) {
       }
       contexts.delete(slotIdx)
     }
+    reconnectExhaustedNotified.delete(slotIdx)
     delete healthStates[slotIdx]
   }
 
@@ -384,13 +392,13 @@ export function useStreamHealth(onStall?: StallCallback) {
     evaluateHealth(slotIdx, ctx)
   }
 
-  /** 综合评估健康状态（修复宽限期逻辑 bug） */
+  /** 综合评估健康状态（优化阈值：减少 GB28181 低帧率设备误触发） */
   function evaluateHealth(slotIdx: number, ctx: MonitorContext) {
     const state = healthStates[slotIdx]
     if (!state) return
 
-    // 启动宽限期：HLS 场景给 10 秒（因为 H.265 GOP 可能很长），其他给 5 秒
-    const startupGraceMs = ctx.type === 'hls' ? 10000 : 5000
+    // 启动宽限期：HLS 10秒（H.265 GOP可能很长），FLV/WebRTC 8秒（TCP建连需更长时间）
+    const startupGraceMs = ctx.type === 'hls' ? 10000 : 8000
     const uptimeMs = Date.now() - ctx.createdAt
     const inStartupGrace = uptimeMs < startupGraceMs
 
@@ -402,18 +410,27 @@ export function useStreamHealth(onStall?: StallCallback) {
       return
     }
 
-    // 连续 5 秒无数据或卡顿 → error（从 3 秒放宽到 5 秒，减少误触发）
-    if (ctx.noDataSeconds >= 5) {
-      if (state.status !== 'error') {
-        state.stallCount++
-        console.warn(`[StreamHealth] slot${slotIdx} 检测到卡顿/无数据，stallCount=${state.stallCount}`)
+    // 连续 8 秒无数据或卡顿 → error（从 5 秒放宽到 8 秒，减少 GB28181 误触发）
+    // GB28181 设备 GOP 间隔可能较长（尤其是低帧率设备），5秒阈值过于敏感
+    if (ctx.noDataSeconds >= 8) {
+      // 连续 error 确认：需连续 2 次 error 评估才真正触发（防止单次网络抖动误判）
+      ctx.consecutiveErrorEvaluations++
+      if (ctx.consecutiveErrorEvaluations >= 2) {
+        if (state.status !== 'error') {
+          state.stallCount++
+          console.warn(`[StreamHealth] slot${slotIdx} 检测到持续卡顿（连续${ctx.consecutiveErrorEvaluations}次确认），stallCount=${state.stallCount}`)
 
-        // 触发卡顿回调，让上层强制刷新视频
-        if (onStall) {
-          onStall(slotIdx, state.stallCount)
+          // 触发卡顿回调，让上层强制刷新视频
+          if (onStall) {
+            onStall(slotIdx, state.stallCount)
+          }
         }
+        state.status = 'error'
+      } else {
+        // 第一次检测到无数据，只标记 warning 不触发 error
+        state.status = 'warning'
+        console.warn(`[StreamHealth] slot${slotIdx} 无数据检测（第${ctx.consecutiveErrorEvaluations}次），待下次确认`)
       }
-      state.status = 'error'
       return
     }
 
@@ -423,13 +440,8 @@ export function useStreamHealth(onStall?: StallCallback) {
       return
     }
 
-    // 丢包率 > 15% → warning
-    if (state.lossRate > 0.15) {
-      state.status = 'warning'
-      return
-    }
-
-    // 数据正常
+    // 数据正常 — 重置连续 error 计数器
+    ctx.consecutiveErrorEvaluations = 0
     state.status = 'good'
     // 状态恢复时重置无数据秒数（防止之前卡顿后恢复但 noDataSeconds 未清零）
     ctx.noDataSeconds = 0

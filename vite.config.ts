@@ -127,6 +127,7 @@ export default defineConfig(async () => {
       },
       proxy: {
         // box-sdk 后端 API 代理（设备/系统/通道/流/告警等所有业务API）
+        // 开发环境代理到 shieldbox 后端 (18080端口, box_config_v6.json)
         '/api/v1': {
           target: 'http://127.0.0.1:18080',
           changeOrigin: true,
