@@ -183,14 +183,9 @@
     <el-dialog v-model="showAlgoDialog" title="算法插件设置" width="480px">
       <el-form v-if="currentChannel" label-width="100px">
         <el-form-item label="算法插件">
-          <el-select v-model="algoForm.plugin" style="width:100%">
-            <el-option label="无" value="无" />
-            <el-option label="入侵检测" value="入侵检测" />
-            <el-option label="烟火检测" value="烟火检测" />
-            <el-option label="安全帽检测" value="安全帽检测" />
-            <el-option label="人脸检测" value="人脸检测" />
-            <el-option label="徘徊检测" value="徘徊检测" />
-            <el-option label="车牌识别" value="车牌识别" />
+          <el-select v-model="algoForm.plugins" multiple placeholder="请选择算法（可多选）" style="width:100%">
+            <el-option label="无（不启用算法）" value="无" />
+            <el-option v-for="m in modelList" :key="m.id" :label="m.name_zh" :value="m.name_zh" />
           </el-select>
         </el-form-item>
         <el-form-item label="检测灵敏度">
@@ -217,6 +212,17 @@ import { http } from '@/api/http'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { Channel, DeviceDetail } from '@/types/device'
 
+// ---- 算法列表 ----
+const modelList = ref<any[]>([])
+
+async function loadModelList() {
+  try {
+    const res = await fetch('/api/v1/models') as any
+    const data = await res.json()
+    modelList.value = data?.data?.models ?? []
+  } catch { console.error('加载算法列表失败') }
+}
+
 const route = useRoute()
 const router = useRouter()
 const deviceStore = useDeviceStore()
@@ -234,7 +240,7 @@ const currentChannel = ref<Channel | null>(null)
 
 // ---- 配置表单 ----
 const configForm = ref({ name: '', resolution: '1920x1080', fps: 25, codec: 'H.264' as Channel['codec'], bitrate: 0, enabled: true })
-const algoForm = ref({ plugin: '无', sensitivity: 5, interval: 5 })
+const algoForm = ref({ plugins: [] as string[], sensitivity: 5, interval: 5 })
 
 // ---- 状态标签 ----
 function streamTagType(s: string) {
@@ -317,7 +323,7 @@ function handleChannelCommand(cmd: string, ch: Channel) {
     case 'algo':
       currentChannel.value = ch
       algoForm.value = {
-        plugin: ch.algoPlugin || '无',
+        plugins: (ch as any).algoPlugins?.length ? (ch as any).algoPlugins : (ch.algoPlugin && ch.algoPlugin !== '无' ? [ch.algoPlugin] : []),
         sensitivity: 5,
         interval: 5,
       }
@@ -358,10 +364,11 @@ async function saveAlgoConfig() {
   if (!currentChannel.value) return
   saving.value = true
   try {
+    const algoPlugins = algoForm.value.plugins.filter((p: string) => p !== '无')
     await updateChannel(currentChannel.value.id, {
-      algoPlugin: algoForm.value.plugin,
+      algoPlugins,
     })
-    ElMessage.success('算法插件已应用')
+    ElMessage.success(`算法插件已应用（共${algoPlugins.length}个）`)
     showAlgoDialog.value = false
     loadChannels()
   } catch {
@@ -371,7 +378,7 @@ async function saveAlgoConfig() {
   }
 }
 
-onMounted(loadChannels)
+onMounted(() => { loadModelList(); loadChannels() })
 </script>
 
 <style scoped>

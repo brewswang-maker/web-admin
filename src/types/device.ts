@@ -23,6 +23,7 @@ export interface DeviceItem {
   rtspPort: number
   channelCount: number
   algoPlugin: string
+  algoPlugins: string[]  // 支持多算法配置
   syncStatus: SyncStatus
   projectName: string
   projectId: string

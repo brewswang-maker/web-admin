@@ -187,13 +187,9 @@
     <el-drawer v-model="showConfigDrawer" title="设备配置" size="480px">
       <el-form :model="configForm" label-width="110px">
         <el-form-item label="算法插件">
-          <el-select v-model="configForm.algoPlugin" style="width:100%">
-            <el-option label="入侵检测" value="入侵检测" />
-            <el-option label="烟火检测" value="烟火检测" />
-            <el-option label="安全帽检测" value="安全帽检测" />
-            <el-option label="人脸检测" value="人脸检测" />
-            <el-option label="徘徊检测" value="徘徊检测" />
-            <el-option label="车牌识别" value="车牌识别" />
+          <el-select v-model="configForm.algoPlugins" multiple placeholder="请选择算法（可多选）" style="width:100%">
+            <el-option label="无（不启用算法）" value="无" />
+            <el-option v-for="m in modelList" :key="m.id" :label="m.name_zh" :value="m.name_zh" />
           </el-select>
         </el-form-item>
         <el-form-item label="录像留存天数">
@@ -230,6 +226,17 @@ import LazyChart from '@/components/LazyChart.vue'
 import { PROTOCOL_OPTIONS } from '@/types/device'
 import type { DeviceDetail, DeviceSyncRecord, DeviceMetrics } from '@/types/device'
 
+// ---- 算法列表 ----
+const modelList = ref<any[]>([])
+
+async function loadModelList() {
+  try {
+    const res = await fetch('/api/v1/models') as any
+    const data = await res.json()
+    modelList.value = data?.data?.models ?? []
+  } catch { console.error('加载算法列表失败') }
+}
+
 const route = useRoute()
 const router = useRouter()
 const deviceStore = useDeviceStore()
@@ -242,7 +249,7 @@ const saving = ref(false)
 const showConfigDrawer = ref(false)
 
 const configForm = ref({
-  algoPlugin: '入侵检测',
+  algoPlugins: [] as string[],
   recordDays: 30,
   sensitivity: 5,
   heartbeatInterval: 30,
@@ -352,17 +359,14 @@ async function saveConfig() {
   try {
     const deviceId = route.params.id as string
     await deviceApi.updateConfig(deviceId, {
-      algo_plugin: configForm.value.algoPlugin,
+      algo_plugins: configForm.value.algoPlugins.filter((p: string) => p !== '无'),
+      algo_plugin: configForm.value.algoPlugins[0] || '无',
       record_days: configForm.value.recordDays,
       sensitivity: configForm.value.sensitivity,
       heartbeat_interval: configForm.value.heartbeatInterval,
       scheduled_reboot: configForm.value.scheduledReboot,
       reboot_time: configForm.value.rebootTime,
     } as any)
-    // GB28181 设备：保存 RTP 传输模式
-    if (isGB28181Device.value) {
-      await deviceApi.setRtpTransport(deviceId, configForm.value.rtpTransportMode)
-    }
     ElMessage.success('配置已保存')
     showConfigDrawer.value = false
   } catch {
@@ -389,7 +393,7 @@ async function loadData() {
   }
 }
 
-onMounted(loadData)
+onMounted(() => { loadModelList(); loadData() })
 watch(() => route.params.id, loadData)
 </script>
 
@@ -397,23 +401,6 @@ watch(() => route.params.id, loadData)
 .device-detail-page { padding: 0 4px; }
 .page-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
 .header-actions { display: flex; gap: 8px; }
-.info-card .info-row { display: flex; justify-content: space-between; align-items: center; padding: 6px 0; border-bottom: 1px solid #f0f0f0; }
-.info-card .info-row:last-child { border-bottom: none; }
-.info-row .label { color: #8c8c8c; font-size: 13px; }
-.info-row .value { font-weight: 500; font-size: 13px; }
-.metric-item { text-align: center; padding: 8px 4px; }
-.metric-value { font-size: 22px; font-weight: 700; }
-.metric-label { font-size: 12px; color: #8c8c8c; margin: 4px 0; }
-.sync-status { text-align: center; padding: 12px 0; }
-.sync-detail { margin-top: 12px; }
-</style>
-</style>
-.metric-item { text-align: center; padding: 8px 4px; }
-.metric-value { font-size: 22px; font-weight: 700; }
-.metric-label { font-size: 12px; color: #8c8c8c; margin: 4px 0; }
-.sync-status { text-align: center; padding: 12px 0; }
-.sync-detail { margin-top: 12px; }
-</style>
 .info-card .info-row { display: flex; justify-content: space-between; align-items: center; padding: 6px 0; border-bottom: 1px solid #f0f0f0; }
 .info-card .info-row:last-child { border-bottom: none; }
 .info-row .label { color: #8c8c8c; font-size: 13px; }

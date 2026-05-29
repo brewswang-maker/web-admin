@@ -421,14 +421,9 @@
           <el-input v-model="addForm.location" placeholder="e.g. 南门岗亭" />
         </el-form-item>
         <el-form-item label="算法插件">
-          <el-select v-model="addForm.algoPlugin" style="width:100%">
-            <el-option label="无" value="无" />
-            <el-option label="入侵检测" value="入侵检测" />
-            <el-option label="烟火检测" value="烟火检测" />
-            <el-option label="安全帽检测" value="安全帽检测" />
-            <el-option label="人脸检测" value="人脸检测" />
-            <el-option label="徘徊检测" value="徘徊检测" />
-            <el-option label="车牌识别" value="车牌识别" />
+          <el-select v-model="addForm.algoPlugins" multiple placeholder="请选择算法（可多选）" style="width:100%">
+            <el-option label="无（不启用算法）" value="无" />
+            <el-option v-for="m in modelList" :key="m.id" :label="m.name_zh" :value="m.name_zh" />
           </el-select>
         </el-form-item>
         <el-form-item label="配置模板">
@@ -479,14 +474,9 @@
           <el-input v-model="editForm.location" placeholder="e.g. 南门岗亭" />
         </el-form-item>
         <el-form-item label="算法插件">
-          <el-select v-model="editForm.algoPlugin" style="width:100%">
-            <el-option label="无" value="无" />
-            <el-option label="入侵检测" value="入侵检测" />
-            <el-option label="烟火检测" value="烟火检测" />
-            <el-option label="安全帽检测" value="安全帽检测" />
-            <el-option label="人脸检测" value="人脸检测" />
-            <el-option label="徘徊检测" value="徘徊检测" />
-            <el-option label="车牌识别" value="车牌识别" />
+          <el-select v-model="editForm.algoPlugins" multiple placeholder="请选择算法（可多选）" style="width:100%">
+            <el-option label="无（不启用算法）" value="无" />
+            <el-option v-for="m in modelList" :key="m.id" :label="m.name_zh" :value="m.name_zh" />
           </el-select>
         </el-form-item>
       </el-form>
@@ -508,6 +498,17 @@ import { deviceApi } from '@/api/device'
 import type { DeviceItem, ProtocolType, DiscoveredDevice } from '@/types/device'
 import type { GB28181Config } from '@/api/devices'
 import { PROTOCOL_OPTIONS } from '@/types/device'
+
+// ---- 算法列表 ----
+const modelList = ref<any[]>([])
+
+async function loadModelList() {
+  try {
+    const res = await fetch('/api/v1/models') as any
+    const data = await res.json()
+    modelList.value = data?.data?.models ?? []
+  } catch { console.error('加载算法列表失败') }
+}
 
 const router = useRouter()
 const deviceStore = useDeviceStore()
@@ -564,7 +565,7 @@ const emptyProtocolConfig = () => ({
 
 const addForm = ref({
   name: '', deviceId: '', deviceType: 'IPCamera' as string, projectId: 'park',
-  ip: '', rtspPort: 554, location: '', algoPlugin: '无', templateId: '',
+  ip: '', rtspPort: 554, location: '', algoPlugins: [] as string[], algoPlugin: '无', templateId: '',
   protocol: 'RTSP' as ProtocolType,
   protocolConfig: emptyProtocolConfig(),
 })
@@ -800,7 +801,8 @@ async function confirmAdd() {
       config: {
         protocol: addForm.value.protocol,
         location: addForm.value.location,
-        algo_plugin: addForm.value.algoPlugin,
+        algo_plugins: addForm.value.algoPlugins.filter((p: string) => p !== '无'),
+        algo_plugin: addForm.value.algoPlugins[0] || '无',
         project_id: addForm.value.projectId,
         ...Object.fromEntries(
           Object.entries(addForm.value.protocolConfig).filter(([, v]) => v !== '' && v !== undefined)
@@ -826,7 +828,7 @@ async function confirmAdd() {
 function resetAddForm() {
   addForm.value = {
     name: '', deviceId: '', deviceType: 'IPCamera', projectId: 'park',
-    ip: '', rtspPort: 554, location: '', algoPlugin: '无', templateId: '',
+    ip: '', rtspPort: 554, location: '', algoPlugins: [] as string[], algoPlugin: '无', templateId: '',
     protocol: 'RTSP',
     protocolConfig: emptyProtocolConfig(),
   }
@@ -839,7 +841,7 @@ const showEditDialog = ref(false)
 const editLoading = ref(false)
 const editForm = ref({
   deviceId: '', name: '', deviceType: 'IPCamera' as string,
-  ip: '', rtspPort: 554, projectId: 'park', location: '', algoPlugin: '无',
+  ip: '', rtspPort: 554, projectId: 'park', location: '', algoPlugins: [] as string[], algoPlugin: '无',
 })
 
 function openEditDialog(row: DeviceItem) {
@@ -871,7 +873,8 @@ async function confirmEdit() {
       config: {
         project_id: editForm.value.projectId,
         location: editForm.value.location,
-        algo_plugin: editForm.value.algoPlugin,
+        algo_plugins: editForm.value.algoPlugins.filter((p: string) => p !== '无'),
+        algo_plugin: editForm.value.algoPlugins[0] || '无',
       },
     } as any)
     ElMessage.success('设备更新成功')
@@ -889,6 +892,7 @@ function resetEditForm() {
 }
 
 onMounted(() => {
+  loadModelList()
   fetchData()
   deviceStore.fetchTemplates()
   fetchSipConfig()

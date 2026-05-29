@@ -28,9 +28,24 @@ export const channelApi = {
     return channelHttp.put<ApiResponse<ChannelItem>>(`/${id}`, data)
   },
 
-  /** 配置通道算法 */
+  /** 配置通道算法（单算法，已废弃） */
   setAlgo(id: string, algoPlugin: string) {
     return channelHttp.post<ApiResponse<void>>(`/${id}/algo`, { algoPlugin })
+  },
+
+  /** 配置通道算法列表（多算法） */
+  setAlgos(id: string, algoPlugins: string[]) {
+    return channelHttp.post<ApiResponse<void>>(`/${id}/algos`, { algoPlugins })
+  },
+
+  /** 批量配置算法（单算法，已废弃） */
+  batchSetAlgo(ids: string[], algoPlugin: string) {
+    return channelHttp.post<ApiResponse<void>>('/batch-algo', { ids, algoPlugin })
+  },
+
+  /** 批量配置算法列表（多算法） */
+  batchSetAlgos(ids: string[], algoPlugins: string[]) {
+    return channelHttp.post<ApiResponse<void>>('/batch-algos', { ids, algoPlugins })
   },
 
   /** 启动/停止录像 */
@@ -51,11 +66,6 @@ export const channelApi = {
   /** 获取流地址 */
   getStreamUrl(id: string, quality: 'main' | 'sub' = 'main') {
     return channelHttp.get<ApiResponse<{ rtspUrl: string; hlsUrl: string; flvUrl: string }>>(`/${id}/stream`, { params: { quality } })
-  },
-
-  /** 批量配置算法 */
-  batchSetAlgo(ids: string[], algoPlugin: string) {
-    return channelHttp.post<ApiResponse<void>>('/batch-algo', { ids, algoPlugin })
   },
 
   /** 获取通道性能指标 */
