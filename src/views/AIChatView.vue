@@ -136,13 +136,28 @@
 
         <!-- 输入区 -->
         <div class="chat-input-area">
+          <!-- 图片预览 -->
+          <div v-if="pendingImages.length" class="image-preview-bar">
+            <div v-for="(img, idx) in pendingImages" :key="idx" class="preview-thumb-wrap">
+              <img :src="img" class="preview-thumb" />
+              <el-button class="thumb-remove" size="small" circle @click="pendingImages.splice(idx, 1)">x</el-button>
+            </div>
+          </div>
           <div class="input-wrapper">
+            <el-upload
+              :auto-upload="false"
+              :show-file-list="false"
+              accept="image/*"
+              :on-change="onImageSelected"
+            >
+              <el-button size="small" :icon="Promotion" circle title="上传图片" />
+            </el-upload>
             <el-input v-model="inputText" type="textarea" :rows="2"
               placeholder="输入您的问题，如：帮我检查3号厂区的安全状况..."
               @keydown.enter.exact.prevent="sendMessage"
               :disabled="isStreaming" resize="none" />
             <el-button type="primary" :icon="Promotion" circle
-              @click="sendMessage" :disabled="!inputText.trim() || isStreaming" />
+              @click="sendMessage" :disabled="(!inputText.trim() && !pendingImages.length) || isStreaming" />
           </div>
           <div class="input-footer">
             <span class="input-hint">Enter发送 · Shift+Enter换行</span>
@@ -185,6 +200,7 @@ const isStreaming = ref(false)
 const streamingText = ref('')
 const agentOnline = ref(true)
 const msgContainer = ref<HTMLElement>()
+const pendingImages = ref<string[]>([])
 
 const quickActions = [
   { icon: '📊', text: '今日报告', prompt: '帮我生成今日安全报告' },
@@ -267,12 +283,28 @@ function sendQuickAction(prompt: string) {
   sendMessage()
 }
 
+function onImageSelected(file: any) {
+  const raw = file.raw as File
+  if (!raw || !raw.type.startsWith('image/')) return
+  if (pendingImages.value.length >= 4) { ElMessage.warning('最多上传4张图片'); return }
+  const reader = new FileReader()
+  reader.onload = (e) => {
+    if (e.target?.result) pendingImages.value.push(e.target.result as string)
+  }
+  reader.readAsDataURL(raw)
+}
+
 async function sendMessage() {
   const text = inputText.value.trim()
-  if (!text || isStreaming.value) return
+  const images = [...pendingImages.value]
+  if ((!text && !images.length) || isStreaming.value) return
 
-  messages.value.push({ role: 'user', content: text })
+  const displayContent = images.length
+    ? (text || '请分析这张图片') + `\n[附带${images.length}张图片]`
+    : text
+  messages.value.push({ role: 'user', content: displayContent })
   inputText.value = ''
+  pendingImages.value = []
   scrollToBottom()
 
   isStreaming.value = true
@@ -280,10 +312,14 @@ async function sendMessage() {
   abortCtrl = new AbortController()
 
   try {
-    const response = await fetch('/api/v1/ai/chat', {
+    const endpoint = images.length ? '/api/v1/ai/chat/multimodal' : '/api/v1/ai/chat'
+    const body: Record<string, any> = { message: text || '请描述这张图片', conversation_id: currentConvId.value, stream: true }
+    if (images.length) body.images = images
+
+    const response = await fetch(endpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${localStorage.getItem('token') || ''}` },
-      body: JSON.stringify({ message: text, conversation_id: currentConvId.value, stream: true }),
+      body: JSON.stringify(body),
       signal: abortCtrl.signal,
     })
 
@@ -464,4 +500,10 @@ onUnmounted(() => { if (abortCtrl) abortCtrl.abort() })
 
 /* 全局暗色覆盖 */
 :deep(.el-card) { background: #252830; border-color: #3C4043; color: #E8EAED; }
+
+/* 图片预览 */
+.image-preview-bar { display: flex; gap: 8px; padding: 6px 0; overflow-x: auto; }
+.preview-thumb-wrap { position: relative; flex-shrink: 0; }
+.preview-thumb { width: 56px; height: 56px; object-fit: cover; border-radius: 6px; border: 1px solid #3C4043; }
+.thumb-remove { position: absolute; top: -6px; right: -6px; width: 18px; height: 18px; min-width: 0; font-size: 10px; padding: 0; }
 </style>

@@ -247,7 +247,7 @@ import { streamHttp, deviceHttp, http } from '@/api/http'
 import { ptzControl as ptzApi } from '@/api/ptz'
 import { detectFromBase64, getInferenceStatus } from '@/api/inference'
 import type { DetectionResult } from '@/api/inference'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElNotification } from 'element-plus'
 import { Lock, Unlock } from '@element-plus/icons-vue'
 import type { Channel, DeviceItem } from '@/types/device'
 import Hls from 'hls.js'
@@ -255,6 +255,8 @@ import flvjs from 'flv.js'
 import { useStreamHealth } from '@/composables/useStreamHealth'
 import { useAdaptiveBitrate } from '@/composables/useAdaptiveBitrate'
 import StreamStatsPanel from '@/components/StreamStatsPanel.vue'
+import { useChannelStore } from '@/stores/channel'
+import type { PlayerFormat as StorePlayerFormat, ActiveSlotData } from '@/stores/channel'
 
 type PlayerFormat = 'flv' | 'ws-flv' | 'hls' | 'webrtc'
 
@@ -292,6 +294,7 @@ interface GridSlot {
   detections: DetectionResult[]
   detectionTime: number
   _lastReconnectTime: number
+  _videoEventCleanups: Array<() => void>  // video 事件监听器清理函数
 }
 
 const route = useRoute()
@@ -303,7 +306,7 @@ const layout = ref(4)
 const activeSlotIdx = ref(0)
 const gridSlots = reactive<GridSlot[]>(
   Array.from({ length: 16 }, () => ({
-    channelId: '', name: '', status: '', urls: {}, codec: '', playing: false, loading: false, muted: true, deviceId: '', playerInstance: null, recording: false, talking: false, currentFormat: '', webrtcRetryCount: 0, reconnectCount: 0, encrypted: false, detections: [] as DetectionResult[], detectionTime: 0, _lastReconnectTime: 0
+    channelId: '', name: '', status: '', urls: {}, codec: '', playing: false, loading: false, muted: true, deviceId: '', playerInstance: null, recording: false, talking: false, currentFormat: '', webrtcRetryCount: 0, reconnectCount: 0, encrypted: false, detections: [] as DetectionResult[], detectionTime: 0, _lastReconnectTime: 0, _videoEventCleanups: []
   }))
 )
 const preferredFormat = ref<PlayerFormat>('flv')
@@ -375,6 +378,9 @@ const streamHealth = useStreamHealth(
 // 码率自适应
 const adaptiveBitrate = useAdaptiveBitrate()
 
+// 全局通道状态 Store（跨路由持久化）
+const channelStore = useChannelStore()
+
 // 统计面板
 const statsPanelVisible = ref(false)
 
@@ -394,6 +400,26 @@ const reconnectDebounce = new Map<number, number>() // slotIdx -> lastTriggerTim
 // 协议降级冷却时间（防止频繁切换导致的闪烁）
 const formatCooldown = new Map<number, number>() // slotIdx -> lastSwitchTime
 const FORMAT_COOLDOWN_MS = 15000  // 15 秒内不允许再次降级
+
+// 统一降级链常量：所有降级逻辑引用此定义，消除三处分散的矛盾
+// H.264: FLV → WS-FLV → WebRTC → HLS
+// H.265: HLS → WebRTC（FLV/WS-FLV 的 MSE 不支持 H.265）
+const DEGRADATION_CHAINS: Record<'h264' | 'h265', PlayerFormat[]> = {
+  h264: ['flv', 'ws-flv', 'webrtc', 'hls'],
+  h265: ['hls', 'webrtc'],
+}
+
+/** 获取指定编码的降级链中，当前格式之后第一个可用的格式 */
+function getNextFallbackFormat(currentFmt: PlayerFormat, codec: string, urls: Partial<Record<PlayerFormat, string>>): PlayerFormat | null {
+  const chain = (codec && (codec.toUpperCase().includes('H265') || codec.toUpperCase().includes('HEVC')))
+    ? DEGRADATION_CHAINS.h265 : DEGRADATION_CHAINS.h264
+  const currentIdx = chain.indexOf(currentFmt)
+  // 从当前格式之后开始找
+  for (let i = currentIdx + 1; i < chain.length; i++) {
+    if (urls[chain[i]]) return chain[i]
+  }
+  return null
+}
 
 // P2-4: 安全自动重连 — 启用但限制为同格式重连，不自动降级协议
 // 同格式最多重试 3 次，超过后停止自动重连
@@ -421,6 +447,10 @@ const imageAdjust = reactive({ brightness: 50, contrast: 50, saturation: 50, hue
 // 检测日志
 interface LogEntry { time: string; level: string; tagType: string; msg: string }
 const detectionLogs = ref<LogEntry[]>([])
+
+// 告警弹窗节流:同一通道+目标类型 30 秒内只弹一次
+const ALERT_THROTTLE_MS = 30_000
+const lastAlertTime: Record<string, number> = {}
 
 // 只有 layout 对应数量的格子可见
 const visibleSlots = computed(() => gridSlots.slice(0, layout.value))
@@ -457,13 +487,17 @@ function setLayout(n: number) {
 async function loadData() {
   if (!deviceStore.devices.length) await deviceStore.fetchDevices({ page: 1, pageSize: 100 })
   devices.value = deviceStore.devices
-  // 加载所有设备的通道
+  // 加载所有设备的通道（仅在线设备）
   const allChs: Channel[] = []
   for (const dev of devices.value) {
+    if (dev.status === 'offline') continue
     try {
       const res = await getDeviceChannels(dev.id) as any
       const chs: Channel[] = res?.data?.data ?? res?.data ?? res
-      for (const ch of chs) { (ch as any).deviceId = dev.id }
+      for (const ch of chs) {
+        (ch as any).deviceId = dev.id
+        if (ch.status === 'offline') continue
+      }
       allChs.push(...chs)
     } catch { /* skip */ }
   }
@@ -524,7 +558,7 @@ function assignChannel(slotIdx: number, ch: Channel) {
       slot.status = 'streaming'
       // 根据编码格式智能选择播放格式：H.265 优先 WebRTC/HLS，H.264 使用 FLV
       const bestFmt = selectBestFormat(result.urls, result.codec)
-      console.log(`[LiveView] slot${slotIdx} 播放格式选择: codec=${result.codec || 'unknown'}, format=${bestFmt}, flv=${!!result.urls.flv}, webrtc=${!!result.urls.webrtc}, hls=${!!result.urls.hls}`)
+      console.debug(`[LiveView] slot${slotIdx} 播放格式选择: codec=${result.codec || 'unknown'}, format=${bestFmt}, flv=${!!result.urls.flv}, webrtc=${!!result.urls.webrtc}, hls=${!!result.urls.hls}`)
       // 不更新 preferredFormat.value，避免触发 watcher 连锁重建其他 slot
       nextTick(() => {
           attachPlayerByFormat(slotIdx, bestFmt)
@@ -535,6 +569,17 @@ function assignChannel(slotIdx: number, ch: Channel) {
             () => streamHealth.getHealth(slotIdx),
           )
         })
+      // 注册到全局通道 Store（跨路由持久化）
+      channelStore.registerSlot(slotIdx, {
+        channelId: ch.id,
+        deviceId: ch.deviceId || '',
+        name: ch.name,
+        urls: result.urls as any,
+        codec: result.codec || '',
+        format: bestFmt,
+        inferenceEnabled: false,
+        registeredAt: Date.now(),
+      })
     } else {
       slot.loading = false
       // 流获取失败，清除旧画面
@@ -554,9 +599,9 @@ function assignToActive(ch: Channel) {
   assignChannel(activeSlotIdx.value, ch)
 }
 
-function closeSlot(idx: number) {
+function closeSlot(idx: number, hard: boolean = true) {
   const slot = gridSlots[idx]
-  // 销毁播放器实例
+  // 销毁播放器实例（所有场景都执行）
   if (slot.playerInstance) {
     if ('destroy' in slot.playerInstance) slot.playerInstance.destroy()
     slot.playerInstance = null
@@ -564,8 +609,10 @@ function closeSlot(idx: number) {
   if (slot.playing) {
     const video = videoRefs.value[idx]
     if (video) { video.pause(); video.removeAttribute('src'); video.load() }
-    if (slot.channelId) {
+    // 仅 hard 模式通知后端停流（用户主动关闭时）
+    if (hard && slot.channelId) {
       streamHttp.post(`/${slot.channelId}/stop`).catch(() => {})
+      channelStore.unregisterSlot(idx)
     }
   }
   Object.assign(slot, { channelId: '', name: '', status: '', urls: {}, playing: false, loading: false, muted: true, deviceId: '', playerInstance: null, currentFormat: '', webrtcRetryCount: 0, reconnectCount: 0, encrypted: false, _lastReconnectTime: 0 })
@@ -590,20 +637,25 @@ function attachPlayerByFormat(slotIdx: number, fmt: PlayerFormat) {
 
   const url = slot.urls[fmt]
   if (!url) {
-    // 当前格式不可用，尝试降级链
-    // 注意：H.265 编码时 FLV 会失败，应该跳过
+    // 当前格式不可用，使用统一降级链查找可用格式
     const isH265 = slot.codec && (slot.codec.toUpperCase().includes('H265') || slot.codec.toUpperCase().includes('HEVC'))
-    const fallbackOrder: PlayerFormat[] = isH265
-      ? ['hls', 'ws-flv', 'webrtc', 'flv']  // H.265: HLS > ws-flv > WebRTC > FLV
-      : ['flv', 'webrtc', 'ws-flv', 'hls']  // H.264: FLV > WebRTC > ws-flv > HLS
-    for (const fb of fallbackOrder) {
+    const chain = isH265 ? DEGRADATION_CHAINS.h265 : DEGRADATION_CHAINS.h264
+    for (const fb of chain) {
       if (slot.urls[fb]) {
         fmt = fb
         break
       }
     }
     const fbUrl = slot.urls[fmt]
-    if (!fbUrl) return
+    if (!fbUrl) {
+      // 无可用格式：根据编码给出明确提示
+      if (isH265) {
+        ElMessage.warning('此设备使用 H.265 编码，当前仅支持 HLS/WebRTC 播放，请检查流媒体配置')
+      } else {
+        ElMessage.warning('视频播放地址不可用，请检查设备推流状态')
+      }
+      return
+    }
     return attachPlayerByFormat(slotIdx, fmt)
   }
 
@@ -630,7 +682,7 @@ function attachPlayerByFormat(slotIdx: number, fmt: PlayerFormat) {
         player.attachMediaElement(video)
         player.load()
 
-        // 首帧显示事件
+        // 首帧显示事件（保存回调引用以便销毁时移除）
         let firstFramePlayed = false
         let firstFrameTimeout: ReturnType<typeof setTimeout> | null = null
 
@@ -645,16 +697,18 @@ function attachPlayerByFormat(slotIdx: number, fmt: PlayerFormat) {
           }
         }, 2000)
 
-        video.addEventListener('playing', () => {
+        const onFlvFirstFrame = () => {
           if (!firstFramePlayed) {
             firstFramePlayed = true
             if (firstFrameTimeout) {
               clearTimeout(firstFrameTimeout)
               firstFrameTimeout = null
             }
-            console.log(`[LiveView] slot${slotIdx} 首帧已显示`)
+            console.debug(`[LiveView] slot${slotIdx} 首帧已显示`)
           }
-        })
+        }
+        video.addEventListener('playing', onFlvFirstFrame)
+        slot._videoEventCleanups.push(() => video.removeEventListener('playing', onFlvFirstFrame))
 
         const playPromise = player.play()
         if (playPromise && typeof playPromise.catch === 'function') {
@@ -666,18 +720,11 @@ function attachPlayerByFormat(slotIdx: number, fmt: PlayerFormat) {
           console.error('[LiveView] flv.js ERROR:', errorType, errorDetail, errorInfo)
           player.destroy()
           slot.playerInstance = null
-          // 降级顺序：HLS > WS-FLV > WebRTC > FLV
-          // 注意：CodecUnsupported 说明流是 H.265/H.266 编码，FLV MSE 不支持
-          // HLS 有更好的 H.265 支持，优先使用；WebRTC 需要 ZLM SDP 交换可能失败
-          if (slot.urls['hls']) {
-            console.log('[LiveView] FLV 失败，降级到 HLS（优先）')
-            attachPlayerByFormat(slotIdx, 'hls')
-          } else if (slot.urls['ws-flv']) {
-            console.log('[LiveView] FLV 失败，降级到 WS-FLV')
-            attachPlayerByFormat(slotIdx, 'ws-flv')
-          } else if (slot.urls['webrtc']) {
-            console.log('[LiveView] FLV/HLS 失败，降级到 WebRTC')
-            attachPlayerByFormat(slotIdx, 'webrtc')
+          // 使用统一降级链查找下一个可用格式
+          const nextFmt = getNextFallbackFormat('flv', slot.codec, slot.urls)
+          if (nextFmt) {
+            console.debug(`[LiveView] FLV 失败，降级到 ${nextFmt}`)
+            attachPlayerByFormat(slotIdx, nextFmt)
           } else {
             ElMessage.warning('视频播放失败（不支持此编码格式），请刷新重试')
           }
@@ -710,24 +757,25 @@ function attachPlayerByFormat(slotIdx: number, fmt: PlayerFormat) {
           liveSyncMaxLatencyDurationCount: 1.2,     // 0.8→1.2 同上，减少 GB28181 低帧率设备误触发
         } as any)
 
-        // 首帧显示事件
+        // 首帧显示事件（保存回调引用以便销毁时移除）
         let wsFirstFramePlayed = false
-        video.addEventListener('playing', () => {
+        const onWsFlvFirstFrame = () => {
           if (!wsFirstFramePlayed) {
             wsFirstFramePlayed = true
-            console.log(`[LiveView] slot${slotIdx} WS-FLV 首帧已显示`)
+            console.debug(`[LiveView] slot${slotIdx} WS-FLV 首帧已显示`)
           }
-        })
+        }
+        video.addEventListener('playing', onWsFlvFirstFrame)
+        slot._videoEventCleanups.push(() => video.removeEventListener('playing', onWsFlvFirstFrame))
 
         // H.265/编码错误降级（flv.js 不支持 H.265 MSE 解码）
         player.on(flvjs.Events.ERROR, (_errorType: string, _errorDetail: string, _errorInfo: any) => {
           console.error(`[LiveView] ws-flv ERROR:`, _errorType, _errorDetail, _errorInfo)
           player.destroy()
           slot.playerInstance = null
-          if (slot.urls['hls']) {
-            attachPlayerByFormat(slotIdx, 'hls')
-          } else if (slot.urls['webrtc']) {
-            attachPlayerByFormat(slotIdx, 'webrtc')
+          const nextFmt = getNextFallbackFormat('ws-flv', slot.codec, slot.urls)
+          if (nextFmt) {
+            attachPlayerByFormat(slotIdx, nextFmt)
           }
         })
 
@@ -766,7 +814,7 @@ function attachPlayerByFormat(slotIdx: number, fmt: PlayerFormat) {
         hls.loadSource(url)
         hls.attachMedia(video)
         hls.on(Hls.Events.MANIFEST_PARSED, () => {
-          console.log(`[LiveView] slot${slotIdx} HLS MANIFEST_PARSED，开始播放`)
+          console.debug(`[LiveView] slot${slotIdx} HLS MANIFEST_PARSED，开始播放`)
           video.play().catch(() => {})
         })
         hls.on(Hls.Events.LEVEL_SWITCHED, (_event, data) => {
@@ -809,32 +857,29 @@ function destroyPlayer(slot: any, slotIdx?: number) {
     }
     rawSlot.playerInstance = null
   }
+  // 清理 video 元素事件监听器
+  if (rawSlot?._videoEventCleanups?.length) {
+    for (const cleanup of rawSlot._videoEventCleanups) {
+      try { cleanup() } catch { /* ignore */ }
+    }
+    rawSlot._videoEventCleanups.length = 0
+  }
 }
 
-// 智能选择最佳播放格式（根据编码格式选择兼容的播放器）
-// H.265/HEVC：flv.js 无法通过 MSE 解码，需要使用 WebRTC 或 HLS
-// H.264：优先 FLV（低延迟），WebRTC 不稳定时降级
+// 智能选择最佳播放格式（使用统一降级链）
 function selectBestFormat(urls: Partial<Record<PlayerFormat, string>>, codec?: string): PlayerFormat {
-  const isH265 = codec && (codec.toUpperCase().includes('H265') || codec.toUpperCase().includes('HEVC'))
-  
+  const isH265 = !!(codec && (codec.toUpperCase().includes('H265') || codec.toUpperCase().includes('HEVC')))
+  const chain = isH265 ? DEGRADATION_CHAINS.h265 : DEGRADATION_CHAINS.h264
+
   if (isH265) {
-    // H.265 编码：优先 HLS（低延迟配置 segDur=1 segNum=1）
-    // 注意：WebRTC 需 ZLM enable_fmp4=1，当前未启用，会浪费 3 秒超时
-    // FLV/WS-FLV 不支持 H.265 MSE 解码
-    console.log(`[LiveView] 检测到 H.265 编码，直接使用 HLS: codec=${codec}`)
-    if (urls.hls) return 'hls'
-    if (urls.webrtc) return 'webrtc'
-    if (urls['ws-flv']) return 'ws-flv'
-    if (urls.flv) return 'flv'  // 最终兜底
-    return 'hls'
+    console.debug(`[LiveView] 检测到 H.265 编码，降级链: ${chain.join(' → ')}, codec=${codec}`)
   }
-  
-  // H.264 编码：优先 HTTP-FLV（低延迟），WebRTC 当前环境不稳定
-  if (urls.flv) return 'flv'
-  if (urls.webrtc) return 'webrtc'
-  if (urls['ws-flv']) return 'ws-flv'
-  if (urls.hls) return 'hls'
-  return 'flv' // 默认
+
+  // 返回降级链中第一个有 URL 的格式
+  for (const fmt of chain) {
+    if (urls[fmt]) return fmt
+  }
+  return chain[0] // 默认返回链头
 }
 
 // WebRTC 播放：通过 ZLM 后端 SDP 交换
@@ -874,13 +919,19 @@ async function attachWebRtc(slotIdx: number, webrtcUrl: string) {
   let iceTimeoutTimer: ReturnType<typeof setTimeout> | null = null
 
   try {
+    // ICE 配置：局域网使用空数组（纯 host candidate 即可穿透）
+    // 公网部署时通过 /api/v1/media/ice-config 获取 STUN/TURN 配置
+    const iceServers: RTCIceServer[] = []
+    try {
+      const { data: iceResp } = await streamHttp.get('/ice-config')
+      const servers = iceResp?.data?.iceServers
+      if (Array.isArray(servers) && servers.length > 0) {
+        iceServers.push(...servers)
+      }
+    } catch { /* 后端不支持此接口，使用空配置 */ }
+
     const pc = new RTCPeerConnection({
-      // 公共 STUN 服务器列表（改善 NAT 穿透）
-      iceServers: [
-        { urls: 'stun:stun.l.google.com:19302' },
-        { urls: 'stun:stun1.l.google.com:19302' },
-        { urls: 'stun:stun.stunprotocol.org:3478' },
-      ],
+      iceServers,
       bundlePolicy: 'max-bundle',
     })
     pc.addTransceiver('video', { direction: 'recvonly' })
@@ -1532,7 +1583,7 @@ async function checkInferenceStatus() {
     inferenceAvailable.value = data?.engine_available ?? false
     if (inferenceAvailable.value && data?.loaded_models?.length) {
       const model = data.loaded_models[0]
-      console.log(`[Inference] 引擎就绪, 模型: ${model.name}, 输入: ${model.input_shape}`)
+      console.debug(`[Inference] 引擎就绪, 模型: ${model.name}, 输入: ${model.input_shape}`)
     }
   } catch {
     inferenceAvailable.value = false
@@ -1635,8 +1686,8 @@ async function runInferenceOnFrame() {
     canvas.getContext('2d')!.drawImage(video, 0, 0)
     const base64 = canvas.toDataURL('image/jpeg', 0.8).split(',')[1]
 
-    // 调用推理 API
-    const resp = await detectFromBase64(base64)
+    // 调用推理 API(传入通道信息,用于告警管道触发)
+    const resp = await detectFromBase64(base64, slot.channelId || undefined, slot.deviceId || undefined)
     const result = resp.data?.data
     if (!result) return
 
@@ -1661,21 +1712,38 @@ async function runInferenceOnFrame() {
 
       for (const [className, info] of Object.entries(classCounts)) {
         const conf = Math.round(info.maxConf * 100)
-        let level: string
-        let tagType: string
-        if (['person', 'bicycle', 'car', 'motorcycle', 'bus', 'truck'].includes(className)) {
-          level = 'WARN'
-          tagType = 'warning'
-        } else {
-          level = 'INFO'
-          tagType = 'info'
-        }
+        // 所有检测结果统一用 INFO 级别(普通目标检测不等同告警)
+        // 真正的告警(入侵、烟火、打架等行为)由后端 AlarmService 推送
+        const level = 'INFO'
+        const tagType = 'info'
         detectionLogs.value.unshift({
           time,
           level,
           tagType,
           msg: `[${slot.name}] ${info.count}x ${className} | 置信度${conf}% | ${result.inference_time_ms.toFixed(0)}ms`
         })
+
+        // 检测告警弹窗通知(节流：同一通道+目标类型 30秒内只弹一次)
+        // 对异常场景和人员检测弹窗,普通目标检测(car/bicycle等)不弹窗
+        const alertClasses = ['fire', 'smoke', 'fall', 'violence', 'intrusion', 'loitering', 'gathering', 'person']
+        if (alertClasses.includes(className) && conf >= 60) {
+          const alertKey = `${slot.name}_${className}`
+          const now = Date.now()
+          if (!lastAlertTime[alertKey] || now - lastAlertTime[alertKey] > ALERT_THROTTLE_MS) {
+            lastAlertTime[alertKey] = now
+            const classNameCn: Record<string, string> = {
+              person: '人员', bicycle: '自行车', car: '车辆', motorcycle: '摩托车', bus: '公交车', truck: '卡车'
+            }
+            const label = classNameCn[className] || className
+            ElNotification({
+              title: 'AI 检测告警',
+              message: `通道 [${slot.name}] 检测到 ${info.count}x ${label}，置信度 ${conf}%`,
+              type: 'warning',
+              duration: 4000,
+              position: 'top-right',
+            })
+          }
+        }
       }
     }
     if (detectionLogs.value.length > 200) detectionLogs.value.length = 200
@@ -1695,6 +1763,10 @@ onMounted(() => {
   loadData()
   updateClock()
   clockTimer = setInterval(updateClock, 1000)
+
+  // 恢复之前活跃的通道（从全局 Store）
+  restoreFromStore()
+
   // 检查推理引擎状态，然后启动推理定时器
   checkInferenceStatus().then(() => {
     if (inferenceAvailable.value) {
@@ -1712,13 +1784,45 @@ onMounted(() => {
   })
 })
 
+/** 从全局 Store 恢复之前的通道播放状态 */
+function restoreFromStore() {
+  const snapshot = channelStore.snapshot()
+  if (!snapshot.length) return
+
+  for (const { idx, data } of snapshot) {
+    const slot = gridSlots[idx]
+    slot.channelId = data.channelId
+    slot.name = data.name
+    slot.deviceId = data.deviceId
+    slot.urls = data.urls as any
+    slot.codec = data.codec
+    slot.status = 'streaming'
+    slot.playing = true
+    slot.loading = false
+    slot.currentFormat = data.format
+
+    nextTick(() => {
+      attachPlayerByFormat(idx, data.format)
+      adaptiveBitrate.activate(idx, data.channelId, () => streamHealth.getHealth(idx))
+    })
+  }
+  // 恢复后隐藏浮窗
+  channelStore.showFloatingPreview = false
+  console.info(`[LiveView] 已恢复 ${snapshot.length} 个通道`)
+}
+
 onUnmounted(() => {
   if (clockTimer) clearInterval(clockTimer)
   if (logTimer) clearInterval(logTimer)
   // 清理健康监测
   streamHealth.cleanup()
-  // 关闭所有流
-  for (let i = 0; i < 16; i++) closeSlot(i)
+  // 有活跃通道时软关闭（不通知后端停流），否则硬关闭
+  if (channelStore.hasActive) {
+    for (let i = 0; i < 16; i++) closeSlot(i, false)  // soft close
+    channelStore.showFloatingPreview = true
+  } else {
+    for (let i = 0; i < 16; i++) closeSlot(i)  // hard close
+  }
 })
 </script>
 

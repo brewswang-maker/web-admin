@@ -121,6 +121,21 @@
           </template>
         </el-table-column>
 
+        <!-- 快照缩略图 -->
+        <el-table-column label="快照" width="80" align="center">
+          <template #default="{ row }">
+            <el-image
+              v-if="row.snapshotUrl"
+              :src="row.snapshotUrl"
+              :preview-src-list="[row.snapshotUrl]"
+              fit="cover"
+              style="width: 56px; height: 32px; border-radius: 4px; cursor: pointer"
+              :preview-teleported="true"
+            />
+            <span v-else class="text-secondary" style="font-size:11px">无</span>
+          </template>
+        </el-table-column>
+
         <!-- 告警类型 -->
         <el-table-column prop="type" label="类型" width="130">
           <template #default="{ row }">
@@ -194,7 +209,7 @@
         </el-table-column>
 
         <!-- 操作 -->
-        <el-table-column label="操作" width="220" fixed="right">
+        <el-table-column label="操作" width="260" fixed="right">
           <template #default="{ row }">
             <div class="action-btns">
               <el-button
@@ -216,7 +231,10 @@
                 误报
               </el-button>
               <el-button size="small" link @click="handleIgnore(row)">忽略</el-button>
-              <el-button size="small" type="primary" link @click="handleDetail(row)">
+              <el-button size="small" type="primary" link @click="showEvidence(row)">
+                证据链
+              </el-button>
+              <el-button size="small" type="info" link @click="handleDetail(row)">
                 详情
               </el-button>
             </div>
@@ -284,6 +302,80 @@
         </el-descriptions>
       </template>
     </el-dialog>
+
+    <!-- ===== 证据链弹窗 ===== -->
+    <el-dialog v-model="showEvidenceDialog" title="告警证据链" width="720px" destroy-on-close>
+      <div v-loading="evidenceLoading">
+        <template v-if="evidenceData">
+          <el-row :gutter="16">
+            <!-- 快照 -->
+            <el-col :span="12">
+              <div class="evidence-section">
+                <div class="evidence-section-title">告警快照</div>
+                <el-image
+                  v-if="evidenceData.snapshotUrl"
+                  :src="evidenceData.snapshotUrl"
+                  fit="contain"
+                  style="width:100%;max-height:300px;border-radius:8px;border:1px solid var(--app-border)"
+                  :preview-src-list="[evidenceData.snapshotUrl]"
+                  :preview-teleported="true"
+                />
+                <el-empty v-else description="无快照" :image-size="60" />
+              </div>
+            </el-col>
+            <!-- 视频片段 -->
+            <el-col :span="12">
+              <div class="evidence-section">
+                <div class="evidence-section-title">视频片段</div>
+                <video
+                  v-if="evidenceData.videoClipUrl"
+                  :src="evidenceData.videoClipUrl"
+                  controls
+                  style="width:100%;max-height:300px;border-radius:8px;background:#000"
+                />
+                <el-empty v-else description="无视频片段" :image-size="60" />
+              </div>
+            </el-col>
+          </el-row>
+          <!-- AI 检测框 -->
+          <div v-if="evidenceData.detectionBoxes?.length" class="evidence-section" style="margin-top:16px">
+            <div class="evidence-section-title">AI 检测目标</div>
+            <el-table :data="evidenceData.detectionBoxes" size="small" stripe>
+              <el-table-column prop="label" label="目标" width="120" />
+              <el-table-column label="置信度" width="100">
+                <template #default="{ row }">
+                  <span :style="{ color: row.confidence >= 0.8 ? '#10B981' : row.confidence >= 0.5 ? '#F59E0B' : '#EF4444' }">
+                    {{ (row.confidence * 100).toFixed(1) }}%
+                  </span>
+                </template>
+              </el-table-column>
+              <el-table-column label="位置">
+                <template #default="{ row }">[{{ row.x }}, {{ row.y }}, {{ row.w }}, {{ row.h }}]</template>
+              </el-table-column>
+            </el-table>
+          </div>
+          <!-- AI 分析 -->
+          <div v-if="evidenceData.aiAnalysis" class="evidence-section" style="margin-top:16px">
+            <div class="evidence-section-title">AI 分析结论</div>
+            <div class="xai-detail">{{ evidenceData.aiAnalysis }}</div>
+          </div>
+          <!-- 关联录像 -->
+          <div v-if="evidenceData.relatedRecordingId" class="evidence-section" style="margin-top:16px">
+            <div class="evidence-section-title">关联录像</div>
+            <el-button type="primary" size="small" @click="goToRecording(evidenceData.relatedRecordingId!)">
+              跳转到录像回放 {{ evidenceData.relatedRecordingTime ? '(' + evidenceData.relatedRecordingTime + ')' : '' }}
+            </el-button>
+          </div>
+          <!-- AI 二次分析 -->
+          <div style="margin-top:16px;text-align:right">
+            <el-button type="primary" :loading="analyzeLoading" @click="doAnalyze">
+              AI 二次分析
+            </el-button>
+          </div>
+        </template>
+        <el-empty v-else-if="!evidenceLoading" description="无法获取证据链数据" />
+      </div>
+    </el-dialog>
   </div>
 </template>
 
@@ -295,9 +387,11 @@ import {
   Search, Refresh, Download, WarningFilled,
 } from '@element-plus/icons-vue'
 import { alarmApi } from '@/api/alarm'
-import type { AlarmHandleForm } from '@/types/alarm'
+import { exportApi } from '@/api/export'
+import type { AlarmHandleForm, AlarmEvidence } from '@/types/alarm'
 import { useAuthStore } from '@/stores/auth'
 import { useWebSocket } from '@/composables/useWebSocket'
+import { useRouter } from 'vue-router'
 
 // ── 严重等级中文映射 ──
 const SEVERITY_LABELS: Record<string, string> = {
@@ -326,6 +420,14 @@ const totalAlarms = ref(0)
 // ── 详情弹窗 ──
 const showDetailDialog = ref(false)
 const detailAlarm = ref<any>(null)
+
+// ── 证据链弹窗 ──
+const router = useRouter()
+const showEvidenceDialog = ref(false)
+const evidenceLoading = ref(false)
+const evidenceData = ref<AlarmEvidence | null>(null)
+const evidenceAlarmId = ref('')
+const analyzeLoading = ref(false)
 
 // ── 日期快捷选项 ──
 const dateShortcuts = [
@@ -358,6 +460,52 @@ const dateShortcuts = [
   },
 ]
 
+// ── 后端 level 整数 → 前端 severity 字符串映射 ──
+function mapLevelToSeverity(level: any): string {
+  if (typeof level === 'string') {
+    const low = level.toLowerCase()
+    if (['critical', 'high', 'medium', 'low', 'info'].includes(low)) return low
+  }
+  const n = Number(level)
+  if (isNaN(n)) return 'low'
+  if (n >= 4) return 'critical'
+  if (n >= 3) return 'high'
+  if (n >= 2) return 'medium'
+  if (n >= 1) return 'low'
+  return 'info'
+}
+
+// ── 后端 snake_case → 前端 camelCase 字段映射 ──
+function normalizeAlarm(raw: any): any {
+  const severity = mapLevelToSeverity(raw.severity ?? raw.level ?? 2)
+  const timestamp = raw.timestamp || raw.timestamp_ms || raw.created_at || Date.now()
+  return {
+    id: raw.id || raw.alarm_id || '',
+    type: raw.type || raw.alarm_type || 'other',
+    severity,
+    level: severity,
+    description: raw.description || raw.title || '',
+    title: raw.title || raw.description || '',
+    channelId: String(raw.channel_id ?? raw.channelId ?? raw.channel ?? ''),
+    channelName: raw.channel_name || raw.channelName || '',
+    deviceId: raw.device_id || raw.deviceId || raw.channel_id || '',
+    deviceName: raw.device_name || raw.deviceName || raw.zone || '',
+    snapshotUrl: raw.snapshot_url || raw.snapshotUrl || raw.snapshot_path || '',
+    videoClipUrl: raw.video_clip_url || raw.videoClipUrl || '',
+    aiConclusion: raw.ai_conclusion || raw.aiConclusion || raw.ai_analysis || '',
+    aiAnalysis: raw.ai_analysis || raw.aiAnalysis || raw.ai_conclusion || '',
+    aiConfidence: raw.confidence ?? raw.ai_confidence ?? raw.aiConfidence ?? 0,
+    confidence: raw.confidence ?? 0,
+    status: raw.status || 'unhandled',
+    location: raw.location || raw.zone || '',
+    createdAt: raw.created_at || raw.createdAt || (timestamp ? new Date(typeof timestamp === 'number' ? timestamp : timestamp).toISOString() : new Date().toISOString()),
+    updatedAt: raw.updated_at || raw.updatedAt || raw.created_at || raw.createdAt || new Date().toISOString(),
+    handledBy: raw.handled_by || raw.handledBy || '',
+    handleNote: raw.handle_note || raw.handleNote || '',
+    metadata: raw.metadata || {},
+  }
+}
+
 // ── 从真实API获取告警数据 ──
 async function fetchAlarms() {
   loading.value = true
@@ -365,35 +513,53 @@ async function fetchAlarms() {
     const params: Record<string, any> = {
       page: currentPage.value,
       pageSize: pageSize.value,
+      count: pageSize.value * 5, // 后端用 count 参数
     }
-    
-    if (levelFilter.value) params.severity = levelFilter.value
-    if (typeFilter.value) params.type = typeFilter.value
+
+    if (levelFilter.value) {
+      params.severity = levelFilter.value
+      params.level = levelFilter.value  // 后端用 level 字段
+    }
+    if (typeFilter.value) {
+      params.type = typeFilter.value
+      params.alarm_type = typeFilter.value  // 后端用 alarm_type 字段
+    }
     if (statusFilter.value) params.status = statusFilter.value
     if (search.value) params.search = search.value
-    
+
     if (dateRange.value && dateRange.value.length === 2 && dateRange.value[0] && dateRange.value[1]) {
       params.startTime = dateRange.value[0].toISOString()
       params.endTime = dateRange.value[1].toISOString()
+      params.start_ms = dateRange.value[0].getTime()
+      params.end_ms = dateRange.value[1].getTime()
     }
 
     const response = await alarmApi.getList(params)
-    const data = response.data?.data ?? response.data
-    
-    // 处理API响应结构
-    if (data && data.items) {
-      alarms.value = data.items
-      totalAlarms.value = data.total || data.items.length
-    } else if (Array.isArray(data)) {
-      alarms.value = data
-      totalAlarms.value = data.length
-    } else {
-      alarms.value = []
-      totalAlarms.value = 0
+    const respData: any = response.data?.data ?? response.data
+
+    // 后端返回 {alarms: [...], total: N} 或 {items: [...], total: N}
+    let rawList: any[] = []
+    let total = 0
+
+    if (respData) {
+      if (Array.isArray(respData.alarms)) {
+        rawList = respData.alarms
+        total = respData.total ?? respData.alarms.length
+      } else if (Array.isArray(respData.items)) {
+        rawList = respData.items
+        total = respData.total ?? respData.items.length
+      } else if (Array.isArray(respData)) {
+        rawList = respData
+        total = respData.length
+      }
     }
+
+    // 字段名归一化
+    alarms.value = rawList.map(normalizeAlarm)
+    totalAlarms.value = total
   } catch (err: any) {
     console.error('[AlarmsView] fetchAlarms failed:', err)
-    ElMessage.error('获取告警列表失败')
+    // 不弹错误提示，避免首次加载后端未启动时刷屏
     alarms.value = []
     totalAlarms.value = 0
   } finally {
@@ -584,6 +750,44 @@ function handleDetail(row: any) {
   showDetailDialog.value = true
 }
 
+// ── 证据链 ──
+async function showEvidence(row: any) {
+  evidenceAlarmId.value = row.id
+  showEvidenceDialog.value = true
+  evidenceLoading.value = true
+  evidenceData.value = null
+  try {
+    const res = await alarmApi.getEvidence(row.id)
+    const data = (res as any)?.data?.data ?? (res as any)?.data
+    evidenceData.value = data || { snapshotUrl: row.snapshotUrl || '', videoClipUrl: row.videoClipUrl }
+  } catch {
+    evidenceData.value = { snapshotUrl: row.snapshotUrl || '', videoClipUrl: row.videoClipUrl }
+  } finally {
+    evidenceLoading.value = false
+  }
+}
+
+function goToRecording(recordingId: string) {
+  showEvidenceDialog.value = false
+  router.push({ name: 'Recording', query: { recordingId, alarmId: evidenceAlarmId.value } })
+}
+
+async function doAnalyze() {
+  analyzeLoading.value = true
+  try {
+    const res = await alarmApi.analyzeAlarm(evidenceAlarmId.value)
+    const analysis = (res as any)?.data?.data?.analysis ?? (res as any)?.data?.data
+    if (analysis && evidenceData.value) {
+      evidenceData.value = { ...evidenceData.value, aiAnalysis: analysis }
+    }
+    ElMessage.success('AI 分析完成')
+  } catch {
+    ElMessage.error('AI 分析失败')
+  } finally {
+    analyzeLoading.value = false
+  }
+}
+
 // 批量确认
 async function handleBatchConfirm() {
   ElMessageBox.confirm(`确认 ${selected.value.length} 条告警为真实告警?`, '批量确认', {
@@ -631,8 +835,41 @@ async function handleBatchFalse() {
 }
 
 // 导出告警
-function exportAlarms() {
-  ElMessage.success('正在生成告警报表...')
+async function exportAlarms() {
+  try {
+    ElMessage.info('正在生成告警报表...')
+    const res = await exportApi.exportAlarms({
+      level: levelFilter.value || undefined,
+      format: 'xlsx',
+      startTime: dateRange.value?.[0],
+      endTime: dateRange.value?.[1],
+    })
+    const task = res.data?.data
+    if (task?.id) {
+      const poll = setInterval(async () => {
+        try {
+          const detail = await exportApi.getTaskDetail(task.id)
+          const t = detail.data?.data
+          if (t?.status === 'completed' && t.fileUrl) {
+            clearInterval(poll)
+            const blob = await exportApi.downloadFile(task.id)
+            const url = URL.createObjectURL(blob.data as any)
+            const a = document.createElement('a')
+            a.href = url
+            a.download = t.fileName || `告警报表.xlsx`
+            a.click()
+            URL.revokeObjectURL(url)
+            ElMessage.success('导出完成')
+          } else if (t?.status === 'failed') {
+            clearInterval(poll)
+            ElMessage.error(t.errorMessage || '导出失败')
+          }
+        } catch { clearInterval(poll) }
+      }, 2000)
+    }
+  } catch {
+    ElMessage.error('导出请求失败')
+  }
 }
 
 // 页面加载时获取数据
@@ -880,4 +1117,16 @@ onUnmounted(() => {
   font-family: var(--font-mono);
   font-size: 13px;
 }
+
+/* ── 证据链 ── */
+.evidence-section { margin-bottom: 8px; }
+.evidence-section-title {
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 8px;
+  color: var(--app-text-primary);
+  border-left: 3px solid #6366F1;
+  padding-left: 8px;
+}
+.text-secondary { color: var(--app-text-secondary); }
 </style>

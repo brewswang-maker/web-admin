@@ -1,4 +1,5 @@
 import pluginVue from 'eslint-plugin-vue'
+import vueParser from 'vue-eslint-parser'
 import tsParser from '@typescript-eslint/parser'
 import tsPlugin from '@typescript-eslint/eslint-plugin'
 
@@ -39,8 +40,9 @@ export default [
   {
     files: ['**/*.vue'],
     languageOptions: {
-      parser: tsParser,
+      parser: vueParser,
       parserOptions: {
+        parser: tsParser,
         ecmaVersion: 'latest',
         sourceType: 'module',
         extraFileExtensions: ['.vue'],

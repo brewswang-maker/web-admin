@@ -854,6 +854,7 @@ function openEditDialog(row: DeviceItem) {
     projectId: (row.metadata as any)?.project_id || (row.metadata as any)?.projectId || 'park',
     location: (row.metadata as any)?.location || row.location || '',
     algoPlugin: row.algoPlugin || '无',
+    algoPlugins: row.algoPlugins || [],
   }
   showEditDialog.value = true
 }
@@ -887,7 +888,7 @@ async function confirmEdit() {
 function resetEditForm() {
   editForm.value = {
     deviceId: '', name: '', deviceType: 'IPCamera',
-    ip: '', rtspPort: 554, projectId: 'park', location: '', algoPlugin: '无',
+    ip: '', rtspPort: 554, projectId: 'park', location: '', algoPlugin: '无', algoPlugins: [],
   }
 }
 

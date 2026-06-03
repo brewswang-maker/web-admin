@@ -144,6 +144,8 @@ export type LightingMode = 'day' | 'night' | 'dusk'
 export interface SceneLightingPreset {
   /** 环境光 */
   ambient: { color: number; intensity: number }
+  /** 半球光 */
+  hemisphere?: { skyColor: number; groundColor: number; intensity: number }
   /** 主方向光 */
   directional: {
     color: number; intensity: number

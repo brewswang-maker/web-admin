@@ -1,184 +1,184 @@
 <template>
   <div class="settings-page" v-loading="loading">
     <el-tabs tab-position="left">
-      <el-tab-pane label="基本设置">
+      <el-tab-pane :label="$t('settings.tabBasic')">
         <el-form :model="basic" label-width="120px">
-          <el-form-item label="设备名称">
+          <el-form-item :label="$t('settings.deviceName')">
             <el-input v-model="basic.deviceName" style="width: 300px" />
           </el-form-item>
-          <el-form-item label="日志级别">
+          <el-form-item :label="$t('settings.logLevel')">
             <el-select v-model="basic.logLevel" style="width: 200px">
-              <el-option label="DEBUG" value="debug" />
-              <el-option label="INFO" value="info" />
-              <el-option label="WARN" value="warn" />
-              <el-option label="ERROR" value="error" />
+              <el-option :label="$t('settings.logLevelDebug')" value="debug" />
+              <el-option :label="$t('settings.logLevelInfo')" value="info" />
+              <el-option :label="$t('settings.logLevelWarn')" value="warn" />
+              <el-option :label="$t('settings.logLevelError')" value="error" />
             </el-select>
           </el-form-item>
-          <el-form-item label="最大通道数">
+          <el-form-item :label="$t('settings.maxChannels')">
             <el-input-number v-model="basic.maxChannels" :min="1" :max="32" />
           </el-form-item>
-          <el-form-item label="录像保留(天)">
+          <el-form-item :label="$t('settings.recordRetentionDays')">
             <el-input-number v-model="basic.recordRetentionDays" :min="1" :max="365" />
           </el-form-item>
-          <el-form-item label="NTP时间服务器">
+          <el-form-item :label="$t('settings.ntpServer')">
             <el-input v-model="basic.ntpServer" style="width: 300px" placeholder="ntp.aliyun.com" />
           </el-form-item>
-          <el-form-item label="数据保留天数">
+          <el-form-item :label="$t('settings.dataRetentionDays')">
             <el-input-number v-model="basic.dataRetentionDays" :min="1" :max="365" />
           </el-form-item>
-          <el-form-item label="异常自动重启">
+          <el-form-item :label="$t('settings.autoRestart')">
             <el-switch v-model="basic.autoRestart" />
           </el-form-item>
           <el-form-item>
-            <el-button type="primary" @click="saveBasic" :loading="basicSaving">保存</el-button>
-            <el-button @click="resetBasic">重置</el-button>
+            <el-button type="primary" @click="saveBasic" :loading="basicSaving">{{ $t('settings.save') }}</el-button>
+            <el-button @click="resetBasic">{{ $t('settings.reset') }}</el-button>
           </el-form-item>
         </el-form>
       </el-tab-pane>
 
-      <el-tab-pane label="网络 & 云端">
+      <el-tab-pane :label="$t('settings.tabNetwork')">
         <!-- 网络配置 -->
-        <h4 style="margin-bottom:16px;color:#303133">网络配置</h4>
+        <h4 style="margin-bottom:16px;color:#303133">{{ $t('settings.networkConfig') }}</h4>
         <el-form :model="network" label-width="130px" style="max-width:680px;margin-bottom:24px">
-          <el-form-item label="主机名">
+          <el-form-item :label="$t('settings.hostname')">
             <el-input v-model="network.hostname" style="width:300px" />
           </el-form-item>
-          <el-form-item label="IP 模式">
+          <el-form-item :label="$t('settings.ipMode')">
             <el-radio-group v-model="network.ipMode">
-              <el-radio value="dhcp">DHCP</el-radio>
-              <el-radio value="static">静态 IP</el-radio>
+              <el-radio value="dhcp">{{ $t('settings.dhcp') }}</el-radio>
+              <el-radio value="static">{{ $t('settings.staticIp') }}</el-radio>
             </el-radio-group>
           </el-form-item>
           <template v-if="network.ipMode === 'static'">
-            <el-form-item label="IP 地址">
+            <el-form-item :label="$t('settings.ipAddress')">
               <el-input v-model="network.ipAddress" style="width:300px" />
             </el-form-item>
-            <el-form-item label="子网掩码">
+            <el-form-item :label="$t('settings.subnetMask')">
               <el-input v-model="network.subnetMask" style="width:300px" />
             </el-form-item>
-            <el-form-item label="网关">
+            <el-form-item :label="$t('settings.gateway')">
               <el-input v-model="network.gateway" style="width:300px" />
             </el-form-item>
           </template>
-          <el-form-item label="DNS 服务器">
+          <el-form-item :label="$t('settings.dnsServer')">
             <div v-for="(dns, idx) in network.dns" :key="idx" style="display:flex;gap:8px;margin-bottom:8px;width:100%">
               <el-input :model-value="dns" @update:model-value="(v: string) => network.dns[idx] = v" style="flex:1" />
               <el-button type="danger" circle size="small" @click="network.dns.splice(idx, 1)">-</el-button>
             </div>
-            <el-button size="small" @click="network.dns.push('')">添加 DNS</el-button>
+            <el-button size="small" @click="network.dns.push('')">{{ $t('settings.addDns') }}</el-button>
           </el-form-item>
         </el-form>
 
         <el-divider />
 
         <!-- MQTT & 云端 -->
-        <h4 style="margin-bottom:16px;color:#303133">云端连接</h4>
+        <h4 style="margin-bottom:16px;color:#303133">{{ $t('settings.cloudConnect') }}</h4>
         <el-form :model="cloud" label-width="130px">
-          <el-form-item label="MQTT Broker">
+          <el-form-item :label="$t('settings.mqttBroker')">
             <el-input v-model="cloud.mqttBroker" style="width: 400px" />
           </el-form-item>
-          <el-form-item label="MQTT 端口">
+          <el-form-item :label="$t('settings.mqttPort')">
             <el-input-number v-model="cloud.mqttPort" :min="1" :max="65535" />
           </el-form-item>
-          <el-form-item label="心跳间隔(秒)">
+          <el-form-item :label="$t('settings.heartbeatInterval')">
             <el-input-number v-model="cloud.heartbeatInterval" :min="10" :max="300" />
           </el-form-item>
-          <el-form-item label="TLS加密">
+          <el-form-item :label="$t('settings.tlsEnabled')">
             <el-switch v-model="cloud.tlsEnabled" />
           </el-form-item>
-          <el-form-item label="断网缓冲事件上限">
+          <el-form-item :label="$t('settings.maxOfflineEvents')">
             <el-input-number v-model="cloud.maxOfflineEvents" :min="1000" :max="500000" :step="1000" />
           </el-form-item>
-          <el-form-item label="云边同步模式">
+          <el-form-item :label="$t('settings.syncMode')">
             <el-radio-group v-model="cloud.syncMode">
-              <el-radio label="auto">自动同步</el-radio>
-              <el-radio label="manual">手动同步</el-radio>
-              <el-radio label="scheduled">定时同步</el-radio>
+              <el-radio label="auto">{{ $t('settings.syncAuto') }}</el-radio>
+              <el-radio label="manual">{{ $t('settings.syncManual') }}</el-radio>
+              <el-radio label="scheduled">{{ $t('settings.syncScheduled') }}</el-radio>
             </el-radio-group>
           </el-form-item>
           <el-form-item>
-            <el-button type="primary" @click="saveCloud" :loading="cloudSaving">保存</el-button>
-            <el-button @click="testConnection" :loading="testConnLoading">测试连接</el-button>
+            <el-button type="primary" @click="saveCloud" :loading="cloudSaving">{{ $t('settings.save') }}</el-button>
+            <el-button @click="testConnection" :loading="testConnLoading">{{ $t('settings.testConnection') }}</el-button>
           </el-form-item>
         </el-form>
       </el-tab-pane>
 
-      <el-tab-pane label="告警策略">
+      <el-tab-pane :label="$t('settings.tabAlarm')">
         <el-form :model="alarm" label-width="150px">
-          <el-divider content-position="left">告警规则</el-divider>
-          <el-form-item label="告警去重窗口(秒)">
+          <el-divider content-position="left">{{ $t('settings.alarmRule') }}</el-divider>
+          <el-form-item :label="$t('settings.dedupWindow')">
             <el-input-number v-model="alarm.dedupWindow" :min="1" :max="60" />
           </el-form-item>
-          <el-form-item label="最低置信度阈值">
+          <el-form-item :label="$t('settings.minConfidence')">
             <el-slider v-model="alarm.minConfidence" :min="0.3" :max="0.95" :step="0.05" show-input />
           </el-form-item>
-          <el-form-item label="严重告警延迟(ms)">
+          <el-form-item :label="$t('settings.criticalMaxLatency')">
             <el-input-number v-model="alarm.criticalMaxLatency" :min="100" :max="5000" :step="100" />
           </el-form-item>
-          <el-form-item label="联动策略">
+          <el-form-item :label="$t('settings.linkageActions')">
             <el-checkbox-group v-model="alarm.linkageActions">
-              <el-checkbox label="ptz">PTZ联动</el-checkbox>
-              <el-checkbox label="record">启动录像</el-checkbox>
-              <el-checkbox label="audio">语音告警</el-checkbox>
-              <el-checkbox label="light">灯光联动</el-checkbox>
-              <el-checkbox label="sms">短信通知</el-checkbox>
-              <el-checkbox label="push">APP推送</el-checkbox>
+              <el-checkbox label="ptz">{{ $t('settings.linkagePtz') }}</el-checkbox>
+              <el-checkbox label="record">{{ $t('settings.linkageRecord') }}</el-checkbox>
+              <el-checkbox label="audio">{{ $t('settings.linkageAudio') }}</el-checkbox>
+              <el-checkbox label="light">{{ $t('settings.linkageLight') }}</el-checkbox>
+              <el-checkbox label="sms">{{ $t('settings.linkageSms') }}</el-checkbox>
+              <el-checkbox label="push">{{ $t('settings.linkagePush') }}</el-checkbox>
             </el-checkbox-group>
           </el-form-item>
           <el-form-item>
-            <el-button type="primary" @click="saveAlarm" :loading="alarmSaving">保存</el-button>
+            <el-button type="primary" @click="saveAlarm" :loading="alarmSaving">{{ $t('settings.save') }}</el-button>
           </el-form-item>
         </el-form>
 
         <el-divider />
 
         <!-- 邮件/Webhook 告警通知（来自 web-console） -->
-        <h4 style="margin-bottom:16px;color:#303133">告警通知</h4>
+        <h4 style="margin-bottom:16px;color:#303133">{{ $t('settings.alertNotify') }}</h4>
         <el-form :model="alertNotify" label-width="150px" style="max-width:680px">
-          <el-form-item label="邮件告警">
+          <el-form-item :label="$t('settings.emailAlertEnabled')">
             <el-switch v-model="alertNotify.emailEnabled" />
           </el-form-item>
-          <el-form-item v-if="alertNotify.emailEnabled" label="收件人">
+          <el-form-item v-if="alertNotify.emailEnabled" :label="$t('settings.recipient')">
             <div v-for="(email, idx) in alertNotify.emailRecipients" :key="idx" style="display:flex;gap:8px;margin-bottom:8px;width:100%">
               <el-input :model-value="email" @update:model-value="(v: string) => alertNotify.emailRecipients[idx] = v" style="flex:1" />
               <el-button type="danger" circle size="small" @click="alertNotify.emailRecipients.splice(idx, 1)">-</el-button>
             </div>
-            <el-button size="small" @click="alertNotify.emailRecipients.push('')">添加收件人</el-button>
+            <el-button size="small" @click="alertNotify.emailRecipients.push('')">{{ $t('settings.addRecipient') }}</el-button>
           </el-form-item>
-          <el-form-item label="Webhook 告警">
+          <el-form-item :label="$t('settings.webhookAlert')">
             <el-switch v-model="alertNotify.webhookEnabled" />
           </el-form-item>
-          <el-form-item v-if="alertNotify.webhookEnabled" label="Webhook URL">
+          <el-form-item v-if="alertNotify.webhookEnabled" :label="$t('settings.webhookUrl')">
             <el-input v-model="alertNotify.webhookUrl" style="width:400px" placeholder="https://..." />
           </el-form-item>
-          <el-divider content-position="left">资源阈值</el-divider>
-          <el-form-item label="CPU 告警阈值 (%)">
+          <el-divider content-position="left">{{ $t('settings.resourceThreshold') }}</el-divider>
+          <el-form-item :label="$t('settings.cpuThreshold')">
             <el-slider v-model="alertNotify.cpuThreshold" :min="50" :max="100" show-input />
           </el-form-item>
-          <el-form-item label="内存告警阈值 (%)">
+          <el-form-item :label="$t('settings.memThreshold')">
             <el-slider v-model="alertNotify.memThreshold" :min="50" :max="100" show-input />
           </el-form-item>
-          <el-form-item label="磁盘告警阈值 (%)">
+          <el-form-item :label="$t('settings.diskThreshold')">
             <el-slider v-model="alertNotify.diskThreshold" :min="50" :max="100" show-input />
           </el-form-item>
         </el-form>
       </el-tab-pane>
 
-      <el-tab-pane label="AI模型管理">
+      <el-tab-pane :label="$t('settings.tabAiModel')">
         <!-- AI Agent 开关与置信度（来自 web-console AgentPanel） -->
-        <h4 style="margin-bottom:16px;color:#303133">AI Agent 配置</h4>
+        <h4 style="margin-bottom:16px;color:#303133">{{ $t('settings.aiAgentConfig') }}</h4>
         <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:16px;margin-bottom:24px">
           <el-card v-for="agent in aiAgents" :key="agent.id" :class="{ 'opacity-60': !agent.enabled }" shadow="hover">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
-              <span style="font-size:15px;font-weight:600">{{ agent.name }}</span>
-              <el-switch :model-value="agent.enabled" @change="(v: string | number | boolean) => agent.enabled = !!v" active-text="启用" inactive-text="停用" />
+              <span style="font-size:15px;font-weight:600">{{ t(`settings.${agent.nameKey}`) }}</span>
+              <el-switch :model-value="agent.enabled" @change="(v: string | number | boolean) => agent.enabled = !!v" :active-text="$t('settings.enable')" :inactive-text="$t('settings.disable')" />
             </div>
             <el-form label-width="80px" size="small">
-              <el-form-item label="模型"><el-tag>{{ agent.model }}</el-tag></el-form-item>
-              <el-form-item label="置信度">
+              <el-form-item :label="$t('settings.agentModel')"><el-tag>{{ agent.model }}</el-tag></el-form-item>
+              <el-form-item :label="$t('settings.agentConfidence')">
                 <el-slider :model-value="agent.confidence" :min="0" :max="1" :step="0.05" :format-tooltip="(v: number | number[]) => `${Math.round((Array.isArray(v) ? v[0] : v) * 100)}%`" @change="(v: number | number[]) => agent.confidence = Array.isArray(v) ? v[0] : v" :disabled="!agent.enabled" />
               </el-form-item>
-              <el-form-item label="帧率"><el-tag type="info">{{ agent.fps }} FPS</el-tag></el-form-item>
+              <el-form-item :label="$t('settings.agentFps')"><el-tag type="info">{{ agent.fps }} {{ $t('settings.fpsUnit') }}</el-tag></el-form-item>
             </el-form>
           </el-card>
         </div>
@@ -186,44 +186,49 @@
         <el-divider />
 
         <!-- 模型列表（原有） -->
-        <h4 style="margin-bottom:16px;color:#303133">已部署模型</h4>
+        <h4 style="margin-bottom:16px;color:#303133">{{ $t('settings.deployedModels') }}</h4>
         <el-table :data="aiModels" stripe v-loading="modelsLoading">
-          <el-table-column prop="name" label="模型名称" width="180" />
-          <el-table-column prop="version" label="版本" width="80" />
-          <el-table-column prop="precision" label="精度" width="80" />
-          <el-table-column prop="sizeMB" label="大小(MB)" width="90">
+          <el-table-column prop="name" :label="$t('settings.modelName')" width="180" />
+          <el-table-column prop="version" :label="$t('settings.version')" width="80" />
+          <el-table-column prop="precision" :label="$t('settings.precision')" width="80" />
+          <el-table-column prop="sizeMB" :label="$t('settings.sizeMB')" width="90">
             <template #default="{ row }">{{ (row.size / 1048576).toFixed(0) }}</template>
           </el-table-column>
-          <el-table-column prop="inferTimeMs" label="推理(ms)" width="100" />
-          <el-table-column prop="status" label="状态" width="90">
+          <el-table-column prop="inferTimeMs" :label="$t('settings.inferMs')" width="100" />
+          <el-table-column prop="status" :label="$t('settings.modelStatus')" width="90">
             <template #default="{ row }">
               <el-tag :type="row.status === 'active' ? 'success' : 'info'" size="small">
-                {{ row.status === 'active' ? '运行中' : row.status === 'loading' ? '加载中' : '已停止' }}
+                {{ row.status === 'active' ? $t('settings.modelActive') : row.status === 'loading' ? $t('settings.modelLoading') : $t('settings.modelStopped') }}
               </el-tag>
             </template>
           </el-table-column>
-          <el-table-column label="操作" width="150">
+          <el-table-column :label="$t('settings.actionCol')" width="150">
             <template #default="{ row }">
-              <el-button v-if="row.status === 'active'" size="small" @click="handleModelAction(row, 'deactivate')">停用</el-button>
-              <el-button v-else size="small" type="primary" @click="handleModelAction(row, 'activate')">激活</el-button>
-              <el-button size="small" @click="handleModelReload(row)">重载</el-button>
+              <el-button v-if="row.status === 'active'" size="small" @click="handleModelAction(row, 'deactivate')">{{ $t('settings.deactivate') }}</el-button>
+              <el-button v-else size="small" type="primary" @click="handleModelAction(row, 'activate')">{{ $t('settings.activate') }}</el-button>
+              <el-button size="small" @click="handleModelReload(row)">{{ $t('settings.reload') }}</el-button>
             </template>
           </el-table-column>
         </el-table>
       </el-tab-pane>
 
-      <el-tab-pane label="关于">
+      <el-tab-pane :label="$t('settings.tabAbout')">
         <el-descriptions :column="1" border v-if="systemInfo">
-          <el-descriptions-item label="产品名称">{{ systemInfo.productName }}</el-descriptions-item>
-          <el-descriptions-item label="SDK版本">{{ systemInfo.sdkVersion }}</el-descriptions-item>
-          <el-descriptions-item label="Hermes AgentOS">{{ systemInfo.hermesVersion }}</el-descriptions-item>
-          <el-descriptions-item label="硬件平台">{{ systemInfo.hardware }}</el-descriptions-item>
-          <el-descriptions-item label="架构">{{ systemInfo.architecture }}</el-descriptions-item>
-          <el-descriptions-item label="算法插件">{{ systemInfo.algorithmPlugins }}个已部署</el-descriptions-item>
-          <el-descriptions-item label="最大通道数">{{ systemInfo.maxChannels }}路 1080P @ 25fps</el-descriptions-item>
-          <el-descriptions-item label="推理精度">{{ systemInfo.inferencePrecision }}</el-descriptions-item>
+          <el-descriptions-item :label="$t('settings.productName')">{{ systemInfo.productName }}</el-descriptions-item>
+          <el-descriptions-item :label="$t('settings.sdkVersion')">{{ systemInfo.sdkVersion }}</el-descriptions-item>
+          <el-descriptions-item :label="$t('settings.hermesAgentOs')">{{ systemInfo.hermesVersion }}</el-descriptions-item>
+          <el-descriptions-item :label="$t('settings.hardware')">{{ systemInfo.hardware }}</el-descriptions-item>
+          <el-descriptions-item :label="$t('settings.architecture')">{{ systemInfo.architecture }}</el-descriptions-item>
+          <el-descriptions-item :label="$t('settings.algorithmPlugins')">{{ systemInfo.algorithmPlugins }} {{ $t('settings.algorithmPluginsUnit') }}</el-descriptions-item>
+          <el-descriptions-item :label="$t('settings.maxChannels')">{{ systemInfo.maxChannels }} {{ $t('settings.maxChannelsUnit') }}</el-descriptions-item>
+          <el-descriptions-item :label="$t('settings.inferencePrecision')">{{ systemInfo.inferencePrecision }}</el-descriptions-item>
         </el-descriptions>
-        <el-empty v-else description="加载系统信息失败" />
+        <el-empty v-else :description="$t('settings.loadSystemInfoFail')" />
+        <el-divider />
+        <div style="display:flex;gap:12px">
+          <el-button @click="handleExportConfig">{{ $t('settings.exportConfig') }}</el-button>
+          <el-button type="primary" @click="handleImportConfig">{{ $t('settings.importConfig') }}</el-button>
+        </div>
       </el-tab-pane>
     </el-tabs>
   </div>
@@ -231,9 +236,13 @@
 
 <script setup lang="ts">
 import { reactive, ref, onMounted } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { settingsApi, type BasicSettings, type CloudSettings, type AlarmPolicySettings, type SystemInfo } from '@/api/settings'
 import { getModels, activateModel, deactivateModel, type ModelInfo } from '@/api/model'
+import configApi from '@/api/config'
+
+const { t } = useI18n()
 
 // ---- 基本设置 ----
 const loading = ref(true)
@@ -248,19 +257,19 @@ async function saveBasic() {
   basicSaving.value = true
   try {
     await settingsApi.saveBasic({ ...basic })
-    ElMessage.success('基本设置已保存')
+    ElMessage.success(t('settings.saveBasicOk'))
   } catch (e: any) {
-    ElMessage.error('保存失败: ' + (e.message || '未知错误'))
+    ElMessage.error(t('settings.saveFail') + ': ' + (e.message || t('settings.unknownError')))
   } finally {
     basicSaving.value = false
   }
 }
 
 function resetBasic() {
-  ElMessageBox.confirm('确认重置为默认设置？', '提示', { type: 'warning' })
+  ElMessageBox.confirm(t('settings.resetConfirm'), t('common.tip'), { type: 'warning' })
     .then(() => {
       Object.assign(basic, basicDefaults)
-      ElMessage.success('已重置')
+      ElMessage.success(t('settings.resetOk'))
     })
 }
 
@@ -287,9 +296,9 @@ async function saveCloud() {
   cloudSaving.value = true
   try {
     await settingsApi.saveCloud({ ...cloud })
-    ElMessage.success('云端连接设置已保存')
+    ElMessage.success(t('settings.saveCloudOk'))
   } catch (e: any) {
-    ElMessage.error('保存失败: ' + (e.message || '未知错误'))
+    ElMessage.error(t('settings.saveFail') + ': ' + (e.message || t('settings.unknownError')))
   } finally {
     cloudSaving.value = false
   }
@@ -302,12 +311,12 @@ async function testConnection() {
       mqttBroker: cloud.mqttBroker, mqttPort: cloud.mqttPort, tlsEnabled: cloud.tlsEnabled
     })
     if (res.data.data?.success) {
-      ElMessage.success(`连接成功 (${res.data.data.latency}ms)`)
+      ElMessage.success(t('settings.connectResult', { ms: res.data.data.latency }))
     } else {
-      ElMessage.error('连接失败')
+      ElMessage.error(t('settings.connectFail'))
     }
   } catch (e: any) {
-    ElMessage.error('连接失败: ' + (e.message || '未知错误'))
+    ElMessage.error(t('settings.connectFail') + ': ' + (e.message || t('settings.unknownError')))
   } finally {
     testConnLoading.value = false
   }
@@ -324,9 +333,9 @@ async function saveAlarm() {
   alarmSaving.value = true
   try {
     await settingsApi.saveAlarmPolicy({ ...alarm })
-    ElMessage.success('告警策略已保存')
+    ElMessage.success(t('settings.saveAlarmOk'))
   } catch (e: any) {
-    ElMessage.error('保存失败: ' + (e.message || '未知错误'))
+    ElMessage.error(t('settings.saveFail') + ': ' + (e.message || t('settings.unknownError')))
   } finally {
     alarmSaving.value = false
   }
@@ -345,9 +354,9 @@ const alertNotify = reactive({
 
 // ---- AI Agent 配置（来自 web-console AgentPanel） ----
 const aiAgents = reactive([
-  { id: 'agent-detect', name: '目标检测', model: 'YOLOv8n', enabled: true, confidence: 0.75, fps: 15 },
-  { id: 'agent-face', name: '人脸识别', model: 'ArcFace-R50', enabled: false, confidence: 0.85, fps: 10 },
-  { id: 'agent-anomaly', name: '异常行为检测', model: 'ST-GCN', enabled: true, confidence: 0.70, fps: 12 },
+  { id: 'agent-detect', nameKey: 'agentDetect', model: 'YOLOv8n', enabled: true, confidence: 0.75, fps: 15 },
+  { id: 'agent-face', nameKey: 'agentFace', model: 'ArcFace-R50', enabled: false, confidence: 0.85, fps: 10 },
+  { id: 'agent-anomaly', nameKey: 'agentAnomaly', model: 'ST-GCN', enabled: true, confidence: 0.70, fps: 12 },
 ])
 
 // ---- AI模型 ----
@@ -371,42 +380,89 @@ async function handleModelAction(row: any, action: 'activate' | 'deactivate') {
   try {
     if (action === 'activate') {
       await activateModel(row.id)
-      ElMessage.success(`模型 ${row.name} 已激活`)
+      ElMessage.success(t('settings.activateOk', { name: row.name }))
     } else {
       await deactivateModel(row.id)
-      ElMessage.success(`模型 ${row.name} 已停用`)
+      ElMessage.success(t('settings.deactivateOk', { name: row.name }))
     }
     loadModels()
   } catch (e: any) {
-    ElMessage.error(e.message || '操作失败')
+    ElMessage.error(e.message || t('settings.actionFailed'))
   }
 }
 
 function handleModelReload(row: any) {
-  ElMessage.info(`正在重载模型: ${row.name}...`)
+  ElMessage.info(t('settings.reloadIng', { name: row.name }))
   deactivateModel(row.id).then(() => activateModel(row.id)).then(() => {
-    ElMessage.success(`模型 ${row.name} 重载完成`)
+    ElMessage.success(t('settings.reloadOk', { name: row.name }))
     loadModels()
-  }).catch(() => ElMessage.error('重载失败'))
+  }).catch(() => ElMessage.error(t('settings.reloadFail')))
 }
 
 // ---- 系统信息 ----
 const systemInfo = ref<SystemInfo | null>(null)
 
+// ---- 配置导入/导出 ----
+async function handleExportConfig() {
+  try {
+    const res = await configApi.exportConfig()
+    const url = res.data?.data?.url
+    if (url) {
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `system_config_${Date.now()}.json`
+      a.click()
+      ElMessage.success(t('settings.exportOk'))
+    }
+  } catch {
+    ElMessage.error(t('settings.exportFail'))
+  }
+}
+
+async function handleImportConfig() {
+  const input = document.createElement('input')
+  input.type = 'file'
+  input.accept = '.json'
+  input.onchange = async () => {
+    const file = input.files?.[0]
+    if (!file) return
+    try {
+      const text = await file.text()
+      await configApi.importConfig(text)
+      ElMessage.success(t('settings.importOk'))
+      setTimeout(() => location.reload(), 1500)
+    } catch {
+      ElMessage.error(t('settings.importFail'))
+    }
+  }
+  input.click()
+}
+
 // ---- 初始化加载 ----
 onMounted(async () => {
   loading.value = true
   try {
-    const [basicRes, cloudRes, alarmRes, infoRes] = await Promise.allSettled([
+    const [basicRes, cloudRes, alarmRes, infoRes, netRes] = await Promise.allSettled([
       settingsApi.getBasic(),
       settingsApi.getCloud(),
       settingsApi.getAlarmPolicy(),
       settingsApi.getSystemInfo(),
+      configApi.getNetwork(),
     ])
     if (basicRes.status === 'fulfilled') Object.assign(basic, basicRes.value.data.data)
     if (cloudRes.status === 'fulfilled') Object.assign(cloud, cloudRes.value.data.data)
     if (alarmRes.status === 'fulfilled') Object.assign(alarm, alarmRes.value.data.data)
     if (infoRes.status === 'fulfilled') systemInfo.value = infoRes.value.data.data
+    if (netRes.status === 'fulfilled') {
+      const n = netRes.value.data.data
+      if (n) {
+        network.ipMode = (n.mode || 'static') as 'dhcp' | 'static'
+        network.ipAddress = n.ip || network.ipAddress
+        network.subnetMask = n.mask || network.subnetMask
+        network.gateway = n.gateway || network.gateway
+        if (n.dns) network.dns = Array.isArray(n.dns) ? n.dns : [n.dns]
+      }
+    }
   } catch { /* individual errors handled above */ }
   loading.value = false
   loadModels()

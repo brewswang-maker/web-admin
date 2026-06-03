@@ -59,14 +59,20 @@ export interface AlarmHandleForm {
 export interface AlarmQuery {
   page?: number
   pageSize?: number
+  count?: number          // 后端 count 参数
   keyword?: string
   level?: AlarmLevel
+  severity?: string      // 兼容前端 severity 筛选
   type?: AlarmType
+  alarm_type?: string    // 后端 alarm_type 参数
   status?: AlarmStatus
   deviceId?: string
   channelId?: string
   startTime?: string
   endTime?: string
+  start_ms?: number      // 后端时间戳参数
+  end_ms?: number
+  search?: string
   dateRange?: [string, string]
 }
 
@@ -85,4 +91,14 @@ export interface AlarmTypeDistribution {
   label: string
   count: number
   percentage: number
+}
+
+/** 告警证据链 */
+export interface AlarmEvidence {
+  snapshotUrl: string
+  videoClipUrl?: string
+  detectionBoxes?: Array<{ x: number; y: number; w: number; h: number; label: string; confidence: number }>
+  aiAnalysis?: string
+  relatedRecordingId?: string
+  relatedRecordingTime?: string
 }

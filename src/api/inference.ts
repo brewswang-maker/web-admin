@@ -61,9 +61,11 @@ export interface ChannelDetections {
 }
 
 /** 提交 base64 图片进行目标检测 */
-export function detectFromBase64(imageBase64: string) {
+export function detectFromBase64(imageBase64: string, channelId?: string, deviceId?: string) {
   return inferenceHttp.post<ApiResponse<DetectResponse>>('/detect', {
     image_base64: imageBase64,
+    ...(channelId ? { channel_id: channelId } : {}),
+    ...(deviceId ? { device_id: deviceId } : {}),
   })
 }
 

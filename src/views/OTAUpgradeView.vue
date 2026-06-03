@@ -189,7 +189,7 @@ const uploadForm = ref({
 })
 
 const taskForm = ref({
-  firmwareId: '', deviceIds: [] as string[], strategy: 'immediate'
+  firmwareId: '', deviceIds: [] as string[], strategy: 'immediate' as 'immediate' | 'scheduled' | 'gray'
 })
 
 function formatSize(bytes: number) {
@@ -293,6 +293,8 @@ async function confirmCreateTask() {
     await otaApi.createTask({
       firmwareId: taskForm.value.firmwareId,
       targetDeviceIds: taskForm.value.deviceIds.length > 0 ? taskForm.value.deviceIds : [],
+      strategy: taskForm.value.strategy,
+      grayscalePercentage: taskForm.value.strategy === 'gray' ? 10 : undefined,
     })
     showCreateTaskDialog.value = false
     ElMessage.success('升级任务已创建')

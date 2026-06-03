@@ -186,3 +186,15 @@ a {
   transform: translateY(100%);
   opacity: 0;
 }
+
+/* ElNotification 定位修复：确保告警弹窗在右上角显示 */
+.el-notification {
+  position: fixed !important;
+  z-index: 99999 !important;
+}
+.el-notification.right {
+  right: 16px !important;
+}
+.el-notification.left {
+  left: 16px !important;
+}

@@ -1,5 +1,5 @@
 <template>
-  <div class="billing-view">
+  <div class="billing-view" v-loading="loading">
     <el-row :gutter="16" class="summary-row">
       <el-col :span="6">
         <el-card shadow="hover" class="summary-card">
@@ -39,7 +39,7 @@
           <div class="summary-item">
             <el-icon :size="36" color="#909399"><Tickets /></el-icon>
             <div class="summary-text">
-              <div class="value">{{ records.length }}</div>
+              <div class="value">{{ totalRecords }}</div>
               <div class="label">账单总数</div>
             </div>
           </div>
@@ -56,7 +56,7 @@
       <template #header>
         <el-row justify="space-between" align="middle">
           <span>账单列表</span>
-          <el-button type="primary" size="small" :icon="DownloadIcon" @click="handleExport">导出账单</el-button>
+          <el-button type="primary" size="small" :icon="DownloadIcon" :loading="exporting" @click="handleExport">导出账单</el-button>
         </el-row>
       </template>
       <el-table :data="records" stripe style="width:100%">
@@ -86,12 +86,21 @@
           <template #default="{ row }">{{ new Date(row.createdAt).toLocaleString('zh-CN') }}</template>
         </el-table-column>
       </el-table>
+      <div class="pagination-wrapper" v-if="totalRecords > pageSize">
+        <el-pagination
+          v-model:current-page="currentPage"
+          :page-size="pageSize"
+          :total="totalRecords"
+          layout="total, prev, pager, next"
+          @current-change="fetchBillingRecords"
+        />
+      </div>
     </el-card>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted, onBeforeUnmount } from 'vue'
+import { ref, reactive, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Wallet, Coin, Warning, Tickets, Download as DownloadIcon } from '@element-plus/icons-vue'
 import * as echarts from 'echarts/core'
@@ -99,28 +108,24 @@ import { BarChart } from 'echarts/charts'
 import { GridComponent, TooltipComponent } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
 import type { BillingRecord, BillingSummary } from '@/types/billing'
+import { fetchBillingSummary, fetchBillingList, exportBilling } from '@/api/billing'
 
 echarts.use([BarChart, GridComponent, TooltipComponent, CanvasRenderer])
 
 const statusLabels: Record<string, string> = { paid: '已支付', pending: '待支付', overdue: '已逾期' }
 const statusMap: Record<string, 'primary' | 'success' | 'warning' | 'info' | 'danger'> = { paid: 'success', pending: 'warning', overdue: 'danger' }
 
-const records = ref<BillingRecord[]>([
-  { id: 'bill-001', period: '2025-06', deviceId: 'camera-01', deviceName: '摄像头-01', planName: '专业版', baseFee: 99, usageFee: 32.5, totalFee: 131.5, status: 'paid', createdAt: Date.now() - 86400000 * 5 },
-  { id: 'bill-002', period: '2025-06', deviceId: 'camera-02', deviceName: '摄像头-02', planName: '标准版', baseFee: 49, usageFee: 12.0, totalFee: 61.0, status: 'pending', createdAt: Date.now() - 86400000 * 3 },
-  { id: 'bill-003', period: '2025-06', deviceId: 'gateway-01', deviceName: '边缘网关', planName: '企业版', baseFee: 299, usageFee: 0, totalFee: 299, status: 'paid', createdAt: Date.now() - 86400000 * 7 },
-  { id: 'bill-004', period: '2025-05', deviceId: 'sensor-01', deviceName: '温度传感器-01', planName: '基础版', baseFee: 19, usageFee: 5.5, totalFee: 24.5, status: 'paid', createdAt: Date.now() - 86400000 * 30 },
-  { id: 'bill-005', period: '2025-05', deviceId: 'sensor-02', deviceName: '湿度传感器-01', planName: '基础版', baseFee: 19, usageFee: 3.2, totalFee: 22.2, status: 'overdue', createdAt: Date.now() - 86400000 * 35 },
-])
+const loading = ref(false)
+const exporting = ref(false)
+const records = ref<BillingRecord[]>([])
+const currentPage = ref(1)
+const pageSize = 20
+const totalRecords = ref(0)
 
-const summary = reactive<BillingSummary>({
-  totalSpent: 538.2, currentMonth: 491.5, lastMonth: 46.7, pendingAmount: 61.0,
-  monthlyTrend: [
-    { month: '2025-01', amount: 320 }, { month: '2025-02', amount: 385 },
-    { month: '2025-03', amount: 410 }, { month: '2025-04', amount: 445 },
-    { month: '2025-05', amount: 46.7 }, { month: '2025-06', amount: 491.5 },
-  ],
-})
+const defaultSummary: BillingSummary = {
+  totalSpent: 0, currentMonth: 0, lastMonth: 0, pendingAmount: 0, monthlyTrend: [],
+}
+const summary = reactive<BillingSummary>({ ...defaultSummary })
 
 function planTagType(plan: string) {
   if (plan.includes('企业')) return 'danger'
@@ -129,26 +134,91 @@ function planTagType(plan: string) {
   return 'info'
 }
 
-function handleExport() { ElMessage.success('账单导出任务已创建') }
+async function fetchBillingRecords() {
+  try {
+    const res = await fetchBillingList({ page: currentPage.value, pageSize })
+    const d = res.data?.data
+    records.value = d?.list ?? []
+    totalRecords.value = d?.total ?? 0
+  } catch (e) {
+    console.warn('[BillingView] fetchBillingRecords failed:', e)
+  }
+}
+
+async function fetchBillingData() {
+  loading.value = true
+  try {
+    const [summaryRes, listRes] = await Promise.allSettled([
+      fetchBillingSummary(),
+      fetchBillingList({ page: currentPage.value, pageSize }),
+    ])
+    if (summaryRes.status === 'fulfilled') {
+      const d = summaryRes.value.data?.data
+      if (d) {
+        summary.totalSpent = d.totalSpent ?? 0
+        summary.currentMonth = d.currentMonth ?? 0
+        summary.lastMonth = d.lastMonth ?? 0
+        summary.pendingAmount = d.pendingAmount ?? 0
+        summary.monthlyTrend = d.monthlyTrend ?? []
+      }
+    }
+    if (listRes.status === 'fulfilled') {
+      const d = listRes.value.data?.data
+      records.value = d?.list ?? []
+      totalRecords.value = d?.total ?? 0
+    }
+  } catch (e) {
+    console.warn('[BillingView] fetchBillingData failed:', e)
+  } finally {
+    loading.value = false
+  }
+}
+
+async function handleExport() {
+  exporting.value = true
+  try {
+    const res = await exportBilling({ format: 'csv' })
+    const blob = res.data
+    if (blob) {
+      const url = URL.createObjectURL(blob instanceof Blob ? blob : new Blob([blob]))
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `billing_${new Date().toISOString().slice(0, 10)}.csv`
+      a.click()
+      URL.revokeObjectURL(url)
+      ElMessage.success('账单导出成功')
+    }
+  } catch (e: any) {
+    ElMessage.error(e.message || '导出失败')
+  } finally {
+    exporting.value = false
+  }
+}
 
 const chartRef = ref<HTMLDivElement>()
 let chart: echarts.ECharts | null = null
 
-onMounted(() => {
-  if (chartRef.value) {
-    chart = echarts.init(chartRef.value)
-    chart.setOption({
-      tooltip: { trigger: 'axis' },
-      xAxis: { type: 'category', data: summary.monthlyTrend.map(t => t.month) },
-      yAxis: { type: 'value', name: '费用 (¥)' },
-      series: [{
-        type: 'bar', data: summary.monthlyTrend.map(t => t.amount),
-        itemStyle: { color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [{ offset: 0, color: '#409EFF' }, { offset: 1, color: '#79bbff' }]), borderRadius: [4, 4, 0, 0] },
-        barWidth: 36,
-      }],
-      grid: { left: 60, right: 20, top: 30, bottom: 30 },
-    })
-  }
+function initChart() {
+  if (!chartRef.value) return
+  chart = echarts.init(chartRef.value)
+  const trend = summary.monthlyTrend
+  chart.setOption({
+    tooltip: { trigger: 'axis' },
+    xAxis: { type: 'category', data: trend.map(t => t.month) },
+    yAxis: { type: 'value', name: '费用 (¥)' },
+    series: [{
+      type: 'bar', data: trend.map(t => t.amount),
+      itemStyle: { color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [{ offset: 0, color: '#409EFF' }, { offset: 1, color: '#79bbff' }]), borderRadius: [4, 4, 0, 0] },
+      barWidth: 36,
+    }],
+    grid: { left: 60, right: 20, top: 30, bottom: 30 },
+  })
+}
+
+onMounted(async () => {
+  await fetchBillingData()
+  await nextTick()
+  initChart()
 })
 
 onBeforeUnmount(() => { chart?.dispose() })
@@ -162,5 +232,6 @@ onBeforeUnmount(() => { chart?.dispose() })
   }
   .chart-card { margin-bottom: 16px; }
   .trend-chart { height: 260px; }
+  .pagination-wrapper { display: flex; justify-content: flex-end; margin-top: 16px; }
 }
 </style>

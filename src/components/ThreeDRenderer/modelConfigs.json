@@ -3,24 +3,24 @@
   "description": "华盾AI智能视频盒子 - 新工厂3D场景模型配置",
 
   "scene": {
-    "background": "#0a0c10",
+    "background": "#1e2233",
     "fog": {
       "type": "FogExp2",
-      "color": "#0a0c10",
-      "density": 0.008
+      "color": "#1e2233",
+      "density": 0.003
     },
     "ground": {
       "width": 120,
       "height": 100,
-      "color": "#151820",
-      "roughness": 0.9,
+      "color": "#2a3040",
+      "roughness": 0.7,
       "metalness": 0.1
     },
     "grid": {
       "size": 120,
       "divisions": 30,
-      "color1": "#1a1d23",
-      "color2": "#111318"
+      "color1": "#2a3050",
+      "color2": "#1e2538"
     }
   },
 
@@ -43,17 +43,24 @@
       "enabled": true,
       "type": "PCFShadowMap"
     },
-    "pixelRatioCap": 2
+    "pixelRatioCap": 2,
+    "toneMapping": "ACESFilmic",
+    "toneMappingExposure": 2.0
   },
 
   "lighting": {
     "ambient": {
-      "color": "#334455",
-      "intensity": 0.6
+      "color": "#99aabb",
+      "intensity": 1.5
+    },
+    "hemisphere": {
+      "skyColor": "#c8d8e8",
+      "groundColor": "#444422",
+      "intensity": 1.0
     },
     "directional": {
       "color": "#ffffff",
-      "intensity": 0.8,
+      "intensity": 3.0,
       "position": [30, 40, 20],
       "castShadow": true,
       "shadowMapSize": 2048,
@@ -65,18 +72,18 @@
       }
     },
     "point": {
-      "color": "#1A73E8",
-      "intensity": 0.3,
+      "color": "#ddeeff",
+      "intensity": 1.2,
       "position": [0, 20, 0],
-      "distance": 100
+      "distance": 150
     }
   },
 
   "walls": {
-    "color": "#1a2040",
-    "opacity": 0.4,
-    "edgeColor": "#1A73E8",
-    "edgeOpacity": 0.3,
+    "color": "#2a3555",
+    "opacity": 0.6,
+    "edgeColor": "#4488cc",
+    "edgeOpacity": 0.5,
     "segments": [
       { "x": -55, "y": 0, "z": 0, "width": 0.3, "height": 3, "depth": 100 },
       { "x": 55,  "y": 0, "z": 0, "width": 0.3, "height": 3, "depth": 100 },
@@ -87,15 +94,16 @@
 
   "materials": {
     "building": {
-      "opacity": 0.35,
-      "roughness": 0.7,
-      "metalness": 0.2,
-      "edgeOpacity": 0.6
+      "opacity": 0.65,
+      "roughness": 0.5,
+      "metalness": 0.3,
+      "emissiveIntensity": 0.1,
+      "edgeOpacity": 0.8
     },
     "deviceBody": {
-      "color": "#2a2d35",
-      "roughness": 0.5,
-      "metalness": 0.6
+      "color": "#6a7585",
+      "roughness": 0.4,
+      "metalness": 0.5
     },
     "deviceLens": {
       "roughness": 0.3,

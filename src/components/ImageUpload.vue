@@ -341,7 +341,7 @@ async function processFile(item: UploadFileItem, idx: number) {
         item.previewUrl = URL.createObjectURL(compressedBlob)
       }
 
-      console.log(
+      console.debug(
         `[ImageUpload] ${item.name}: ${formatFileSize(item.size)} → ${formatFileSize(compressedSize)} (-${(compressionRatio * 100).toFixed(0)}%, ${elapsed.toFixed(0)}ms)`
       )
     }

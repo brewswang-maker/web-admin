@@ -113,6 +113,7 @@ import LazyChart from '@/components/LazyChart.vue'
 import type { AlarmStats, SecurityScore, AgentActivity } from '@/types/analytics'
 import { Download } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
+import { exportApi } from '@/api/export'
 
 const cloudStore = useCloudStore()
 const timeRange = ref('7d')
@@ -248,32 +249,47 @@ async function loadData() {
 
 onMounted(loadData)
 
-// ── 导出CSV ──
-function exportCSV() {
+// ── 导出报表 ──
+async function exportCSV() {
   const stats = cloudStore.alarmStats
   if (!stats) {
     ElMessage.warning('暂无数据可导出')
     return
   }
-  const headers = ['日期', '告警总数', '严重', '高危', '中危', '低危', '已处理', '处置率']
-  const trendData = stats.trendData || []
-  const rows = trendData.map((s: any) => [
-    s.date || s.time || '',
-    s.total ?? '',
-    s.critical ?? '',
-    s.high ?? '',
-    s.medium ?? '',
-    s.low ?? '',
-    s.handled ?? '',
-    s.total ? ((s.handled / s.total * 100).toFixed(1) + '%') : '',
-  ])
-  const csv = [headers.join(','), ...rows.map((r: any[]) => r.join(','))].join('\n')
-  const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8' })
-  const a = document.createElement('a')
-  a.href = URL.createObjectURL(blob)
-  a.download = `alarm_stats_${timeRange.value}_${Date.now()}.csv`
-  a.click()
-  ElMessage.success('导出成功')
+  try {
+    ElMessage.info('正在生成统计报表...')
+    const res = await exportApi.create({
+      type: 'statistics',
+      format: 'xlsx',
+      params: { timeRange: timeRange.value },
+      fileName: `统计报表_${timeRange.value}_${new Date().toISOString().slice(0, 10)}`,
+    })
+    const task = res.data?.data
+    if (task?.id) {
+      const poll = setInterval(async () => {
+        try {
+          const detail = await exportApi.getTaskDetail(task.id)
+          const t = detail.data?.data
+          if (t?.status === 'completed' && t.fileUrl) {
+            clearInterval(poll)
+            const blob = await exportApi.downloadFile(task.id)
+            const url = URL.createObjectURL(blob.data as any)
+            const a = document.createElement('a')
+            a.href = url
+            a.download = t.fileName || `统计报表.xlsx`
+            a.click()
+            URL.revokeObjectURL(url)
+            ElMessage.success('导出完成')
+          } else if (t?.status === 'failed') {
+            clearInterval(poll)
+            ElMessage.error(t.errorMessage || '导出失败')
+          }
+        } catch { clearInterval(poll) }
+      }, 2000)
+    }
+  } catch {
+    ElMessage.error('导出请求失败')
+  }
 }
 </script>
 

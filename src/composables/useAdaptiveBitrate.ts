@@ -181,7 +181,7 @@ export function useAdaptiveBitrate() {
   async function requestQualityChange(channelId: string, level: QualityLevel) {
     try {
       await streamHttp.post(`/${channelId}/quality`, { id: channelId, quality: level })
-      console.log(`[ABR] quality changed to ${level} for ${channelId}`)
+      console.debug(`[ABR] quality changed to ${level} for ${channelId}`)
     } catch (err: any) {
       // 4xx 可能是设备未注册，静默跳过；其他错误上报
       if (err?.status >= 500) {

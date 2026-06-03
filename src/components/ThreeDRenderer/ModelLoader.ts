@@ -359,6 +359,8 @@ export class ModelLoader {
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, config.pixelRatioCap))
     renderer.shadowMap.enabled = config.shadowMap.enabled
     renderer.shadowMap.type = THREE.PCFShadowMap
+    renderer.toneMapping = THREE.ACESFilmicToneMapping
+    renderer.toneMappingExposure = config.toneMappingExposure ?? 1.4
     return renderer
   }
 

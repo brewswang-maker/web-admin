@@ -1,12 +1,12 @@
 <template>
-  <el-container class="main-layout" :class="{ 'dark-theme': isDarkMode }">
+  <el-container class="main-layout" :class="{ 'dark-theme': prefStore.themeMode === 'dark' }">
     <!-- ===== 侧边栏 ===== -->
     <el-aside :width="isCollapsed ? '64px' : '230px'" class="sidebar" :class="{ collapsed: isCollapsed }">
       <!-- Logo -->
       <div class="logo" @click="router.push('/dashboard')">
         <img src="/favicon.svg" alt="logo" width="32" height="32" />
         <transition name="logo-fade">
-          <span v-if="!isCollapsed" class="logo-text">华盾AI v7.0</span>
+          <span v-if="!isCollapsed" class="logo-text">{{ $t('menu.shieldBox') }} v7.0</span>
         </transition>
       </div>
 
@@ -24,159 +24,169 @@
         <!-- ===== 监控总览 ===== -->
         <el-menu-item-group>
           <template #title v-if="!isCollapsed">
-            <span class="group-title">监控总览</span>
+            <span class="group-title">{{ $t('menuGroup.monitor') }}</span>
           </template>
           <el-menu-item index="/dashboard">
             <el-icon><Odometer /></el-icon>
-            <template #title>仪表盘</template>
+            <template #title>{{ $t('menu.dashboard') }}</template>
           </el-menu-item>
           <el-menu-item index="/situation">
             <el-icon><DataAnalysis /></el-icon>
-            <template #title>态势大屏</template>
+            <template #title>{{ $t('menu.situationScreen') }}</template>
           </el-menu-item>
         </el-menu-item-group>
 
         <!-- ===== 设备与监控 ===== -->
         <el-menu-item-group>
           <template #title v-if="!isCollapsed">
-            <span class="group-title">设备与监控</span>
+            <span class="group-title">{{ $t('menuGroup.device') }}</span>
           </template>
           <el-menu-item index="/devices">
             <el-icon><Monitor /></el-icon>
-            <template #title>设备管理</template>
+            <template #title>{{ $t('menu.devices') }}</template>
           </el-menu-item>
           <el-menu-item index="/live">
             <el-icon><VideoCamera /></el-icon>
-            <template #title>实时监控</template>
+            <template #title>{{ $t('menu.live') }}</template>
           </el-menu-item>
           <el-menu-item index="/alarms">
             <el-icon><Bell /></el-icon>
-            <template #title>告警中心</template>
-            <el-badge v-if="alarmStore.unhandledCount > 0" :value="alarmStore.unhandledCount" class="menu-badge" />
+            <template #title>
+              <span class="alarm-menu-label">{{ $t('menu.alarms') }}</span>
+              <el-badge
+                v-if="alarmStore.unhandledCount > 0"
+                :value="alarmStore.unhandledCount > 99 ? '99+' : alarmStore.unhandledCount"
+                class="menu-badge"
+              />
+            </template>
           </el-menu-item>
         </el-menu-item-group>
 
         <!-- ===== 视频与流 ===== -->
         <el-menu-item-group>
           <template #title v-if="!isCollapsed">
-            <span class="group-title">视频与流</span>
+            <span class="group-title">{{ $t('menuGroup.video') }}</span>
           </template>
           <el-menu-item index="/channels">
             <el-icon><VideoPlay /></el-icon>
-            <template #title>通道管理</template>
+            <template #title>{{ $t('menu.channels') }}</template>
           </el-menu-item>
           <el-menu-item index="/streams">
             <el-icon><Film /></el-icon>
-            <template #title>流管理</template>
+            <template #title>{{ $t('menu.streams') }}</template>
           </el-menu-item>
           <el-menu-item index="/recordings">
             <el-icon><VideoPause /></el-icon>
-            <template #title>录像回放</template>
+            <template #title>{{ $t('menu.recording') }}</template>
           </el-menu-item>
           <el-menu-item index="/location">
             <el-icon><Location /></el-icon>
-            <template #title>定位与轨迹</template>
+            <template #title>{{ $t('menu.location') }}</template>
           </el-menu-item>
           <el-menu-item index="/topology">
             <el-icon><Share /></el-icon>
-            <template #title>设备拓扑</template>
+            <template #title>{{ $t('menu.topology') }}</template>
           </el-menu-item>
           <el-menu-item index="/gb28181">
             <el-icon><Connection /></el-icon>
-            <template #title>GB28181</template>
+            <template #title>{{ $t('menu.gb28181') }}</template>
           </el-menu-item>
           <el-menu-item index="/onvif">
             <el-icon><Camera /></el-icon>
-            <template #title>ONVIF发现</template>
+            <template #title>{{ $t('menu.onvif') }}</template>
           </el-menu-item>
         </el-menu-item-group>
 
         <!-- ===== 🧩 算法与AI ===== -->
         <el-menu-item-group>
           <template #title v-if="!isCollapsed">
-            <span class="group-title">算法与AI</span>
+            <span class="group-title">{{ $t('menuGroup.algorithm') }}</span>
           </template>
           <el-menu-item index="/pipelines">
             <el-icon><SetUp /></el-icon>
-            <template #title>Pipeline编辑</template>
+            <template #title>{{ $t('menu.pipelineEditor') }}</template>
           </el-menu-item>
           <el-menu-item index="/models">
             <el-icon><Cpu /></el-icon>
-            <template #title>模型管理</template>
+            <template #title>{{ $t('menu.models') }}</template>
           </el-menu-item>
           <el-menu-item index="/ai-chat">
             <el-icon><ChatDotRound /></el-icon>
-            <template #title>AI助手</template>
+            <template #title>{{ $t('menu.aiChat') }}</template>
           </el-menu-item>
           <el-menu-item index="/statistics">
             <el-icon><TrendCharts /></el-icon>
-            <template #title>数据分析</template>
+            <template #title>{{ $t('menu.statistics') }}</template>
           </el-menu-item>
           <el-menu-item index="/federation">
             <el-icon><Connection /></el-icon>
-            <template #title>联邦学习</template>
+            <template #title>{{ $t('menu.federation') }}</template>
           </el-menu-item>
           <el-menu-item index="/algorithm-store">
             <el-icon><ShoppingCart /></el-icon>
-            <template #title>算法商城</template>
+            <template #title>{{ $t('menu.algorithms') }}</template>
+          </el-menu-item>
+          <el-menu-item index="/face-database">
+            <el-icon><User /></el-icon>
+            <template #title>{{ $t('menu.face') }}</template>
           </el-menu-item>
         </el-menu-item-group>
 
         <!-- ===== ⚙️ 管理 ===== -->
         <el-menu-item-group>
           <template #title v-if="!isCollapsed">
-            <span class="group-title">管理</span>
+            <span class="group-title">{{ $t('menuGroup.management') }}</span>
           </template>
           <el-menu-item index="/linkage">
             <el-icon><Connection /></el-icon>
-            <template #title>联动规则</template>
+            <template #title>{{ $t('menu.linkage') }}</template>
           </el-menu-item>
           <el-menu-item index="/projects" v-if="auth.can('projects', 'read')">
             <el-icon><FolderOpened /></el-icon>
-            <template #title>项目管理</template>
+            <template #title>{{ $t('menu.projects') }}</template>
           </el-menu-item>
           <el-menu-item index="/teams">
             <el-icon><User /></el-icon>
-            <template #title>团队管理</template>
+            <template #title>{{ $t('menu.team') }}</template>
           </el-menu-item>
           <el-menu-item index="/upgrade">
             <el-icon><Upload /></el-icon>
-            <template #title>OTA升级</template>
+            <template #title>{{ $t('menu.ota') }}</template>
           </el-menu-item>
           <el-menu-item index="/settings">
             <el-icon><Setting /></el-icon>
-            <template #title>系统设置</template>
+            <template #title>{{ $t('menu.settings') }}</template>
           </el-menu-item>
         </el-menu-item-group>
 
         <!-- ===== 安全与集成 ===== -->
         <el-menu-item-group>
           <template #title v-if="!isCollapsed">
-            <span class="group-title">安全与集成</span>
+            <span class="group-title">{{ $t('menuGroup.security') }}</span>
           </template>
           <el-menu-item index="/audit">
             <el-icon><DocumentChecked /></el-icon>
-            <template #title>审计中心</template>
+            <template #title>{{ $t('menu.audit') }}</template>
           </el-menu-item>
           <el-menu-item index="/open-platform">
             <el-icon><Link /></el-icon>
-            <template #title>开放平台</template>
+            <template #title>{{ $t('menu.openPlatform') }}</template>
           </el-menu-item>
           <el-menu-item index="/users">
             <el-icon><User /></el-icon>
-            <template #title>用户管理</template>
+            <template #title>{{ $t('menu.user') }}</template>
           </el-menu-item>
           <el-menu-item index="/roles">
             <el-icon><Avatar /></el-icon>
-            <template #title>角色管理</template>
+            <template #title>{{ $t('menu.role') }}</template>
           </el-menu-item>
           <el-menu-item index="/permissions">
             <el-icon><Lock /></el-icon>
-            <template #title>权限列表</template>
+            <template #title>{{ $t('menu.permission') }}</template>
           </el-menu-item>
           <el-menu-item index="/billing">
             <el-icon><Wallet /></el-icon>
-            <template #title>账单查看</template>
+            <template #title>{{ $t('menu.billing') }}</template>
           </el-menu-item>
         </el-menu-item-group>
       </el-menu>
@@ -198,16 +208,37 @@
           <!-- 全局搜索 -->
           <div class="global-search" @click="showSearch = true">
             <el-icon><Search /></el-icon>
-            <span class="search-hint">Ctrl+K</span>
+            <span class="search-hint">{{ $t('search.hint') }}</span>
           </div>
         </div>
 
         <div class="header-right">
+          <!-- 语言切换 -->
+          <el-tooltip :content="$t('language.title')" placement="bottom">
+            <el-dropdown trigger="click" @command="onLanguageChange">
+              <div class="header-icon-btn">
+                <el-icon :size="20"><Position /></el-icon>
+              </div>
+              <template #dropdown>
+                <el-dropdown-menu>
+                  <el-dropdown-item
+                    v-for="loc in SUPPORTED_LOCALES"
+                    :key="loc"
+                    :command="loc"
+                    :disabled="prefStore.language === loc"
+                  >
+                    {{ LOCALE_LABELS[loc] }}
+                  </el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
+          </el-tooltip>
+
           <!-- 主题切换 -->
-          <el-tooltip :content="isDarkMode ? '切换亮色主题' : '切换暗色主题'" placement="bottom">
-            <div class="header-icon-btn" @click="toggleTheme">
+          <el-tooltip :content="themeTip" placement="bottom">
+            <div class="header-icon-btn" @click="prefStore.toggleTheme()">
               <el-icon :size="20">
-                <Sunny v-if="isDarkMode" />
+                <Sunny v-if="prefStore.themeMode === 'dark'" />
                 <Moon v-else />
               </el-icon>
             </div>
@@ -217,7 +248,7 @@
           <NotificationBell />
 
           <!-- AI 助手快捷入口 -->
-          <el-tooltip content="AI助手" placement="bottom">
+          <el-tooltip :content="$t('layout.aiAssistant')" placement="bottom">
             <div class="header-icon-btn ai-btn" @click="router.push('/ai-chat')">
               <el-icon :size="20"><Cpu /></el-icon>
             </div>
@@ -227,19 +258,19 @@
           <el-dropdown trigger="click" @command="handleUserCommand">
             <div class="user-menu">
               <el-avatar :size="32" :icon="UserFilled" />
-              <span class="username hidden-mobile">{{ auth.username || '管理员' }}</span>
+              <span class="username hidden-mobile">{{ auth.username || $t('layout.defaultUser') }}</span>
               <el-icon class="dropdown-icon"><ArrowDown /></el-icon>
             </div>
             <template #dropdown>
               <el-dropdown-menu>
                 <el-dropdown-item command="profile">
-                  <el-icon><User /></el-icon>个人信息
+                  <el-icon><User /></el-icon>{{ $t('layout.profile') }}
                 </el-dropdown-item>
                 <el-dropdown-item command="settings">
-                  <el-icon><Setting /></el-icon>个人设置
+                  <el-icon><Setting /></el-icon>{{ $t('layout.settings') }}
                 </el-dropdown-item>
                 <el-dropdown-item divided command="logout">
-                  <el-icon><SwitchButton /></el-icon>退出登录
+                  <el-icon><SwitchButton /></el-icon>{{ $t('menu.logout') }}
                 </el-dropdown-item>
               </el-dropdown-menu>
             </template>
@@ -260,7 +291,7 @@
     <!-- ===== 全局搜索弹窗 ===== -->
     <el-dialog
       v-model="showSearch"
-      title="全局搜索"
+      :title="$t('search.title')"
       width="560px"
       :show-close="true"
       class="search-dialog"
@@ -269,7 +300,7 @@
       <el-input
         ref="searchInputRef"
         v-model="searchQuery"
-        placeholder="搜索设备、告警、项目... (Ctrl+K 唤起)"
+        :placeholder="$t('search.placeholder')"
         size="large"
         clearable
         @keyup.enter="handleGlobalSearch"
@@ -277,8 +308,8 @@
         <template #prefix><el-icon><Search /></el-icon></template>
       </el-input>
       <div class="search-results" v-if="searchQuery">
-        <div v-if="searchLoading" class="search-hint-text">搜索中...</div>
-        <div v-else-if="searchResults.length === 0" class="search-hint-text">未找到结果</div>
+        <div v-if="searchLoading" class="search-hint-text">{{ $t('search.searching') }}</div>
+        <div v-else-if="searchResults.length === 0" class="search-hint-text">{{ $t('search.noResults') }}</div>
         <div v-else class="search-list">
           <div v-for="r in searchResults" :key="r.path + r.title" class="search-result-item" @click="goToResult(r)">
             <span class="result-type">{{ r.type }}</span>
@@ -294,6 +325,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import { ElMessageBox } from 'element-plus'
 import {
   Odometer, DataAnalysis, Monitor, VideoCamera, Bell, TrendCharts,
@@ -301,10 +333,12 @@ import {
   DocumentChecked, Link, User, Avatar, Lock, Search,
   Sunny, Moon, Cpu, UserFilled, ArrowDown, SwitchButton,
   DArrowLeft, DArrowRight, VideoPlay, Film, VideoPause, Camera, SetUp,
-  Location, Share, ShoppingCart, Wallet,
+  Location, Share, ShoppingCart, Wallet, Position,
 } from '@element-plus/icons-vue'
 import { useAuthStore } from '@/stores/auth'
 import { useAlarmStore } from '@/stores/alarm'
+import { usePreferenceStore } from '@/stores/preference'
+import { SUPPORTED_LOCALES, LOCALE_LABELS, type AppLocale } from '@/i18n'
 import NotificationBell from '@/components/NotificationBell.vue'
 import { http } from '@/api/http'
 
@@ -312,38 +346,30 @@ const router = useRouter()
 const route = useRoute()
 const auth = useAuthStore()
 const alarmStore = useAlarmStore()
+const prefStore = usePreferenceStore()
+const { t } = useI18n()
 
-// ── 侧边栏折叠 ──
-const isCollapsed = ref(false)
+// ── 侧边栏折叠(双向同步到 prefStore) ──
+const isCollapsed = computed({
+  get: () => prefStore.sidebarCollapsed,
+  set: (v: boolean) => {
+    if (prefStore.sidebarCollapsed !== v) prefStore.sidebarCollapsed = v
+  }
+})
 
 function toggleCollapse() {
-  isCollapsed.value = !isCollapsed
-  localStorage.setItem('sidebar_collapsed', String(isCollapsed.value))
+  prefStore.toggleSidebar()
 }
 
-// 从 localStorage 恢复折叠状态
-const savedCollapsed = localStorage.getItem('sidebar_collapsed')
-if (savedCollapsed === 'true') {
-  isCollapsed.value = true
-}
+// ── 主题提示文案 ──
+const themeTip = computed(() =>
+  prefStore.themeMode === 'dark' ? t('layout.switchToLight') : t('layout.switchToDark')
+)
 
-// ── 暗色主题 ──
-const isDarkMode = ref(true)
-
-function toggleTheme() {
-  isDarkMode.value = !isDarkMode
-  localStorage.setItem('theme_mode', isDarkMode.value ? 'dark' : 'light')
-  document.documentElement.setAttribute('data-theme', isDarkMode.value ? 'dark' : 'light')
+// ── 语言切换 ──
+function onLanguageChange(loc: AppLocale) {
+  prefStore.setLanguage(loc)
 }
-
-// 初始化主题
-const savedTheme = localStorage.getItem('theme_mode')
-if (savedTheme === 'light') {
-  isDarkMode.value = false
-}
-onMounted(() => {
-  document.documentElement.setAttribute('data-theme', isDarkMode.value ? 'dark' : 'light')
-})
 
 // ── 激活菜单 ──
 const activeMenu = computed(() => {
@@ -378,29 +404,29 @@ watch(searchQuery, async (q) => {
     // fallback: 本地菜单匹配
     const keyword = q.toLowerCase()
     const menuItems = [
-      { type: 'page', title: '仪表盘', path: '/dashboard', desc: '监控概览' },
-      { type: 'page', title: '态势大屏', path: '/situation', desc: '3D GIS态势' },
-      { type: 'page', title: '设备管理', path: '/devices', desc: '设备列表' },
-      { type: 'page', title: '实时监控', path: '/live', desc: '视频监控' },
-      { type: 'page', title: '告警中心', path: '/alarms', desc: '告警列表' },
-      { type: 'page', title: 'Pipeline编辑', path: '/pipelines', desc: '算法管线' },
-      { type: 'page', title: '模型管理', path: '/models', desc: 'BModel管理' },
-      { type: 'page', title: 'AI助手', path: '/ai-chat', desc: 'AI对话' },
-      { type: 'page', title: '定位与轨迹', path: '/location', desc: '设备定位+轨迹回放' },
-      { type: 'page', title: '设备拓扑', path: '/topology', desc: '网络拓扑' },
-      { type: 'page', title: '算法商城', path: '/algorithm-store', desc: '算法下载' },
-      { type: 'page', title: '账单查看', path: '/billing', desc: '账单' },
-      { type: 'page', title: '联动规则', path: '/linkage', desc: '联动' },
-      { type: 'page', title: 'GB28181', path: '/gb28181', desc: '国标设备' },
-      { type: 'page', title: 'ONVIF发现', path: '/onvif', desc: '设备发现' },
-      { type: 'page', title: '流管理', path: '/streams', desc: 'ZLM流' },
-      { type: 'page', title: '录像回放', path: '/recordings', desc: '录像查询' },
-      { type: 'page', title: '数据分析', path: '/statistics', desc: '统计分析' },
-      { type: 'page', title: '系统设置', path: '/settings', desc: '配置' },
-      { type: 'page', title: '用户管理', path: '/users', desc: '用户列表' },
-      { type: 'page', title: '角色管理', path: '/roles', desc: 'RBAC' },
-      { type: 'page', title: '审计中心', path: '/audit', desc: '操作日志' },
-      { type: 'page', title: '开放平台', path: '/open-platform', desc: 'API Keys' },
+      { type: t('search.page'), title: t('menu.dashboard'), path: '/dashboard', desc: t('menu.dashboard') + ' Overview' },
+      { type: t('search.page'), title: t('menu.situationScreen'), path: '/situation', desc: '3D GIS' },
+      { type: t('search.page'), title: t('menu.devices'), path: '/devices', desc: t('device.title') },
+      { type: t('search.page'), title: t('menu.live'), path: '/live', desc: t('menu.live') },
+      { type: t('search.page'), title: t('menu.alarms'), path: '/alarms', desc: t('alarm.title') },
+      { type: t('search.page'), title: t('menu.pipelineEditor'), path: '/pipelines', desc: t('menu.pipeline') },
+      { type: t('search.page'), title: t('menu.models'), path: '/models', desc: t('menu.models') },
+      { type: t('search.page'), title: t('menu.aiChat'), path: '/ai-chat', desc: t('menu.aiChat') },
+      { type: t('search.page'), title: t('menu.location'), path: '/location', desc: t('menu.location') },
+      { type: t('search.page'), title: t('menu.topology'), path: '/topology', desc: t('menu.topology') },
+      { type: t('search.page'), title: t('menu.algorithms'), path: '/algorithm-store', desc: t('menu.algorithms') },
+      { type: t('search.page'), title: t('menu.billing'), path: '/billing', desc: t('menu.billing') },
+      { type: t('search.page'), title: t('menu.linkage'), path: '/linkage', desc: t('menu.linkage') },
+      { type: t('search.page'), title: t('menu.gb28181'), path: '/gb28181', desc: t('menu.gb28181') },
+      { type: t('search.page'), title: t('menu.onvif'), path: '/onvif', desc: t('menu.onvif') },
+      { type: t('search.page'), title: t('menu.streams'), path: '/streams', desc: t('menu.streams') },
+      { type: t('search.page'), title: t('menu.recording'), path: '/recordings', desc: t('menu.recording') },
+      { type: t('search.page'), title: t('menu.statistics'), path: '/statistics', desc: t('menu.statistics') },
+      { type: t('search.page'), title: t('menu.settings'), path: '/settings', desc: t('menu.settings') },
+      { type: t('search.page'), title: t('menu.user'), path: '/users', desc: t('menu.user') },
+      { type: t('search.page'), title: t('menu.role'), path: '/roles', desc: t('menu.role') },
+      { type: t('search.page'), title: t('menu.audit'), path: '/audit', desc: t('menu.audit') },
+      { type: t('search.page'), title: t('menu.openPlatform'), path: '/open-platform', desc: t('menu.openPlatform') },
     ]
     searchResults.value = menuItems.filter(m =>
       m.title.toLowerCase().includes(keyword) || m.desc.toLowerCase().includes(keyword) || m.path.includes(keyword)
@@ -432,6 +458,8 @@ function handleKeydown(e: KeyboardEvent) {
 
 onMounted(() => {
   window.addEventListener('keydown', handleKeydown)
+  // 初始化未处理告警数，驱动侧边栏徽章
+  alarmStore.fetchUnhandledCount().catch(() => {})
 })
 
 onUnmounted(() => {
@@ -448,9 +476,9 @@ function handleUserCommand(command: string) {
       router.push('/settings')
       break
     case 'logout':
-      ElMessageBox.confirm('确定要退出登录吗？', '退出登录', {
-        confirmButtonText: '退出',
-        cancelButtonText: '取消',
+      ElMessageBox.confirm(t('logout.confirm'), t('logout.title'), {
+        confirmButtonText: t('logout.confirmBtn'),
+        cancelButtonText: t('logout.cancelBtn'),
         type: 'warning',
       }).then(() => {
         auth.logout?.()
@@ -565,12 +593,21 @@ function handleUserCommand(command: string) {
   font-size: 18px;
 }
 
+.alarm-menu-label {
+  display: inline;
+}
+
 .menu-badge {
-  margin-left: auto;
+  margin-left: 8px;
+  vertical-align: middle;
 }
 
 .menu-badge :deep(.el-badge__content) {
   font-size: 10px;
+  transform: none;
+  position: relative;
+  top: auto;
+  right: auto;
 }
 
 /* 折叠按钮 */

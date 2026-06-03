@@ -87,7 +87,7 @@ export { ptzControl, ptzStop, ptzAbsolute, getPresets, setPreset, deletePreset }
 export type { PTZParams } from './ptz'
 
 export { linkageApi } from './linkage'
-export type { LinkageRule, LinkageCondition, LinkageAction, LinkageLog, LinkageRuleQuery, LinkageLogQuery } from './linkage'
+export type { LinkageRule, LinkageAction, LinkageLog, LinkageRuleQuery, LinkageLogQuery, TimeCondition, SpatialCondition, SourceCondition, MergeCondition } from './linkage'
 
 // ── 3D 场景模型资源 ──
 export {
@@ -142,3 +142,12 @@ export { default as algorithmsApi } from './algorithms'
 export { default as configApi } from './config'
 export { default as logsApi } from './logs'
 export { default as systemApi } from './system'
+export { default as faceApi } from './face'
+export type {
+  FaceRecord,
+  FaceDatabaseStats,
+  FaceMatchResult,
+  FaceAlarmEvent,
+  FaceDatabaseResponse,
+  PaginatedRecords
+} from './face'

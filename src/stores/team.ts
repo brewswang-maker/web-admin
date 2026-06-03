@@ -13,7 +13,7 @@ export const useTeamStore = defineStore('team', () => {
   async function fetchTeams(query?: TeamQuery) {
     loading.value = true
     try {
-      const { data } = await http.get('/api/v1/teams', { params: query })
+      const { data } = await http.get('/teams', { params: query })
       teams.value = data?.data || data || []
     } catch (e) {
       console.warn('[TeamStore] fetchTeams failed:', e)
@@ -25,7 +25,7 @@ export const useTeamStore = defineStore('team', () => {
   async function fetchTeamDetail(id: string) {
     loading.value = true
     try {
-      const { data } = await http.get(`/api/v1/teams/${id}`)
+      const { data } = await http.get(`/teams/${id}`)
       currentTeam.value = data?.data || data || null
     } catch (e) {
       console.warn('[TeamStore] fetchTeamDetail failed:', e)
@@ -36,7 +36,7 @@ export const useTeamStore = defineStore('team', () => {
 
   async function fetchMembers(teamId: string) {
     try {
-      const { data } = await http.get(`/api/v1/teams/${teamId}/members`)
+      const { data } = await http.get(`/teams/${teamId}/members`)
       members.value = data?.data || data || []
     } catch (e) {
       console.warn('[TeamStore] fetchMembers failed:', e)
@@ -45,7 +45,7 @@ export const useTeamStore = defineStore('team', () => {
 
   async function fetchTeamStats(teamId: string) {
     try {
-      const { data } = await http.get(`/api/v1/teams/${teamId}/stats`)
+      const { data } = await http.get(`/teams/${teamId}/stats`)
       teamStats.value = data?.data || data || null
     } catch (e) {
       console.warn('[TeamStore] fetchTeamStats failed:', e)
@@ -54,7 +54,7 @@ export const useTeamStore = defineStore('team', () => {
 
   async function addMember(teamId: string, member: Partial<TeamMember>) {
     try {
-      await http.post(`/api/v1/teams/${teamId}/members`, member)
+      await http.post(`/teams/${teamId}/members`, member)
       await fetchMembers(teamId)
     } catch (e) {
       console.warn('[TeamStore] addMember failed:', e)
@@ -63,7 +63,7 @@ export const useTeamStore = defineStore('team', () => {
 
   async function removeMember(teamId: string, memberId: string) {
     try {
-      await http.delete(`/api/v1/teams/${teamId}/members/${memberId}`)
+      await http.delete(`/teams/${teamId}/members/${memberId}`)
       await fetchMembers(teamId)
     } catch (e) {
       console.warn('[TeamStore] removeMember failed:', e)

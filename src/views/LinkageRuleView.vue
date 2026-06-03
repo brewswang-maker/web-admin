@@ -31,13 +31,23 @@
           </el-select>
           <el-select v-model="sortBy" style="width: 140px" @change="fetchRules">
             <el-option label="优先级排序" value="priority" />
-            <el-option label="创建时间" value="createdAt" />
-            <el-option label="更新时间" value="updatedAt" />
+            <el-option label="创建时间" value="created_at" />
+            <el-option label="更新时间" value="updated_at" />
           </el-select>
         </div>
         <div class="toolbar-right">
+          <template v-if="selectedRows.length > 0">
+            <el-button type="success" size="small" @click="handleBatchToggle(true)">
+              批量启用 ({{ selectedRows.length }})
+            </el-button>
+            <el-button type="warning" size="small" @click="handleBatchToggle(false)">批量停用</el-button>
+            <el-button type="danger" size="small" @click="handleBatchDelete">批量删除</el-button>
+          </template>
           <el-button @click="showLogDialog = true">
             <el-icon><Document /></el-icon>执行日志
+          </el-button>
+          <el-button @click="openTemplateLibrary">
+            <el-icon><CopyDocument /></el-icon>模板库
           </el-button>
           <el-button type="primary" @click="openEditor(null)">
             <el-icon><Plus /></el-icon>新建规则
@@ -49,7 +59,10 @@
     <!-- ===== 规则列表 ===== -->
     <el-card shadow="never" class="list-card">
       <el-table :data="filteredRules" stripe row-key="id" v-loading="loading"
-        :default-sort="{ prop: sortBy, order: sortOrder }" @sort-change="handleSortChange">
+        :default-sort="{ prop: sortBy, order: sortOrder }"
+        @sort-change="handleSortChange"
+        @selection-change="handleSelectionChange">
+        <el-table-column type="selection" width="45" />
         <el-table-column prop="enabled" label="状态" width="80" align="center">
           <template #default="{ row }">
             <el-switch v-model="row.enabled" size="small" inline-prompt active-text="开" inactive-text="关" @change="toggleRule(row)" />
@@ -60,31 +73,32 @@
             <div class="rule-name-cell">
               <span class="rule-name">{{ row.name }}</span>
               <el-tag size="small" :type="row.enabled ? 'success' : 'info'" effect="plain" class="priority-tag">P{{ row.priority }}</el-tag>
+              <el-tag v-for="tag in (row.tags || [])" :key="tag" size="small" type="info" effect="plain" style="margin-left: 2px">{{ tag }}</el-tag>
             </div>
           </template>
         </el-table-column>
         <el-table-column label="触发条件" min-width="200">
           <template #default="{ row }">
             <div class="condition-tags">
-              <el-tag v-for="c in (row.conditions || []).filter((c: any) => c.enabled)" :key="c.type" size="small" effect="plain" class="cond-tag">{{ conditionLabel(c.type) }}</el-tag>
-              <span v-if="!(row.conditions || []).length" class="text-secondary">无条件</span>
+              <el-tag v-for="tag in getActiveConditions(row)" :key="tag.key" size="small" effect="plain" class="cond-tag">{{ tag.label }}</el-tag>
+              <span v-if="getActiveConditions(row).length === 0" class="text-secondary">无条件</span>
             </div>
           </template>
         </el-table-column>
         <el-table-column label="联动动作" min-width="180">
           <template #default="{ row }">
-            <span v-if="(row.actions || []).length" class="action-count">⚡ {{ row.actions.filter((a: any) => a.enabled).length }} 项动作</span>
+            <span v-if="(row.actions || []).length" class="action-count">{{ row.actions.filter((a: any) => a.enabled).length }} 项动作</span>
             <span v-else class="text-secondary">无动作</span>
           </template>
         </el-table-column>
-        <el-table-column prop="cooldownMs" label="冷却时间" width="100" align="center">
+        <el-table-column prop="cooldown_ms" label="冷却时间" width="100" align="center">
           <template #default="{ row }">
-            <span class="text-secondary">{{ row.cooldownMs ? (row.cooldownMs >= 1000 ? (row.cooldownMs / 1000) + 's' : row.cooldownMs + 'ms') : '-' }}</span>
+            <span class="text-secondary">{{ formatCooldown(row.cooldown_ms) }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="updatedAt" label="更新时间" width="170" sortable="custom">
+        <el-table-column prop="updated_at" label="更新时间" width="170" sortable="custom">
           <template #default="{ row }">
-            <span class="time-text">{{ formatTime(row.updatedAt) }}</span>
+            <span class="time-text">{{ formatTime(row.updated_at) }}</span>
           </template>
         </el-table-column>
         <el-table-column label="操作" width="140" fixed="right">
@@ -99,26 +113,57 @@
     <!-- ===== 规则编辑抽屉 ===== -->
     <el-drawer v-model="drawerVisible" :title="editingRule ? '编辑联动规则' : '新建联动规则'" size="520px" direction="rtl" :close-on-click-modal="false" destroy-on-close>
       <div class="editor-body">
-        <el-form :model="form" label-position="top" size="default">
-          <el-form-item label="规则名称" required>
-            <el-input v-model="form.name" placeholder="例: 周界入侵联动" />
+        <el-form :model="form" label-position="top" size="default" :rules="formRules" ref="formRef">
+          <!-- 规则名称 + 启用开关 -->
+          <el-row :gutter="12">
+            <el-col :span="18">
+              <el-form-item label="规则名称" prop="name">
+                <el-input v-model="form.name" placeholder="例: 周界入侵联动" />
+              </el-form-item>
+            </el-col>
+            <el-col :span="6">
+              <el-form-item label="启用状态">
+                <el-switch v-model="form.enabled" active-text="启用" inactive-text="停用" style="margin-top: 6px" />
+              </el-form-item>
+            </el-col>
+          </el-row>
+          <el-form-item label="描述">
+            <el-input v-model="form.description" placeholder="可选，规则的简要说明" />
           </el-form-item>
           <el-row :gutter="16">
             <el-col :span="12">
-              <el-form-item label="优先级 (1-100)">
+              <el-form-item label="优先级 (1-100)" prop="priority">
                 <el-input-number v-model="form.priority" :min="1" :max="100" :step="5" style="width: 100%" />
               </el-form-item>
             </el-col>
             <el-col :span="12">
-              <el-form-item label="冷却时间(ms)">
+              <el-form-item label="冷却时间(ms)" prop="cooldownMs">
                 <el-input-number v-model="form.cooldownMs" :min="1000" :max="60000" :step="1000" style="width: 100%" />
               </el-form-item>
             </el-col>
           </el-row>
+          <el-form-item label="标签">
+            <el-select v-model="form.tags" multiple filterable allow-create default-first-option placeholder="输入标签后回车" style="width: 100%">
+              <el-option v-for="tag in allTags" :key="tag" :label="tag" :value="tag" />
+            </el-select>
+          </el-form-item>
 
-          <el-divider content-position="left">📋 触发条件</el-divider>
+          <el-divider content-position="left">
+            触发条件
+            <el-switch v-model="advancedConditionMode" size="small" active-text="高级" inactive-text="普通"
+              style="margin-left: 12px; vertical-align: middle" />
+          </el-divider>
 
-          <!-- 条件卡片 -->
+          <!-- 高级条件模式: JSON 编辑 -->
+          <div v-if="advancedConditionMode" style="margin-bottom: 12px">
+            <el-alert type="info" :closable="false" style="margin-bottom: 8px">
+              高级模式支持 AND/OR/NOT 条件组合。请在下方编辑条件表达式树 JSON。
+            </el-alert>
+            <el-input v-model="conditionTreeJson" type="textarea" :rows="10"
+              placeholder='{"type":"AND","children":[{"type":"LEAF","leaf_type":"source","condition":{...}}]}' />
+          </div>
+
+          <!-- 普通条件卡片 -->
           <div v-for="cond in conditionDefs" :key="cond.type" class="condition-card">
             <div class="cond-header" @click="toggleCollapse(cond.type)">
               <div class="cond-title">
@@ -142,6 +187,9 @@
                     <el-checkbox v-for="d in weekdays" :key="d.value" :label="d.label" :value="d.value" size="small" />
                   </el-checkbox-group>
                 </div>
+                <div class="time-template-actions">
+                  <el-button size="small" text @click="showTimeTemplateDialog = true">管理时段模板</el-button>
+                </div>
               </template>
 
               <!-- 空间条件 -->
@@ -149,8 +197,14 @@
                 <el-form-item label="物理位置" label-position="top" class="cond-form-item">
                   <el-select v-model="form.conditions.region.config.location" placeholder="选择位置" style="width: 100%"><el-option v-for="l in locationOptions" :key="l" :label="l" :value="l" /></el-select>
                 </el-form-item>
-                <el-form-item label="ROI区域" label-position="top" class="cond-form-item">
-                  <el-select v-model="form.conditions.region.config.roi" placeholder="选择区域" style="width: 100%"><el-option v-for="r in roiOptions" :key="r" :label="r" :value="r" /></el-select>
+                <el-form-item label="关联通道(快照背景)" label-position="top" class="cond-form-item">
+                  <el-select v-model="form.conditions.region.config.channelId" placeholder="选择通道加载快照" clearable style="width: 100%" @change="loadChannelSnapshot">
+                    <el-option v-for="ch in channelOptionsDynamic" :key="ch.value" :label="ch.label" :value="ch.value" />
+                    <template #empty><span class="text-secondary">暂无通道</span></template>
+                  </el-select>
+                </el-form-item>
+                <el-form-item label="ROI多边形区域" label-position="top" class="cond-form-item">
+                  <RoiPolygonEditor v-model="form.conditions.region.config.roiPolygon" :background-image-url="roiBackgroundUrl" :canvas-width="440" :canvas-height="248" />
                 </el-form-item>
                 <el-form-item label="设备分组" label-position="top" class="cond-form-item">
                   <el-select v-model="form.conditions.region.config.group" placeholder="选择分组" style="width: 100%"><el-option v-for="g in groupOptions" :key="g" :label="g" :value="g" /></el-select>
@@ -166,19 +220,28 @@
 
               <!-- 事件类型 -->
               <template v-if="cond.type === 'eventType'">
-                <el-checkbox-group v-model="form.conditions.eventType.config.types" class="event-type-grid">
-                  <el-checkbox v-for="et in eventTypes" :key="et" :label="et" :value="et" size="small" />
+                <el-checkbox-group v-model="form.conditions.eventType.config.types" class="event-type-grid" v-loading="optionsLoading">
+                  <template v-if="eventTypeOptions.length > 0">
+                    <div v-for="(group, cat) in eventTypeGrouped" :key="cat" class="event-type-group">
+                      <div class="event-type-group__title">{{ cat }}</div>
+                      <el-checkbox v-for="et in group" :key="et.value" :label="et.label" :value="et.value" size="small" />
+                    </div>
+                  </template>
+                  <template v-else>
+                    <el-checkbox v-for="et in fallbackEventTypes" :key="et" :label="et" :value="et" size="small" />
+                  </template>
                 </el-checkbox-group>
+                <p v-if="form.conditions.eventType.config.types.length === 0" class="cond-hint" style="color: #E6A23C; margin-top: 4px">⚠ 未选择事件类型 = 匹配所有告警事件</p>
                 <el-row :gutter="16" style="margin-top: 12px">
                   <el-col :span="12">
                     <el-form-item label="最低严重度" label-position="top" class="cond-form-item">
                       <el-select v-model="form.conditions.eventType.config.minSeverity" style="width: 100%">
-                        <el-option label="1-提示" :value="1" /><el-option label="2-低" :value="2" /><el-option label="3-中" :value="3" /><el-option label="4-高" :value="4" /><el-option label="5-紧急" :value="5" />
+                        <el-option label="0-不限" :value="0" /><el-option label="1-提示" :value="1" /><el-option label="2-低" :value="2" /><el-option label="3-中" :value="3" /><el-option label="4-高" :value="4" /><el-option label="5-紧急" :value="5" />
                       </el-select>
                     </el-form-item>
                   </el-col>
                   <el-col :span="12">
-                    <el-form-item label="最低置信度" label-position="top" class="cond-form-item">
+                    <el-form-item label="最低置信度(%)" label-position="top" class="cond-form-item">
                       <el-slider v-model="form.conditions.eventType.config.minConfidence" :min="10" :max="100" :step="5" show-input size="small" />
                     </el-form-item>
                   </el-col>
@@ -188,8 +251,13 @@
               <!-- 事件源 -->
               <template v-if="cond.type === 'eventSource'">
                 <p class="cond-hint">选择通道 (留空=全部)</p>
-                <el-checkbox-group v-model="form.conditions.eventSource.config.channels" class="channel-grid">
-                  <el-checkbox v-for="ch in channelOptions" :key="ch" :label="ch" :value="ch" size="small" />
+                <el-checkbox-group v-model="form.conditions.eventSource.config.channels" class="channel-grid" v-loading="optionsLoading">
+                  <template v-if="channelOptionsDynamic.length > 0">
+                    <el-checkbox v-for="ch in channelOptionsDynamic" :key="ch.value" :label="ch.label" :value="ch.value" size="small" />
+                  </template>
+                  <template v-else>
+                    <el-checkbox v-for="ch in fallbackChannelOptions" :key="ch" :label="ch" :value="ch" size="small" />
+                  </template>
                 </el-checkbox-group>
               </template>
 
@@ -218,41 +286,44 @@
             </div>
           </div>
 
-          <el-divider content-position="left">⚡ 联动动作</el-divider>
+          <el-divider content-position="left">联动动作</el-divider>
 
           <!-- 动作 Tabs -->
           <el-tabs v-model="activeActionTab" type="card" class="action-tabs">
-            <el-tab-pane label="🖥️ 客户端" name="client">
+            <el-tab-pane label="客户端" name="client">
               <div v-for="group in clientActionGroups" :key="group.label" class="action-group">
                 <div class="action-group-title">{{ group.label }}</div>
                 <div v-for="act in group.items" :key="act.type" class="action-row">
                   <el-checkbox v-model="actionState[act.type]" @change="onActionToggle(act.type)">{{ act.icon }} {{ act.label }}</el-checkbox>
-                  <el-button v-if="actionState[act.type]" size="small" link type="primary" @click="openActionParams(act)">⚙️</el-button>
+                  <el-button v-if="actionState[act.type]" size="small" link type="primary" @click="openActionParams(act)">参数</el-button>
                 </div>
               </div>
             </el-tab-pane>
-            <el-tab-pane label="🌐 Web端" name="web">
-              <div v-for="act in webActions" :key="act.type" class="action-row">
-                <el-checkbox v-model="actionState[act.type]" @change="onActionToggle(act.type)">{{ act.icon }} {{ act.label }}</el-checkbox>
-                <el-button v-if="actionState[act.type]" size="small" link type="primary" @click="openActionParams(act)">⚙️</el-button>
+            <el-tab-pane label="Web端" name="web">
+              <div v-for="group in webActionGroups" :key="group.label" class="action-group">
+                <div class="action-group-title">{{ group.label }}</div>
+                <div v-for="act in group.items" :key="act.type" class="action-row">
+                  <el-checkbox v-model="actionState[act.type]" @change="onActionToggle(act.type)">{{ act.icon }} {{ act.label }}</el-checkbox>
+                  <el-button v-if="actionState[act.type]" size="small" link type="primary" @click="openActionParams(act)">参数</el-button>
+                </div>
               </div>
             </el-tab-pane>
-            <el-tab-pane label="📱 APP" name="app">
+            <el-tab-pane label="APP" name="app">
               <div v-for="act in appActions" :key="act.type" class="action-row">
                 <el-checkbox v-model="actionState[act.type]" @change="onActionToggle(act.type)">{{ act.icon }} {{ act.label }}</el-checkbox>
-                <el-button v-if="actionState[act.type]" size="small" link type="primary" @click="openActionParams(act)">⚙️</el-button>
+                <el-button v-if="actionState[act.type]" size="small" link type="primary" @click="openActionParams(act)">参数</el-button>
               </div>
             </el-tab-pane>
-            <el-tab-pane label="💬 小程序" name="mp">
+            <el-tab-pane label="小程序" name="mp">
               <div v-for="act in mpActions" :key="act.type" class="action-row">
                 <el-checkbox v-model="actionState[act.type]" @change="onActionToggle(act.type)">{{ act.icon }} {{ act.label }}</el-checkbox>
-                <el-button v-if="actionState[act.type]" size="small" link type="primary" @click="openActionParams(act)">⚙️</el-button>
+                <el-button v-if="actionState[act.type]" size="small" link type="primary" @click="openActionParams(act)">参数</el-button>
               </div>
             </el-tab-pane>
-            <el-tab-pane label="⚙️ 系统" name="system">
+            <el-tab-pane label="系统" name="system">
               <div v-for="act in sysActions" :key="act.type" class="action-row">
                 <el-checkbox v-model="actionState[act.type]" @change="onActionToggle(act.type)">{{ act.icon }} {{ act.label }}</el-checkbox>
-                <el-button v-if="actionState[act.type]" size="small" link type="primary" @click="openActionParams(act)">⚙️</el-button>
+                <el-button v-if="actionState[act.type]" size="small" link type="primary" @click="openActionParams(act)">参数</el-button>
               </div>
             </el-tab-pane>
           </el-tabs>
@@ -261,24 +332,147 @@
 
       <template #footer>
         <div class="drawer-footer">
+          <el-button @click="handleDryRun" :loading="dryRunLoading" :disabled="!editingRule">
+            模拟测试
+          </el-button>
+          <div style="flex:1" />
           <el-button @click="drawerVisible = false">取消</el-button>
-          <el-button type="primary" @click="handleSave" :loading="saving">💾 保存规则</el-button>
+          <el-button type="primary" @click="handleSave" :loading="saving">保存规则</el-button>
         </div>
       </template>
     </el-drawer>
 
-    <!-- ===== 动作参数弹窗 ===== -->
-    <el-dialog v-model="paramDialogVisible" :title="paramDialogTitle" width="480px" destroy-on-close append-to-body>
+    <!-- ===== 专用动作参数弹窗 ===== -->
+    <el-dialog v-model="paramDialogVisible" :title="paramDialogTitle" width="520px" destroy-on-close append-to-body>
       <el-form :model="paramForm" label-position="top">
-        <el-form-item label="通道/设备">
-          <el-select v-model="paramForm.channelId" placeholder="选择通道" style="width: 100%"><el-option v-for="ch in channelOptions" :key="ch" :label="ch" :value="ch" /></el-select>
+        <!-- 通用: 关联通道 (多数动作需要) -->
+        <el-form-item v-if="paramNeedsChannel" label="关联通道/设备">
+          <el-select v-model="paramForm.channel_id" placeholder="选择通道" clearable style="width: 100%">
+            <template v-if="channelOptionsDynamic.length > 0">
+              <el-option v-for="ch in channelOptionsDynamic" :key="ch.value" :label="ch.label" :value="ch.value" />
+            </template>
+            <template v-else>
+              <el-option v-for="ch in fallbackChannelOptions" :key="ch" :label="ch" :value="ch" />
+            </template>
+          </el-select>
         </el-form-item>
-        <el-form-item label="持续时长(秒)">
-          <el-input-number v-model="paramForm.duration" :min="1" :max="3600" style="width: 100%" />
-        </el-form-item>
-        <el-form-item label="自定义参数 (JSON)">
-          <el-input v-model="paramForm.extra" type="textarea" :rows="4" placeholder='{"key": "value"}' />
-        </el-form-item>
+
+        <!-- === TTS 播报专用 === -->
+        <template v-if="paramActionCategory === 'tts'">
+          <el-form-item label="播报文本" required>
+            <el-input v-model="paramForm.tts_text" type="textarea" :rows="3" placeholder="支持变量: {type} {location} {time} {channel}" />
+          </el-form-item>
+          <el-form-item label="重复次数">
+            <el-input-number v-model="paramForm.tts_repeat" :min="1" :max="10" style="width: 100%" />
+          </el-form-item>
+        </template>
+
+        <!-- === PTZ 云台专用 === -->
+        <template v-if="paramActionCategory === 'ptz'">
+          <el-row :gutter="12">
+            <el-col :span="12">
+              <el-form-item label="起始预置点">
+                <el-input v-model="paramForm.preset_id_start" placeholder="预置点编号" />
+              </el-form-item>
+            </el-col>
+            <el-col :span="12">
+              <el-form-item label="结束预置点">
+                <el-input v-model="paramForm.preset_id_end" placeholder="预置点编号" />
+              </el-form-item>
+            </el-col>
+          </el-row>
+          <el-form-item label="巡航路径ID">
+            <el-input v-model="paramForm.cruise_path_id" placeholder="路径编号" />
+          </el-form-item>
+        </template>
+
+        <!-- === WebHook / HTTP 回调专用 === -->
+        <template v-if="paramActionCategory === 'webhook'">
+          <el-form-item label="回调URL" required>
+            <el-input v-model="paramForm.callback_url" placeholder="https://example.com/webhook" />
+          </el-form-item>
+          <el-form-item label="请求方法">
+            <el-select v-model="paramForm.callback_method" style="width: 100%">
+              <el-option label="POST" value="POST" />
+              <el-option label="GET" value="GET" />
+              <el-option label="PUT" value="PUT" />
+            </el-select>
+          </el-form-item>
+        </template>
+
+        <!-- === MQTT 发布专用 === -->
+        <template v-if="paramActionCategory === 'mqtt'">
+          <el-form-item label="MQTT 主题" required>
+            <el-input v-model="paramForm.mqtt_topic" placeholder="alarm/linkage/event" />
+          </el-form-item>
+          <el-form-item label="负载模板 (JSON)">
+            <el-input v-model="paramForm.mqtt_payload" type="textarea" :rows="3" placeholder='{"event": "{type}", "location": "{location}"}' />
+          </el-form-item>
+        </template>
+
+        <!-- === 电视墙专用 === -->
+        <template v-if="paramActionCategory === 'tvwall'">
+          <el-form-item label="电视墙ID">
+            <el-input v-model="paramForm.tv_wall_id" placeholder="电视墙编号" />
+          </el-form-item>
+          <el-form-item label="持续时长(秒)">
+            <el-input-number v-model="paramForm.tv_wall_duration_s" :min="5" :max="3600" style="width: 100%" />
+          </el-form-item>
+        </template>
+
+        <!-- === 抓图专用 === -->
+        <template v-if="paramActionCategory === 'capture'">
+          <el-row :gutter="12">
+            <el-col :span="12">
+              <el-form-item label="抓图间隔(秒)">
+                <el-input-number v-model="paramForm.capture_interval_s" :min="1" :max="60" style="width: 100%" />
+              </el-form-item>
+            </el-col>
+            <el-col :span="12">
+              <el-form-item label="抓图次数">
+                <el-input-number v-model="paramForm.capture_count" :min="1" :max="30" style="width: 100%" />
+              </el-form-item>
+            </el-col>
+          </el-row>
+        </template>
+
+        <!-- === Modbus 专用 === -->
+        <template v-if="paramActionCategory === 'modbus'">
+          <el-row :gutter="12">
+            <el-col :span="16">
+              <el-form-item label="设备地址">
+                <el-input v-model="paramForm.modbus_host" placeholder="192.168.1.100" />
+              </el-form-item>
+            </el-col>
+            <el-col :span="8">
+              <el-form-item label="端口">
+                <el-input-number v-model="paramForm.modbus_port" :min="1" :max="65535" style="width: 100%" />
+              </el-form-item>
+            </el-col>
+          </el-row>
+          <el-row :gutter="12">
+            <el-col :span="12">
+              <el-form-item label="寄存器地址">
+                <el-input-number v-model="paramForm.modbus_register" :min="0" style="width: 100%" />
+              </el-form-item>
+            </el-col>
+            <el-col :span="12">
+              <el-form-item label="写入值">
+                <el-input-number v-model="paramForm.modbus_value" :min="0" style="width: 100%" />
+              </el-form-item>
+            </el-col>
+          </el-row>
+        </template>
+
+        <!-- === 通用参数 (非专用动作) === -->
+        <template v-if="paramActionCategory === 'generic'">
+          <el-form-item label="延迟执行(ms)">
+            <el-input-number v-model="paramForm.delay_ms" :min="0" :max="60000" :step="100" style="width: 100%" />
+          </el-form-item>
+          <el-form-item label="扩展参数 (JSON)">
+            <el-input v-model="paramForm.extra" type="textarea" :rows="3" placeholder='{"key": "value"}' />
+          </el-form-item>
+        </template>
       </el-form>
       <template #footer>
         <el-button @click="paramDialogVisible = false">取消</el-button>
@@ -287,31 +481,125 @@
     </el-dialog>
 
     <!-- ===== 执行日志弹窗 ===== -->
-    <el-dialog v-model="showLogDialog" title="联动执行日志" width="900px" destroy-on-close>
-      <el-table :data="logs" stripe v-loading="logLoading" size="small">
-        <el-table-column prop="triggeredAt" label="触发时间" width="170">
-          <template #default="{ row }"><span class="time-text">{{ formatTime(row.triggeredAt) }}</span></template>
-        </el-table-column>
-        <el-table-column prop="ruleName" label="规则" width="140" />
-        <el-table-column prop="eventType" label="事件类型" width="100" />
-        <el-table-column prop="channelName" label="通道" width="100" />
-        <el-table-column label="执行动作" min-width="180">
-          <template #default="{ row }">
-            <el-tag v-for="a in (row.actionsExecuted || []).slice(0, 3)" :key="a" size="small" effect="plain" style="margin: 2px">{{ a }}</el-tag>
-            <span v-if="(row.actionsExecuted || []).length > 3" class="text-secondary">+{{ row.actionsExecuted.length - 3 }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column prop="result" label="结果" width="80" align="center">
-          <template #default="{ row }">
-            <el-tag :type="row.result === 'success' ? 'success' : row.result === 'partial' ? 'warning' : 'danger'" size="small">
-              {{ row.result === 'success' ? '成功' : row.result === 'partial' ? '部分' : '失败' }}
-            </el-tag>
-          </template>
-        </el-table-column>
-      </el-table>
-      <div class="pagination-wrap" v-if="logTotal > logPageSize">
-        <el-pagination v-model:current-page="logPage" v-model:page-size="logPageSize" :total="logTotal" :page-sizes="[10, 20, 50]" layout="total, sizes, prev, pager, next" background small @change="fetchLogs" />
+    <el-dialog v-model="showLogDialog" title="联动执行日志" width="960px" destroy-on-close @open="fetchLogs">
+      <el-tabs v-model="logViewMode" style="margin-bottom: 12px">
+        <el-tab-pane label="表格视图" name="table" />
+        <el-tab-pane label="时间线" name="timeline" />
+      </el-tabs>
+      <!-- 表格视图 -->
+      <div v-if="logViewMode === 'table'">
+        <el-table :data="logs" stripe v-loading="logLoading" size="small">
+          <el-table-column prop="trigger_at" label="触发时间" width="170">
+            <template #default="{ row }"><span class="time-text">{{ formatTime(row.trigger_at) }}</span></template>
+          </el-table-column>
+          <el-table-column prop="rule_name" label="规则" width="140" />
+          <el-table-column prop="event_type" label="事件类型" width="100" />
+          <el-table-column prop="channel_id" label="通道" width="80" />
+          <el-table-column label="执行动作" min-width="180">
+            <template #default="{ row }">
+              <el-tag v-for="a in (row.actions_executed || []).slice(0, 3)" :key="a" size="small" effect="plain" style="margin: 2px">{{ a }}</el-tag>
+              <span v-if="(row.actions_executed || []).length > 3" class="text-secondary">+{{ row.actions_executed.length - 3 }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column prop="duration_ms" label="耗时(ms)" width="90" align="center" />
+        </el-table>
+        <div class="pagination-wrap" v-if="logTotal > logPageSize">
+          <el-pagination v-model:current-page="logPage" v-model:page-size="logPageSize" :total="logTotal" :page-sizes="[10, 20, 50]" layout="total, sizes, prev, pager, next" background small @change="fetchLogs" />
+        </div>
       </div>
+      <!-- 时间线视图 -->
+      <div v-if="logViewMode === 'timeline'" v-loading="logLoading" style="max-height: 500px; overflow-y: auto; padding: 8px">
+        <el-timeline v-if="logs.length > 0">
+          <el-timeline-item v-for="log in logs" :key="log.id"
+            :timestamp="formatTime(log.trigger_at)" placement="top"
+            :type="log.severity >= 4 ? 'danger' : log.severity >= 3 ? 'warning' : 'primary'"
+            :hollow="log.severity < 3">
+            <el-card shadow="never" :body-style="{ padding: '10px 14px' }">
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px">
+                <div>
+                  <span style="font-weight: 600">{{ log.rule_name }}</span>
+                  <el-tag size="small" :type="log.severity >= 4 ? 'danger' : 'warning'" effect="plain" style="margin-left: 6px">
+                    {{ log.event_type || '未知事件' }}
+                  </el-tag>
+                  <el-tag size="small" type="info" effect="plain" style="margin-left: 4px">通道 {{ log.channel_id }}</el-tag>
+                </div>
+                <span style="font-size: 12px; color: #909399">{{ log.duration_ms }}ms</span>
+              </div>
+              <div>
+                <el-tag v-for="a in (log.actions_executed || []).slice(0, 5)" :key="a" size="small" effect="plain" style="margin: 1px">{{ a }}</el-tag>
+                <span v-if="(log.actions_executed || []).length > 5" style="font-size: 12px; color: #909399; margin-left: 4px">+{{ log.actions_executed.length - 5 }}项</span>
+              </div>
+            </el-card>
+          </el-timeline-item>
+        </el-timeline>
+        <el-empty v-else description="暂无执行记录" />
+      </div>
+    </el-dialog>
+
+    <!-- ===== Dry-Run 结果对话框 ===== -->
+    <el-dialog v-model="showDryRunDialog" title="规则模拟测试结果" width="680px" destroy-on-close>
+      <template v-if="dryRunResult">
+        <el-alert :type="dryRunResult.matched ? 'success' : 'warning'" :closable="false" style="margin-bottom: 16px">
+          <template #title>
+            <span style="font-size: 15px; font-weight: 600">{{ dryRunResult.matched ? '存在匹配规则' : '未匹配任何规则' }}</span>
+          </template>
+        </el-alert>
+        <el-table :data="dryRunResult.rule_details" stripe size="small" style="margin-bottom: 16px">
+          <el-table-column prop="rule_name" label="规则名称" min-width="120" />
+          <el-table-column label="匹配" width="70" align="center">
+            <template #default="{ row }"><el-tag :type="row.matched ? 'success' : 'danger'" size="small">{{ row.matched ? '是' : '否' }}</el-tag></template>
+          </el-table-column>
+          <el-table-column label="时间" width="60" align="center">
+            <template #default="{ row }"><el-tag :type="row.time_matched ? 'success' : 'info'" size="small">{{ row.time_matched ? '✓' : '✗' }}</el-tag></template>
+          </el-table-column>
+          <el-table-column label="空间" width="60" align="center">
+            <template #default="{ row }"><el-tag :type="row.spatial_matched ? 'success' : 'info'" size="small">{{ row.spatial_matched ? '✓' : '✗' }}</el-tag></template>
+          </el-table-column>
+          <el-table-column label="源" width="60" align="center">
+            <template #default="{ row }"><el-tag :type="row.source_matched ? 'success' : 'info'" size="small">{{ row.source_matched ? '✓' : '✗' }}</el-tag></template>
+          </el-table-column>
+          <el-table-column label="冷却" width="60" align="center">
+            <template #default="{ row }"><el-tag :type="row.cooldown_active ? 'warning' : 'info'" size="small">{{ row.cooldown_active ? '是' : '否' }}</el-tag></template>
+          </el-table-column>
+          <el-table-column prop="match_reason" label="原因" min-width="120" />
+        </el-table>
+        <div v-if="dryRunResult.simulated_actions?.length" style="margin-top: 12px">
+          <div style="font-weight: 600; margin-bottom: 8px">将触发的动作:</div>
+          <el-tag v-for="a in dryRunResult.simulated_actions" :key="a" type="success" effect="plain" style="margin: 2px">{{ a }}</el-tag>
+        </div>
+      </template>
+      <template #footer><el-button @click="showDryRunDialog = false">关闭</el-button></template>
+    </el-dialog>
+
+    <!-- ===== 模板库对话框 ===== -->
+    <el-dialog v-model="showTemplateDialog" title="规则模板库" width="820px" destroy-on-close>
+      <div v-loading="templateLoading">
+        <div v-for="(group, cat) in templatesByCategory" :key="cat" style="margin-bottom: 20px">
+          <div style="font-size: 15px; font-weight: 600; margin-bottom: 10px; color: #303133; border-left: 3px solid #6366F1; padding-left: 8px">{{ cat }}</div>
+          <el-row :gutter="12">
+            <el-col :span="8" v-for="tmpl in group" :key="tmpl.template_id">
+              <el-card shadow="hover" class="template-card" :body-style="{ padding: '14px' }">
+                <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px">
+                  <div style="font-weight: 600; font-size: 14px">{{ tmpl.name }}</div>
+                  <el-tag v-if="tmpl.is_builtin" size="small" type="info" effect="plain">内置</el-tag>
+                </div>
+                <div style="font-size: 12px; color: #909399; margin-bottom: 10px; line-height: 1.5">{{ tmpl.description }}</div>
+                <div style="margin-bottom: 8px">
+                  <el-tag v-for="t in (tmpl.tags || []).slice(0, 3)" :key="t" size="small" effect="plain" style="margin: 1px">{{ t }}</el-tag>
+                </div>
+                <div style="font-size: 12px; color: #909399; margin-bottom: 10px">优先级: {{ tmpl.priority }} | 动作: {{ (tmpl.actions || []).length }}项</div>
+                <el-button type="primary" size="small" @click="applyTemplate(tmpl)" style="width: 100%">一键应用</el-button>
+              </el-card>
+            </el-col>
+          </el-row>
+        </div>
+        <el-empty v-if="!templateLoading && Object.keys(templatesByCategory).length === 0" description="暂无规则模板" />
+      </div>
+    </el-dialog>
+
+    <!-- ===== 时段模板管理对话框 ===== -->
+    <el-dialog v-model="showTimeTemplateDialog" title="布防时段模板管理" width="600px" destroy-on-close>
+      <TimeTemplateEditor @apply="applyTimeTemplate" />
     </el-dialog>
   </div>
 </template>
@@ -319,9 +607,14 @@
 <script setup lang="ts">
 import { ref, computed, reactive, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import type { FormInstance, FormRules } from 'element-plus'
 import { Search, Plus, Document, Link, Bell, Setting, ArrowDown } from '@element-plus/icons-vue'
-import { linkageApi } from '@/api/linkage'
-import type { LinkageRule, LinkageLog } from '@/api/linkage'
+import { linkageApi, ACTION_TYPE_MAP, ACTION_TYPE_REVERSE_MAP, getTargetForActionType } from '@/api/linkage'
+import type { LinkageRule, LinkageAction, LinkageLog, TimeTemplate } from '@/api/linkage'
+import { useLinkageOptions } from '@/composables/useLinkageOptions'
+import RoiPolygonEditor from '@/components/RoiPolygonEditor.vue'
+import TimeTemplateEditor from '@/components/TimeTemplateEditor.vue'
+import type { RoiData } from '@/composables/useRoiCanvas'
 
 // ── 常量 ──
 
@@ -338,36 +631,56 @@ const weekdays = [
   { label: '周一', value: 1 }, { label: '周二', value: 2 }, { label: '周三', value: 3 },
   { label: '周四', value: 4 }, { label: '周五', value: 5 }, { label: '周六', value: 6 }, { label: '周日', value: 7 },
 ]
-const eventTypes = ['周界入侵', '绊线', '烟火', '安全帽', '人脸', '车牌', '人群', '摔倒']
+
+// 动态选项 (从后端加载)
+const { eventTypeOptions, eventTypeGrouped, channelOptions: channelOptionsDynamic, loading: optionsLoading, fetchOptions } = useLinkageOptions()
+
+// 静态回退选项
+const fallbackEventTypes = ['周界入侵', '绊线', '烟火', '安全帽', '人脸', '车牌', '人群', '摔倒']
+const fallbackChannelOptions = ['CH01', 'CH02', 'CH03', 'CH04', 'CH05', 'CH06', 'CH07', 'CH08']
 const locationOptions = ['全部位置', '3号厂区', '东围墙', '2号车间', '1号大门']
 const roiOptions = ['全部区域', '周界线A', '绊线B', '区域C']
 const groupOptions = ['全部分组', '东区摄像头', '室内摄像头', '室外摄像头']
-const channelOptions = ['CH01', 'CH02', 'CH03', 'CH04', 'CH05', 'CH06', 'CH07', 'CH08']
+
+// ROI 编辑器背景快照
+const roiBackgroundUrl = ref('')
+async function loadChannelSnapshot(channelId: string) {
+  if (!channelId) { roiBackgroundUrl.value = ''; return }
+  try {
+    const res = await fetch(`/api/v1/channels/${channelId}/snapshot`, { credentials: 'include' })
+    if (res.ok) {
+      const blob = await res.blob()
+      roiBackgroundUrl.value = URL.createObjectURL(blob)
+    } else {
+      roiBackgroundUrl.value = ''
+    }
+  } catch { roiBackgroundUrl.value = '' }
+}
 
 const clientActionGroups = [
-  { label: '📹 视频联动', items: [
+  { label: '视频联动', items: [
     { type: 'CLIENT_SHOW_LIVE', icon: '📹', label: '弹出指定监控点实时视频' },
     { type: 'CLIENT_SHOW_PLAYBACK', icon: '📼', label: '弹出指定监控点录像回放' },
     { type: 'CLIENT_SHOW_IMAGE', icon: '🖼️', label: '弹出事件图片' },
     { type: 'CLIENT_OVERLAY_INFO', icon: '📋', label: '弹窗视频画面叠加事件信息' },
   ]},
-  { label: '🔊 音频联动', items: [
+  { label: '音频联动', items: [
     { type: 'CLIENT_VOICE_TALK', icon: '🎙️', label: '控制指定对讲通道语音对讲' },
     { type: 'CLIENT_PLAY_TONE', icon: '🔔', label: '播放提示音' },
     { type: 'CLIENT_TTS_BROADCAST', icon: '📢', label: '语音播报事件信息 (重复N次)' },
   ]},
-  { label: '📺 显示联动', items: [
+  { label: '显示联动', items: [
     { type: 'CLIENT_SHOW_MAP', icon: '🗺️', label: '联动地图位置' },
     { type: 'CLIENT_TV_WALL', icon: '🖥️', label: '指定监控点上电视墙 (持续N秒)' },
     { type: 'CLIENT_SUPPRESS_POPUP', icon: '🔇', label: '发生预警不弹窗 (静默)' },
     { type: 'CLIENT_EXECUTE_PLAN', icon: '📋', label: '执行事件处理预案' },
   ]},
-  { label: '📹 录像与抓图', items: [
+  { label: '录像与抓图', items: [
     { type: 'CLIENT_RECORD_EVENT', icon: '🎥', label: '指定监控点事件录像' },
-    { type: 'CLIENT_ADD_BOOKMARK', icon: '🔖', label: '添加录像标记 (类型+描述)' },
+    { type: 'CLIENT_ADD_BOOKMARK', icon: '🔖', label: '添加录像标记' },
     { type: 'CLIENT_CAPTURE_IMAGE', icon: '📸', label: '间隔N秒抓图M次' },
   ]},
-  { label: '🎮 设备控制', items: [
+  { label: '设备控制', items: [
     { type: 'CLIENT_ALARM_OUTPUT', icon: '🚨', label: '控制指定报警输出' },
     { type: 'CLIENT_PTZ_CONTROL', icon: '🎮', label: '控制云台' },
     { type: 'CLIENT_PTZ_PRESET_START', icon: '📍', label: '事件开始转到预置点' },
@@ -376,19 +689,35 @@ const clientActionGroups = [
     { type: 'CLIENT_PTZ_TRACK', icon: '〰️', label: '调用轨迹' },
     { type: 'CLIENT_ACCESS_OPEN', icon: '🚪', label: '指定门禁点开门' },
   ]},
-  { label: '📬 通知', items: [
+  { label: '通知', items: [
     { type: 'CLIENT_SEND_SMS', icon: '💬', label: '发送短信给指定用户' },
     { type: 'CLIENT_SEND_EMAIL', icon: '📧', label: '发送邮件给指定用户' },
     { type: 'CLIENT_ALARM_MODE', icon: '🌐', label: '指定IP进行指定模式报警' },
-    { type: 'CLIENT_ESCALATE', icon: '⬆️', label: '逐级推送 (每N秒未解决推送至下一级)' },
+    { type: 'CLIENT_ESCALATE', icon: '⬆️', label: '逐级推送' },
   ]},
 ]
 
-const webActions = [
-  { type: 'WEB_POPUP', icon: '💬', label: 'Web端弹窗通知' },
-  { type: 'WEB_EMAIL', icon: '📧', label: '发送邮件' },
-  { type: 'WEB_WEBHOOK', icon: '🔗', label: 'HTTP回调 (WebHook)' },
-  { type: 'WEB_DASHBOARD_ALERT', icon: '📊', label: 'Dashboard嵌入告警' },
+const webActionGroups = [
+  { label: '视频联动', items: [
+    { type: 'WEB_POPUP', icon: '💬', label: 'Web端弹窗通知' },
+    { type: 'WEB_SHOW_LIVE', icon: '📹', label: '弹出实时视频' },
+    { type: 'WEB_SHOW_PLAYBACK', icon: '📼', label: '弹出录像回放' },
+    { type: 'WEB_SHOW_IMAGE', icon: '🖼️', label: '弹出事件图片' },
+  ]},
+  { label: '音频联动', items: [
+    { type: 'WEB_PLAY_TONE', icon: '🔔', label: '播放提示音' },
+    { type: 'WEB_TTS_BROADCAST', icon: '📢', label: '语音播报' },
+  ]},
+  { label: '录像控制', items: [
+    { type: 'WEB_CAPTURE_IMAGE', icon: '📸', label: '抓图' },
+    { type: 'WEB_RECORD_EVENT', icon: '🎥', label: '事件录像' },
+  ]},
+  { label: '通知推送', items: [
+    { type: 'WEB_EMAIL', icon: '📧', label: '发送邮件' },
+    { type: 'WEB_WEBHOOK', icon: '🔗', label: 'HTTP回调 (WebHook)' },
+    { type: 'WEB_SEND_SMS', icon: '💬', label: '发送短信' },
+    { type: 'WEB_DASHBOARD_ALERT', icon: '📊', label: 'Dashboard嵌入告警' },
+  ]},
 ]
 const appActions = [
   { type: 'APP_PUSH_NOTIFY', icon: '📱', label: 'APP推送通知' },
@@ -419,6 +748,16 @@ const searchQuery = ref('')
 const enabledFilter = ref<boolean | undefined>(undefined)
 const sortBy = ref('priority')
 const sortOrder = ref<'ascending' | 'descending'>('descending')
+const selectedRows = ref<LinkageRule[]>([])
+const tagFilter = ref<string[]>([])
+
+const allTags = computed(() => {
+  const tagSet = new Set<string>()
+  for (const r of rules.value) {
+    for (const t of r.tags || []) tagSet.add(t)
+  }
+  return Array.from(tagSet).sort()
+})
 
 const filteredRules = computed(() => {
   let list = [...rules.value]
@@ -427,11 +766,17 @@ const filteredRules = computed(() => {
     list = list.filter(r => r.name.toLowerCase().includes(q))
   }
   if (enabledFilter.value !== undefined) list = list.filter(r => r.enabled === enabledFilter.value)
+  if (tagFilter.value.length > 0) {
+    list = list.filter(r => {
+      const ruleTags = r.tags || []
+      return tagFilter.value.some(t => ruleTags.includes(t))
+    })
+  }
   const key = sortBy.value
   const ord = sortOrder.value === 'ascending' ? 1 : -1
   list.sort((a: any, b: any) => {
     if (key === 'priority') return (a.priority - b.priority) * ord
-    return (new Date(a[key]).getTime() - new Date(b[key]).getTime()) * ord
+    return ((a[key] || 0) - (b[key] || 0)) * ord
   })
   return list
 })
@@ -445,7 +790,7 @@ const statCards = computed(() => {
     { label: '规则总数', value: total, color: '#6366F1', icon: Link },
     { label: '已启用', value: enabled, color: '#10B981', icon: Bell },
     { label: '已停用', value: total - enabled, color: '#F59E0B', icon: Setting },
-    { label: '高优先级(≥80)', value: rules.value.filter(r => r.priority >= 80).length, color: '#EF4444', icon: Bell },
+    { label: '高优先级(>=80)', value: rules.value.filter(r => r.priority >= 80).length, color: '#EF4444', icon: Bell },
   ]
 })
 
@@ -458,11 +803,17 @@ const activeActionTab = ref('client')
 const collapsedConditions = reactive<Record<string, boolean>>({ time: false, region: true, location: true, eventType: false, eventSource: true, autoMerge: true })
 const actionState = reactive<Record<string, boolean>>({})
 const actionParams = reactive<Record<string, Record<string, any>>>({})
+const formRef = ref<FormInstance>()
+
+const formRules = reactive<FormRules>({
+  name: [{ required: true, message: '请输入规则名称', trigger: 'blur' }],
+  priority: [{ type: 'number', min: 1, max: 100, message: '优先级 1-100', trigger: 'change' }],
+})
 
 function defaultConditions() {
   return {
     time: { enabled: false, config: { startTime: '08:00', endTime: '20:00', weekdays: [1, 2, 3, 4, 5] } },
-    region: { enabled: false, config: { location: '', roi: '', group: '' } },
+    region: { enabled: false, config: { location: '', roi: '', group: '', roiPolygon: [] as RoiData[], channelId: '' } },
     location: { enabled: false, config: { point: '' } },
     eventType: { enabled: true, config: { types: [] as string[], minSeverity: 3, minConfidence: 50 } },
     eventSource: { enabled: false, config: { channels: [] as string[] } },
@@ -471,8 +822,38 @@ function defaultConditions() {
 }
 
 const form = reactive({
-  name: '', priority: 50, cooldownMs: 5000, enabled: true,
+  name: '',
+  description: '',
+  priority: 50,
+  cooldownMs: 5000,
+  enabled: true,
+  tags: [] as string[],
+  timeTemplateId: '',
   conditions: defaultConditions(),
+})
+
+// ── 高级条件模式 ──
+const advancedConditionMode = ref(false)
+const conditionTreeJson = ref('')
+
+// ── Dry-Run 状态 ──
+const dryRunLoading = ref(false)
+const dryRunResult = ref<any>(null)
+const showDryRunDialog = ref(false)
+
+// ── 模板库状态 ──
+const showTemplateDialog = ref(false)
+const showTimeTemplateDialog = ref(false)
+const templateLoading = ref(false)
+const templateList = ref<any[]>([])
+const templatesByCategory = computed(() => {
+  const map: Record<string, any[]> = {}
+  for (const t of templateList.value) {
+    const cat = t.category || '其他'
+    if (!map[cat]) map[cat] = []
+    map[cat].push(t)
+  }
+  return map
 })
 
 // ── 日志状态 ──
@@ -483,95 +864,392 @@ const logLoading = ref(false)
 const logPage = ref(1)
 const logPageSize = ref(20)
 const logTotal = ref(0)
+const logViewMode = ref('table')
 
 // ── 参数弹窗 ──
 
 const paramDialogVisible = ref(false)
 const paramDialogTitle = ref('')
 const currentParamAction = ref('')
-const paramForm = reactive({ channelId: '', duration: 10, extra: '' })
+const paramActionCategory = ref('generic')
 
-// ── 方法 ──
+const paramForm = reactive({
+  channel_id: '',
+  device_id: '',
+  delay_ms: 0,
+  // TTS
+  tts_text: '',
+  tts_repeat: 1,
+  // PTZ
+  preset_id_start: '',
+  preset_id_end: '',
+  cruise_path_id: '',
+  // WebHook
+  callback_url: '',
+  callback_method: 'POST',
+  // MQTT
+  mqtt_topic: '',
+  mqtt_payload: '',
+  // TV Wall
+  tv_wall_id: '',
+  tv_wall_duration_s: 30,
+  // Capture
+  capture_interval_s: 2,
+  capture_count: 3,
+  // Modbus
+  modbus_host: '',
+  modbus_port: 502,
+  modbus_register: 0,
+  modbus_value: 1,
+  // Generic
+  extra: '',
+})
+
+// ── 工具函数 ──
 
 function conditionLabel(type: string) {
-  const m: Record<string, string> = { time: '🕐 时间', region: '📍 区域', location: '📌 位置', eventType: '🎯 事件', eventSource: '📹 事件源', autoMerge: '🔄 合并' }
+  const m: Record<string, string> = { time: '时间', spatial: '空间', source: '事件源', merge: '合并' }
   return m[type] || type
 }
 
-function formatTime(iso?: string) {
-  if (!iso) return '-'
-  try { return new Date(iso).toLocaleString('zh-CN') } catch { return iso }
+function getActiveConditions(rule: LinkageRule): Array<{ key: string; label: string }> {
+  const tags: Array<{ key: string; label: string }> = []
+  const tc = rule.time_cond
+  if (tc && (tc.time_start || tc.time_end || tc.weekdays?.length || tc.monthdays?.length))
+    tags.push({ key: 'time', label: '🕐 时间' })
+  const sc = rule.spatial_cond
+  if (sc && (sc.region_id || sc.location_id || sc.device_group_id || sc.roi_polygon?.length))
+    tags.push({ key: 'spatial', label: '📍 空间' })
+  const src = rule.source_cond
+  if (src && (src.event_types?.length || src.channel_ids?.length || src.algorithm_ids?.length))
+    tags.push({ key: 'source', label: '🎯 事件源' })
+  const mc = rule.merge_cond
+  if (mc && mc.enabled)
+    tags.push({ key: 'merge', label: '🔄 合并' })
+  return tags
+}
+
+function formatTime(ts?: number | string) {
+  if (!ts) return '-'
+  try {
+    const date = typeof ts === 'number' ? new Date(ts * 1000) : new Date(ts)
+    return date.toLocaleString('zh-CN')
+  } catch { return String(ts) }
+}
+
+function formatCooldown(ms?: number) {
+  if (!ms) return '-'
+  return ms >= 1000 ? (ms / 1000) + 's' : ms + 'ms'
 }
 
 function toggleCollapse(type: string) { collapsedConditions[type] = !collapsedConditions[type] }
 function handleSortChange({ prop, order }: any) { if (prop) sortBy.value = prop; if (order) sortOrder.value = order }
+function handleSelectionChange(rows: LinkageRule[]) { selectedRows.value = rows }
+
+function getParamCategory(typeStr: string): string {
+  if (typeStr === 'CLIENT_TTS_BROADCAST' || typeStr === 'WEB_TTS_BROADCAST') return 'tts'
+  if (typeStr.startsWith('CLIENT_PTZ')) return 'ptz'
+  if (typeStr === 'WEB_WEBHOOK' || typeStr === 'SYS_HTTP_CALLBACK') return 'webhook'
+  if (typeStr === 'SYS_MQTT_PUBLISH') return 'mqtt'
+  if (typeStr === 'CLIENT_TV_WALL') return 'tvwall'
+  if (typeStr === 'CLIENT_CAPTURE_IMAGE' || typeStr === 'WEB_CAPTURE_IMAGE') return 'capture'
+  if (typeStr === 'SYS_MODBUS_WRITE') return 'modbus'
+  return 'generic'
+}
+
+function getActionLabel(typeStr: string): string {
+  for (const g of clientActionGroups)
+    for (const a of g.items)
+      if (a.type === typeStr) return a.label
+  for (const g of webActionGroups)
+    for (const a of g.items)
+      if (a.type === typeStr) return a.label
+  for (const a of [...appActions, ...mpActions, ...sysActions])
+    if (a.type === typeStr) return a.label
+  return typeStr
+}
+
+// ── 数据加载 ──
 
 async function fetchRules() {
   loading.value = true
   try {
-    const res = await linkageApi.getRules({ sortBy: sortBy.value as any, sortOrder: sortOrder.value === 'ascending' ? 'asc' : 'desc' })
+    const res = await linkageApi.getRules()
     const d = (res.data as any)?.data ?? res.data
     rules.value = d?.items ?? (Array.isArray(d) ? d : [])
-  } catch { ElMessage.error('获取联动规则失败') }
-  finally { loading.value = false }
+  } catch (e: any) {
+    const msg = e?.response?.data?.message || e?.message || '获取联动规则失败'
+    ElMessage.error(msg)
+  } finally { loading.value = false }
 }
 
 async function toggleRule(rule: LinkageRule) {
-  try { await linkageApi.updateRule(rule.id, { enabled: rule.enabled }); ElMessage.success(rule.enabled ? '已启用' : '已停用') }
-  catch { rule.enabled = !rule.enabled; ElMessage.error('操作失败') }
+  try {
+    await linkageApi.updateRule(rule.id, { enabled: rule.enabled })
+    ElMessage.success(rule.enabled ? '已启用' : '已停用')
+  } catch (e: any) {
+    rule.enabled = !rule.enabled
+    const msg = e?.response?.data?.message || '操作失败'
+    ElMessage.error(msg)
+  }
 }
+
+// ── 编辑器: 打开/恢复 ──
 
 function openEditor(rule: LinkageRule | null) {
   editingRule.value = rule
   form.name = rule?.name || ''
+  form.description = rule?.description || ''
   form.priority = rule?.priority ?? 50
-  form.cooldownMs = rule?.cooldownMs ?? 5000
+  form.cooldownMs = rule?.cooldown_ms ?? 5000
   form.enabled = rule?.enabled ?? true
-
-  // 恢复条件
-  const defaults = defaultConditions()
-  const cfg = rule?.conditions || []
-  for (const cond of conditionDefs) {
-    const found = (cfg as any[]).find((c: any) => c.type === cond.type)
-    ;(form.conditions as any)[cond.type] = found ? { enabled: true, config: { ...(defaults as any)[cond.type].config, ...found.config } } : (defaults as any)[cond.type]
+  form.tags = rule?.tags ? [...rule.tags] : []
+  // 恢复条件树
+  if (rule?.condition_tree) {
+    advancedConditionMode.value = true
+    conditionTreeJson.value = JSON.stringify(rule.condition_tree, null, 2)
+  } else {
+    advancedConditionMode.value = false
+    conditionTreeJson.value = ''
   }
 
-  // 恢复动作
+  // 恢复条件: 后端格式 → 内部 6 条件表单
+  const defaults = defaultConditions()
+  if (rule) {
+    // time_cond → time
+    const tc = rule.time_cond || {} as any
+    form.conditions.time = {
+      enabled: !!(tc.time_start || tc.time_end || tc.weekdays?.length),
+      config: { startTime: tc.time_start || '08:00', endTime: tc.time_end || '20:00', weekdays: tc.weekdays || [1, 2, 3, 4, 5] },
+    }
+    // spatial_cond → region + location
+    const sc = rule.spatial_cond || {} as any
+    const hasSpatial = !!(sc.region_id || sc.location_id || sc.device_group_id || sc.roi_polygon?.length)
+    form.conditions.region = {
+      enabled: hasSpatial,
+      config: { location: sc.location_id || '', roi: sc.region_id || '', group: sc.device_group_id || '', roiPolygon: [] as RoiData[], channelId: '' },
+    }
+    form.conditions.location = {
+      enabled: !!sc.location_id,
+      config: { point: sc.location_id || '' },
+    }
+    // source_cond → eventType + eventSource
+    const src = rule.source_cond || {} as any
+    form.conditions.eventType = {
+      enabled: true,
+      config: {
+        types: src.algorithm_ids?.length ? src.algorithm_ids : (src.event_types || []),
+        minSeverity: src.min_severity ?? 3,
+        minConfidence: Math.round((src.min_confidence ?? 0.5) * 100),
+      },
+    }
+    form.conditions.eventSource = {
+      enabled: !!(src.channel_ids?.length || src.device_ids?.length),
+      config: { channels: [...(src.channel_ids || []).map(String), ...(src.device_ids || [])] },
+    }
+    // merge_cond → autoMerge
+    const mc = rule.merge_cond || {} as any
+    form.conditions.autoMerge = {
+      enabled: !!mc.enabled,
+      config: { windowMs: mc.window_ms || 10000, maxCount: mc.max_merge_count || 10, dimension: mc.merge_by || 'channel' },
+    }
+  } else {
+    form.conditions = defaultConditions()
+  }
+
+  // 恢复动作: 后端格式 → actionState + actionParams
   Object.keys(actionState).forEach(k => delete actionState[k])
   Object.keys(actionParams).forEach(k => delete actionParams[k])
-  for (const a of rule?.actions || []) {
-    actionState[a.actionType] = a.enabled
-    actionParams[a.actionType] = a.params || {}
+  if (rule?.actions) {
+    for (const a of rule.actions) {
+      const typeStr = ACTION_TYPE_REVERSE_MAP[a.type]
+      if (typeStr) {
+        actionState[typeStr] = a.enabled
+        // 提取参数 (排除 type/target/name/enabled 等元数据字段)
+        const { type: _t, target: _tg, name: _n, enabled: _e, ...rest } = a
+        actionParams[typeStr] = rest || {}
+      }
+    }
   }
 
   drawerVisible.value = true
 }
 
+// ── 编辑器: 保存 (内部表单 → 后端格式) ──
+
 async function handleSave() {
+  // 表单验证
   if (!form.name.trim()) { ElMessage.warning('请输入规则名称'); return }
+  if (form.priority < 1 || form.priority > 100) { ElMessage.warning('优先级范围 1-100'); return }
+  if (form.cooldownMs < 1000) { ElMessage.warning('冷却时间最小 1000ms'); return }
+
+  const enabledActions = Object.entries(actionState).filter(([, v]) => v)
+  if (enabledActions.length === 0) { ElMessage.warning('请至少选择一个联动动作'); return }
+
   saving.value = true
   try {
-    const conditions = conditionDefs
-      .filter(c => form.conditions[c.type].enabled)
-      .map(c => ({ type: c.type, enabled: true, config: form.conditions[c.type].config }))
+    // 构建 conditions: 内部 6 条件 → 后端 4 条件
+    const tc = form.conditions.time
+    const time_cond = tc.enabled ? {
+      time_start: tc.config.startTime,
+      time_end: tc.config.endTime,
+      weekdays: tc.config.weekdays,
+      monthdays: [] as number[],
+    } : { time_start: '', time_end: '', weekdays: [] as number[], monthdays: [] as number[] }
 
-    const actions = Object.entries(actionState)
-      .filter(([, v]) => v)
-      .map(([type]) => ({ actionType: type, enabled: true, params: actionParams[type] || {} }))
+    const rc = form.conditions.region
+    const lc = form.conditions.location
+    const spatial_cond = (rc.enabled || lc.enabled) ? {
+      region_id: rc.config.roi || '',
+      location_id: lc.enabled ? (lc.config.point || rc.config.location) : (rc.config.location || ''),
+      device_group_id: rc.config.group || '',
+      roi_polygon: rc.config.roiPolygon.flatMap((r: RoiData) => r.polygon) || [] as number[],
+    } : { region_id: '', location_id: '', device_group_id: '', roi_polygon: [] as number[] }
 
-    const payload = { name: form.name, priority: form.priority, cooldownMs: form.cooldownMs, enabled: form.enabled, conditions, actions }
+    const etc = form.conditions.eventType
+    const esc = form.conditions.eventSource
+    // 提取 alarm type (从算法 ID 最后一部分)
+    const event_types = etc.config.types.map(id => { const p = id.split('.'); return p[p.length - 1] || id })
+    // 通道分类: 纯数字 ID → channel_ids (int32), 字符串 ID → device_ids
+    const numericChannels: number[] = []
+    const stringChannels: string[] = []
+    for (const c of esc.config.channels) {
+      const n = parseInt(c, 10)
+      if (!isNaN(n) && String(n) === c.trim()) numericChannels.push(n)
+      else stringChannels.push(c)
+    }
+    const source_cond = {
+      channel_ids: numericChannels,
+      device_ids: stringChannels,
+      event_types,
+      min_severity: etc.config.minSeverity,
+      min_confidence: etc.config.minConfidence / 100,
+      algorithm_ids: etc.config.types,
+    }
+
+    const mc = form.conditions.autoMerge
+    const merge_cond = mc.enabled ? {
+      enabled: true,
+      window_ms: mc.config.windowMs,
+      max_merge_count: mc.config.maxCount,
+      merge_by: mc.config.dimension,
+    } : { enabled: false, window_ms: 10000, max_merge_count: 10, merge_by: 'channel' }
+
+    // 构建 actions: actionState + actionParams → 后端 LinkageAction[]
+    const actions: LinkageAction[] = enabledActions.map(([typeStr]) => {
+      const params = actionParams[typeStr] || {}
+      return {
+        type: ACTION_TYPE_MAP[typeStr] || 0,
+        target: getTargetForActionType(typeStr),
+        name: getActionLabel(typeStr),
+        enabled: true,
+        channel_id: params.channel_id || '',
+        device_id: params.device_id || '',
+        delay_ms: params.delay_ms || 0,
+        // 按类别保留专用字段
+        ...(params.tts_text !== undefined ? { tts_text: params.tts_text } : {}),
+        ...(params.tts_repeat !== undefined ? { tts_repeat: params.tts_repeat } : {}),
+        ...(params.preset_id_start !== undefined ? { preset_id_start: params.preset_id_start } : {}),
+        ...(params.preset_id_end !== undefined ? { preset_id_end: params.preset_id_end } : {}),
+        ...(params.cruise_path_id !== undefined ? { cruise_path_id: params.cruise_path_id } : {}),
+        ...(params.callback_url !== undefined ? { callback_url: params.callback_url } : {}),
+        ...(params.callback_method !== undefined ? { callback_method: params.callback_method } : {}),
+        ...(params.mqtt_topic !== undefined ? { mqtt_topic: params.mqtt_topic } : {}),
+        ...(params.mqtt_payload !== undefined ? { mqtt_payload: params.mqtt_payload } : {}),
+        ...(params.tv_wall_id !== undefined ? { tv_wall_id: params.tv_wall_id } : {}),
+        ...(params.tv_wall_duration_s !== undefined ? { tv_wall_duration_s: params.tv_wall_duration_s } : {}),
+        ...(params.capture_interval_s !== undefined ? { capture_interval_s: params.capture_interval_s } : {}),
+        ...(params.capture_count !== undefined ? { capture_count: params.capture_count } : {}),
+        ...(params.modbus_host !== undefined ? { modbus_host: params.modbus_host } : {}),
+        ...(params.modbus_port !== undefined ? { modbus_port: params.modbus_port } : {}),
+        ...(params.modbus_register !== undefined ? { modbus_register: params.modbus_register } : {}),
+        ...(params.modbus_value !== undefined ? { modbus_value: params.modbus_value } : {}),
+        ...(params.extra ? { params: params.extra } : {}),
+      } as LinkageAction
+    })
+
+    const payload = {
+      name: form.name.trim(),
+      description: form.description.trim(),
+      priority: form.priority,
+      cooldown_ms: form.cooldownMs,
+      enabled: form.enabled,
+      tags: form.tags,
+      ...(advancedConditionMode.value && conditionTreeJson.value ? { condition_tree: JSON.parse(conditionTreeJson.value) } : {}),
+      time_cond,
+      spatial_cond,
+      source_cond,
+      merge_cond,
+      actions,
+    }
 
     if (editingRule.value) {
       await linkageApi.updateRule(editingRule.value.id, payload)
     } else {
-      await linkageApi.createRule(payload as any)
+      // 新建时生成 UUID
+      const id = crypto.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+      await linkageApi.createRule({ id, ...payload })
     }
     ElMessage.success(editingRule.value ? '规则已更新' : '规则已创建')
     drawerVisible.value = false
     fetchRules()
-  } catch { ElMessage.error('保存失败') }
-  finally { saving.value = false }
+  } catch (e: any) {
+    const msg = e?.response?.data?.message || e?.message || '保存失败'
+    ElMessage.error(msg)
+  } finally { saving.value = false }
 }
+
+// ── Dry-Run 模拟测试 ──
+
+async function handleDryRun() {
+  if (!editingRule.value) { ElMessage.warning('请先保存规则后再进行模拟测试'); return }
+  dryRunLoading.value = true
+  try {
+    const res = await linkageApi.dryRun({
+      rule_id: editingRule.value.id,
+      alarm_type: (form.conditions.eventType.config.types[0] as string) || 'intrusion',
+      channel_id: parseInt(form.conditions.eventSource.config.channels[0]) || 1,
+      severity: form.conditions.eventType.config.minSeverity,
+      // 使用表单设置的置信度 + 5% 作为模拟值，确保高于阈值
+      confidence: Math.min((form.conditions.eventType.config.minConfidence + 5) / 100, 1.0),
+      region_id: form.conditions.region.config.roi || '',
+      location_id: form.conditions.region.config.location || '',
+    })
+    const data = (res as any)?.data?.data ?? (res as any)?.data ?? res
+    dryRunResult.value = data
+    showDryRunDialog.value = true
+  } catch (e: any) {
+    ElMessage.error('模拟测试失败: ' + (e?.message || '未知错误'))
+  } finally { dryRunLoading.value = false }
+}
+
+// ── 模板库 ──
+
+async function openTemplateLibrary() {
+  showTemplateDialog.value = true
+  templateLoading.value = true
+  try {
+    const res = await linkageApi.getRuleTemplates()
+    const data = (res as any)?.data?.data ?? (res as any)?.data ?? []
+    templateList.value = Array.isArray(data) ? data : []
+  } catch {
+    templateList.value = []
+  } finally { templateLoading.value = false }
+}
+
+async function applyTemplate(tmpl: any) {
+  try {
+    await ElMessageBox.confirm(`确定从模板「${tmpl.name}」创建新规则?`, '应用模板', { type: 'info' })
+    const res = await linkageApi.applyRuleTemplate(tmpl.template_id, tmpl.name)
+    ElMessage.success('规则已从模板创建')
+    showTemplateDialog.value = false
+    fetchRules()
+  } catch (e: any) {
+    if (e !== 'cancel') ElMessage.error('应用模板失败: ' + (e?.message || ''))
+  }
+}
+
+// ── 删除 ──
 
 async function handleDelete(row: LinkageRule) {
   try {
@@ -579,31 +1257,162 @@ async function handleDelete(row: LinkageRule) {
     await linkageApi.deleteRule(row.id)
     ElMessage.success('已删除')
     fetchRules()
-  } catch {}
+  } catch (e: any) {
+    if (e !== 'cancel') {
+      const msg = e?.response?.data?.message || '删除失败'
+      ElMessage.error(msg)
+    }
+  }
 }
+
+// ── 动作参数弹窗 ──
 
 function onActionToggle(type: string) {
   if (actionState[type] && !actionParams[type]) actionParams[type] = {}
 }
 
+const paramNeedsChannel = computed(() => {
+  const t = currentParamAction.value
+  return !['WEB_WEBHOOK', 'SYS_HTTP_CALLBACK', 'SYS_MQTT_PUBLISH', 'SYS_MODBUS_WRITE', 'WEB_POPUP', 'WEB_DASHBOARD_ALERT', 'WEB_EMAIL', 'WEB_PLAY_TONE', 'WEB_TTS_BROADCAST', 'WEB_SEND_SMS', 'WEB_SHOW_IMAGE'].includes(t)
+})
+
 function openActionParams(act: any) {
   currentParamAction.value = act.type
-  paramDialogTitle.value = `${act.icon} ${act.label} - 参数配置`
+  paramDialogTitle.value = `${act.label} - 参数配置`
+  paramActionCategory.value = getParamCategory(act.type)
+
   const p = actionParams[act.type] || {}
-  paramForm.channelId = p.channelId || ''
-  paramForm.duration = p.duration || 10
-  paramForm.extra = p.extra ? JSON.stringify(p.extra) : ''
+  paramForm.channel_id = p.channel_id || ''
+  paramForm.device_id = p.device_id || ''
+  paramForm.delay_ms = p.delay_ms || 0
+  paramForm.tts_text = p.tts_text || ''
+  paramForm.tts_repeat = p.tts_repeat || 1
+  paramForm.preset_id_start = p.preset_id_start || ''
+  paramForm.preset_id_end = p.preset_id_end || ''
+  paramForm.cruise_path_id = p.cruise_path_id || ''
+  paramForm.callback_url = p.callback_url || ''
+  paramForm.callback_method = p.callback_method || 'POST'
+  paramForm.mqtt_topic = p.mqtt_topic || ''
+  paramForm.mqtt_payload = p.mqtt_payload || ''
+  paramForm.tv_wall_id = p.tv_wall_id || ''
+  paramForm.tv_wall_duration_s = p.tv_wall_duration_s || 30
+  paramForm.capture_interval_s = p.capture_interval_s || 2
+  paramForm.capture_count = p.capture_count || 3
+  paramForm.modbus_host = p.modbus_host || ''
+  paramForm.modbus_port = p.modbus_port || 502
+  paramForm.modbus_register = p.modbus_register || 0
+  paramForm.modbus_value = p.modbus_value || 1
+  paramForm.extra = ''
+  // 如果有 params 对象 (generic extra), 显示为 JSON
+  if (p.params && typeof p.params === 'object') {
+    paramForm.extra = JSON.stringify(p.params, null, 2)
+  }
+
   paramDialogVisible.value = true
 }
 
 function saveActionParams() {
-  let extra = {}
-  if (paramForm.extra.trim()) {
-    try { extra = JSON.parse(paramForm.extra) } catch { ElMessage.warning('JSON 格式不正确'); return }
+  const category = paramActionCategory.value
+  const typeStr = currentParamAction.value
+
+  // 按类别验证
+  if (category === 'tts' && !paramForm.tts_text.trim()) {
+    ElMessage.warning('请输入播报文本'); return
   }
-  actionParams[currentParamAction.value] = { channelId: paramForm.channelId, duration: paramForm.duration, extra }
+  if (category === 'webhook' && !paramForm.callback_url.trim()) {
+    ElMessage.warning('请输入回调URL'); return
+  }
+  if (category === 'mqtt' && !paramForm.mqtt_topic.trim()) {
+    ElMessage.warning('请输入MQTT主题'); return
+  }
+  if (category === 'modbus' && !paramForm.modbus_host.trim()) {
+    ElMessage.warning('请输入设备地址'); return
+  }
+
+  // 构建参数对象
+  const params: Record<string, any> = {
+    channel_id: paramForm.channel_id,
+    device_id: paramForm.device_id,
+    delay_ms: paramForm.delay_ms,
+  }
+
+  if (category === 'tts') {
+    params.tts_text = paramForm.tts_text
+    params.tts_repeat = paramForm.tts_repeat
+  } else if (category === 'ptz') {
+    params.preset_id_start = paramForm.preset_id_start
+    params.preset_id_end = paramForm.preset_id_end
+    params.cruise_path_id = paramForm.cruise_path_id
+  } else if (category === 'webhook') {
+    params.callback_url = paramForm.callback_url
+    params.callback_method = paramForm.callback_method
+  } else if (category === 'mqtt') {
+    params.mqtt_topic = paramForm.mqtt_topic
+    params.mqtt_payload = paramForm.mqtt_payload
+  } else if (category === 'tvwall') {
+    params.tv_wall_id = paramForm.tv_wall_id
+    params.tv_wall_duration_s = paramForm.tv_wall_duration_s
+  } else if (category === 'capture') {
+    params.capture_interval_s = paramForm.capture_interval_s
+    params.capture_count = paramForm.capture_count
+  } else if (category === 'modbus') {
+    params.modbus_host = paramForm.modbus_host
+    params.modbus_port = paramForm.modbus_port
+    params.modbus_register = paramForm.modbus_register
+    params.modbus_value = paramForm.modbus_value
+  } else {
+    // 通用: 解析 JSON extra
+    if (paramForm.extra.trim()) {
+      try { params.extra = JSON.parse(paramForm.extra) }
+      catch { ElMessage.warning('JSON 格式不正确'); return }
+    }
+  }
+
+  actionParams[typeStr] = params
   paramDialogVisible.value = false
 }
+
+// ── 批量操作 ──
+
+async function handleBatchToggle(enabled: boolean) {
+  if (!selectedRows.value.length) return
+  try {
+    const ids = selectedRows.value.map(r => r.id)
+    const res = await linkageApi.batchToggle(ids, enabled)
+    const d = (res.data as any)?.data ?? res.data
+    ElMessage.success(`已${enabled ? '启用' : '停用'} ${d?.updated || ids.length} 条规则`)
+    selectedRows.value = []
+    fetchRules()
+  } catch (e: any) {
+    const msg = e?.response?.data?.message || '批量操作失败'
+    ElMessage.error(msg)
+  }
+}
+
+async function handleBatchDelete() {
+  if (!selectedRows.value.length) return
+  try {
+    await ElMessageBox.confirm(
+      `确定删除选中的 ${selectedRows.value.length} 条规则?`,
+      '批量删除确认',
+      { type: 'warning' }
+    )
+    let success = 0
+    let failed = 0
+    for (const row of selectedRows.value) {
+      try { await linkageApi.deleteRule(row.id); success++ }
+      catch { failed++ }
+    }
+    if (failed > 0) ElMessage.warning(`已删除 ${success} 条，失败 ${failed} 条`)
+    else ElMessage.success(`已删除 ${success} 条规则`)
+    selectedRows.value = []
+    fetchRules()
+  } catch (e: any) {
+    if (e !== 'cancel') ElMessage.error('批量删除失败')
+  }
+}
+
+// ── 日志 ──
 
 async function fetchLogs() {
   logLoading.value = true
@@ -612,11 +1421,24 @@ async function fetchLogs() {
     const d = (res.data as any)?.data ?? res.data
     logs.value = d?.items ?? (Array.isArray(d) ? d : [])
     logTotal.value = d?.total ?? logs.value.length
-  } catch { ElMessage.error('获取日志失败') }
-  finally { logLoading.value = false }
+  } catch (e: any) {
+    const msg = e?.response?.data?.message || '获取日志失败'
+    ElMessage.error(msg)
+  } finally { logLoading.value = false }
 }
 
-onMounted(() => { fetchRules() })
+// ── 时段模板 ──
+
+function applyTimeTemplate(tmpl: TimeTemplate) {
+  form.conditions.time.enabled = true
+  form.conditions.time.config.startTime = tmpl.time_start || '08:00'
+  form.conditions.time.config.endTime = tmpl.time_end || '20:00'
+  form.conditions.time.config.weekdays = [...(tmpl.weekdays || [1, 2, 3, 4, 5])]
+  showTimeTemplateDialog.value = false
+  ElMessage.success('已应用时段模板: ' + tmpl.name)
+}
+
+onMounted(() => { fetchRules(); fetchOptions() })
 </script>
 
 <style scoped>
@@ -651,7 +1473,7 @@ onMounted(() => { fetchRules() })
 .toolbar-card :deep(.el-card__body) { padding: 12px 16px; }
 .toolbar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
 .toolbar-left { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.toolbar-right { display: flex; gap: 8px; }
+.toolbar-right { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 
 /* ── 列表卡片 ── */
 .list-card { border-radius: var(--radius-lg, 8px); }
@@ -700,6 +1522,8 @@ onMounted(() => { fetchRules() })
 /* ── 星期/事件/通道网格 ── */
 .weekdays { margin-top: 8px; }
 .event-type-grid { display: flex; flex-wrap: wrap; gap: 4px; }
+.event-type-group { width: 100%; margin-bottom: 4px; }
+.event-type-group__title { font-size: 11px; font-weight: 600; color: var(--color-primary-400, #3B82F6); margin-bottom: 2px; padding: 2px 0; }
 .channel-grid { display: flex; flex-wrap: wrap; gap: 4px; }
 
 /* ── 动作 Tabs ── */
@@ -718,4 +1542,8 @@ onMounted(() => { fetchRules() })
 
 /* ── 抽屉底部 ── */
 .drawer-footer { display: flex; justify-content: flex-end; gap: 12px; }
+
+/* ── 辅助 ── */
+.text-center { text-align: center; }
+.text-secondary { color: var(--app-text-secondary); font-size: 13px; }
 </style>

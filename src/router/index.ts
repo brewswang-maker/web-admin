@@ -43,6 +43,12 @@ const LocationTrackView = () => import('@/views/LocationTrackView.vue')
 const TopologyView = () => import('@/views/TopologyView.vue')
 const AlgorithmStoreView = () => import('@/views/AlgorithmStoreView.vue')
 const BillingView = () => import('@/views/BillingView.vue')
+const FaceDatabaseView = () => import('@/views/FaceDatabaseView.vue')
+const SystemLogsView = () => import('@/views/SystemLogsView.vue')
+const AlgoConfigView = () => import('@/views/AlgoConfigView.vue')
+const AlgoQualityView = () => import('@/views/AlgoQualityView.vue')
+const PipelineHealthView = () => import('@/views/PipelineHealthView.vue')
+const AnnotationView = () => import('@/views/AnnotationView.vue')
 
 // 基础路由（无需权限）
 export const constantRoutes: RouteRecordRaw[] = [
@@ -214,10 +220,22 @@ export const asyncRoutes: RouteRecordRaw[] = [
         meta: { title: '账单查看', icon: 'Wallet', roles: ['admin'] }
       },
       {
+        path: 'face-database',
+        name: 'FaceDatabase',
+        component: FaceDatabaseView,
+        meta: { title: '人脸库管理', icon: 'User', roles: ['admin', 'user'] }
+      },
+      {
         path: 'topology',
         name: 'Topology',
         component: TopologyView,
         meta: { title: '设备拓扑', icon: 'Connection', roles: ['admin', 'viewer'] }
+      },
+      {
+        path: 'system-logs',
+        name: 'SystemLogs',
+        component: SystemLogsView,
+        meta: { title: '系统日志', icon: 'Document', roles: ['admin'] }
       },
       {
         path: 'location',
@@ -260,6 +278,30 @@ export const asyncRoutes: RouteRecordRaw[] = [
         name: 'UserManagement',
         component: UserManagementView,
         meta: { title: '用户管理', icon: 'Avatar', hidden: true, roles: ['admin'] }
+      },
+      {
+        path: 'algo-config',
+        name: 'AlgoConfig',
+        component: AlgoConfigView,
+        meta: { title: '算法配置', icon: 'Setting', roles: ['admin'] }
+      },
+      {
+        path: 'algo-quality',
+        name: 'AlgoQuality',
+        component: AlgoQualityView,
+        meta: { title: '算法质检', icon: 'DataLine', roles: ['admin', 'user'] }
+      },
+      {
+        path: 'pipeline-health',
+        name: 'PipelineHealth',
+        component: PipelineHealthView,
+        meta: { title: 'Pipeline健康', icon: 'Monitor', roles: ['admin', 'user'] }
+      },
+      {
+        path: 'annotation',
+        name: 'Annotation',
+        component: AnnotationView,
+        meta: { title: '标注管理', icon: 'Edit', roles: ['admin', 'user'] }
       },
     ]
   },
@@ -342,7 +384,7 @@ router.beforeEach(async (to, _from, next) => {
 // 路由导航后置处理
 router.afterEach((to) => {
   // 记录访问日志
-  console.log('[Router] 导航至:', to.path, to.meta.title)
+  console.debug('[Router] 导航至:', to.path, to.meta.title)
 })
 
 export default router

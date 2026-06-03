@@ -1,5 +1,5 @@
 <template>
-  <el-config-provider :locale="zhCn">
+  <el-config-provider :locale="currentElementPlusLocale">
     <router-view v-slot="{ Component, route }">
       <transition name="page-fade" mode="out-in">
         <suspense :timeout="0">
@@ -20,16 +20,22 @@
     <Teleport to="body">
       <transition name="sw-update-slide">
         <div v-if="swUpdateAvailable" class="sw-update-banner">
-          <span>🎉 新版本可用</span>
+          <span>🎉 {{ $t('common.info') }}</span>
           <el-button type="primary" size="small" @click="applySWUpdate">
-            立即刷新
+            {{ $t('common.refresh') }}
           </el-button>
           <el-button text size="small" @click="swUpdateAvailable = false">
-            稍后
+            {{ $t('common.close') }}
           </el-button>
         </div>
       </transition>
     </Teleport>
+
+    <!-- 全局告警弹窗（海康威视风格） -->
+    <Alarm-popup />
+
+    <!-- 全局视频浮窗（离开 LiveView 后持续预览） -->
+    <FloatingPreview />
   </el-config-provider>
 </template>
 
@@ -38,16 +44,27 @@
  * App.vue — 华盾AI v6.0 Web管理控制台根组件
  *
  * 职责:
- *  1. 全局配置提供 (Element Plus Locale)
+ *  1. 全局配置提供 (Element Plus Locale + i18n 联动)
  *  2. 路由级 Suspense + 过渡动画
  *  3. Service Worker 更新提示
  *  4. Auth 初始化 (在路由守卫中完成)
  */
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { ElConfigProvider } from 'element-plus'
 import zhCn from 'element-plus/es/locale/lang/zh-cn'
+import en from 'element-plus/es/locale/lang/en'
 import SkeletonLoader from '@/components/SkeletonLoader.vue'
+import { usePreferenceStore } from '@/stores/preference'
+import { startGlobalAlarm, stopGlobalAlarm } from '@/composables/useGlobalAlarm'
+import AlarmPopup from '@/components/alarm/AlarmPopup.vue'
+import FloatingPreview from '@/components/video/FloatingPreview.vue'
 import type { RouteLocationNormalized } from 'vue-router'
+
+// ── Element Plus Locale 随 i18n 联动 ──
+const prefStore = usePreferenceStore()
+const currentElementPlusLocale = computed(() => {
+  return prefStore.language === 'en-US' ? en : zhCn
+})
 
 // ── SW 更新提示 ──
 const swUpdateAvailable = ref(false)
@@ -66,10 +83,13 @@ function applySWUpdate() {
 
 onMounted(() => {
   window.addEventListener('sw-update-available', onSWUpdate)
+  // 启动全局告警 WebSocket（全页面共用，弹窗不依赖 LiveView）
+  startGlobalAlarm()
 })
 
 onUnmounted(() => {
   window.removeEventListener('sw-update-available', onSWUpdate)
+  stopGlobalAlarm()
 })
 
 // ── 骨架屏类型判断 ──

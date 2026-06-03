@@ -7,6 +7,9 @@ import type { ApiResponse } from '@/types/common'
 export interface AlgorithmInfo {
   id: string
   name: string
+  name_zh?: string
+  name_en?: string
+  algo_id?: string
   type: string
   version: string
   description: string
@@ -14,6 +17,7 @@ export interface AlgorithmInfo {
   accuracy: number
   fps: number
   enabled: boolean
+  alarm_type?: string
   config?: Record<string, unknown>
 }
 

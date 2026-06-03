@@ -109,5 +109,20 @@ export const aiApi = {
   /** 生成安全报告 */
   generateReport(params: { period: '7d' | '30d' | '90d'; projectId?: string }) {
     return aiHttp.post<ApiResponse<{ reportId: string; url: string }>>('/report/generate', params)
+  },
+
+  /** VLM 视觉大模型 - 图片分析 */
+  analyzeImage(data: { imageBase64: string; prompt?: string; model?: string }) {
+    return aiHttp.post<ApiResponse<ChatResponse>>('/vlm/analyze', data)
+  },
+
+  /** 多模态对话(文本+图片) */
+  multimodalChat(data: ChatRequest & { images?: string[] }) {
+    return aiHttp.post<ApiResponse<ChatResponse>>('/chat/multimodal', data)
+  },
+
+  /** 获取可用模型列表(TinyLLM / VLM / MultiModal) */
+  getModels() {
+    return aiHttp.get<ApiResponse<Array<{ id: string; name: string; type: string; status: string }>>>('/models')
   }
 }

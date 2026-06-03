@@ -18,6 +18,7 @@ export interface StreamHealthState {
   lastDataTime: number
   firstFrameTime: number  // 首帧到达时间戳（用于计算首帧延迟）
   playbackStartTime: number  // 播放开始时间戳
+  fps: number  // 实时帧率
 }
 
 type HealthStates = Record<number, StreamHealthState>
@@ -43,6 +44,12 @@ interface MonitorContext {
   lastVideoTime: number
   // 连续 error 评估次数（用于防误判：需连续 2 次才真正触发 error）
   consecutiveErrorEvaluations: number
+  // FLV 事件回调引用（保存以便正确移除）
+  flvOnStats?: (info: any) => void
+  flvOnLoadingComplete?: () => void
+  // FPS 统计：帧计数 + 上次计数时间
+  frameCount: number
+  lastFpsTime: number
 }
 
 // 卡顿回调类型
@@ -68,6 +75,7 @@ export function useStreamHealth(onStall?: StallCallback, onReconnectExhausted?: 
       lastDataTime: Date.now(),
       firstFrameTime: 0,
       playbackStartTime: 0,
+      fps: 0,
     }
   }
 
@@ -96,14 +104,16 @@ export function useStreamHealth(onStall?: StallCallback, onReconnectExhausted?: 
       videoElement: videoEl || null,
       lastVideoTime: 0,
       consecutiveErrorEvaluations: 0,
+      frameCount: 0,
+      lastFpsTime: Date.now(),
     }
 
     if (isWebRTC) {
       ctx.intervalId = setInterval(() => pollWebRtcStats(slotIdx, ctx), 1000)
     } else if (isFlv) {
-      // FLV: 监听 statistics_info 事件
+      // FLV: 监听 statistics_info 事件（保存回调引用以便正确移除）
       const flvPlayer = player as flvjs.Player
-      flvPlayer.on(flvjs.Events.STATISTICS_INFO, (info: any) => {
+      const onStatsInfo = (info: any) => {
         if (info && typeof info.speed === 'number') {
           ctx.lastSpeed = info.speed // KB/s
           healthStates[slotIdx].bytesPerSec = info.speed * 1024 // 转换为 bytes/s
@@ -121,17 +131,21 @@ export function useStreamHealth(onStall?: StallCallback, onReconnectExhausted?: 
             console.debug(`[StreamHealth] slot${slotIdx} flv延迟=${info.latency.toFixed(2)}s speed=${info.speed?.toFixed(1)}KB/s`)
           }
         }
-      })
+      }
+      flvPlayer.on(flvjs.Events.STATISTICS_INFO, onStatsInfo)
+      ctx.flvOnStats = onStatsInfo
 
       // 监听首帧事件，记录首帧时间
-      flvPlayer.on(flvjs.Events.LOADING_COMPLETE, () => {
+      const onLoadingComplete = () => {
         const now = Date.now()
         if (healthStates[slotIdx].firstFrameTime === 0) {
           healthStates[slotIdx].firstFrameTime = now
           healthStates[slotIdx].playbackStartTime = now
-          console.log(`[StreamHealth] slot${slotIdx} 首帧到达，延迟=${now - ctx.createdAt}ms`)
+          console.debug(`[StreamHealth] slot${slotIdx} 首帧到达，延迟=${now - ctx.createdAt}ms`)
         }
-      })
+      }
+      flvPlayer.on(flvjs.Events.LOADING_COMPLETE, onLoadingComplete)
+      ctx.flvOnLoadingComplete = onLoadingComplete
 
       ctx.intervalId = setInterval(() => pollFlvStats(slotIdx, ctx), 1000)
     } else if (isHls) {
@@ -146,7 +160,7 @@ export function useStreamHealth(onStall?: StallCallback, onReconnectExhausted?: 
           if (healthStates[slotIdx].firstFrameTime === 0) {
             healthStates[slotIdx].firstFrameTime = now
             healthStates[slotIdx].playbackStartTime = now
-            console.log(`[StreamHealth] slot${slotIdx} HLS首帧到达，延迟=${now - ctx.createdAt}ms`)
+            console.debug(`[StreamHealth] slot${slotIdx} HLS首帧到达，延迟=${now - ctx.createdAt}ms`)
           }
           ctx.noDataSeconds = 0
           healthStates[slotIdx].lastDataTime = now
@@ -194,10 +208,16 @@ export function useStreamHealth(onStall?: StallCallback, onReconnectExhausted?: 
       if (ctx.intervalId) {
         clearInterval(ctx.intervalId)
       }
-      // FLV: 移除事件监听
+      // FLV: 移除事件监听（使用保存的回调引用）
       if (ctx.type === 'flv' && ctx.player) {
         try {
-          ;(ctx.player as flvjs.Player).off(flvjs.Events.STATISTICS_INFO, () => {})
+          const flvPlayer = ctx.player as flvjs.Player
+          if (ctx.flvOnStats) {
+            flvPlayer.off(flvjs.Events.STATISTICS_INFO, ctx.flvOnStats)
+          }
+          if (ctx.flvOnLoadingComplete) {
+            flvPlayer.off(flvjs.Events.LOADING_COMPLETE, ctx.flvOnLoadingComplete)
+          }
         } catch { /* ignore */ }
       }
       // HLS: 移除视频事件监听
@@ -268,6 +288,8 @@ export function useStreamHealth(onStall?: StallCallback, onReconnectExhausted?: 
       }
     }
 
+    // FPS 计算：通过 getVideoPlaybackQuality 统计解码帧数
+    computeFpsFromVideo(slotIdx, ctx)
     state.lossRate = 0
     evaluateHealth(slotIdx, ctx)
   }
@@ -296,6 +318,11 @@ export function useStreamHealth(onStall?: StallCallback, onReconnectExhausted?: 
           bytesReceived = report.bytesReceived ?? 0
           packetsLost = report.packetsLost ?? 0
           packetsReceived = report.packetsReceived ?? 0
+          // FPS: framesPerSecond 是标准 inbound-rtp 字段 (Chrome 80+)
+          const fps = (report as any).framesPerSecond
+          if (typeof fps === 'number' && fps >= 0) {
+            state.fps = Math.round(fps)
+          }
         }
         // P2-4: candidate-pair 包含 RTT（往返延迟），只取成功连接的
         if (report.type === 'candidate-pair' && (report as any).state === 'succeeded') {
@@ -388,8 +415,37 @@ export function useStreamHealth(onStall?: StallCallback, onReconnectExhausted?: 
       ctx.noDataSeconds = 0
     }
 
+    // FPS 计算：通过 getVideoPlaybackQuality 统计解码帧数
+    computeFpsFromVideo(slotIdx, ctx)
+
     state.lossRate = 0
     evaluateHealth(slotIdx, ctx)
+  }
+
+  /** 通过 getVideoPlaybackQuality 计算 FPS（FLV/HLS 通用） */
+  function computeFpsFromVideo(slotIdx: number, ctx: MonitorContext) {
+    const video = ctx.videoElement
+    if (!video) return
+    const state = healthStates[slotIdx]
+    if (!state) return
+
+    const now = Date.now()
+    const elapsed = now - ctx.lastFpsTime
+    // 至少间隔 800ms 再计算一次 fps
+    if (elapsed < 800) return
+
+    try {
+      const pq = (video as any).getVideoPlaybackQuality?.() as any
+      if (pq && typeof pq.totalVideoFrames === 'number') {
+        const totalFrames = pq.totalVideoFrames as number
+        const delta = totalFrames - ctx.frameCount
+        if (delta > 0 && ctx.frameCount > 0) {
+          state.fps = Math.round(delta / (elapsed / 1000))
+        }
+        ctx.frameCount = totalFrames
+      }
+    } catch { /* 不支持 getVideoPlaybackQuality，忽略 */ }
+    ctx.lastFpsTime = now
   }
 
   /** 综合评估健康状态（优化阈值：减少 GB28181 低帧率设备误触发） */
@@ -397,22 +453,23 @@ export function useStreamHealth(onStall?: StallCallback, onReconnectExhausted?: 
     const state = healthStates[slotIdx]
     if (!state) return
 
-    // 启动宽限期：HLS 10秒（H.265 GOP可能很长），FLV/WebRTC 8秒（TCP建连需更长时间）
-    const startupGraceMs = ctx.type === 'hls' ? 10000 : 8000
+    // 启动宽限期：HLS 15秒（H.265 GOP可能很长），FLV/WebRTC 12秒
+    // GB28181 设备推流需要 SIP INVITE + RTP 传输建立，初始化时间较长
+    const startupGraceMs = ctx.type === 'hls' ? 15000 : 12000
     const uptimeMs = Date.now() - ctx.createdAt
     const inStartupGrace = uptimeMs < startupGraceMs
 
     if (inStartupGrace) {
       // 在宽限期内，无数据只标记 warning 而非 error
-      if (ctx.noDataSeconds >= 3) {
+      if (ctx.noDataSeconds >= 5) {
         state.status = 'warning'
       }
       return
     }
 
-    // 连续 8 秒无数据或卡顿 → error（从 5 秒放宽到 8 秒，减少 GB28181 误触发）
-    // GB28181 设备 GOP 间隔可能较长（尤其是低帧率设备），5秒阈值过于敏感
-    if (ctx.noDataSeconds >= 8) {
+    // 连续 10 秒无数据或卡顿 → error
+    // GB28181 设备 GOP 间隔可能较长（低帧率设备），需要更宽松的阈值
+    if (ctx.noDataSeconds >= 10) {
       // 连续 error 确认：需连续 2 次 error 评估才真正触发（防止单次网络抖动误判）
       ctx.consecutiveErrorEvaluations++
       if (ctx.consecutiveErrorEvaluations >= 2) {

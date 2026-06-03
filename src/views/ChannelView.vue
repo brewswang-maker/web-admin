@@ -366,7 +366,7 @@ async function saveAlgoConfig() {
   try {
     const algoPlugins = algoForm.value.plugins.filter((p: string) => p !== '无')
     await updateChannel(currentChannel.value.id, {
-      algoPlugins,
+      algoPlugin: algoPlugins[0] || '无',
     })
     ElMessage.success(`算法插件已应用（共${algoPlugins.length}个）`)
     showAlgoDialog.value = false

@@ -144,10 +144,10 @@ const rows = computed<StatsRow[]>(() => {
       slotIdx: slot.slotIdx,
       name: slot.name || `CH${slot.slotIdx + 1}`,
       status: h?.status ?? 'good',
-      rttMs: (h as any)?.rttMs ?? 0,
+      rttMs: h?.rttMs ?? 0,
       lossRate: h?.lossRate ?? 0,
       bitrate: h?.bytesPerSec ?? 0,
-      fps: (h as any)?.fps ?? 0,
+      fps: h?.fps ?? 0,
     }
   })
 })

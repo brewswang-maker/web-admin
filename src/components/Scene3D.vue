@@ -481,7 +481,7 @@ function createDevice(d: Device3D) {
 
   // 摄像头主体（圆柱+球）
   const bodyGeo = new THREE.CylinderGeometry(0.3, 0.4, 1.2, 8)
-  const bodyMat = new THREE.MeshStandardMaterial({ color: 0x2a2d35, roughness: 0.5, metalness: 0.6 })
+  const bodyMat = new THREE.MeshStandardMaterial({ color: 0x5a6070, roughness: 0.5, metalness: 0.6 })
   const body = new THREE.Mesh(bodyGeo, bodyMat)
   body.position.set(d.x, d.y, d.z)
   body.castShadow = true
@@ -525,7 +525,7 @@ function createDevice(d: Device3D) {
   labelDiv.className = 'device-label-3d'
   const icon = statusIcon(d.status)
   labelDiv.textContent = `${icon} ${d.name}`
-  labelDiv.style.cssText = `color:${d.status === 'alarm' ? '#DB4437' : '#E8EAED'};font-size:11px;font-family:system-ui;background:rgba(0,0,0,0.6);padding:2px 6px;border-radius:3px;white-space:nowrap;`
+  labelDiv.style.cssText = `color:${d.status === 'alarm' ? '#DB4437' : '#E8EAED'};font-size:11px;font-family:system-ui;background:rgba(20,25,40,0.7);padding:2px 6px;border-radius:3px;white-space:nowrap;`
   const label = new CSS2DObject(labelDiv)
   label.position.set(d.x, d.y + 2.5, d.z)
   scene.add(label)
@@ -673,7 +673,7 @@ function exportPerformanceReport(): PerformanceReport | null {
   if (!perfCollector) return null
   const report = perfCollector.generateReport()
   emit('performance-report', report)
-  console.log(formatPerformanceReport(report))
+  console.debug(formatPerformanceReport(report))
   return report
 }
 

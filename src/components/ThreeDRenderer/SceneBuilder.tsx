@@ -41,6 +41,8 @@ export interface RendererConfig {
   alpha: boolean
   shadowMap: { enabled: boolean; type: string }
   pixelRatioCap: number
+  toneMapping?: string
+  toneMappingExposure?: number
 }
 
 export interface LightingConfig {

@@ -28,17 +28,72 @@ export const useAlarmStore = defineStore('alarm', () => {
 
   // ===== Actions =====
 
+  /** 后端 snake_case → 前端 AlarmEvent 归一化 */
+  function normalizeAlarm(raw: any): AlarmEvent {
+    return {
+      id: raw.id || raw.alarm_id || '',
+      type: raw.type || raw.alarm_type || 'other',
+      level: raw.level || raw.severity || 'low',
+      description: raw.description || '',
+      channelId: raw.channel_id || raw.channelId || '',
+      channelName: raw.channel_name || raw.channelName || '',
+      deviceId: raw.device_id || raw.deviceId || raw.channel_id || '',
+      deviceName: raw.device_name || raw.deviceName || raw.zone || '',
+      snapshotUrl: raw.snapshot_url || raw.snapshotUrl || raw.snapshot_path || '',
+      videoClipUrl: raw.video_clip_url || raw.videoClipUrl || '',
+      aiConclusion: raw.ai_conclusion || raw.aiConclusion || '',
+      confidence: raw.confidence ?? 0,
+      status: raw.status || 'unhandled',
+      location: raw.location || raw.zone || '',
+      metadata: raw.metadata || {},
+      createdAt: raw.created_at || raw.createdAt || (raw.timestamp ? new Date(raw.timestamp).toISOString() : new Date().toISOString()),
+      updatedAt: raw.updated_at || raw.updatedAt || raw.created_at || raw.createdAt || new Date().toISOString(),
+      handledBy: raw.handled_by || raw.handledBy || '',
+      handledAt: raw.handled_at || raw.handledAt || '',
+      handleNote: raw.handle_note || raw.handleNote || '',
+    }
+  }
+
   /** 加载告警列表 */
   async function fetchAlarms(params?: AlarmQuery) {
     loading.value = true
     try {
       query.value = { ...query.value, ...params }
-      const res = await alarmApi.getList({ page: currentPage.value, pageSize: pageSize.value, ...query.value })
-      alarms.value = res.data.data.items
-      total.value = res.data.data.total
-      currentPage.value = res.data.data.page
+      const res = await alarmApi.getList({
+        page: currentPage.value,
+        pageSize: pageSize.value,
+        count: pageSize.value * 3, // 后端用 count 参数
+        ...query.value,
+      })
+      const respData: any = res.data?.data ?? res.data
+
+      // 后端返回 {alarms: [...], total: N} 或 {items: [...], total: N}
+      let rawList: any[] = []
+      if (respData) {
+        if (Array.isArray(respData.alarms)) {
+          rawList = respData.alarms
+          total.value = respData.total ?? respData.alarms.length
+        } else if (Array.isArray(respData.items)) {
+          rawList = respData.items
+          total.value = respData.total ?? respData.items.length
+        } else if (Array.isArray(respData)) {
+          rawList = respData
+          total.value = respData.length
+        }
+      }
+
+      alarms.value = rawList.map(normalizeAlarm)
+
+      // 从加载的数据中计算未处理数（后端可能没有 unhandled-count 端点）
+      if (rawList.length > 0) {
+        const unhandled = rawList.filter((a: any) => (a.status || 'unhandled') === 'unhandled').length
+        // 只在列表较大时更新（避免只加载部分数据时低估）
+        if (rawList.length >= 10 || alarms.value.length <= pageSize.value) {
+          unhandledCount.value = unhandled
+        }
+      }
     } catch (e: any) {
-      ElMessage.error('加载告警列表失败: ' + (e.message || '未知错误'))
+      console.error('[AlarmStore] fetchAlarms failed:', e)
     } finally {
       loading.value = false
     }
@@ -48,7 +103,12 @@ export const useAlarmStore = defineStore('alarm', () => {
   async function fetchStats() {
     try {
       const res = await alarmApi.getStats()
-      stats.value = res.data.data
+      const respData: any = res.data?.data ?? res.data
+      stats.value = respData
+      // stats 端点可能返回 unhandled 计数
+      if (respData && typeof respData.unhandled === 'number') {
+        unhandledCount.value = respData.unhandled
+      }
     } catch (e: any) {
       console.error('[AlarmStore] 获取统计失败:', e)
     }
@@ -58,9 +118,12 @@ export const useAlarmStore = defineStore('alarm', () => {
   async function fetchUnhandledCount() {
     try {
       const res = await alarmApi.getUnhandledCount()
-      unhandledCount.value = res.data.data.count
+      const respData: any = res.data?.data ?? res.data
+      // 后端可能返回 {count: N} 或直接数字
+      unhandledCount.value = typeof respData === 'number' ? respData : (respData?.count ?? respData?.unhandled ?? 0)
     } catch {
-      // 静默失败
+      // 静默失败，尝试从已加载列表计算
+      unhandledCount.value = alarms.value.filter(a => a.status === 'unhandled').length
     }
   }
 

@@ -5,7 +5,7 @@
 
 import { alarmHttp, http } from './http'
 import type { ApiResponse, PageResponse } from '@/types/common'
-import type { AlarmEvent, AlarmStats, AlarmQuery, AlarmHandleForm, AlarmTrendItem, AlarmTypeDistribution } from '@/types/alarm'
+import type { AlarmEvent, AlarmStats, AlarmQuery, AlarmHandleForm, AlarmTrendItem, AlarmTypeDistribution, AlarmEvidence } from '@/types/alarm'
 
 export const alarmApi = {
   /** 获取告警列表 */
@@ -81,5 +81,15 @@ export const alarmApi = {
   /** 转发告警 */
   forward(id: string, forwardTo: string, note?: string) {
     return alarmApi.handle(id, { status: 'forwarded', forwardTo, note })
+  },
+
+  /** 获取告警证据链(快照+视频+AI分析+关联录像) */
+  getEvidence(id: string) {
+    return alarmHttp.get<ApiResponse<AlarmEvidence>>(`/${id}/evidence`)
+  },
+
+  /** AI二次分析告警图片 */
+  analyzeAlarm(id: string) {
+    return alarmHttp.post<ApiResponse<{ analysis: string }>>(`/${id}/analyze`)
   }
 }

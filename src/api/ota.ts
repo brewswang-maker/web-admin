@@ -52,6 +52,8 @@ export interface CreateTaskRequest {
   targetDeviceIds: string[]
   scheduledAt?: string
   isForce?: boolean
+  strategy?: 'immediate' | 'scheduled' | 'gray'
+  grayscalePercentage?: number
 }
 
 /** 固件上传请求 */

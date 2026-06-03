@@ -1,4 +1,4 @@
-// @ts-nocheck
+// @ts-nocheck — Vite config uses http-proxy types that conflict with Vite's type definitions
 import { defineConfig, type Plugin } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import { resolve } from 'path'

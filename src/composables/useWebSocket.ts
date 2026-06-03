@@ -43,9 +43,11 @@ export function useWebSocket(path?: string) {
         messages.push(msg)
         if (messages.length > 100) messages.splice(0, messages.length - 100)
         // Dispatch to subscribers
+        // 兼容两种载荷字段名: msg.data(pushSystemEvent) / msg.alarm(pushAlarm)
         const typeHandlers = handlers.get(msg.type)
         if (typeHandlers) {
-          typeHandlers.forEach(handler => handler(msg.data))
+          const payload = (msg as any).data ?? (msg as any).alarm ?? msg
+          typeHandlers.forEach(handler => handler(payload))
         }
         // Also notify wildcard subscribers
         const wildcardHandlers = handlers.get('*')

@@ -8,6 +8,10 @@
       <div class="pe-actions">
         <el-button size="small" @click="loadPipeline">加载</el-button>
         <el-button size="small" type="primary" @click="handleSavePipeline" :disabled="!dirty">保存</el-button>
+        <el-button size="small" type="warning" @click="handleValidate" :loading="validating">验证</el-button>
+        <el-button size="small" type="success" @click="handleDeploy" :loading="deploying">部署</el-button>
+        <el-button size="small" type="danger" @click="handleUndeploy" :loading="undeploying">停止</el-button>
+        <el-button size="small" @click="toggleMonitor">{{ showMonitor ? '关闭监控' : '运行时监控' }}</el-button>
         <el-button size="small" @click="clearCanvas">清空</el-button>
       </div>
     </div>
@@ -93,16 +97,7 @@
 
             <!-- ROI绘制 -->
             <el-form-item v-if="selectedNodeData.hasROI" label="ROI区域">
-              <el-button size="small" @click="roiDrawing = !roiDrawing">
-                {{ roiDrawing ? '完成绘制' : '绘制ROI' }}
-              </el-button>
-              <canvas v-if="roiDrawing" ref="roiCanvas" width="320" height="180"
-                      style="border:1px solid #3C4043;border-radius:4px;margin-top:8px;background:#111;cursor:crosshair"
-                      @mousedown="onRoiMouseDown" @mousemove="onRoiMouseMove" @mouseup="onRoiMouseUp" />
-              <div v-if="roiPoints.length" style="margin-top:4px">
-                <el-tag size="small">{{ roiPoints.length }}个点</el-tag>
-                <el-button size="small" text @click="roiPoints.splice(0)">清除</el-button>
-              </div>
+              <RoiPolygonEditor v-model="roiFlatPoints" />
             </el-form-item>
 
             <!-- 时间计划 -->
@@ -131,13 +126,68 @@
         </div>
       </div>
     </div>
+
+    <!-- v7.0: 运行时监控面板 -->
+    <div v-if="showMonitor && runtimeStatus" class="pe-monitor">
+      <div class="monitor-header">
+        <span class="monitor-title">🚀 Pipeline运行时监控</span>
+        <el-tag size="small" :type="runtimeStatus.deploy_state === 'RUNNING' ? 'success' : 'info'">{{ runtimeStatus.deploy_state }}</el-tag>
+      </div>
+      <div class="monitor-dashboard">
+        <div class="metric-card">
+          <div class="metric-label">Total FPS</div>
+          <div class="metric-value">{{ runtimeStatus.total_fps?.toFixed(1) || '0' }}</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">Avg Latency</div>
+          <div class="metric-value">{{ runtimeStatus.avg_latency_ms?.toFixed(1) || '0' }}ms</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">TPU Util</div>
+          <div class="metric-value">{{ (runtimeStatus.tpu_utilization || 0).toFixed(0) }}%</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">Buffer Pool</div>
+          <div class="metric-value">{{ (runtimeStatus.buffer_pool_utilization || 0).toFixed(0) }}%</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">Channels</div>
+          <div class="metric-value">{{ runtimeStatus.active_channels }}</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">Total Frames</div>
+          <div class="metric-value">{{ runtimeStatus.total_frames }}</div>
+        </div>
+      </div>
+      <div class="monitor-nodes">
+        <el-table :data="runtimeStatus.nodes" size="small" stripe :header-cell-style="{ background: '#2D3039', color: '#E8EAED' }" class="monitor-table">
+          <el-table-column prop="node_id" label="Node" width="120" />
+          <el-table-column prop="type" label="Type" width="100" />
+          <el-table-column prop="state" label="State" width="90">
+            <template #default="{ row }">
+              <el-tag size="small" :type="row.state === 'PLAYING' ? 'success' : row.state === 'ERROR' ? 'danger' : 'info'">{{ row.state }}</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column prop="fps" label="FPS" width="80">
+            <template #default="{ row }">{{ row.fps?.toFixed(1) }}</template>
+          </el-table-column>
+          <el-table-column prop="avg_latency_ms" label="Latency" width="90">
+            <template #default="{ row }">{{ row.avg_latency_ms?.toFixed(1) }}ms</template>
+          </el-table-column>
+          <el-table-column prop="frame_count" label="Frames" width="90" />
+        </el-table>
+      </div>
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, reactive, nextTick, onMounted } from 'vue'
-import { savePipeline as apiSavePipeline, getPipelines } from '@/api/pipeline'
+import { ref, computed, reactive } from 'vue'
+import { savePipeline as apiSavePipeline, getPipelines, validatePipeline, deployPipeline, undeployPipeline, getPipelineRuntime } from '@/api/pipeline'
+import type { PipelineRuntimeStatus } from '@/api/pipeline'
 import { ElMessage } from 'element-plus'
+import RoiPolygonEditor from '@/components/RoiPolygonEditor.vue'
+import type { RoiData } from '@/composables/useRoiCanvas'
 
 interface PipelineNode {
   id: string
@@ -151,6 +201,7 @@ interface PipelineNode {
   hasROI?: boolean
   hasSchedule?: boolean
   hasActions?: boolean
+  roiPolygon?: RoiData[]
   props: PropItem[]
   scheduleType?: string
   scheduleStart?: any
@@ -171,6 +222,14 @@ const canvasContainer = ref<HTMLElement>()
 const canvasW = ref(2000)
 const canvasH = ref(1200)
 
+// v7.0: 验证/部署/监控状态
+const validating = ref(false)
+const deploying = ref(false)
+const undeploying = ref(false)
+const showMonitor = ref(false)
+const runtimeStatus = ref<PipelineRuntimeStatus | null>(null)
+let monitorTimer: ReturnType<typeof setInterval> | null = null
+
 // 拖拽
 let dragComp: any = null
 let dragNode: PipelineNode | null = null
@@ -181,11 +240,14 @@ let drawingLine = ref(false)
 let lineFrom = { node: '', port: '', dir: '' }
 let lineTo = { x: 0, y: 0 }
 
-// ROI
-const roiDrawing = ref(false)
-const roiCanvas = ref<HTMLCanvasElement>()
-const roiPoints = reactive<{ x: number; y: number }[]>([])
-let roiDragging = false
+// ROI - computed bridge for RoiPolygonEditor v-model
+const roiFlatPoints = computed({
+  get: (): RoiData[] => selectedNodeData.value?.roiPolygon || [],
+  set: (val: RoiData[]) => {
+    const node = nodes.find(n => n.id === selectedNode.value)
+    if (node) { node.roiPolygon = val; dirty.value = true }
+  }
+})
 
 const categories = [
   { name: '视频源', icon: '📹', items: [
@@ -229,6 +291,7 @@ function onCanvasDrop(e: DragEvent) {
     id: genNodeId(), type: dragComp.type, label: dragComp.name, icon: dragComp.icon,
     x, y, inputs: [...dragComp.inputs], outputs: [...dragComp.outputs],
     hasROI: dragComp.hasROI, hasSchedule: dragComp.hasSchedule, hasActions: dragComp.hasActions,
+    roiPolygon: [],
     props: dragComp.props.map((p: any) => ({ ...p })),
     scheduleType: 'all', actionAlarm: true, actionLight: false, actionGate: false,
   }
@@ -306,40 +369,6 @@ function removeNode(id: string) {
 }
 function clearCanvas() { nodes.splice(0); connections.splice(0); selectedNode.value = ''; dirty.value = true }
 
-// ROI绘制
-function onRoiMouseDown(e: MouseEvent) {
-  roiDragging = true
-  addRoiPoint(e)
-}
-function onRoiMouseMove(e: MouseEvent) {
-  if (roiDragging) addRoiPoint(e)
-}
-function onRoiMouseUp() { roiDragging = false }
-function addRoiPoint(e: MouseEvent) {
-  const canvas = roiCanvas.value
-  if (!canvas) return
-  const rect = canvas.getBoundingClientRect()
-  roiPoints.push({ x: Math.round((e.clientX - rect.left) / canvas.width * 1920), y: Math.round((e.clientY - rect.top) / canvas.height * 1080) })
-  drawRoi()
-}
-function drawRoi() {
-  const canvas = roiCanvas.value
-  if (!canvas) return
-  const ctx = canvas.getContext('2d')!
-  ctx.clearRect(0, 0, canvas.width, canvas.height)
-  if (roiPoints.length < 2) return
-  ctx.beginPath()
-  ctx.moveTo(roiPoints[0].x / 1920 * canvas.width, roiPoints[0].y / 1080 * canvas.height)
-  for (let i = 1; i < roiPoints.length; i++) {
-    ctx.lineTo(roiPoints[i].x / 1920 * canvas.width, roiPoints[i].y / 1080 * canvas.height)
-  }
-  ctx.strokeStyle = '#0F9D58'
-  ctx.lineWidth = 2
-  ctx.stroke()
-  ctx.fillStyle = 'rgba(15,157,88,0.15)'
-  ctx.fill()
-}
-
 // 保存/加载
 async function handleSavePipeline() {
   const payload = { name: pipelineName.value, nodes: nodes.map(n => ({ ...n })), connections: [...connections] }
@@ -361,6 +390,86 @@ async function loadPipeline() {
     nodes.push(...((pl as any)?.nodes || []) as PipelineNode[])
     connections.push(...((pl as any)?.connections || []) as Connection[])
     dirty.value = false
+  } catch { /* ignore */ }
+}
+
+// v7.0: 验证Pipeline
+async function handleValidate() {
+  validating.value = true
+  try {
+    const payload = { name: pipelineName.value, nodes: nodes.map(n => ({ ...n })), connections: [...connections] }
+    const { data: resp } = await validatePipeline(pipelineName.value, payload)
+    const result = (resp as any)?.data || resp
+    if (result.valid) {
+      ElMessage.success(`验证通过: ${result.node_count}个节点, ${result.edge_count}条边`)
+    } else {
+      ElMessage.error(`验证失败: ${(result.errors || []).join('; ')}`)
+    }
+    if (result.warnings?.length) {
+      ElMessage.warning(`警告: ${(result.warnings as string[]).join('; ')}`)
+    }
+  } catch (e: any) {
+    ElMessage.error('验证请求失败: ' + e.message)
+  } finally {
+    validating.value = false
+  }
+}
+
+// v7.0: 部署Pipeline
+async function handleDeploy() {
+  deploying.value = true
+  try {
+    const payload = { name: pipelineName.value, nodes: nodes.map(n => ({ ...n })), connections: [...connections] }
+    const { data: resp } = await deployPipeline(pipelineName.value, payload)
+    ElMessage.success('Pipeline已部署')
+    dirty.value = false
+    if (showMonitor.value) startMonitor()
+  } catch (e: any) {
+    ElMessage.error('部署失败: ' + e.message)
+  } finally {
+    deploying.value = false
+  }
+}
+
+// v7.0: 停止Pipeline
+async function handleUndeploy() {
+  undeploying.value = true
+  try {
+    await undeployPipeline(pipelineName.value)
+    ElMessage.success('Pipeline已停止')
+    stopMonitor()
+  } catch (e: any) {
+    ElMessage.error('停止失败: ' + e.message)
+  } finally {
+    undeploying.value = false
+  }
+}
+
+// v7.0: 运行时监控
+function toggleMonitor() {
+  showMonitor.value = !showMonitor.value
+  if (showMonitor.value) {
+    startMonitor()
+  } else {
+    stopMonitor()
+  }
+}
+
+function startMonitor() {
+  stopMonitor()
+  fetchRuntime()
+  monitorTimer = setInterval(fetchRuntime, 3000)
+}
+
+function stopMonitor() {
+  if (monitorTimer) { clearInterval(monitorTimer); monitorTimer = null }
+  runtimeStatus.value = null
+}
+
+async function fetchRuntime() {
+  try {
+    const { data: resp } = await getPipelineRuntime(pipelineName.value)
+    runtimeStatus.value = ((resp as any)?.data || resp) as PipelineRuntimeStatus
   } catch { /* ignore */ }
 }
 </script>
@@ -409,4 +518,17 @@ async function loadPipeline() {
 :deep(.el-form-item__label) { color: #9AA0A6; font-size: 12px; }
 :deep(.el-input__inner) { background: #1A1D23; border-color: #3C4043; color: #E8EAED; }
 :deep(.el-textarea__inner) { background: #1A1D23; border-color: #3C4043; color: #E8EAED; }
+
+/* v7.0: 运行时监控面板 */
+.pe-monitor { height: 220px; background: #141720; border-top: 2px solid #1A73E8; overflow-y: auto; }
+.monitor-header { padding: 8px 16px; display: flex; align-items: center; gap: 8px; border-bottom: 1px solid #3C4043; }
+.monitor-title { font-size: 13px; font-weight: 600; color: #E8EAED; }
+.monitor-dashboard { display: flex; gap: 12px; padding: 10px 16px; }
+.metric-card { flex: 1; background: #252830; border-radius: 8px; padding: 10px 12px; text-align: center; }
+.metric-label { font-size: 11px; color: #9AA0A6; margin-bottom: 4px; }
+.metric-value { font-size: 18px; font-weight: 700; color: #1A73E8; }
+.monitor-nodes { padding: 0 16px 10px; }
+:deep(.monitor-table .el-table__row) { background: #1A1D23; }
+:deep(.monitor-table .el-table__row--striped) { background: #252830; }
+:deep(.monitor-table td) { color: #E8EAED; border-color: #3C4043; }
 </style>

@@ -245,10 +245,16 @@ import {
 } from '@element-plus/icons-vue'
 import { statsHttp } from '@/api/http'
 import { federationApi } from '@/api/federation'
+import { useWebSocket } from '@/composables/useWebSocket'
 import LazyChart from '@/components/LazyChart.vue'
 import type { EChartsOption } from 'echarts'
 
 const router = useRouter()
+
+// ── WebSocket 实时推送 ──
+const { connected: wsConnected, subscribe } = useWebSocket('/ws/dashboard')
+let unsubAlarm: (() => void) | null = null
+let unsubDevice: (() => void) | null = null
 
 // ── 状态 ──
 const refreshing = ref(false)
@@ -269,13 +275,30 @@ function startRefreshTimer() {
 onMounted(async () => {
   startRefreshTimer()
   await fetchDashboardData()
-  // 30秒自动刷新
-  autoRefreshTimer = setInterval(fetchDashboardData, 30000)
+
+  // WebSocket: 告警推送 → 增量更新告警计数
+  unsubAlarm = subscribe('alarm', (data: any) => {
+    topStatsValues.alarmCount += 1
+    lastUpdated.value = '刚刚'
+    startRefreshTimer()
+  })
+
+  // WebSocket: 设备状态变更 → 增量刷新设备统计
+  unsubDevice = subscribe('device_status', () => {
+    topStatsValues.deviceOnline += 0 // trigger reactivity
+    lastUpdated.value = '刚刚'
+    startRefreshTimer()
+  })
+
+  // 兜底轮询：5分钟全量刷新
+  autoRefreshTimer = setInterval(fetchDashboardData, 300000)
 })
 
 onUnmounted(() => {
   if (refreshTimer) clearInterval(refreshTimer)
   if (autoRefreshTimer) clearInterval(autoRefreshTimer)
+  unsubAlarm?.()
+  unsubDevice?.()
 })
 
 // ── API数据获取 ──
