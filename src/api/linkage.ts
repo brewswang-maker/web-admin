@@ -63,6 +63,12 @@ export const ACTION_TYPE_MAP: Record<string, number> = {
   SYS_RELAY_SWITCH: 503,
   SYS_HTTP_CALLBACK: 504,
   SYS_CLOUD_FORWARD: 505,
+  SYS_START_INFERENCE: 506,
+  SYS_STOP_INFERENCE: 507,
+  SYS_START_STREAM: 508,
+  SYS_STOP_STREAM: 509,
+  SYS_DEPLOY_PIPELINE: 510,
+  SYS_UNDEPLOY_PIPELINE: 511,
 }
 
 /** 后端整数值 → 前端动作类型字符串 */
@@ -295,6 +301,109 @@ export interface RuleTemplate {
 
 // ── API ──
 
+/** 预案 (后端 LinkagePlan) */
+export interface LinkagePlan {
+  plan_id: string
+  name: string
+  description: string
+  icon: string
+  rule_ids: string[]
+  enabled: boolean
+  schedule: {
+    enabled: boolean
+    arm_time: string
+    disarm_time: string
+    weekdays: number[]
+  }
+  created_by: string
+  created_at: number
+  updated_at: number
+}
+
+/** CEP 模式步骤 */
+export interface CEPPatternStep {
+  step_id: string
+  op: number  // 0=SEQUENCE, 1=AND, 2=OR, 3=NOT, 4=COUNT, 5=ABSENCE
+  event_type: string
+  channel_ids: number[]
+  min_confidence: number
+  count_threshold: number
+}
+
+/** CEP 模式 */
+export interface CEPPattern {
+  pattern_id: string
+  name: string
+  description: string
+  enabled: boolean
+  steps: CEPPatternStep[]
+  window_ms: number
+  window_type: 'sliding' | 'tumbling'
+  output_event_type: string
+  group_by: string
+  cooldown_ms: number
+  is_builtin: boolean
+  created_at: number
+  updated_at: number
+}
+
+/** 自动部署算法路由 */
+export interface AlgoRoute {
+  scene_pattern: string
+  algo_plugin: string
+  interval_ms: number
+}
+
+/** 自动部署策略 */
+export interface DeployPolicy {
+  policy_id: string
+  name: string
+  enabled: boolean
+  priority: number
+  vendor_patterns: string[]
+  device_type_patterns: string[]
+  channel_name_regex: string[]
+  algo_plugin: string
+  interval_ms: number
+  auto_start_stream: boolean
+  auto_start_inference: boolean
+  algo_routes: AlgoRoute[]
+  created_at: number
+  updated_at: number
+}
+
+/** 自动部署状态 */
+export interface DeployStatus {
+  channel_id: string
+  device_id: string
+  policy_id: string
+  stream_running: boolean
+  inference_running: boolean
+  algo_plugin: string
+  deployed_at: number
+  last_check_at: number
+}
+
+/** 动作执行日志条目 */
+export interface ActionLogEntry {
+  id: number
+  trigger_log_id: number
+  rule_id: string
+  action_type: number
+  action_name: string
+  channel_id: number
+  status: string  // pending/executing/success/failed/timeout
+  retry_count: number
+  max_retries: number
+  started_at: number
+  completed_at: number
+  execution_ms: number
+  error_code: number
+  error_message: string
+  response_data: Record<string, any>
+  created_at: number
+}
+
 export const linkageApi = {
   /** 获取联动规则列表 */
   getRules(params?: LinkageRuleQuery) {
@@ -409,5 +518,103 @@ export const linkageApi = {
   /** 删除自定义规则模板 */
   deleteRuleTemplate(id: string) {
     return http.delete<ApiResponse<{ message: string }>>(`/linkage/rule-templates/${id}`)
+  },
+
+  // ── 预案管理 (v7.1) ──
+
+  /** 获取所有预案 */
+  getPlans() {
+    return http.get<ApiResponse<LinkagePlan[]>>('/linkage/plans')
+  },
+
+  /** 创建预案 */
+  createPlan(data: Partial<LinkagePlan> & { plan_id: string; name: string }) {
+    return http.post<ApiResponse<{ message: string; plan_id: string }>>('/linkage/plans', data)
+  },
+
+  /** 更新预案 */
+  updatePlan(id: string, data: Partial<LinkagePlan>) {
+    return http.put<ApiResponse<{ message: string; plan_id: string }>>(`/linkage/plans/${id}`, data)
+  },
+
+  /** 删除预案 */
+  deletePlan(id: string) {
+    return http.delete<ApiResponse<{ message: string; plan_id: string }>>(`/linkage/plans/${id}`)
+  },
+
+  /** 激活预案 */
+  activatePlan(id: string) {
+    return http.post<ApiResponse<{ message: string; plan_id: string }>>(`/linkage/plans/${id}/activate`)
+  },
+
+  /** 停用预案 */
+  deactivatePlan(id: string) {
+    return http.post<ApiResponse<{ message: string; plan_id: string }>>(`/linkage/plans/${id}/deactivate`)
+  },
+
+  // ── CEP 复杂事件处理 (v7.2) ──
+
+  /** 获取所有CEP模式 */
+  getCEPPatterns() {
+    return http.get<ApiResponse<{ items: CEPPattern[]; total: number }>>('/cep/patterns')
+  },
+
+  /** 创建CEP模式 */
+  createCEPPattern(data: Partial<CEPPattern> & { pattern_id: string; name: string }) {
+    return http.post<ApiResponse<{ message: string; pattern_id: string }>>('/cep/patterns', data)
+  },
+
+  /** 更新CEP模式 */
+  updateCEPPattern(id: string, data: Partial<CEPPattern>) {
+    return http.put<ApiResponse<{ message: string; pattern_id: string }>>(`/cep/patterns/${id}`, data)
+  },
+
+  /** 删除CEP模式 */
+  deleteCEPPattern(id: string) {
+    return http.delete<ApiResponse<{ message: string; pattern_id: string }>>(`/cep/patterns/${id}`)
+  },
+
+  // ── 自动部署策略 (v7.1) ──
+
+  /** 获取所有自动部署策略 */
+  getDeployPolicies() {
+    return http.get<ApiResponse<DeployPolicy[]>>('/auto-deploy/policies')
+  },
+
+  /** 创建自动部署策略 */
+  createDeployPolicy(data: Partial<DeployPolicy> & { policy_id: string; name: string }) {
+    return http.post<ApiResponse<{ message: string; policy_id: string }>>('/auto-deploy/policies', data)
+  },
+
+  /** 更新自动部署策略 */
+  updateDeployPolicy(id: string, data: Partial<DeployPolicy>) {
+    return http.put<ApiResponse<{ message: string; policy_id: string }>>(`/auto-deploy/policies/${id}`, data)
+  },
+
+  /** 删除自动部署策略 */
+  deleteDeployPolicy(id: string) {
+    return http.delete<ApiResponse<{ message: string; policy_id: string }>>(`/auto-deploy/policies/${id}`)
+  },
+
+  /** 获取自动部署状态 */
+  getDeployStatus() {
+    return http.get<ApiResponse<{
+      items: DeployStatus[]
+      total_deployments: number
+      total_failures: number
+      active_channels: number
+    }>>('/auto-deploy/status')
+  },
+
+  // ── 动作执行日志 (v7.1) ──
+
+  /** 获取动作执行日志 */
+  getActionLog(params?: PageQuery & { rule_id?: string; status?: string }) {
+    return http.get<ApiResponse<PageResponse<ActionLogEntry>>>('/linkage/action-log', { params })
+  },
+
+  /** 重试失败动作 */
+  retryAction(id: number) {
+    return http.post<ApiResponse<{ message: string; id: string }>>(`/linkage/action-log/${id}/retry`)
   },
 }

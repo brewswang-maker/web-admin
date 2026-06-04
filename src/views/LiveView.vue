@@ -609,9 +609,9 @@ function closeSlot(idx: number, hard: boolean = true) {
   if (slot.playing) {
     const video = videoRefs.value[idx]
     if (video) { video.pause(); video.removeAttribute('src'); video.load() }
-    // 仅 hard 模式通知后端停流（用户主动关闭时）
+    // 关闭预览时不再通知后端停流 —— 保持流活跃以便算法持续运行
+    // 仅注销前端通道映射，后端流和推理继续工作
     if (hard && slot.channelId) {
-      streamHttp.post(`/${slot.channelId}/stop`).catch(() => {})
       channelStore.unregisterSlot(idx)
     }
   }

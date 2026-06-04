@@ -1,5 +1,9 @@
 <template>
   <div class="linkage-page">
+    <!-- ===== 主页面 Tabs ===== -->
+    <el-tabs v-model="mainTab" type="border-card" class="main-tabs">
+    <el-tab-pane label="联动规则" name="rules">
+
     <!-- ===== 统计卡片 ===== -->
     <el-row :gutter="16" class="stat-row">
       <el-col :span="6" v-for="s in statCards" :key="s.label">
@@ -154,13 +158,12 @@
               style="margin-left: 12px; vertical-align: middle" />
           </el-divider>
 
-          <!-- 高级条件模式: JSON 编辑 -->
+          <!-- 高级条件模式: 可视化树编辑器 -->
           <div v-if="advancedConditionMode" style="margin-bottom: 12px">
             <el-alert type="info" :closable="false" style="margin-bottom: 8px">
-              高级模式支持 AND/OR/NOT 条件组合。请在下方编辑条件表达式树 JSON。
+              使用可视化树编辑器组合 AND/OR/NOT 条件。支持时间、空间、事件源、合并条件叶子节点。
             </el-alert>
-            <el-input v-model="conditionTreeJson" type="textarea" :rows="10"
-              placeholder='{"type":"AND","children":[{"type":"LEAF","leaf_type":"source","condition":{...}}]}' />
+            <ConditionTreeEditor v-model="conditionTreeValue" />
           </div>
 
           <!-- 普通条件卡片 -->
@@ -195,7 +198,12 @@
               <!-- 空间条件 -->
               <template v-if="cond.type === 'region'">
                 <el-form-item label="物理位置" label-position="top" class="cond-form-item">
-                  <el-select v-model="form.conditions.region.config.location" placeholder="选择位置" style="width: 100%"><el-option v-for="l in locationOptions" :key="l" :label="l" :value="l" /></el-select>
+                  <el-select v-model="form.conditions.region.config.location" placeholder="选择位置" clearable style="width: 100%">
+                    <template v-if="locationOptionsDynamic.length > 0">
+                      <el-option v-for="l in locationOptionsDynamic" :key="l.value" :label="l.label" :value="l.value" />
+                    </template>
+                    <template #empty><span class="text-secondary">暂无设备位置</span></template>
+                  </el-select>
                 </el-form-item>
                 <el-form-item label="关联通道(快照背景)" label-position="top" class="cond-form-item">
                   <el-select v-model="form.conditions.region.config.channelId" placeholder="选择通道加载快照" clearable style="width: 100%" @change="loadChannelSnapshot">
@@ -214,7 +222,12 @@
               <!-- 位置条件 -->
               <template v-if="cond.type === 'location'">
                 <el-form-item label="监控位置" label-position="top" class="cond-form-item">
-                  <el-select v-model="form.conditions.location.config.point" placeholder="选择位置" style="width: 100%"><el-option v-for="l in locationOptions" :key="l" :label="l" :value="l" /></el-select>
+                  <el-select v-model="form.conditions.location.config.point" placeholder="选择位置" clearable style="width: 100%">
+                                      <template v-if="locationOptionsDynamic.length > 0">
+                                        <el-option v-for="l in locationOptionsDynamic" :key="l.value" :label="l.label" :value="l.value" />
+                                      </template>
+                                      <template #empty><span class="text-secondary">暂无设备位置</span></template>
+                                    </el-select>
                 </el-form-item>
               </template>
 
@@ -256,7 +269,7 @@
                     <el-checkbox v-for="ch in channelOptionsDynamic" :key="ch.value" :label="ch.label" :value="ch.value" size="small" />
                   </template>
                   <template v-else>
-                    <el-checkbox v-for="ch in fallbackChannelOptions" :key="ch" :label="ch" :value="ch" size="small" />
+                    <span class="text-secondary" style="padding: 8px 0; display: inline-block;">暂无通道数据，请先添加通道或检查后端连接</span>
                   </template>
                 </el-checkbox-group>
               </template>
@@ -351,8 +364,8 @@
             <template v-if="channelOptionsDynamic.length > 0">
               <el-option v-for="ch in channelOptionsDynamic" :key="ch.value" :label="ch.label" :value="ch.value" />
             </template>
-            <template v-else>
-              <el-option v-for="ch in fallbackChannelOptions" :key="ch" :label="ch" :value="ch" />
+            <template #empty>
+              <span class="text-secondary">暂无通道数据</span>
             </template>
           </el-select>
         </el-form-item>
@@ -601,19 +614,111 @@
     <el-dialog v-model="showTimeTemplateDialog" title="布防时段模板管理" width="600px" destroy-on-close>
       <TimeTemplateEditor @apply="applyTimeTemplate" />
     </el-dialog>
+
+    </el-tab-pane><!-- end 联动规则 -->
+
+    <!-- ==================== 预案管理 Tab ==================== -->
+    <el-tab-pane label="预案管理" name="plans">
+      <div class="tab-toolbar">
+        <el-button type="primary" size="small" @click="openPlanEditor(null)">+ 新建预案</el-button>
+        <el-button size="small" @click="fetchPlans">刷新</el-button>
+      </div>
+      <el-table :data="plans" stripe v-loading="plansLoading" size="small" style="margin-top: 12px">
+        <el-table-column prop="plan_id" label="ID" width="140" />
+        <el-table-column prop="name" label="名称" width="160" />
+        <el-table-column prop="description" label="描述" min-width="180" />
+        <el-table-column label="关联规则" width="100">
+          <template #default="{ row }">{{ (row.rule_ids || []).length }} 条</template>
+        </el-table-column>
+        <el-table-column label="定时布撤防" width="160">
+          <template #default="{ row }">
+            <span v-if="row.schedule?.enabled">{{ row.schedule.arm_time }} - {{ row.schedule.disarm_time }}</span>
+            <span v-else style="color: #c0c4cc">未启用</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="状态" width="90">
+          <template #default="{ row }">
+            <el-tag :type="row.enabled ? 'success' : 'info'" size="small">{{ row.enabled ? '已激活' : '未激活' }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="260" fixed="right">
+          <template #default="{ row }">
+            <el-button size="small" link type="primary" @click="openPlanEditor(row)">编辑</el-button>
+            <el-button v-if="!row.enabled" size="small" link type="success" @click="handleActivatePlan(row.plan_id)">激活</el-button>
+            <el-button v-else size="small" link type="warning" @click="handleDeactivatePlan(row.plan_id)">停用</el-button>
+            <el-popconfirm title="确认删除?" @confirm="handleDeletePlan(row.plan_id)">
+              <template #reference><el-button size="small" link type="danger">删除</el-button></template>
+            </el-popconfirm>
+          </template>
+        </el-table-column>
+      </el-table>
+    </el-tab-pane>
+
+    <!-- ==================== CEP 模式 Tab ==================== -->
+    <el-tab-pane label="CEP复杂事件" name="cep">
+      <div class="tab-toolbar">
+        <el-button type="primary" size="small" @click="openCEPEditor(null)">+ 新建CEP模式</el-button>
+        <el-button size="small" @click="fetchCEPPatterns">刷新</el-button>
+        <span v-if="cepStats" style="margin-left: 16px; font-size: 12px; color: #909399">
+          事件输入: {{ cepStats.total_events_in }} | 模式匹配: {{ cepStats.total_patterns_matched }} | 复合事件: {{ cepStats.total_composite_events }}
+        </span>
+      </div>
+      <el-table :data="cepPatterns" stripe v-loading="cepLoading" size="small" style="margin-top: 12px">
+        <el-table-column prop="pattern_id" label="ID" width="200" />
+        <el-table-column prop="name" label="名称" width="180" />
+        <el-table-column prop="description" label="描述" min-width="180" />
+        <el-table-column label="操作符" width="100">
+          <template #default="{ row }">
+            <el-tag v-for="s in (row.steps || []).slice(0, 2)" :key="s.step_id" size="small" style="margin: 1px">{{ opLabel(s.op) }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="窗口" width="100">
+          <template #default="{ row }">{{ (row.window_ms / 1000).toFixed(0) }}s</template>
+        </el-table-column>
+        <el-table-column prop="output_event_type" label="输出事件" width="160" />
+        <el-table-column label="状态" width="90">
+          <template #default="{ row }">
+            <el-tag :type="row.enabled ? 'success' : 'info'" size="small">{{ row.enabled ? '启用' : '禁用' }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="内置" width="70">
+          <template #default="{ row }">
+            <el-tag v-if="row.is_builtin" type="info" size="small">内置</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="180" fixed="right">
+          <template #default="{ row }">
+            <el-button size="small" link type="primary" @click="openCEPEditor(row)" :disabled="row.is_builtin">编辑</el-button>
+            <el-popconfirm title="确认删除?" @confirm="handleDeleteCEP(row.pattern_id)" :disabled="row.is_builtin">
+              <template #reference><el-button size="small" link type="danger" :disabled="row.is_builtin">删除</el-button></template>
+            </el-popconfirm>
+          </template>
+        </el-table-column>
+      </el-table>
+    </el-tab-pane>
+
+    </el-tabs><!-- end main-tabs -->
+
+    <!-- ===== 预案编辑器 ===== -->
+    <PlanEditor v-model="planEditorVisible" :edit-plan="editingPlan" @saved="fetchPlans" />
+    <!-- ===== CEP 编辑器 ===== -->
+    <CEPPatternEditor v-model="cepEditorVisible" :edit-pattern="editingCEP" @saved="fetchCEPPatterns" />
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, reactive, onMounted } from 'vue'
+import { ref, computed, reactive, onMounted, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { FormInstance, FormRules } from 'element-plus'
 import { Search, Plus, Document, Link, Bell, Setting, ArrowDown } from '@element-plus/icons-vue'
 import { linkageApi, ACTION_TYPE_MAP, ACTION_TYPE_REVERSE_MAP, getTargetForActionType } from '@/api/linkage'
-import type { LinkageRule, LinkageAction, LinkageLog, TimeTemplate } from '@/api/linkage'
+import type { LinkageRule, LinkageAction, LinkageLog, TimeTemplate, LinkagePlan, CEPPattern, ConditionNode } from '@/api/linkage'
 import { useLinkageOptions } from '@/composables/useLinkageOptions'
 import RoiPolygonEditor from '@/components/RoiPolygonEditor.vue'
 import TimeTemplateEditor from '@/components/TimeTemplateEditor.vue'
+import PlanEditor from '@/components/PlanEditor.vue'
+import CEPPatternEditor from '@/components/CEPPatternEditor.vue'
+import ConditionTreeEditor from '@/components/ConditionTreeEditor.vue'
 import type { RoiData } from '@/composables/useRoiCanvas'
 
 // ── 常量 ──
@@ -633,12 +738,11 @@ const weekdays = [
 ]
 
 // 动态选项 (从后端加载)
-const { eventTypeOptions, eventTypeGrouped, channelOptions: channelOptionsDynamic, loading: optionsLoading, fetchOptions } = useLinkageOptions()
+const { eventTypeOptions, eventTypeGrouped, channelOptions: channelOptionsDynamic, locationOptions: locationOptionsDynamic, loading: optionsLoading, fetchOptions } = useLinkageOptions()
 
 // 静态回退选项
 const fallbackEventTypes = ['周界入侵', '绊线', '烟火', '安全帽', '人脸', '车牌', '人群', '摔倒']
-const fallbackChannelOptions = ['CH01', 'CH02', 'CH03', 'CH04', 'CH05', 'CH06', 'CH07', 'CH08']
-const locationOptions = ['全部位置', '3号厂区', '东围墙', '2号车间', '1号大门']
+const fallbackChannelOptions: string[] = [] // 已移除虚假静态通道，避免规则无法触发
 const roiOptions = ['全部区域', '周界线A', '绊线B', '区域C']
 const groupOptions = ['全部分组', '东区摄像头', '室内摄像头', '室外摄像头']
 
@@ -738,6 +842,12 @@ const sysActions = [
   { type: 'SYS_RELAY_SWITCH', icon: '⚡', label: '继电器开关' },
   { type: 'SYS_HTTP_CALLBACK', icon: '🌐', label: 'HTTP回调' },
   { type: 'SYS_CLOUD_FORWARD', icon: '☁️', label: '转发到云端' },
+  { type: 'SYS_START_INFERENCE', icon: '🧠', label: '启动AI推理' },
+  { type: 'SYS_STOP_INFERENCE', icon: '⏹️', label: '停止AI推理' },
+  { type: 'SYS_START_STREAM', icon: '📹', label: '启动拉流' },
+  { type: 'SYS_STOP_STREAM', icon: '⏸️', label: '停止拉流' },
+  { type: 'SYS_DEPLOY_PIPELINE', icon: '🚀', label: '部署Pipeline' },
+  { type: 'SYS_UNDEPLOY_PIPELINE', icon: '🛑', label: '卸载Pipeline' },
 ]
 
 // ── 列表状态 ──
@@ -834,7 +944,7 @@ const form = reactive({
 
 // ── 高级条件模式 ──
 const advancedConditionMode = ref(false)
-const conditionTreeJson = ref('')
+const conditionTreeValue = ref<ConditionNode | undefined>(undefined)
 
 // ── Dry-Run 状态 ──
 const dryRunLoading = ref(false)
@@ -1007,10 +1117,10 @@ function openEditor(rule: LinkageRule | null) {
   // 恢复条件树
   if (rule?.condition_tree) {
     advancedConditionMode.value = true
-    conditionTreeJson.value = JSON.stringify(rule.condition_tree, null, 2)
+    conditionTreeValue.value = rule.condition_tree
   } else {
     advancedConditionMode.value = false
-    conditionTreeJson.value = ''
+    conditionTreeValue.value = undefined
   }
 
   // 恢复条件: 后端格式 → 内部 6 条件表单
@@ -1099,10 +1209,13 @@ async function handleSave() {
 
     const rc = form.conditions.region
     const lc = form.conditions.location
+    // 清理 "全部XXX" 占位值，后端空字符串 = 不过滤
+    const cleanLocation = (v: string) => (v && v.startsWith('全部') ? '' : v)
+    const cleanGroup = (v: string) => (v && v.startsWith('全部') ? '' : v)
     const spatial_cond = (rc.enabled || lc.enabled) ? {
-      region_id: rc.config.roi || '',
-      location_id: lc.enabled ? (lc.config.point || rc.config.location) : (rc.config.location || ''),
-      device_group_id: rc.config.group || '',
+      region_id: cleanLocation(rc.config.roi || ''),
+      location_id: cleanLocation(lc.enabled ? (lc.config.point || rc.config.location) : (rc.config.location || '')),
+      device_group_id: cleanGroup(rc.config.group || ''),
       roi_polygon: rc.config.roiPolygon.flatMap((r: RoiData) => r.polygon) || [] as number[],
     } : { region_id: '', location_id: '', device_group_id: '', roi_polygon: [] as number[] }
 
@@ -1175,7 +1288,7 @@ async function handleSave() {
       cooldown_ms: form.cooldownMs,
       enabled: form.enabled,
       tags: form.tags,
-      ...(advancedConditionMode.value && conditionTreeJson.value ? { condition_tree: JSON.parse(conditionTreeJson.value) } : {}),
+      ...(advancedConditionMode.value && conditionTreeValue.value ? { condition_tree: conditionTreeValue.value } : {}),
       time_cond,
       spatial_cond,
       source_cond,
@@ -1438,7 +1551,102 @@ function applyTimeTemplate(tmpl: TimeTemplate) {
   ElMessage.success('已应用时段模板: ' + tmpl.name)
 }
 
-onMounted(() => { fetchRules(); fetchOptions() })
+onMounted(() => {
+  fetchRules(); fetchOptions()
+  if (mainTab.value === 'plans') fetchPlans()
+  if (mainTab.value === 'cep') fetchCEPPatterns()
+})
+
+// ── 主页面 Tab ──
+const mainTab = ref('rules')
+
+// ── 预案管理 ──
+const plans = ref<LinkagePlan[]>([])
+const plansLoading = ref(false)
+const planEditorVisible = ref(false)
+const editingPlan = ref<LinkagePlan | null>(null)
+
+async function fetchPlans() {
+  plansLoading.value = true
+  try {
+    const res = await linkageApi.getPlans()
+    plans.value = (res.data as any) || []
+  } catch (e) { console.error('Fetch plans failed:', e) }
+  finally { plansLoading.value = false }
+}
+
+function openPlanEditor(plan: LinkagePlan | null) {
+  editingPlan.value = plan
+  planEditorVisible.value = true
+}
+
+async function handleActivatePlan(planId: string) {
+  try {
+    await linkageApi.activatePlan(planId)
+    ElMessage.success('预案已激活')
+    fetchPlans()
+  } catch (e: any) { ElMessage.error('激活失败: ' + (e.message || e)) }
+}
+
+async function handleDeactivatePlan(planId: string) {
+  try {
+    await linkageApi.deactivatePlan(planId)
+    ElMessage.success('预案已停用')
+    fetchPlans()
+  } catch (e: any) { ElMessage.error('停用失败: ' + (e.message || e)) }
+}
+
+async function handleDeletePlan(planId: string) {
+  try {
+    await linkageApi.deletePlan(planId)
+    ElMessage.success('预案已删除')
+    fetchPlans()
+  } catch (e: any) { ElMessage.error('删除失败: ' + (e.message || e)) }
+}
+
+// ── CEP 模式管理 ──
+const cepPatterns = ref<CEPPattern[]>([])
+const cepLoading = ref(false)
+const cepEditorVisible = ref(false)
+const editingCEP = ref<CEPPattern | null>(null)
+const cepStats = ref<{ total_events_in: number; total_patterns_matched: number; total_composite_events: number } | null>(null)
+
+const OP_LABELS: Record<number, string> = { 0: 'SEQUENCE', 1: 'AND', 2: 'OR', 3: 'NOT', 4: 'COUNT', 5: 'ABSENCE' }
+function opLabel(op: number): string { return OP_LABELS[op] || 'AND' }
+
+async function fetchCEPPatterns() {
+  cepLoading.value = true
+  try {
+    const res = await linkageApi.getCEPPatterns()
+    const data = res.data as any
+    cepPatterns.value = data?.items || []
+    cepStats.value = data ? {
+      total_events_in: data.total_events_in || 0,
+      total_patterns_matched: data.total_patterns_matched || 0,
+      total_composite_events: data.total_composite_events || 0,
+    } : null
+  } catch (e) { console.error('Fetch CEP patterns failed:', e) }
+  finally { cepLoading.value = false }
+}
+
+function openCEPEditor(pattern: CEPPattern | null) {
+  editingCEP.value = pattern
+  cepEditorVisible.value = true
+}
+
+async function handleDeleteCEP(patternId: string) {
+  try {
+    await linkageApi.deleteCEPPattern(patternId)
+    ElMessage.success('CEP模式已删除')
+    fetchCEPPatterns()
+  } catch (e: any) { ElMessage.error('删除失败: ' + (e.message || e)) }
+}
+
+// 切换主Tab时自动加载数据
+watch(mainTab, (tab) => {
+  if (tab === 'plans' && plans.value.length === 0) fetchPlans()
+  if (tab === 'cep' && cepPatterns.value.length === 0) fetchCEPPatterns()
+})
 </script>
 
 <style scoped>
@@ -1449,6 +1657,12 @@ onMounted(() => { fetchRules(); fetchOptions() })
   margin: 0 auto;
   animation: fadeIn 0.3s ease;
 }
+
+/* ── 主页面 Tabs ── */
+.main-tabs :deep(.el-tabs__content) { padding: 16px 0 0 0; overflow: visible; }
+.main-tabs :deep(.el-tabs__header) { margin-bottom: 0; }
+.main-tabs :deep(.el-tabs__nav-wrap::after) { height: 0; }
+.tab-toolbar { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
 
 /* ── 统计卡片 ── */
 .stat-row { margin-bottom: 16px; }
