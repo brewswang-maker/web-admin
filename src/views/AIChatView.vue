@@ -177,6 +177,7 @@ import { ref, reactive, onMounted, nextTick, onUnmounted } from 'vue'
 import { aiHttp } from '@/api/http'
 import { ElMessage } from 'element-plus'
 import { Promotion } from '@element-plus/icons-vue'
+import type { ApiResponse } from '@/types/common'
 
 interface ThinkStep { text: string; status: 'pending' | 'running' | 'done'; duration?: number }
 interface ChatMessage {
@@ -231,9 +232,10 @@ function formatJson(obj: any): string {
 
 async function loadConversations() {
   try {
-    const { data } = await aiHttp.get('/sessions')
-    // sessions = conversations alias
-    conversations.value = data?.data || data || []
+    // 后端响应是 {code, message, data:{sessions, total}} 嵌套结构
+    const { data } = await aiHttp.get<ApiResponse<{ sessions: Conversation[]; total: number }>>('/sessions')
+    const list = data?.data?.sessions
+    conversations.value = Array.isArray(list) ? list : []
   } catch {
     conversations.value = [{ id: 'default', title: '新对话', created_at: new Date().toISOString() }]
   }
@@ -356,6 +358,7 @@ async function sendMessage() {
       messages.value.push({ role: 'assistant', content: streamingText.value })
     }
     // 更新对话标题
+    if (!Array.isArray(conversations.value)) return
     const conv = conversations.value.find(c => c.id === currentConvId.value)
     if (conv && conv.title === '新对话') {
       conv.title = text.substring(0, 20) + (text.length > 20 ? '...' : '')
