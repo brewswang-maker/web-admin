@@ -145,6 +145,11 @@ export default defineConfig(async () => {
           ws: true,
           changeOrigin: true,
         },
+        // box-sdk 快照文件代理（与/api/v1指向同一后端，/snapshots/路径提供JEPG文件）
+        '/snapshots': {
+          target: 'http://127.0.0.1:18080',
+          changeOrigin: true,
+        },
         // ZLM HTTP-FLV 播放代理
         '/rtp': {
           target: 'http://127.0.0.1:9080',
