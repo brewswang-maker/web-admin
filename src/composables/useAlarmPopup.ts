@@ -275,31 +275,22 @@ export async function showAlarmPopup(rawAlarm: any) {
   // 1. 数据适配
   const alarm = normalizeAlarmPayload(rawAlarm)
 
-  // 2. 如果弹窗已打开 → 仅推入队列（不打断当前展示）
-  if (popupVisible.value) {
-    // alarmStore 已在 useGlobalAlarm 中 pushRealtimeAlarm
-    return
-  }
-
-  // 3. 查询匹配的联动规则
+  // 2. 查询匹配的联动规则
   const rule = await findMatchingRule(alarm)
 
-  // 4. 设置当前告警和匹配规则
+  // 3. 总是更新 currentAlarm (§13 Fix P2: 弹窗已开时也切到最新, 不静默吞掉)
   currentAlarm.value = alarm
   matchedRule.value = rule
   linkageLogs.value = []
   queueIndex.value = 0
 
-  // 5. 打开弹窗
-  popupVisible.value = true
-
-  // 6. 音效
-  if (hasAction('WEB_PLAY_TONE') || hasAction('CLIENT_PLAY_TONE')) {
-    playAlarmSound()
-  } else {
-    // 默认也播放（可后续通过配置关闭）
-    playAlarmSound()
+  // 4. 打开弹窗 (已开则保持 visible, 不重置)
+  if (!popupVisible.value) {
+    popupVisible.value = true
   }
+
+  // 5. 音效 (新告警到达时总是播放一次, 不论弹窗是否已开)
+  playAlarmSound()
 }
 
 // ── 关闭弹窗 ──

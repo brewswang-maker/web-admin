@@ -18,12 +18,8 @@ let reconnectTimer: ReturnType<typeof setTimeout> | null = null
 let reconnectAttempts = 0
 const maxReconnectAttempts = 10
 const reconnectDelay = 3000
-const THROTTLE_MS = 10_000
 
 export const connected = ref(false)
-
-/** 防抖：同 alarm_type + channel_id 在 THROTTLE_MS 内只弹一次 */
-const lastPopupTime = new Map<string, number>()
 
 let started = false
 
@@ -106,30 +102,21 @@ function doConnect() {
 function handleAlarm(alarm: any) {
   if (!alarm) return
 
-  // 1. 推入 alarmStore（更新 realtimeAlarms + unhandledCount）
+  // 1. 规整: WS 推过来的原始 payload 字段是 snake_case, 前端需要驼峰 + status='unhandled'
+  const normalized = normalizeAlarmPayload(alarm)
+
+  // 2. 推入 alarmStore（更新 realtimeAlarms + unhandledCount）
   try {
     const alarmStore = useAlarmStore()
-    // 关键: WS 推过来的原始 payload 没有 status/normalized 字段, 必须先 normalize,
-    // 否则 useAlarmPopup 的 alarmQueue.filter(a => a.status === 'unhandled') 永远空.
-    const normalized = normalizeAlarmPayload(alarm)
     alarmStore.pushRealtimeAlarm(normalized)
   } catch {
     // Store 未初始化时忽略
   }
 
-  // 2. 防抖弹窗
-  const alarmType = alarm.alarm_type || alarm.type || 'unknown'
-  const channelId = alarm.channel_id ?? alarm.channel ?? ''
-  const throttleKey = `${alarmType}_${channelId}`
-  const now = Date.now()
-
-  if (lastPopupTime.has(throttleKey) && now - lastPopupTime.get(throttleKey)! < THROTTLE_MS) {
-    return // 10 秒内同类型同通道不重复弹窗
-  }
-  lastPopupTime.set(throttleKey, now)
-
-  // 3. 弹出海康风格报警弹窗
-  showAlarmPopup(alarm)
+  // 3. 弹窗交给 showAlarmPopup 决定"切 vs 排队"
+  //    §13 Fix P: 旧版按 type+channel 节流 10s, 导致同 camera 连续告警第 2 条起永远不弹;
+  //    现在删除节流, 弹窗总是更新 currentAlarm, 用户可在队列中切换
+  showAlarmPopup(normalized)
 }
 
 // ── 联动动作图标映射 ──
@@ -174,5 +161,5 @@ export function stopGlobalAlarm() {
     ws = null
   }
   connected.value = false
-  lastPopupTime.clear()
+  // §13 Fix P: 节流键已删除, 无需清理
 }

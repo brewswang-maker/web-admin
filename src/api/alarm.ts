@@ -84,8 +84,25 @@ export const alarmApi = {
   },
 
   /** 获取告警证据链(快照+视频+AI分析+关联录像) */
-  getEvidence(id: string) {
-    return alarmHttp.get<ApiResponse<AlarmEvidence>>(`/${id}/evidence`)
+  // §13 Fix E: 后端实际响应是 ApiResponse<{snapshot:{url,available}, video_clip:{url,available}, ...}>,
+  // 前端 AlarmEvidence 是扁平结构, 这里做映射 (nested → flat) 后再返回
+  async getEvidence(id: string): Promise<AlarmEvidence | null> {
+    try {
+      const res: any = await alarmHttp.get<ApiResponse<any>>(`/${id}/evidence`)
+      // axios response -> ApiResponse -> data
+      const d = res?.data?.data ?? res?.data
+      if (!d) return null
+      return {
+        snapshotUrl: d.snapshot?.url ?? '',
+        videoClipUrl: d.video_clip?.url ?? '',
+        detectionBoxes: d.metadata ?? [],
+        aiAnalysis: '',
+        relatedRecordingId: '',
+        relatedRecordingTime: '',
+      }
+    } catch {
+      return null
+    }
   },
 
   /** AI二次分析告警图片 */

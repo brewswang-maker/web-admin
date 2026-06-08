@@ -314,16 +314,17 @@ function startPlayback() {
 }
 
 async function loadPlayback() {
-  // fix #C5: 兜底 — 如果 list 接口没返回 videoClipUrl, 主动调 evidence 拿
+  // §13 Fix E: getEvidence 现在直接返回扁平字段 (snapshotUrl/videoClipUrl)
   if (!currentAlarm.value?.id) return
   try {
-    const ev: any = await alarmApi.getEvidence(currentAlarm.value.id)
-    const data = ev?.data?.data ?? ev?.data
-    if (data) {
-      if (data.video_clip_url) currentAlarm.value.videoClipUrl = data.video_clip_url
-      if (data.snapshot_url && !currentAlarm.value.snapshotUrl) {
-        currentAlarm.value.snapshotUrl = data.snapshot_url
+    const ev = await alarmApi.getEvidence(currentAlarm.value.id)
+    if (ev) {
+      if (ev.videoClipUrl) currentAlarm.value.videoClipUrl = ev.videoClipUrl
+      if (ev.snapshotUrl && !currentAlarm.value.snapshotUrl) {
+        currentAlarm.value.snapshotUrl = ev.snapshotUrl
       }
+    } else {
+      ElMessage.warning('该告警无可用证据')
     }
   } catch (e) {
     console.warn('[AlarmPopup] loadPlayback failed:', e)
