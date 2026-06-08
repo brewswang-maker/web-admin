@@ -8,6 +8,7 @@ import { ref, computed } from 'vue'
 import { alarmApi } from '@/api/alarm'
 import type { AlarmEvent, AlarmStats, AlarmQuery, AlarmHandleForm, AlarmType } from '@/types/alarm'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { normalizeAlarmPayload } from '@/composables/useAlarmPopup'
 
 export const useAlarmStore = defineStore('alarm', () => {
   // ===== 状态 =====
@@ -185,7 +186,10 @@ export const useAlarmStore = defineStore('alarm', () => {
 
   /** 接收实时告警（WebSocket推送） */
   function pushRealtimeAlarm(alarm: AlarmEvent) {
-    realtimeAlarms.value.unshift(alarm)
+    // 防御性兜底: 如果调用方忘了 normalize, 内部补一次.
+    // 否则 store 里的 status 为 undefined, 依赖 status==='unhandled' 的过滤全部失败.
+    const norm = (alarm as any)?.status ? alarm : normalizeAlarmPayload(alarm)
+    realtimeAlarms.value.unshift(norm)
     // 保持最近50条
     if (realtimeAlarms.value.length > 50) {
       realtimeAlarms.value = realtimeAlarms.value.slice(0, 50)

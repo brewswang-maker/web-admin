@@ -9,7 +9,7 @@
  */
 import { ref } from 'vue'
 import { useAlarmStore } from '@/stores/alarm'
-import { showAlarmPopup, pushLinkageLog } from './useAlarmPopup'
+import { showAlarmPopup, pushLinkageLog, normalizeAlarmPayload } from './useAlarmPopup'
 
 // ── 单例状态（模块级，不随组件销毁） ──
 
@@ -109,7 +109,10 @@ function handleAlarm(alarm: any) {
   // 1. 推入 alarmStore（更新 realtimeAlarms + unhandledCount）
   try {
     const alarmStore = useAlarmStore()
-    alarmStore.pushRealtimeAlarm(alarm)
+    // 关键: WS 推过来的原始 payload 没有 status/normalized 字段, 必须先 normalize,
+    // 否则 useAlarmPopup 的 alarmQueue.filter(a => a.status === 'unhandled') 永远空.
+    const normalized = normalizeAlarmPayload(alarm)
+    alarmStore.pushRealtimeAlarm(normalized)
   } catch {
     // Store 未初始化时忽略
   }

@@ -129,6 +129,7 @@
               :src="row.snapshotUrl"
               :preview-src-list="[row.snapshotUrl]"
               fit="cover"
+              loading="lazy"
               style="width: 56px; height: 32px; border-radius: 4px; cursor: pointer"
               :preview-teleported="true"
             />
@@ -513,7 +514,7 @@ async function fetchAlarms() {
     const params: Record<string, any> = {
       page: currentPage.value,
       pageSize: pageSize.value,
-      count: pageSize.value * 5, // 后端用 count 参数
+      // count: 不发 — 让后端 default 50 生效, 之前 pageSize*5 远大于默认造成过度拉取
     }
 
     if (levelFilter.value) {
@@ -577,14 +578,20 @@ function refreshAlarms() {
 const { connected: wsConnected, subscribe: wsSubscribe } = useWebSocket('/ws/alarms')
 
 const unsubscribeAlarm = wsSubscribe('alarm', (data: any) => {
-  // 新告警推送到列表头部
-  alarms.value.unshift(data)
+  // 关键: WS 推过来的 payload 是 snake_case 原始数据, 必须先 normalize,
+  // 否则 snapshotUrl/videoClipUrl/level 等 camelCase 字段都是 undefined.
+  const normalized = normalizeAlarm(data)
+  // 不可变更新 — 避免 alarms.value.unshift 触发整表 re-render
+  alarms.value = [normalized, ...alarms.value]
   totalAlarms.value++
-  ElMessage({
-    type: data.severity === 'critical' ? 'error' : 'warning',
-    message: `🚨 新告警: ${data.type || data.alarm_type} — ${data.location || data.device_name}`,
-    duration: 5000,
-  })
+  // 仅在前 3 页弹 ElMessage, 深层页静默更新避免刷屏
+  if (currentPage.value <= 3) {
+    ElMessage({
+      type: (normalized.level || normalized.severity) === 'critical' ? 'error' : 'warning',
+      message: `🚨 新告警: ${normalized.type || normalized.alarm_type} — ${normalized.deviceName || normalized.location || ''}`,
+      duration: 5000,
+    })
+  }
 })
 
 // ── 统计卡片数据 ──

@@ -49,13 +49,19 @@
                   </div>
                 </el-tab-pane>
 
-                <!-- 录像回放 -->
+                <!-- 录像回放 (fix #C4: 之前是 stub, 现在用 MiniPlayer 真实播放) -->
                 <el-tab-pane v-if="hasAction('WEB_SHOW_PLAYBACK')" label="📼 录像回放" name="playback">
                   <div class="alarm-popup__tab-content">
-                    <div class="alarm-popup__placeholder">
+                    <MiniPlayer
+                      v-if="currentAlarm.videoClipUrl"
+                      :src="currentAlarm.videoClipUrl"
+                      :channel-id="currentAlarm.channelId"
+                      autoplay
+                    />
+                    <div v-else class="alarm-popup__placeholder">
                       <p>📼 录像回放</p>
-                      <p class="alarm-popup__hint">播放告警时间段录像片段</p>
-                      <el-button type="primary" size="small" @click="startPlayback">开始回放</el-button>
+                      <p class="alarm-popup__hint">该告警暂无录像片段</p>
+                      <el-button type="primary" size="small" @click="loadPlayback">加载录像</el-button>
                     </div>
                   </div>
                 </el-tab-pane>
@@ -192,6 +198,7 @@ import {
   closePopup,
 } from '@/composables/useAlarmPopup'
 import { ACTION_TYPE_REVERSE_MAP } from '@/api/linkage'
+import { alarmApi } from '@/api/alarm'
 
 // ── 告警类型中文 ──
 const ALARM_TYPE_CN: Record<string, string> = {
@@ -299,7 +306,29 @@ function onPlayerSnapshot(_blob: Blob) {
 }
 
 function startPlayback() {
-  ElMessage.info('正在启动录像回放...')
+  // fix #C4: 切到 playback tab, 让 MiniPlayer 真正渲染 (之前是 stub)
+  activeTab.value = 'playback'
+  if (currentAlarm.value && !currentAlarm.value.videoClipUrl) {
+    loadPlayback()
+  }
+}
+
+async function loadPlayback() {
+  // fix #C5: 兜底 — 如果 list 接口没返回 videoClipUrl, 主动调 evidence 拿
+  if (!currentAlarm.value?.id) return
+  try {
+    const ev: any = await alarmApi.getEvidence(currentAlarm.value.id)
+    const data = ev?.data?.data ?? ev?.data
+    if (data) {
+      if (data.video_clip_url) currentAlarm.value.videoClipUrl = data.video_clip_url
+      if (data.snapshot_url && !currentAlarm.value.snapshotUrl) {
+        currentAlarm.value.snapshotUrl = data.snapshot_url
+      }
+    }
+  } catch (e) {
+    console.warn('[AlarmPopup] loadPlayback failed:', e)
+    ElMessage.warning('加载录像失败')
+  }
 }
 
 // ── 动作图标 ──
