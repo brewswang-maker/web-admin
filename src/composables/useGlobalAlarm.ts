@@ -9,7 +9,7 @@
  */
 import { ref } from 'vue'
 import { useAlarmStore } from '@/stores/alarm'
-import { showAlarmPopup, pushLinkageLog, normalizeAlarmPayload } from './useAlarmPopup'
+import { showAlarmPopup, pushLinkageLog, normalizeAlarmPayload, playAlarmSound } from './useAlarmPopup'
 
 // ── 单例状态（模块级，不随组件销毁） ──
 
@@ -70,8 +70,10 @@ function doConnect() {
       // alarm: 通用告警类型
       // linkage_alarm: LinkageEngine WEB_POPUP 动作推送
       // dashboard_alert: Dashboard 告警嵌入
+      // system.dashboard_alert / system.alarm: pushSystemEvent 路径
       if (msg.type === 'alarm' || msg.type === 'alarm.new' ||
-          msg.type === 'linkage_alarm' || msg.type === 'dashboard_alert') {
+          msg.type === 'linkage_alarm' || msg.type === 'dashboard_alert' ||
+          msg.type === 'system.dashboard_alert' || msg.type === 'system.alarm') {
         handleAlarm(payload)
       }
 
@@ -83,6 +85,33 @@ function doConnect() {
           icon: getActionIcon(payload.action),
           text: getActionText(payload),
         })
+
+        // 录像完成后更新当前告警的 videoClipUrl
+        if (payload.action === 'record_complete' && payload.video_clip_url) {
+          try {
+            const store = useAlarmStore()
+            const idx = store.realtimeAlarms.findIndex(a => a.id === payload.alarm_id)
+            if (idx >= 0) store.realtimeAlarms[idx].videoClipUrl = payload.video_clip_url
+          } catch { /* store not ready */ }
+        }
+
+        // 播放提示音
+        if (payload.action === 'play_tone' && payload.status === 'completed') {
+          playAlarmSound()
+        }
+
+        // TTS 语音播报
+        if (payload.action === 'tts_broadcast' && payload.status === 'completed') {
+          const text = payload.text || payload.tts_text || payload.description || ''
+          if (text && window.speechSynthesis) {
+            window.speechSynthesis.cancel()
+            const utterance = new SpeechSynthesisUtterance(text)
+            utterance.lang = 'zh-CN'
+            utterance.rate = 1.0
+            utterance.volume = 1.0
+            window.speechSynthesis.speak(utterance)
+          }
+        }
       }
     } catch {
       // 忽略非 JSON 消息

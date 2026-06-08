@@ -36,12 +36,15 @@
                 <!-- 实时视频（始终显示，联动规则有 WEB_SHOW_LIVE 时自动激活） -->
                 <el-tab-pane label="📹 实时视频" name="live">
                   <MiniPlayer
-                    v-if="activeTab === 'live' && currentAlarm?.channelId"
-                    :channel-id="currentAlarm.channelId"
+                    v-show="activeTab === 'live' && currentAlarm?.channelId"
+                    :channel-id="currentAlarm?.channelId || ''"
                     :show-controls="true"
+                    stream-type="sub"
+                    :visible="activeTab === 'live' && !!currentAlarm?.channelId"
+                    :skip-start-api="false"
                     @snapshot="onPlayerSnapshot"
                   />
-                  <div v-else-if="activeTab === 'live'" class="alarm-popup__tab-content">
+                  <div v-if="activeTab === 'live' && !currentAlarm?.channelId" class="alarm-popup__tab-content">
                     <div class="alarm-popup__placeholder">
                       <p>⚠️ 无通道信息</p>
                       <p class="alarm-popup__hint">该告警未关联视频通道</p>

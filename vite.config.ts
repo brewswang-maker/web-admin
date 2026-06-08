@@ -150,6 +150,11 @@ export default defineConfig(async () => {
           target: 'http://127.0.0.1:18080',
           changeOrigin: true,
         },
+        // box-sdk 录像文件代理（MP4 证据链回放）
+        '/record': {
+          target: 'http://127.0.0.1:18080',
+          changeOrigin: true,
+        },
         // ZLM HTTP-FLV 播放代理
         '/rtp': {
           target: 'http://127.0.0.1:9080',

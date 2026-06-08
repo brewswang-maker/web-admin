@@ -247,14 +247,35 @@ export async function handleAlarm(action: 'confirmed' | 'false_alarm' | 'forward
 }
 
 // ── 音效 ──
-function playAlarmSound() {
+let audioUnlocked = false
+function ensureAudioUnlock() {
+  if (audioUnlocked) return
+  audioUnlocked = true
+  if (!alarmAudio) {
+    alarmAudio = new Audio('/audio/alarm.m4a')
+    alarmAudio.volume = 0.6
+  }
+  const unlock = () => {
+    alarmAudio!.play().then(() => {
+      alarmAudio!.pause()
+      alarmAudio!.currentTime = 0
+    }).catch(() => {})
+    document.removeEventListener('click', unlock)
+    document.removeEventListener('keydown', unlock)
+  }
+  document.addEventListener('click', unlock)
+  document.addEventListener('keydown', unlock)
+}
+
+export function playAlarmSound() {
   try {
+    ensureAudioUnlock()
     if (!alarmAudio) {
-      alarmAudio = new Audio('/audio/alarm.mp3')
+      alarmAudio = new Audio('/audio/alarm.m4a')
       alarmAudio.volume = 0.6
     }
     alarmAudio.currentTime = 0
-    alarmAudio.play().catch(() => { /* 浏览器自动播放策略限制 */ })
+    alarmAudio.play().catch(() => {})
   } catch { /* 静默 */ }
 }
 
@@ -275,22 +296,24 @@ export async function showAlarmPopup(rawAlarm: any) {
   // 1. 数据适配
   const alarm = normalizeAlarmPayload(rawAlarm)
 
-  // 2. 查询匹配的联动规则
-  const rule = await findMatchingRule(alarm)
-
-  // 3. 总是更新 currentAlarm (§13 Fix P2: 弹窗已开时也切到最新, 不静默吞掉)
+  // 2. 先更新状态 + 打开弹窗（用户立即看到，不被下游 await 阻塞）
   currentAlarm.value = alarm
-  matchedRule.value = rule
   linkageLogs.value = []
   queueIndex.value = 0
-
-  // 4. 打开弹窗 (已开则保持 visible, 不重置)
   if (!popupVisible.value) {
     popupVisible.value = true
   }
 
-  // 5. 音效 (新告警到达时总是播放一次, 不论弹窗是否已开)
+  // 3. 音效
   playAlarmSound()
+
+  // 4. 异步查询联动规则（弹窗已开，匹配结果后续填入；失败不阻塞弹窗）
+  try {
+    const rule = await findMatchingRule(alarm)
+    matchedRule.value = rule
+  } catch {
+    matchedRule.value = null
+  }
 }
 
 // ── 关闭弹窗 ──

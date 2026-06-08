@@ -125,14 +125,12 @@
         <!-- 快照缩略图 -->
         <el-table-column label="快照" width="80" align="center">
           <template #default="{ row }">
-            <el-image
+            <img
               v-if="row.snapshotUrl"
               :src="row.snapshotUrl"
-              :preview-src-list="previewList(row.snapshotUrl)"
-              fit="cover"
               loading="lazy"
-              style="width: 56px; height: 32px; border-radius: 4px; cursor: pointer"
-              :preview-teleported="true"
+              style="width:56px;height:32px;object-fit:cover;border-radius:4px;cursor:pointer"
+              @click="previewImageUrl = row.snapshotUrl; previewVisible = true"
             />
             <span v-else class="text-secondary" style="font-size:11px">无</span>
           </template>
@@ -183,7 +181,7 @@
         <!-- AI解释 -->
         <el-table-column prop="aiAnalysis" label="AI解释" width="180" show-overflow-tooltip>
           <template #default="{ row }">
-            <el-tooltip :content="row.aiAnalysis || '无AI解释'" placement="top" :show-after="400" effect="dark">
+            <el-tooltip :content="row.aiAnalysis || '无AI解释'" placement="top" :show-after="1500" effect="dark">
               <span class="xai-text">{{ row.aiAnalysis || '-' }}</span>
             </el-tooltip>
           </template>
@@ -378,11 +376,18 @@
         <el-empty v-else-if="!evidenceLoading" description="无法获取证据链数据" />
       </div>
     </el-dialog>
+
+    <!-- 图片预览 -->
+    <el-image-viewer
+      v-if="previewVisible"
+      :url-list="[previewImageUrl]"
+      @close="previewVisible = false"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, shallowRef, computed, onMounted, onUnmounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   Bell, Warning, CircleCheck, Clock,
@@ -416,7 +421,7 @@ const pageSize = ref(20)
 const loading = ref(false)
 
 // ── 告警数据 ──
-const alarms = ref<any[]>([])
+const alarms = shallowRef<any[]>([])
 const totalAlarms = ref(0)
 
 // ── 详情弹窗 ──
@@ -430,6 +435,8 @@ const evidenceLoading = ref(false)
 const evidenceData = ref<AlarmEvidence | null>(null)
 const evidenceAlarmId = ref('')
 const analyzeLoading = ref(false)
+const previewVisible = ref(false)
+const previewImageUrl = ref('')
 
 // ── 日期快捷选项 ──
 const dateShortcuts = [
@@ -576,7 +583,7 @@ function refreshAlarms() {
 }
 
 // ── WebSocket实时推送新告警 ──
-const { connected: wsConnected, subscribe: wsSubscribe } = useWebSocket('/ws/alarms')
+const { connected: wsConnected, subscribe: wsSubscribe } = useWebSocket('/ws')
 
 const unsubscribeAlarm = wsSubscribe('alarm', (data: any) => {
   // 关键: WS 推过来的 payload 是 snake_case 原始数据, 必须先 normalize,
@@ -595,53 +602,55 @@ const unsubscribeAlarm = wsSubscribe('alarm', (data: any) => {
   }
 })
 
-// ── 统计卡片数据 ──
-const alarmStatCards = computed(() => {
-  const total = totalAlarms.value || alarms.value.length
-  const critical = alarms.value.filter(a => a.severity === 'critical' || a.level === 'critical').length
-  const unhandled = alarms.value.filter(a => a.status === 'unhandled').length
-  const falseAlarms = alarms.value.filter(a => a.status === 'false_alarm' || a.status === 'ignored').length
-  return [
-    { label: '总告警', value: total, color: '#6366F1', icon: Bell },
-    { label: '严重', value: critical, color: '#DC2626', icon: Warning },
-    { label: '未处理', value: unhandled, color: '#F59E0B', icon: Clock },
-    { label: '误报', value: falseAlarms, color: '#22C55E', icon: CircleCheck },
-  ]
-})
+// ── 统计 + 筛选（单次遍历） ──
+const { alarmStatCards, filteredAlarms } = (() => {
+  const filtered = computed(() => {
+    const src = alarms.value
+    let crit = 0, unhandled = 0, falseAlarms = 0
+    const out: any[] = []
+    const lf = levelFilter.value
+    const tf = typeFilter.value
+    const sf = statusFilter.value
+    const q = search.value ? search.value.toLowerCase() : ''
+    const hasDate = dateRange.value && dateRange.value.length === 2 && dateRange.value[0] && dateRange.value[1]
+    const dateStart = hasDate ? dateRange.value![0]!.getTime() : 0
+    const dateEnd = hasDate ? dateRange.value![1]!.getTime() : 0
 
-// ── 筛选后的告警 ──
-const filteredAlarms = computed(() => {
-  let list = [...alarms.value]
+    for (const a of src) {
+      // 统计（全量）
+      if (a.severity === 'critical' || a.level === 'critical') crit++
+      if (a.status === 'unhandled') unhandled++
+      if (a.status === 'false_alarm' || a.status === 'ignored') falseAlarms++
 
-  if (levelFilter.value) {
-    list = list.filter(a => (a.severity || a.level) === levelFilter.value)
-  }
-  if (typeFilter.value) {
-    list = list.filter(a => a.type === typeFilter.value)
-  }
-  if (statusFilter.value) {
-    list = list.filter(a => a.status === statusFilter.value)
-  }
-  if (search.value) {
-    const q = search.value.toLowerCase()
-    list = list.filter(a =>
-      (a.description || '').toLowerCase().includes(q) ||
-      (a.title || '').toLowerCase().includes(q) ||
-      (a.deviceName || '').toLowerCase().includes(q)
-    )
-  }
+      // 筛选
+      if (lf && (a.severity || a.level) !== lf) continue
+      if (tf && a.type !== tf) continue
+      if (sf && a.status !== sf) continue
+      if (q) {
+        if (!((a.description || '').toLowerCase().includes(q) ||
+              (a.title || '').toLowerCase().includes(q) ||
+              (a.deviceName || '').toLowerCase().includes(q))) continue
+      }
+      if (hasDate) {
+        const t = new Date(a.createdAt).getTime()
+        if (t < dateStart || t > dateEnd) continue
+      }
+      out.push(a)
+    }
 
-  // 时间范围筛选
-  if (dateRange.value && dateRange.value.length === 2 && dateRange.value[0] && dateRange.value[1]) {
-    const [start, end] = dateRange.value
-    list = list.filter(a => {
-      const t = new Date(a.createdAt).getTime()
-      return t >= start.getTime() && t <= end.getTime()
-    })
+    const total = totalAlarms.value || src.length
+    return { stats: [
+      { label: '总告警', value: total, color: '#6366F1', icon: Bell },
+      { label: '严重', value: crit, color: '#DC2626', icon: Warning },
+      { label: '未处理', value: unhandled, color: '#F59E0B', icon: Clock },
+      { label: '误报', value: falseAlarms, color: '#22C55E', icon: CircleCheck },
+    ], filtered: out }
+  })
+  return {
+    alarmStatCards: computed(() => filtered.value.stats),
+    filteredAlarms: computed(() => filtered.value.filtered),
   }
-
-  return list
-})
+})()
 
 // ── 分页后的告警 ──
 const paginatedAlarms = computed(() => {
@@ -692,19 +701,20 @@ function confPct(row: any): number {
   return v
 }
 
-// §13 Fix L4: preview-src-list 用稳定引用, 避免每次渲染创建新数组
-const _emptyArr: string[] = Object.freeze([]) as unknown as string[]
-function previewList(url: string | undefined): string[] {
-  return url ? [url] : _emptyArr
-}
 
+const _timeCache = new Map<string, string>()
 function formatTime(isoString: string | undefined) {
   if (!isoString) return '-'
+  let v = _timeCache.get(isoString)
+  if (v !== undefined) return v
   try {
-    return new Date(isoString).toLocaleString('zh-CN')
+    v = new Date(isoString).toLocaleString('zh-CN')
   } catch {
-    return isoString
+    v = isoString
   }
+  _timeCache.set(isoString, v)
+  if (_timeCache.size > 2000) { const first = _timeCache.keys().next().value as string; if (first) _timeCache.delete(first) }
+  return v
 }
 
 // ── 操作函数 ──

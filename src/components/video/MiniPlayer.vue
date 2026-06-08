@@ -51,18 +51,26 @@ const DEGRADATION_CHAINS: Record<string, PlayerFormat[]> = {
 
 const props = withDefaults(defineProps<{
   channelId: string
+  /** 直接 URL 播放（证据回放 / 已知流地址），跳过 fetchStreamUrls */
+  src?: string
   autoPlay?: boolean
   muted?: boolean
   aspectRatio?: string
   showControls?: boolean
   /** 跳过 /start 调用（流已在推时使用，如浮窗预览） */
   skipStartApi?: boolean
+  /** 码流类型: 'main' (高清) 或 'sub' (子码流, 低分辨率) */
+  streamType?: 'main' | 'sub'
+  /** 组件是否可见 (v-show 场景下控制是否启动流) */
+  visible?: boolean
 }>(), {
   autoPlay: true,
   muted: true,
   aspectRatio: '16:9',
   showControls: false,
   skipStartApi: false,
+  streamType: 'main',
+  visible: true,
 })
 
 const emit = defineEmits<{
@@ -102,30 +110,8 @@ function destroyPlayer() {
 // ── 获取流 URL ──
 async function fetchStreamUrls(chId: string): Promise<{ urls: Partial<Record<PlayerFormat, string>>, codec: string } | null> {
   try {
-    let startData: any = null
-    let c = ''
-    // skipStartApi=true 时跳过 /start 调用（流已在推）
-    if (!props.skipStartApi) {
-      try {
-        const { data: startResp } = await streamHttp.post(`/${chId}/start`)
-        startData = startResp?.data || startResp
-      } catch { /* 可能已在推流 */ }
-    }
-
-    if (startData && (startData.flvUrl || startData.webrtcUrl) && startData.zlmReady) {
-      c = startData.codec || ''
-      return {
-        urls: {
-          flv: startData.flvUrl || '',
-          webrtc: startData.webrtcUrl || '',
-          'ws-flv': startData.wsFlvUrl || '',
-          hls: startData.hlsUrl || '',
-        },
-        codec: c,
-      }
-    }
-
-    for (let attempt = 0; attempt < 5; attempt++) {
+    // 1. 先查现有流 URL（无副作用，复用已有流，不触发 GB28181 INVITE）
+    for (let attempt = 0; attempt < 3; attempt++) {
       try {
         const { data } = await streamHttp.get(`/${chId}/multi-urls`)
         const d = data?.data || data
@@ -137,6 +123,42 @@ async function fetchStreamUrls(chId: string): Promise<{ urls: Partial<Record<Pla
         }
       } catch { /* */ }
       await new Promise(r => setTimeout(r, 100))
+    }
+
+    // 2. 现有流不存在时才触发拉流（有副作用：可能触发 GB28181 INVITE）
+    if (!props.skipStartApi) {
+      try {
+        const { data: startResp } = await streamHttp.post(`/${chId}/start`, {
+          stream_type: props.streamType,
+        })
+        const startData = startResp?.data || startResp
+        if (startData && (startData.flvUrl || startData.webrtcUrl) && startData.zlmReady) {
+          return {
+            urls: {
+              flv: startData.flvUrl || '',
+              webrtc: startData.webrtcUrl || '',
+              'ws-flv': startData.wsFlvUrl || '',
+              hls: startData.hlsUrl || '',
+            },
+            codec: startData.codec || '',
+          }
+        }
+      } catch { /* 可能已在推流 */ }
+
+      // start 后等待流就绪
+      for (let attempt = 0; attempt < 5; attempt++) {
+        try {
+          const { data } = await streamHttp.get(`/${chId}/multi-urls`)
+          const d = data?.data || data
+          if (d?.flvUrl || d?.webrtcUrl || d?.hlsUrl) {
+            return {
+              urls: { flv: d.flvUrl || '', webrtc: d.webrtcUrl || '', 'ws-flv': d.wsFlvUrl || '', hls: d.hlsUrl || '' },
+              codec: d.codec || '',
+            }
+          }
+        } catch { /* */ }
+        await new Promise(r => setTimeout(r, 200))
+      }
     }
     return null
   } catch {
@@ -215,6 +237,65 @@ function attachPlayer(video: HTMLVideoElement, fmt: PlayerFormat, url: string) {
   }
 }
 
+// ── 直接 URL 播放（证据回放） ──
+function playSrc(url: string) {
+  const video = videoRef.value
+  if (!video) return
+  destroyPlayer()
+
+  if (url.endsWith('.mp4') || url.startsWith('blob:') || url.startsWith('data:')) {
+    video.src = url
+    video.play().catch(() => {})
+    playing.value = true
+    emit('playing')
+    return
+  }
+  if (url.includes('.m3u8')) {
+    if (Hls.isSupported()) {
+      const hls = new Hls()
+      hls.loadSource(url)
+      hls.attachMedia(video)
+      hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        video.play().catch(() => {})
+        playing.value = true
+        emit('playing')
+      })
+      playerInstance = hls
+      currentFormat = 'hls'
+    } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+      video.src = url
+      video.play().catch(() => {})
+      playing.value = true
+      emit('playing')
+    }
+    return
+  }
+  if (flvjs.isSupported() && (url.includes('.flv') || url.includes('ws-flv') || url.includes('ws://'))) {
+    const isWs = url.startsWith('ws')
+    const player = flvjs.createPlayer({
+      type: 'flv', url,
+      isLive: !url.endsWith('.flv'),
+    }, { enableStashBuffer: false })
+    player.attachMediaElement(video)
+    player.load()
+    player.play()
+    playerInstance = player
+    currentFormat = isWs ? 'ws-flv' : 'flv'
+    playing.value = true
+    emit('playing')
+    return
+  }
+  video.src = url
+  video.play().catch(() => {})
+  playing.value = true
+  emit('playing')
+}
+
+// ── 监听 src prop ──
+watch(() => props.src, (url) => {
+  if (url) nextTick(() => playSrc(url))
+}, { immediate: true })
+
 // ── 启动播放 ──
 async function startPlay() {
   if (!props.channelId) return
@@ -266,11 +347,22 @@ function toggleMute() {
 
 // ── 监听 channelId 变化 ──
 watch(() => props.channelId, (newId) => {
+  if (props.src) return  // src 已提供时跳过直播流获取
   destroyPlayer()
-  if (newId && props.autoPlay) {
+  if (newId && props.autoPlay && props.visible) {
     nextTick(() => startPlay())
   }
 }, { immediate: true })
+
+// ── 监听可见性变化 ──
+watch(() => props.visible, (vis) => {
+  if (props.src) return
+  if (vis && props.channelId && !playerInstance) {
+    nextTick(() => startPlay())
+  } else if (!vis && playerInstance) {
+    destroyPlayer()
+  }
+})
 
 onBeforeUnmount(() => {
   destroyPlayer()
@@ -284,6 +376,7 @@ onBeforeUnmount(() => {
   background: #000;
   border-radius: 6px;
   overflow: hidden;
+  will-change: transform;
 }
 .mini-player__overlay {
   position: absolute;
