@@ -7,8 +7,8 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { alarmApi } from '@/api/alarm'
 import type { AlarmEvent, AlarmStats, AlarmQuery, AlarmHandleForm, AlarmType } from '@/types/alarm'
+import { normalizeAlarmCore } from '@/types/alarm'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { normalizeAlarmPayload } from '@/composables/useAlarmPopup'
 
 export const useAlarmStore = defineStore('alarm', () => {
   // ===== 状态 =====
@@ -29,30 +29,9 @@ export const useAlarmStore = defineStore('alarm', () => {
 
   // ===== Actions =====
 
-  /** 后端 snake_case → 前端 AlarmEvent 归一化 */
+  /** 后端 snake_case → 前端 AlarmEvent 归一化 (委派给 types/alarm.ts 统一实现) */
   function normalizeAlarm(raw: any): AlarmEvent {
-    return {
-      id: raw.id || raw.alarm_id || '',
-      type: raw.type || raw.alarm_type || 'other',
-      level: raw.level || raw.severity || 'low',
-      description: raw.description || '',
-      channelId: raw.channel_id || raw.channelId || '',
-      channelName: raw.channel_name || raw.channelName || '',
-      deviceId: raw.device_id || raw.deviceId || raw.channel_id || '',
-      deviceName: raw.device_name || raw.deviceName || raw.zone || '',
-      snapshotUrl: raw.snapshot_url || raw.snapshotUrl || raw.snapshot_path || '',
-      videoClipUrl: raw.video_clip_url || raw.videoClipUrl || '',
-      aiConclusion: raw.ai_conclusion || raw.aiConclusion || '',
-      confidence: raw.confidence ?? 0,
-      status: raw.status || 'unhandled',
-      location: raw.location || raw.zone || '',
-      metadata: raw.metadata || {},
-      createdAt: raw.created_at || raw.createdAt || (raw.timestamp ? new Date(raw.timestamp).toISOString() : new Date().toISOString()),
-      updatedAt: raw.updated_at || raw.updatedAt || raw.created_at || raw.createdAt || new Date().toISOString(),
-      handledBy: raw.handled_by || raw.handledBy || '',
-      handledAt: raw.handled_at || raw.handledAt || '',
-      handleNote: raw.handle_note || raw.handleNote || '',
-    }
+    return normalizeAlarmCore(raw)
   }
 
   /** 加载告警列表 */
@@ -188,7 +167,7 @@ export const useAlarmStore = defineStore('alarm', () => {
   function pushRealtimeAlarm(alarm: AlarmEvent) {
     // 防御性兜底: 如果调用方忘了 normalize, 内部补一次.
     // 否则 store 里的 status 为 undefined, 依赖 status==='unhandled' 的过滤全部失败.
-    const norm = (alarm as any)?.status ? alarm : normalizeAlarmPayload(alarm)
+    const norm = (alarm as any)?.status ? alarm : normalizeAlarmCore(alarm)
     realtimeAlarms.value.unshift(norm)
     // 保持最近50条
     if (realtimeAlarms.value.length > 50) {

@@ -92,13 +92,32 @@ export const alarmApi = {
       // axios response -> ApiResponse -> data
       const d = res?.data?.data ?? res?.data
       if (!d) return null
+      
+      // 修复：增强对 videoClipUrl 的处理（含 snake_case 扁平 fallback）
+      let videoClipUrl = d.video_clip?.url ?? d.videoClipUrl ?? d.video_clip_url ?? ''
+      // 如果是相对路径，转为绝对路径
+      if (videoClipUrl && !videoClipUrl.startsWith('http') && !videoClipUrl.startsWith('data:')) {
+        const base = window.location.origin
+        videoClipUrl = videoClipUrl.startsWith('/') ? base + videoClipUrl : base + '/' + videoClipUrl
+      }
+
+      // 修复：确保 snapshotUrl 是绝对路径（含 snake_case 扁平 fallback）
+      let snapshotUrl = d.snapshot?.url ?? d.snapshotUrl ?? d.snapshot_url ?? ''
+      if (snapshotUrl && !snapshotUrl.startsWith('http') && !snapshotUrl.startsWith('data:')) {
+        const base = window.location.origin
+        snapshotUrl = snapshotUrl.startsWith('/') ? base + snapshotUrl : base + '/' + snapshotUrl
+      }
+
+      console.log('[alarmApi] getEvidence raw:', JSON.stringify(d).substring(0, 300))
+      console.log('[alarmApi] getEvidence resolved snapshotUrl:', snapshotUrl, 'videoClipUrl:', videoClipUrl)
+      
       return {
-        snapshotUrl: d.snapshot?.url ?? '',
-        videoClipUrl: d.video_clip?.url ?? '',
-        detectionBoxes: d.metadata ?? [],
-        aiAnalysis: '',
-        relatedRecordingId: '',
-        relatedRecordingTime: '',
+        snapshotUrl,
+        videoClipUrl,
+        detectionBoxes: d.metadata ?? d.detectionBoxes ?? [],
+        aiAnalysis: d.ai_analysis ?? d.aiAnalysis ?? '',
+        relatedRecordingId: d.related_recording_id ?? d.relatedRecordingId ?? '',
+        relatedRecordingTime: d.related_recording_time ?? d.relatedRecordingTime ?? '',
       }
     } catch {
       return null

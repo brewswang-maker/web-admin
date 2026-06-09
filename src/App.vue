@@ -48,6 +48,7 @@
  *  2. 路由级 Suspense + 过渡动画
  *  3. Service Worker 更新提示
  *  4. Auth 初始化 (在路由守卫中完成)
+ *  5. 首次用户交互时解锁音频/语音合成 (autoplay policy)
  */
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { ElConfigProvider } from 'element-plus'
@@ -81,14 +82,52 @@ function applySWUpdate() {
   window.location.reload()
 }
 
+// ── 首次用户交互 → 解锁音频 + 预热 SpeechSynthesis ──
+// 浏览器 autoplay policy: 未交互前 Audio.play() / speechSynthesis.speak() 静默失败.
+// 把解锁挂到 document 级别, 用户第一次 click/keydown/touchstart 即触发, 之后告警音效和 TTS 才能响.
+let mediaUnlocked = false
+function unlockMediaOnFirstGesture() {
+  if (mediaUnlocked) return
+  mediaUnlocked = true
+
+  // 1) 解锁 audio: 创建一个 <audio> 元素, play 一下再 pause.
+  try {
+    const a = new Audio('/audio/alarm.m4a')
+    a.volume = 0.001 // 极小音量, 避免吓到用户
+    a.play().then(() => { a.pause(); a.currentTime = 0 }).catch(() => { /* still ok */ })
+  } catch { /* noop */ }
+
+  // 2) 预热 Web Speech API: 一次空 speak() 让浏览器标记"已授权语音".
+  try {
+    if ('speechSynthesis' in window) {
+      window.speechSynthesis.resume()
+      const u = new SpeechSynthesisUtterance(' ')
+      u.volume = 0
+      u.lang = 'zh-CN'
+      window.speechSynthesis.speak(u)
+    }
+  } catch { /* noop */ }
+
+  document.removeEventListener('click', unlockMediaOnFirstGesture)
+  document.removeEventListener('keydown', unlockMediaOnFirstGesture)
+  document.removeEventListener('touchstart', unlockMediaOnFirstGesture)
+}
+
 onMounted(() => {
   window.addEventListener('sw-update-available', onSWUpdate)
   // 启动全局告警 WebSocket（全页面共用，弹窗不依赖 LiveView）
   startGlobalAlarm()
+  // 注册首次交互解锁监听器 (passive, 不阻塞)
+  document.addEventListener('click', unlockMediaOnFirstGesture, { once: true, passive: true })
+  document.addEventListener('keydown', unlockMediaOnFirstGesture, { once: true, passive: true })
+  document.addEventListener('touchstart', unlockMediaOnFirstGesture, { once: true, passive: true })
 })
 
 onUnmounted(() => {
   window.removeEventListener('sw-update-available', onSWUpdate)
+  document.removeEventListener('click', unlockMediaOnFirstGesture)
+  document.removeEventListener('keydown', unlockMediaOnFirstGesture)
+  document.removeEventListener('touchstart', unlockMediaOnFirstGesture)
   stopGlobalAlarm()
 })
 

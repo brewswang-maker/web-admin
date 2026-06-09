@@ -57,3 +57,28 @@ export function deleteRecording(id: string) {
 export function controlPlayback(id: string, action: 'pause' | 'resume' | 'seek' | 'speed', params?: { position?: number; speed?: number; scale?: number }) {
   return recordingHttp.post<ApiResponse<void>>(`/${id}/control`, { action, ...params })
 }
+
+// ── GB28181 设备录像查询 ──
+
+/** POST /recordings/query 返回的录像条目 */
+export interface DeviceRecording {
+  id: string
+  device_id: string
+  channel_id: string
+  start_time: string
+  end_time: string
+  type: string
+  file_size: number
+}
+
+/** 按设备/通道/时间范围查询 GB28181 录像 */
+export async function queryRecordings(params: {
+  device_id: string
+  channel_id?: string
+  start_time: string
+  end_time: string
+}): Promise<DeviceRecording[]> {
+  const { data } = await recordingHttp.post('/query', params)
+  const d = data?.data ?? data
+  return d?.recordings ?? d ?? []
+}

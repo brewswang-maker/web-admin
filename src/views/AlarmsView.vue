@@ -131,6 +131,7 @@
               loading="lazy"
               style="width:56px;height:32px;object-fit:cover;border-radius:4px;cursor:pointer"
               @click="previewImageUrl = row.snapshotUrl; previewVisible = true"
+              @error="() => console.warn('[AlarmsView] snapshot load failed:', row.snapshotUrl)"
             />
             <span v-else class="text-secondary" style="font-size:11px">无</span>
           </template>
@@ -359,12 +360,60 @@
             <div class="evidence-section-title">AI 分析结论</div>
             <div class="xai-detail">{{ evidenceData.aiAnalysis }}</div>
           </div>
-          <!-- 关联录像 -->
-          <div v-if="evidenceData.relatedRecordingId" class="evidence-section" style="margin-top:16px">
-            <div class="evidence-section-title">关联录像</div>
-            <el-button type="primary" size="small" @click="goToRecording(evidenceData.relatedRecordingId!)">
-              跳转到录像回放 {{ evidenceData.relatedRecordingTime ? '(' + evidenceData.relatedRecordingTime + ')' : '' }}
-            </el-button>
+          <!-- 设备录像 -->
+          <div class="evidence-section" style="margin-top:16px">
+            <div class="evidence-section-title">
+              设备录像
+              <el-tag v-if="evidenceAlarmRow?.deviceName" size="small" type="info" style="margin-left:8px">
+                {{ evidenceAlarmRow.deviceName }}
+              </el-tag>
+              <span v-if="recordingsLoading" style="margin-left:8px;font-size:12px;color:#999">加载中...</span>
+              <span v-else-if="deviceRecordings.length" style="margin-left:8px;font-size:12px;color:#999">
+                找到 {{ deviceRecordings.length }} 段录像
+              </span>
+            </div>
+            <div v-if="evidenceData.relatedRecordingId" style="margin-bottom:8px">
+              <el-button type="primary" size="small" @click="goToRecording(evidenceData.relatedRecordingId!)">
+                跳转到关联录像 {{ evidenceData.relatedRecordingTime ? '(' + evidenceData.relatedRecordingTime + ')' : '' }}
+              </el-button>
+            </div>
+            <el-table
+              v-if="deviceRecordings.length > 0"
+              :data="deviceRecordings"
+              v-loading="recordingsLoading"
+              size="small"
+              stripe
+              max-height="240"
+              style="width:100%"
+            >
+              <el-table-column label="开始时间" width="100">
+                <template #default="{ row }">
+                  {{ row.start_time?.split('T')[1]?.substring(0, 8) || row.start_time }}
+                </template>
+              </el-table-column>
+              <el-table-column label="结束时间" width="100">
+                <template #default="{ row }">
+                  {{ row.end_time?.split('T')[1]?.substring(0, 8) || row.end_time }}
+                </template>
+              </el-table-column>
+              <el-table-column label="大小" width="100">
+                <template #default="{ row }">
+                  {{ row.file_size ? (row.file_size / 1048576).toFixed(1) + ' MB' : '-' }}
+                </template>
+              </el-table-column>
+              <el-table-column label="操作" width="120">
+                <template #default="{ row }">
+                  <el-button type="primary" size="small" link @click="playEvidenceRecording(row)">播放</el-button>
+                  <el-button size="small" link @click="goToRecording(row.id)">回放页</el-button>
+                </template>
+              </el-table-column>
+            </el-table>
+            <div v-else-if="!recordingsLoading && evidenceAlarmRow?.deviceId" style="padding:12px 0;color:#999;font-size:13px">
+              该设备在报警时间前后1小时内无录像记录
+            </div>
+            <div v-else-if="!recordingsLoading && !evidenceAlarmRow?.deviceId" style="padding:12px 0;color:#999;font-size:13px">
+              该告警未关联视频设备，无法查询录像
+            </div>
           </div>
           <!-- AI 二次分析 -->
           <div style="margin-top:16px;text-align:right">
@@ -395,7 +444,10 @@ import {
 } from '@element-plus/icons-vue'
 import { alarmApi } from '@/api/alarm'
 import { exportApi } from '@/api/export'
-import type { AlarmHandleForm, AlarmEvidence } from '@/types/alarm'
+import { queryRecordings, type DeviceRecording } from '@/api/recording'
+import { recordingHttp } from '@/api/http'
+import type { AlarmHandleForm, AlarmEvidence, AlarmEvent } from '@/types/alarm'
+import { normalizeAlarmCore } from '@/types/alarm'
 import { useAuthStore } from '@/stores/auth'
 import { useWebSocket } from '@/composables/useWebSocket'
 import { useRouter } from 'vue-router'
@@ -438,6 +490,11 @@ const analyzeLoading = ref(false)
 const previewVisible = ref(false)
 const previewImageUrl = ref('')
 
+// ── 设备录像列表 ──
+const deviceRecordings = ref<DeviceRecording[]>([])
+const recordingsLoading = ref(false)
+const evidenceAlarmRow = ref<any>(null)
+
 // ── 日期快捷选项 ──
 const dateShortcuts = [
   {
@@ -469,49 +526,17 @@ const dateShortcuts = [
   },
 ]
 
-// ── 后端 level 整数 → 前端 severity 字符串映射 ──
-function mapLevelToSeverity(level: any): string {
-  if (typeof level === 'string') {
-    const low = level.toLowerCase()
-    if (['critical', 'high', 'medium', 'low', 'info'].includes(low)) return low
-  }
-  const n = Number(level)
-  if (isNaN(n)) return 'low'
-  if (n >= 4) return 'critical'
-  if (n >= 3) return 'high'
-  if (n >= 2) return 'medium'
-  if (n >= 1) return 'low'
-  return 'info'
-}
-
 // ── 后端 snake_case → 前端 camelCase 字段映射 ──
+// 委派给 types/alarm.ts 的统一实现 normalizeAlarmCore, 并补一份兼容旧字段 (severity/aiAnalysis/aiConfidence).
+// 旧字段在模板和筛选中仍在用, 不要破坏这些用法.
 function normalizeAlarm(raw: any): any {
-  const severity = mapLevelToSeverity(raw.severity ?? raw.level ?? 2)
-  const timestamp = raw.timestamp || raw.timestamp_ms || raw.created_at || Date.now()
+  const norm: AlarmEvent = normalizeAlarmCore(raw)
   return {
-    id: raw.id || raw.alarm_id || '',
-    type: raw.type || raw.alarm_type || 'other',
-    severity,
-    level: severity,
-    description: raw.description || raw.title || '',
-    title: raw.title || raw.description || '',
-    channelId: String(raw.channel_id ?? raw.channelId ?? raw.channel ?? ''),
-    channelName: raw.channel_name || raw.channelName || '',
-    deviceId: raw.device_id || raw.deviceId || raw.channel_id || '',
-    deviceName: raw.device_name || raw.deviceName || raw.zone || '',
-    snapshotUrl: raw.snapshot_url || raw.snapshotUrl || raw.snapshot_path || '',
-    videoClipUrl: raw.video_clip_url || raw.videoClipUrl || '',
-    aiConclusion: raw.ai_conclusion || raw.aiConclusion || raw.ai_analysis || '',
-    aiAnalysis: raw.ai_analysis || raw.aiAnalysis || raw.ai_conclusion || '',
-    aiConfidence: raw.confidence ?? raw.ai_confidence ?? raw.aiConfidence ?? 0,
-    confidence: raw.confidence ?? 0,
-    status: raw.status || 'unhandled',
-    location: raw.location || raw.zone || '',
-    createdAt: raw.created_at || raw.createdAt || (timestamp ? new Date(typeof timestamp === 'number' ? timestamp : timestamp).toISOString() : new Date().toISOString()),
-    updatedAt: raw.updated_at || raw.updatedAt || raw.created_at || raw.createdAt || new Date().toISOString(),
-    handledBy: raw.handled_by || raw.handledBy || '',
-    handleNote: raw.handle_note || raw.handleNote || '',
-    metadata: raw.metadata || {},
+    ...norm,
+    // 兼容旧字段: severity 字符串 (等同 level), aiAnalysis 与 aiConclusion 同义
+    severity: norm.level,
+    aiAnalysis: norm.aiConclusion,
+    aiConfidence: norm.confidence,
   }
 }
 
@@ -585,7 +610,7 @@ function refreshAlarms() {
 // ── WebSocket实时推送新告警 ──
 const { connected: wsConnected, subscribe: wsSubscribe } = useWebSocket('/ws')
 
-const unsubscribeAlarm = wsSubscribe('alarm', (data: any) => {
+const unsubscribeAlarm = wsSubscribe('alarm.new', (data: any) => {
   // 关键: WS 推过来的 payload 是 snake_case 原始数据, 必须先 normalize,
   // 否则 snapshotUrl/videoClipUrl/level 等 camelCase 字段都是 undefined.
   const normalized = normalizeAlarm(data)
@@ -601,6 +626,22 @@ const unsubscribeAlarm = wsSubscribe('alarm', (data: any) => {
     })
   }
 })
+
+// ── 联动录像完成后, 全局 CustomEvent 通知列表更新 videoClipUrl ──
+// useGlobalAlarm 在收到 system.linkage_action=record_complete 时派发 alarm-clip-updated 事件.
+// 我们维护自己的 alarms[] 数组 (不和 store.realtimeAlarms 共享), 需要单独更新.
+function onAlarmClipUpdated(e: Event) {
+  const detail = (e as CustomEvent<{ alarmId: string; videoClipUrl: string }>).detail
+  if (!detail?.alarmId || !detail.videoClipUrl) return
+  const idx = alarms.value.findIndex(a => a.id === detail.alarmId)
+  if (idx >= 0) {
+    alarms.value = [
+      ...alarms.value.slice(0, idx),
+      { ...alarms.value[idx], videoClipUrl: detail.videoClipUrl },
+      ...alarms.value.slice(idx + 1),
+    ]
+  }
+}
 
 // ── 统计 + 筛选（单次遍历） ──
 const { alarmStatCards, filteredAlarms } = (() => {
@@ -788,22 +829,68 @@ function handleDetail(row: any) {
 // ── 证据链 ──
 async function showEvidence(row: any) {
   evidenceAlarmId.value = row.id
+  evidenceAlarmRow.value = row
   showEvidenceDialog.value = true
   evidenceLoading.value = true
   evidenceData.value = null
+  deviceRecordings.value = []
+  recordingsLoading.value = true
   try {
-    // §13 Fix E: getEvidence 现在直接返回 AlarmEvidence | null (扁平字段)
     const ev = await alarmApi.getEvidence(row.id)
     if (ev) {
       evidenceData.value = ev
     } else {
-      // 兜底用告警自带的 snapshotUrl/videoClipUrl
       evidenceData.value = { snapshotUrl: row.snapshotUrl || '', videoClipUrl: row.videoClipUrl }
     }
   } catch {
     evidenceData.value = { snapshotUrl: row.snapshotUrl || '', videoClipUrl: row.videoClipUrl }
   } finally {
     evidenceLoading.value = false
+  }
+
+  // 自动查询告警设备在报警时间前后的录像
+  if (row.deviceId) {
+    try {
+      const alarmTime = new Date(row.createdAt)
+      const start = new Date(alarmTime.getTime() - 3600_000)
+      const end = new Date(alarmTime.getTime() + 3600_000)
+      deviceRecordings.value = await queryRecordings({
+        device_id: row.deviceId,
+        channel_id: row.channelId || undefined,
+        start_time: start.toISOString().replace('Z', ''),
+        end_time: end.toISOString().replace('Z', ''),
+      })
+    } catch (e) {
+      console.warn('[AlarmsView] 查询设备录像失败:', e)
+    } finally {
+      recordingsLoading.value = false
+    }
+  } else {
+    recordingsLoading.value = false
+  }
+}
+
+async function playEvidenceRecording(rec: DeviceRecording) {
+  try {
+    const { data } = await recordingHttp.post(`/${rec.id}/play`, {
+      device_id: rec.device_id,
+      channel_id: rec.channel_id,
+      start_time: rec.start_time,
+      end_time: rec.end_time,
+    })
+    const result = data?.data || data
+    if (result?.urls) {
+      const url = result.urls.flv || result.urls.hls || result.urls.wsFlv || ''
+      if (url) {
+        window.open(url, '_blank')
+      } else {
+        ElMessage.warning('无可用播放地址')
+      }
+    } else {
+      ElMessage.warning('设备不支持回放')
+    }
+  } catch (e: any) {
+    ElMessage.error('回放失败: ' + (e.message || ''))
   }
 }
 
@@ -915,10 +1002,12 @@ async function exportAlarms() {
 // 页面加载时获取数据
 onMounted(() => {
   fetchAlarms()
+  window.addEventListener('alarm-clip-updated', onAlarmClipUpdated)
 })
 
 onUnmounted(() => {
   unsubscribeAlarm?.()
+  window.removeEventListener('alarm-clip-updated', onAlarmClipUpdated)
 })
 </script>
 

@@ -2,7 +2,7 @@
   <Teleport to="body">
     <transition name="alarm-popup">
       <div v-if="popupVisible && currentAlarm" class="alarm-popup-overlay" @click.self="closePopup">
-        <div class="alarm-popup" :style="{ borderColor: levelColor }">
+        <div class="alarm-popup" :class="{ 'alarm-flash': popupVisible }" :style="{ borderColor: levelColor }">
 
           <!-- ═══ 顶栏: 告警摘要 ═══ -->
           <div class="alarm-popup__header" :style="{ background: levelBg }">
@@ -37,10 +37,11 @@
                 <el-tab-pane label="📹 实时视频" name="live">
                   <MiniPlayer
                     v-show="activeTab === 'live' && currentAlarm?.channelId"
+                    :key="currentAlarm?.channelId || 'none'"
                     :channel-id="currentAlarm?.channelId || ''"
                     :show-controls="true"
                     stream-type="sub"
-                    :visible="activeTab === 'live' && !!currentAlarm?.channelId"
+                    :visible="activeTab === 'live'"
                     :skip-start-api="false"
                     @snapshot="onPlayerSnapshot"
                   />
@@ -52,19 +53,46 @@
                   </div>
                 </el-tab-pane>
 
-                <!-- 录像回放 (fix #C4: 之前是 stub, 现在用 MiniPlayer 真实播放) -->
+                <!-- 录像回放 -->
                 <el-tab-pane v-if="hasAction('WEB_SHOW_PLAYBACK')" label="📼 录像回放" name="playback">
                   <div class="alarm-popup__tab-content">
                     <MiniPlayer
                       v-if="currentAlarm.videoClipUrl"
+                      :key="`clip-${currentAlarm?.id || 'none'}-${currentAlarm.videoClipUrl}`"
                       :src="currentAlarm.videoClipUrl"
                       :channel-id="currentAlarm.channelId"
                       autoplay
                     />
-                    <div v-else class="alarm-popup__placeholder">
-                      <p>📼 录像回放</p>
-                      <p class="alarm-popup__hint">该告警暂无录像片段</p>
-                      <el-button type="primary" size="small" @click="loadPlayback">加载录像</el-button>
+                    <div v-else class="alarm-popup__recording-list">
+                      <div v-if="recordingsLoading" style="text-align:center;color:#4A4D58;padding:20px">
+                        <el-icon class="is-loading" :size="20"><Loading /></el-icon>
+                        <span style="margin-left:8px">加载录像中...</span>
+                      </div>
+                      <div v-else-if="deviceRecordings.length === 0" class="alarm-popup__placeholder">
+                        <p>📼 录像回放</p>
+                        <p class="alarm-popup__hint">该告警暂无录像片段</p>
+                        <el-button type="primary" size="small" @click="loadPlayback">加载设备录像</el-button>
+                      </div>
+                      <div v-else style="width:100%;overflow-y:auto;padding:8px">
+                        <div style="font-size:12px;color:#8B8FA3;margin-bottom:8px">
+                          找到 {{ deviceRecordings.length }} 段录像，点击播放：
+                        </div>
+                        <div
+                          v-for="rec in deviceRecordings"
+                          :key="rec.id"
+                          class="alarm-popup__rec-item"
+                          :class="{ 'alarm-popup__rec-item--active': selectedRecording?.id === rec.id }"
+                          @click="playSelectedRecording(rec)"
+                        >
+                          <span class="alarm-popup__rec-time">
+                            {{ rec.start_time?.split('T')[1]?.substring(0, 8) }} -
+                            {{ rec.end_time?.split('T')[1]?.substring(0, 8) }}
+                          </span>
+                          <span class="alarm-popup__rec-size">
+                            {{ rec.file_size ? (rec.file_size / 1048576).toFixed(1) + 'MB' : '' }}
+                          </span>
+                        </div>
+                      </div>
                     </div>
                   </div>
                 </el-tab-pane>
@@ -72,6 +100,7 @@
                 <!-- 告警快照（始终显示） -->
                 <el-tab-pane label="🖼️ 告警快照" name="snapshot">
                   <AlarmSnapshot
+                    :key="`snap-${currentAlarm?.id || 'none'}-${currentAlarm?.snapshotUrl || ''}`"
                     :image-url="currentAlarm.snapshotUrl || ''"
                     :bbox="(currentAlarm.metadata?.bbox as number[]) || []"
                     :target-label="(currentAlarm.metadata?.targetLabel as string) || ''"
@@ -192,6 +221,7 @@
  */
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { ElMessage } from 'element-plus'
+import { Loading } from '@element-plus/icons-vue'
 import MiniPlayer from '@/components/video/MiniPlayer.vue'
 import AlarmSnapshot from '@/components/alarm/AlarmSnapshot.vue'
 import {
@@ -202,6 +232,8 @@ import {
 } from '@/composables/useAlarmPopup'
 import { ACTION_TYPE_REVERSE_MAP } from '@/api/linkage'
 import { alarmApi } from '@/api/alarm'
+import { queryRecordings, type DeviceRecording } from '@/api/recording'
+import { recordingHttp } from '@/api/http'
 
 // ── 告警类型中文 ──
 const ALARM_TYPE_CN: Record<string, string> = {
@@ -214,6 +246,11 @@ const ALARM_TYPE_CN: Record<string, string> = {
 
 // ── 自动激活 Tab ──
 const activeTab = ref('fallback')
+
+// ── 设备录像列表 ──
+const deviceRecordings = ref<DeviceRecording[]>([])
+const recordingsLoading = ref(false)
+const selectedRecording = ref<DeviceRecording | null>(null)
 
 watch(defaultTab, (tab) => {
   if (tab) activeTab.value = tab
@@ -317,8 +354,9 @@ function startPlayback() {
 }
 
 async function loadPlayback() {
-  // §13 Fix E: getEvidence 现在直接返回扁平字段 (snapshotUrl/videoClipUrl)
   if (!currentAlarm.value?.id) return
+  recordingsLoading.value = true
+  deviceRecordings.value = []
   try {
     const ev = await alarmApi.getEvidence(currentAlarm.value.id)
     if (ev) {
@@ -326,12 +364,48 @@ async function loadPlayback() {
       if (ev.snapshotUrl && !currentAlarm.value.snapshotUrl) {
         currentAlarm.value.snapshotUrl = ev.snapshotUrl
       }
-    } else {
-      ElMessage.warning('该告警无可用证据')
+    }
+    // 同时查询设备录像列表
+    if (currentAlarm.value.deviceId) {
+      const alarmTime = new Date(currentAlarm.value.createdAt)
+      const start = new Date(alarmTime.getTime() - 3600_000)
+      const end = new Date(alarmTime.getTime() + 3600_000)
+      deviceRecordings.value = await queryRecordings({
+        device_id: currentAlarm.value.deviceId,
+        channel_id: currentAlarm.value.channelId || undefined,
+        start_time: start.toISOString().replace('Z', ''),
+        end_time: end.toISOString().replace('Z', ''),
+      })
     }
   } catch (e) {
     console.warn('[AlarmPopup] loadPlayback failed:', e)
-    ElMessage.warning('加载录像失败')
+  } finally {
+    recordingsLoading.value = false
+  }
+}
+
+async function playSelectedRecording(rec: DeviceRecording) {
+  selectedRecording.value = rec
+  try {
+    const { data } = await recordingHttp.post(`/${rec.id}/play`, {
+      device_id: rec.device_id,
+      channel_id: rec.channel_id,
+      start_time: rec.start_time,
+      end_time: rec.end_time,
+    })
+    const result = data?.data || data
+    if (result?.urls) {
+      const url = result.urls.flv || result.urls.hls || result.urls.wsFlv || ''
+      if (url) {
+        currentAlarm.value!.videoClipUrl = url
+      } else {
+        ElMessage.warning('无可用播放地址')
+      }
+    } else {
+      ElMessage.warning('设备不支持回放')
+    }
+  } catch (e: any) {
+    ElMessage.error('回放失败: ' + (e.message || ''))
   }
 }
 
@@ -380,6 +454,41 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
+/* ── Recording list ── */
+.alarm-popup__recording-list {
+  width: 100%;
+  height: 100%;
+  min-height: 280px;
+  display: flex;
+  flex-direction: column;
+  background: #000;
+}
+.alarm-popup__rec-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 10px;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: background 0.15s;
+}
+.alarm-popup__rec-item:hover {
+  background: rgba(0, 212, 170, 0.1);
+}
+.alarm-popup__rec-item--active {
+  background: rgba(0, 212, 170, 0.15);
+  border-left: 2px solid #00D4AA;
+}
+.alarm-popup__rec-time {
+  font-size: 12px;
+  color: #E8E8E8;
+  font-family: monospace;
+}
+.alarm-popup__rec-size {
+  font-size: 11px;
+  color: #8B8FA3;
+}
+
 /* ── Overlay ── */
 .alarm-popup-overlay {
   position: fixed;
@@ -603,5 +712,14 @@ onBeforeUnmount(() => {
 .alarm-popup-leave-to {
   opacity: 0;
   transform: translateX(60px);
+}
+
+/* ── 弹窗边框闪烁动画（即使没有声音也能引起注意） ── */
+@keyframes alarm-flash-border {
+  0%, 100% { border-color: #FF3D71; box-shadow: 0 8px 32px rgba(255,61,113,0.3); }
+  50% { border-color: #FFB800; box-shadow: 0 8px 40px rgba(255,184,0,0.5); }
+}
+.alarm-flash {
+  animation: alarm-flash-border 0.5s ease 3;
 }
 </style>

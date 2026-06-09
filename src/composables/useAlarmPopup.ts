@@ -13,26 +13,8 @@ import { ref, computed } from 'vue'
 import { useAlarmStore } from '@/stores/alarm'
 import { linkageApi, ACTION_TYPE_MAP } from '@/api/linkage'
 import type { LinkageRule, LinkageAction } from '@/api/linkage'
-import type { AlarmEvent, AlarmLevel } from '@/types/alarm'
-
-// ── 告警类型中文映射 ──
-const alarmTypeCn: Record<string, string> = {
-  person_detected: '人员检测',
-  intrusion: '入侵检测',
-  fire: '烟火检测',
-  smoke: '烟雾检测',
-  fall: '倒地检测',
-  violence: '打架检测',
-  loitering: '徘徊检测',
-  gathering: '聚集检测',
-  vehicle_detected: '车辆检测',
-  object_detected: '物体检测',
-  face_blacklist: '黑名单告警',
-  gb28181_alarm: '设备告警',
-  ppe: '安全帽检测',
-  crowd: '人群密度',
-  plate: '车牌识别',
-}
+import type { AlarmEvent } from '@/types/alarm'
+import { normalizeAlarmCore } from '@/types/alarm'
 
 // ── 联动动作 → Tab/按钮 映射 ──
 const WEB_SHOW_LIVE = ACTION_TYPE_MAP.WEB_SHOW_LIVE         // 210
@@ -61,46 +43,11 @@ const queueIndex = ref(0)
 // 音频实例（懒加载）
 let alarmAudio: HTMLAudioElement | null = null
 
-// ── Severity 数字 → AlarmLevel 映射 ──
-function mapSeverity(severity: number): AlarmLevel {
-  if (severity >= 5) return 'critical'
-  if (severity >= 4) return 'high'
-  if (severity >= 3) return 'medium'
-  return 'low'
-}
-
 // ── WS 数据适配 (snake_case → camelCase) ──
+// 委派给 types/alarm.ts 的统一实现 normalizeAlarmCore,
+// 避免与 AlarmsView.vue / stores/alarm.ts 三处各自实现漂移
 export function normalizeAlarmPayload(raw: any): AlarmEvent {
-  const severityNum = raw.severity ?? raw.level ?? 2
-  const alarmType = raw.alarm_type || raw.type || 'other'
-  const channelId = String(raw.channel_id ?? raw.channelId ?? raw.channel ?? '')
-  const ts = raw.timestamp_ms || raw.timestamp || Date.now()
-
-  return {
-    id: raw.id || raw.alarm_id || `${raw.device_id || ''}_${channelId}_${ts}`,
-    type: alarmType as AlarmEvent['type'],
-    level: mapSeverity(severityNum),
-    description: raw.description || `${alarmTypeCn[alarmType] || alarmType}`,
-    channelId,
-    channelName: raw.channel_name || raw.channelName || (channelId ? `通道${channelId}` : ''),
-    deviceId: raw.device_id || raw.deviceId || '',
-    deviceName: raw.device_name || raw.deviceName || '',
-    snapshotUrl: raw.snapshot_url || raw.snapshotUrl || '',
-    videoClipUrl: raw.video_clip_url || raw.videoClipUrl || '',
-    aiConclusion: raw.ai_analysis || raw.aiConclusion || raw.ai_analysis || '',
-    confidence: Number(raw.confidence ?? 0),
-    status: 'unhandled',
-    location: raw.location_name || raw.location || raw.location_id || '',
-    metadata: {
-      bbox: raw.bbox || [],
-      targetLabel: raw.target_label || raw.target_label || '',
-      regionId: raw.region_id || '',
-      severityNum,
-      suggestedAction: raw.suggested_action || '',
-    },
-    createdAt: new Date(ts).toISOString(),
-    updatedAt: new Date().toISOString(),
-  }
+  return normalizeAlarmCore(raw)
 }
 
 // ── 联动规则匹配 ──
@@ -246,20 +193,25 @@ export async function handleAlarm(action: 'confirmed' | 'false_alarm' | 'forward
   }
 }
 
-// ── 音效 ──
+// ── 音效（修复：解锁失败时不设置 audioUnlocked） ──
 let audioUnlocked = false
 function ensureAudioUnlock() {
   if (audioUnlocked) return
-  audioUnlocked = true
+  // 尝试解锁音频上下文（需要用户交互）
   if (!alarmAudio) {
     alarmAudio = new Audio('/audio/alarm.m4a')
     alarmAudio.volume = 0.6
+    alarmAudio.load() // 预加载
   }
   const unlock = () => {
-    alarmAudio!.play().then(() => {
+    if (!alarmAudio) return
+    alarmAudio.play().then(() => {
       alarmAudio!.pause()
       alarmAudio!.currentTime = 0
-    }).catch(() => {})
+      audioUnlocked = true // 修复：只在成功解锁后设置
+    }).catch((e) => {
+      console.warn('[useAlarmPopup] 音频解锁失败（需要用户交互）:', e)
+    })
     document.removeEventListener('click', unlock)
     document.removeEventListener('keydown', unlock)
   }
@@ -275,8 +227,12 @@ export function playAlarmSound() {
       alarmAudio.volume = 0.6
     }
     alarmAudio.currentTime = 0
-    alarmAudio.play().catch(() => {})
-  } catch { /* 静默 */ }
+    alarmAudio.play().catch((e) => {
+      console.warn('[useAlarmPopup] 报警音效播放失败:', e?.message || e)
+    })
+  } catch (e) {
+    console.warn('[useAlarmPopup] playAlarmSound 异常:', e)
+  }
 }
 
 // ── 联动执行状态更新（被 useGlobalAlarm WS 消息调用） ──
@@ -293,6 +249,8 @@ export function pushLinkageLog(log: { action: string; status: string; icon?: str
 export async function showAlarmPopup(rawAlarm: any) {
   if (!rawAlarm) return
 
+  console.log('[useAlarmPopup] showAlarmPopup called, id:', rawAlarm.id || rawAlarm.alarm_id, 'type:', rawAlarm.type || rawAlarm.alarm_type)
+
   // 1. 数据适配
   const alarm = normalizeAlarmPayload(rawAlarm)
 
@@ -302,6 +260,9 @@ export async function showAlarmPopup(rawAlarm: any) {
   queueIndex.value = 0
   if (!popupVisible.value) {
     popupVisible.value = true
+    console.log('[useAlarmPopup] popupVisible set to true, alarm:', alarm.id, 'ch:', alarm.channelId)
+  } else {
+    console.log('[useAlarmPopup] popup already visible, updated alarm to:', alarm.id)
   }
 
   // 3. 音效

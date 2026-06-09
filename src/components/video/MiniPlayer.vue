@@ -346,11 +346,14 @@ function toggleMute() {
 }
 
 // ── 监听 channelId 变化 ──
-watch(() => props.channelId, (newId) => {
+watch(() => props.channelId, (newId, oldId) => {
   if (props.src) return  // src 已提供时跳过直播流获取
-  destroyPlayer()
-  if (newId && props.autoPlay && props.visible) {
-    nextTick(() => startPlay())
+  // 只在 channelId 真正变化时销毁并重建，避免同通道不必要重连
+  if (newId && newId !== oldId) {
+    destroyPlayer()
+    if (props.autoPlay && props.visible) {
+      nextTick(() => startPlay())
+    }
   }
 }, { immediate: true })
 
@@ -359,9 +362,8 @@ watch(() => props.visible, (vis) => {
   if (props.src) return
   if (vis && props.channelId && !playerInstance) {
     nextTick(() => startPlay())
-  } else if (!vis && playerInstance) {
-    destroyPlayer()
   }
+  // 不在不可见时销毁播放器 — 保持流持续，避免 TAB 切换时闪烁重连
 })
 
 onBeforeUnmount(() => {

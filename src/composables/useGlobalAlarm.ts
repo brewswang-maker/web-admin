@@ -55,6 +55,7 @@ function doConnect() {
   ws = new WebSocket(url)
 
   ws.onopen = () => {
+    console.log('[useGlobalAlarm] WS connected to', url)
     connected.value = true
     reconnectAttempts = 0
   }
@@ -64,6 +65,7 @@ function doConnect() {
       const msg = JSON.parse(event.data)
       // 兼容 msg.data (pushSystemEvent) / msg.alarm (pushAlarm)
       const payload = msg.data ?? msg.alarm ?? msg
+      console.log('[useGlobalAlarm] WS msg type:', msg.type, '| keys:', Object.keys(msg).join(','))
 
       // 处理告警类型消息（兼容所有后端推送类型）
       // alarm.new: WebSocketServer.pushAlarm 直接推送
@@ -87,12 +89,18 @@ function doConnect() {
         })
 
         // 录像完成后更新当前告警的 videoClipUrl
+        // - 更新 alarmStore.realtimeAlarms (供弹窗使用)
+        // - 派发 CustomEvent 让 AlarmsView 自己更新其 alarms[] 数组
         if (payload.action === 'record_complete' && payload.video_clip_url) {
           try {
             const store = useAlarmStore()
             const idx = store.realtimeAlarms.findIndex(a => a.id === payload.alarm_id)
             if (idx >= 0) store.realtimeAlarms[idx].videoClipUrl = payload.video_clip_url
           } catch { /* store not ready */ }
+          // 通知 AlarmsView (它维护自己的 alarms 数组, 不会自动同步 store.realtimeAlarms)
+          window.dispatchEvent(new CustomEvent('alarm-clip-updated', {
+            detail: { alarmId: payload.alarm_id, videoClipUrl: payload.video_clip_url },
+          }))
         }
 
         // 播放提示音
@@ -100,16 +108,39 @@ function doConnect() {
           playAlarmSound()
         }
 
-        // TTS 语音播报
+        // TTS 语音播报 - 修复: 增加错误处理和用户交互检查
         if (payload.action === 'tts_broadcast' && payload.status === 'completed') {
           const text = payload.text || payload.tts_text || payload.description || ''
-          if (text && window.speechSynthesis) {
-            window.speechSynthesis.cancel()
-            const utterance = new SpeechSynthesisUtterance(text)
-            utterance.lang = 'zh-CN'
-            utterance.rate = 1.0
-            utterance.volume = 1.0
-            window.speechSynthesis.speak(utterance)
+          if (text) {
+            // 检查浏览器是否支持语音合成
+            if ('speechSynthesis' in window) {
+              // 取消当前正在播放的语音
+              window.speechSynthesis.cancel()
+
+              const utterance = new SpeechSynthesisUtterance(text)
+              utterance.lang = 'zh-CN'  // 中文
+              utterance.rate = 1.0
+              utterance.volume = 1.0
+              utterance.pitch = 1.0
+
+              // 错误处理
+              utterance.onerror = (e) => {
+                console.warn('[useGlobalAlarm] TTS 播放失败:', e)
+              }
+
+              utterance.onstart = () => {
+                console.log('[useGlobalAlarm] TTS 开始播放:', text.substring(0, 50))
+              }
+
+              // 尝试播放（可能需要用户交互 — App.vue 已注册首次交互解锁）
+              try {
+                window.speechSynthesis.speak(utterance)
+              } catch (e) {
+                console.warn('[useGlobalAlarm] TTS speak() 异常:', e)
+              }
+            } else {
+              console.warn('[useGlobalAlarm] 浏览器不支持 SpeechSynthesis')
+            }
           }
         }
       }
@@ -119,17 +150,22 @@ function doConnect() {
   }
 
   ws.onclose = () => {
+    console.warn('[useGlobalAlarm] WS closed, will attempt reconnect #' + (reconnectAttempts + 1))
     connected.value = false
     attemptReconnect()
   }
 
-  ws.onerror = () => {
-    // onclose 会处理重连
+  ws.onerror = (e) => {
+    console.error('[useGlobalAlarm] WS error:', e)
   }
 }
 
 function handleAlarm(alarm: any) {
-  if (!alarm) return
+  if (!alarm) {
+    console.warn('[useGlobalAlarm] handleAlarm called with null payload')
+    return
+  }
+  console.log('[useGlobalAlarm] handleAlarm type:', alarm.alarm_type || alarm.type, 'ch:', alarm.channel_id || alarm.channelId)
 
   // 1. 规整: WS 推过来的原始 payload 字段是 snake_case, 前端需要驼峰 + status='unhandled'
   const normalized = normalizeAlarmPayload(alarm)
@@ -146,6 +182,22 @@ function handleAlarm(alarm: any) {
   //    §13 Fix P: 旧版按 type+channel 节流 10s, 导致同 camera 连续告警第 2 条起永远不弹;
   //    现在删除节流, 弹窗总是更新 currentAlarm, 用户可在队列中切换
   showAlarmPopup(normalized)
+
+  // 4. 每条告警都播报 TTS（不依赖联动规则的 tts_broadcast 动作）
+  speakAlarm(normalized)
+}
+
+// ── 告警 TTS 播报（每条告警都触发，不依赖联动动作） ──
+function speakAlarm(alarm: any) {
+  if (!('speechSynthesis' in window)) return
+  const desc = alarm?.description || alarmTypeCn[alarm?.type] || '告警'
+  const where = alarm?.channelName || alarm?.location || ''
+  const text = where ? `${desc}，${where}` : desc
+  window.speechSynthesis.cancel()
+  const u = new SpeechSynthesisUtterance(text)
+  u.lang = 'zh-CN'; u.rate = 1.1; u.volume = 1.0
+  u.onerror = (e) => console.warn('[useGlobalAlarm] TTS 播放失败:', e)
+  try { window.speechSynthesis.speak(u) } catch {}
 }
 
 // ── 联动动作图标映射 ──
@@ -172,8 +224,12 @@ function getActionText(payload: any): string {
 
 /** 启动全局告警 WebSocket（由 App.vue onMounted 调用） */
 export function startGlobalAlarm() {
-  if (started) return
+  if (started) {
+    console.log('[useGlobalAlarm] already started, skipping')
+    return
+  }
   started = true
+  console.log('[useGlobalAlarm] starting WS connection...')
   doConnect()
 }
 
