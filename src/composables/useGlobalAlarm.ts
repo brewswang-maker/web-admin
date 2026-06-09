@@ -188,16 +188,41 @@ function handleAlarm(alarm: any) {
 }
 
 // ── 告警 TTS 播报（每条告警都触发，不依赖联动动作） ──
+let ttsResumeTimer: ReturnType<typeof setInterval> | null = null
+
 function speakAlarm(alarm: any) {
   if (!('speechSynthesis' in window)) return
   const desc = alarm?.description || alarmTypeCn[alarm?.type] || '告警'
   const where = alarm?.channelName || alarm?.location || ''
   const text = where ? `${desc}，${where}` : desc
+
+  // 清除上次的 resume 定时器
+  if (ttsResumeTimer) { clearInterval(ttsResumeTimer); ttsResumeTimer = null }
+
   window.speechSynthesis.cancel()
   const u = new SpeechSynthesisUtterance(text)
   u.lang = 'zh-CN'; u.rate = 1.1; u.volume = 1.0
-  u.onerror = (e) => console.warn('[useGlobalAlarm] TTS 播放失败:', e)
-  try { window.speechSynthesis.speak(u) } catch {}
+  u.onerror = (e) => {
+    console.warn('[useGlobalAlarm] TTS 播放失败:', e)
+    if (ttsResumeTimer) { clearInterval(ttsResumeTimer); ttsResumeTimer = null }
+  }
+  u.onend = () => {
+    if (ttsResumeTimer) { clearInterval(ttsResumeTimer); ttsResumeTimer = null }
+  }
+
+  try {
+    window.speechSynthesis.speak(u)
+    // Chrome bug workaround: speechSynthesis 在 ~15s 后自动暂停，
+    // 定时调用 resume() 保持播放
+    ttsResumeTimer = setInterval(() => {
+      if (window.speechSynthesis.speaking && window.speechSynthesis.paused) {
+        window.speechSynthesis.resume()
+      } else if (!window.speechSynthesis.speaking) {
+        clearInterval(ttsResumeTimer!)
+        ttsResumeTimer = null
+      }
+    }, 10000)
+  } catch {}
 }
 
 // ── 联动动作图标映射 ──

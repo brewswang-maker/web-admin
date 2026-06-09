@@ -92,18 +92,21 @@ function unlockMediaOnFirstGesture() {
 
   // 1) 解锁 audio: 创建一个 <audio> 元素, play 一下再 pause.
   try {
-    const a = new Audio('/audio/alarm.m4a')
+    const a = new Audio('/audio/alarm.wav')
     a.volume = 0.001 // 极小音量, 避免吓到用户
     a.play().then(() => { a.pause(); a.currentTime = 0 }).catch(() => { /* still ok */ })
   } catch { /* noop */ }
 
-  // 2) 预热 Web Speech API: 一次空 speak() 让浏览器标记"已授权语音".
+  // 2) 预热 Web Speech API: 一次 speak() 让浏览器标记"已授权语音".
+  //    volume 不能为 0，否则某些浏览器不认为"已播放音频"
   try {
     if ('speechSynthesis' in window) {
+      window.speechSynthesis.cancel()
       window.speechSynthesis.resume()
       const u = new SpeechSynthesisUtterance(' ')
-      u.volume = 0
+      u.volume = 0.01
       u.lang = 'zh-CN'
+      u.rate = 10  // 最快速，尽快结束
       window.speechSynthesis.speak(u)
     }
   } catch { /* noop */ }

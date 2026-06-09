@@ -199,9 +199,9 @@ function ensureAudioUnlock() {
   if (audioUnlocked) return
   // 尝试解锁音频上下文（需要用户交互）
   if (!alarmAudio) {
-    alarmAudio = new Audio('/audio/alarm.m4a')
+    alarmAudio = new Audio('/audio/alarm.wav')
     alarmAudio.volume = 0.6
-    alarmAudio.load() // 预加载
+    alarmAudio.load()
   }
   const unlock = () => {
     if (!alarmAudio) return
@@ -223,7 +223,7 @@ export function playAlarmSound() {
   try {
     ensureAudioUnlock()
     if (!alarmAudio) {
-      alarmAudio = new Audio('/audio/alarm.m4a')
+      alarmAudio = new Audio('/audio/alarm.wav')
       alarmAudio.volume = 0.6
     }
     alarmAudio.currentTime = 0
