@@ -610,6 +610,9 @@ function refreshAlarms() {
 // ── WebSocket实时推送新告警 ──
 const { connected: wsConnected, subscribe: wsSubscribe } = useWebSocket('/ws')
 
+// 导出轮询 timer（需要在 onUnmounted 时清理）
+let exportPollTimer: ReturnType<typeof setInterval> | null = null
+
 const unsubscribeAlarm = wsSubscribe('alarm.new', (data: any) => {
   // 关键: WS 推过来的 payload 是 snake_case 原始数据, 必须先 normalize,
   // 否则 snapshotUrl/videoClipUrl/level 等 camelCase 字段都是 undefined.
@@ -973,12 +976,13 @@ async function exportAlarms() {
     })
     const task = res.data?.data
     if (task?.id) {
-      const poll = setInterval(async () => {
+      exportPollTimer = setInterval(async () => {
         try {
           const detail = await exportApi.getTaskDetail(task.id)
           const t = detail.data?.data
           if (t?.status === 'completed' && t.fileUrl) {
-            clearInterval(poll)
+            clearInterval(exportPollTimer!)
+            exportPollTimer = null
             const blob = await exportApi.downloadFile(task.id)
             const url = URL.createObjectURL(blob.data as any)
             const a = document.createElement('a')
@@ -988,10 +992,14 @@ async function exportAlarms() {
             URL.revokeObjectURL(url)
             ElMessage.success('导出完成')
           } else if (t?.status === 'failed') {
-            clearInterval(poll)
+            clearInterval(exportPollTimer!)
+            exportPollTimer = null
             ElMessage.error(t.errorMessage || '导出失败')
           }
-        } catch { clearInterval(poll) }
+        } catch {
+          clearInterval(exportPollTimer!)
+          exportPollTimer = null
+        }
       }, 2000)
     }
   } catch {
@@ -1008,6 +1016,10 @@ onMounted(() => {
 onUnmounted(() => {
   unsubscribeAlarm?.()
   window.removeEventListener('alarm-clip-updated', onAlarmClipUpdated)
+  if (exportPollTimer) {
+    clearInterval(exportPollTimer)
+    exportPollTimer = null
+  }
 })
 </script>
 

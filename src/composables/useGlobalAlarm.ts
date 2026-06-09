@@ -265,6 +265,10 @@ export function stopGlobalAlarm() {
     clearTimeout(reconnectTimer)
     reconnectTimer = null
   }
+  if (ttsResumeTimer) {
+    clearInterval(ttsResumeTimer)
+    ttsResumeTimer = null
+  }
   if (ws) {
     ws.onclose = null // 防止触发重连
     ws.close()

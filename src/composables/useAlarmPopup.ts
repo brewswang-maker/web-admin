@@ -42,6 +42,12 @@ const queueIndex = ref(0)
 
 // 音频实例（懒加载）
 let alarmAudio: HTMLAudioElement | null = null
+let audioUnlockCleanup: (() => void) | null = null
+
+// 联动规则缓存
+let cachedRules: LinkageRule[] | null = null
+let ruleCacheTime = 0
+const RULE_CACHE_TTL_MS = 30000
 
 // ── WS 数据适配 (snake_case → camelCase) ──
 // 委派给 types/alarm.ts 的统一实现 normalizeAlarmCore,
@@ -53,8 +59,13 @@ export function normalizeAlarmPayload(raw: any): AlarmEvent {
 // ── 联动规则匹配 ──
 async function findMatchingRule(alarm: AlarmEvent): Promise<LinkageRule | null> {
   try {
-    const { data: res } = await linkageApi.getRules({ pageSize: 200 })
-    const rules = (res?.data?.items ?? res?.data ?? []) as LinkageRule[]
+    const now = Date.now()
+    if (!cachedRules || now - ruleCacheTime > RULE_CACHE_TTL_MS) {
+      const { data: res } = await linkageApi.getRules({ pageSize: 200 })
+      cachedRules = (res?.data?.items ?? res?.data ?? []) as LinkageRule[]
+      ruleCacheTime = now
+    }
+    const rules = cachedRules
     const alarmType = alarm.type
     const chId = Number(alarm.channelId) || 0
     const severity = (alarm.metadata?.severityNum as number) ?? 2
@@ -88,6 +99,29 @@ async function findMatchingRule(alarm: AlarmEvent): Promise<LinkageRule | null> 
     return null
   } catch (e) {
     console.warn('[useAlarmPopup] findMatchingRule failed:', e)
+    // 失败时尝试使用缓存
+    if (cachedRules) {
+      const alarmType = alarm.type
+      const chId = Number(alarm.channelId) || 0
+      const severity = (alarm.metadata?.severityNum as number) ?? 2
+      const confidence = alarm.confidence
+      const sorted = [...cachedRules]
+        .filter(r => r.enabled)
+        .sort((a, b) => b.priority - a.priority)
+      for (const rule of sorted) {
+        const src = rule.source_cond
+        if (src.event_types?.length) {
+          const typeMatch = src.event_types.some(t =>
+            t === alarmType || alarmType.includes(t) || t.includes(alarmType)
+          )
+          if (!typeMatch) continue
+        }
+        if (src.channel_ids?.length && !src.channel_ids.includes(chId)) continue
+        if (severity < src.min_severity) continue
+        if (confidence < src.min_confidence) continue
+        return rule
+      }
+    }
     return null
   }
 }
@@ -197,6 +231,8 @@ export async function handleAlarm(action: 'confirmed' | 'false_alarm' | 'forward
 let audioUnlocked = false
 function ensureAudioUnlock() {
   if (audioUnlocked) return
+  // 先清理旧的监听器（防止重复调用时泄漏）
+  audioUnlockCleanup?.()
   // 尝试解锁音频上下文（需要用户交互）
   if (!alarmAudio) {
     alarmAudio = new Audio('/audio/alarm.wav')
@@ -208,12 +244,19 @@ function ensureAudioUnlock() {
     alarmAudio.play().then(() => {
       alarmAudio!.pause()
       alarmAudio!.currentTime = 0
-      audioUnlocked = true // 修复：只在成功解锁后设置
+      audioUnlocked = true
     }).catch((e) => {
       console.warn('[useAlarmPopup] 音频解锁失败（需要用户交互）:', e)
+    }).finally(() => {
+      // 确保无论成功失败都清理监听器
+      audioUnlockCleanup?.()
     })
+  }
+  // 清理函数：移除所有监听器
+  audioUnlockCleanup = () => {
     document.removeEventListener('click', unlock)
     document.removeEventListener('keydown', unlock)
+    audioUnlockCleanup = null
   }
   document.addEventListener('click', unlock)
   document.addEventListener('keydown', unlock)
@@ -280,6 +323,8 @@ export async function showAlarmPopup(rawAlarm: any) {
 // ── 关闭弹窗 ──
 export function closePopup() {
   popupVisible.value = false
+  // 清理音频监听器
+  audioUnlockCleanup?.()
   // 延迟清理，等 transition 结束
   setTimeout(() => {
     currentAlarm.value = null

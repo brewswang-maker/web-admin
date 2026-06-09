@@ -100,7 +100,7 @@
                 <!-- 告警快照（始终显示） -->
                 <el-tab-pane label="🖼️ 告警快照" name="snapshot">
                   <AlarmSnapshot
-                    :key="`snap-${currentAlarm?.id || 'none'}-${currentAlarm?.snapshotUrl || ''}`"
+                    :key="`snap-${currentAlarm?.id || 'none'}`"
                     :image-url="currentAlarm.snapshotUrl || ''"
                     :bbox="(currentAlarm.metadata?.bbox as number[]) || []"
                     :target-label="(currentAlarm.metadata?.targetLabel as string) || ''"
@@ -280,8 +280,13 @@ function stopCountdown() {
 }
 
 watch(popupVisible, (v) => {
-  if (v) startCountdown()
-  else stopCountdown()
+  if (v) {
+    startCountdown()
+    // 弹窗打开时自动加载证据（快照和录像URL）
+    loadPlayback()
+  } else {
+    stopCountdown()
+  }
 })
 
 // ── 计算属性 ──
@@ -446,9 +451,21 @@ function onKeydown(e: KeyboardEvent) {
   if (e.key === 'ArrowRight') nextAlarm()
 }
 
-onMounted(() => window.addEventListener('keydown', onKeydown))
+// 监听录像完成事件，更新当前告警的 videoClipUrl
+function onAlarmClipUpdated(e: Event) {
+  const detail = (e as CustomEvent).detail
+  if (currentAlarm.value?.id === detail.alarmId && detail.videoClipUrl) {
+    currentAlarm.value.videoClipUrl = detail.videoClipUrl
+  }
+}
+
+onMounted(() => {
+  window.addEventListener('keydown', onKeydown)
+  window.addEventListener('alarm-clip-updated', onAlarmClipUpdated)
+})
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKeydown)
+  window.removeEventListener('alarm-clip-updated', onAlarmClipUpdated)
   stopCountdown()
 })
 </script>

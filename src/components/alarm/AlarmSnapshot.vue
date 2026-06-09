@@ -7,6 +7,8 @@
       style="width:100%;height:100%;border-radius:6px;background:#0a0c10"
       :preview-src-list="[imageUrl]"
       :preview-teleported="true"
+      @load="onImageLoad"
+      @error="onImageError"
     >
       <template #error>
         <div class="alarm-snapshot__empty">
@@ -33,7 +35,7 @@
  * 在告警快照图片上叠加 Canvas 绘制的 detection boxes。
  * 坐标从归一化 (0-1) 转为像素坐标。
  */
-import { ref, computed, watch, onMounted, nextTick } from 'vue'
+import { ref, computed, nextTick } from 'vue'
 
 interface DetectionBox {
   x: number; y: number; w: number; h: number
@@ -115,16 +117,14 @@ function drawBoxes() {
   }
 }
 
-// 图片加载完成后绘制
-watch(() => props.imageUrl, () => {
-  nextTick(() => {
-    setTimeout(drawBoxes, 200) // 等待图片渲染
-  })
-})
+// 图片加载/错误处理
+function onImageLoad() {
+  nextTick(() => drawBoxes())
+}
 
-onMounted(() => {
-  nextTick(() => setTimeout(drawBoxes, 300))
-})
+function onImageError() {
+  console.warn('[AlarmSnapshot] Image failed to load:', props.imageUrl)
+}
 </script>
 
 <style scoped>

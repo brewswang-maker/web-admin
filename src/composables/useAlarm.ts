@@ -82,16 +82,19 @@ export function useAlarmList() {
 /** 告警实时推送 */
 export function useAlarmRealtime() {
   const alarmStore = useAlarmStore()
-  const { connected, lastMessage } = useWebSocket('/ws/alarms')
+  const { connected, subscribe } = useWebSocket('/ws/alarms')
 
-  // 监听 WebSocket 推送，自动写入 store
-  const stopWatch = setInterval(() => {
-    if (lastMessage.value?.type === 'alarm' && lastMessage.value.data) {
-      alarmStore.pushRealtimeAlarm(lastMessage.value.data as AlarmEvent)
-    }
-  }, 1000)
+  let unsubAlarm: (() => void) | null = null
 
-  onUnmounted(() => clearInterval(stopWatch))
+  onMounted(() => {
+    unsubAlarm = subscribe('alarm', (data: any) => {
+      if (data) {
+        alarmStore.pushRealtimeAlarm(data as AlarmEvent)
+      }
+    })
+  })
+
+  onUnmounted(() => unsubAlarm?.())
 
   return {
     connected,
