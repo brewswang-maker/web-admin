@@ -124,7 +124,104 @@ declare module 'axios' {
     timeoutMs?: number
     /** 是否跳过重试 */
     skipRetry?: boolean
+    /** 期望后端返回分页结构 (items/total/page/pageSize/totalPages) */
+    expectPageShape?: boolean
   }
+}
+
+// ─────────────────────────────────────────────────────────
+// 3.5. 响应数据归一化 (Phase 13 P0 #1, #2 + P1 timestamp)
+// ─────────────────────────────────────────────────────────
+
+/**
+ * 后端列表端点使用 {plural,total} 风格 (如 {devices,total}、{alarms,total}),
+ * 前端统一期望 {items,total,page,pageSize,totalPages}。
+ * 已知 wrapper key 全清单见下方。
+ */
+const PLURAL_WRAPPER_KEYS = [
+  'devices', 'alarms', 'channels', 'algos', 'algorithms', 'models',
+  'recordings', 'teams', 'pipelines', 'rules', 'patterns', 'policies',
+  'logs', 'users', 'keys', 'webhooks', 'plans', 'invoices', 'products',
+  'orders', 'licenses', 'scenes', 'projects', 'notifications',
+  'firmwares', 'tasks', 'streams', 'members', 'permissions', 'roles',
+  'docs', 'endpoints', 'event_types', 'alerts', 'recognition_events',
+  'face_records', 'behaviors', 'items',
+] as const
+
+/**
+ * 将后端 {devices,total} / {items,total} 统一转换为 PageResponse。
+ * 仅在 data[k] 是数组且非空场景下进行转换，避免误识别。
+ */
+function unwrapPageData<T = unknown>(data: any): T {
+  if (!data || typeof data !== 'object') return data as T
+  // 已是 PageResponse 形态 → 直接返回
+  if (Array.isArray((data as any).items) && typeof (data as any).total === 'number') {
+    return data as T
+  }
+  for (const k of PLURAL_WRAPPER_KEYS) {
+    if (Array.isArray((data as any)[k])) {
+      const arr = (data as any)[k]
+      const total = typeof (data as any).total === 'number' ? (data as any).total : arr.length
+      const page = typeof (data as any).page === 'number' ? (data as any).page : 1
+      const pageSize = typeof (data as any).pageSize === 'number' ? (data as any).pageSize : arr.length
+      const totalPages = typeof (data as any).totalPages === 'number'
+        ? (data as any).totalPages
+        : Math.max(1, Math.ceil(total / pageSize))
+      return { items: arr, total, page, pageSize, totalPages } as any
+    }
+  }
+  return data as T
+}
+
+/** 已知的时间字段 (unix_ms number) → ISO 字符串 */
+const TIMESTAMP_KEY_PATTERNS = [
+  /^timestamp$/i,
+  /At$/,
+  /_at$/,
+  /Time$/,
+  /_time$/,
+  /timestamp_ms$/i,
+]
+
+function isTimestampKey(k: string): boolean {
+  return TIMESTAMP_KEY_PATTERNS.some((p) => p.test(k))
+}
+
+function normalizeTimestamps(obj: any): any {
+  if (obj == null) return obj
+  if (obj instanceof Date) return obj
+  if (Array.isArray(obj)) return obj.map(normalizeTimestamps)
+  if (typeof obj !== 'object') return obj
+  const result: any = {}
+  for (const [k, v] of Object.entries(obj)) {
+    if (isTimestampKey(k) && typeof v === 'number' && v > 0) {
+      // unix_ms (>= 10^12) 或 unix_s (>= 10^9) 自动识别
+      const ms = v > 1e12 ? v : v * 1000
+      result[k] = new Date(ms).toISOString()
+    } else {
+      result[k] = normalizeTimestamps(v)
+    }
+  }
+  return result
+}
+
+/** camelCase → snake_case (仅对纯 JSON body 生效) */
+function camelToSnakeKey(k: string): string {
+  // 已含下划线的全小写 key 不动
+  if (/^[a-z0-9_]+$/.test(k)) return k
+  return k.replace(/[A-Z]/g, (m) => '_' + m.toLowerCase()).replace(/^_/, '')
+}
+
+function camelToSnake(obj: any): any {
+  if (obj == null) return obj
+  if (obj instanceof Date || obj instanceof File || obj instanceof FormData || obj instanceof Blob) return obj
+  if (Array.isArray(obj)) return obj.map(camelToSnake)
+  if (typeof obj !== 'object') return obj
+  const result: any = {}
+  for (const [k, v] of Object.entries(obj)) {
+    result[camelToSnakeKey(k)] = camelToSnake(v)
+  }
+  return result
 }
 
 // ─────────────────────────────────────────────────────────
@@ -153,7 +250,7 @@ export const API_VERSION = 'v1'
 const API_VERSION_HEADER = 'X-API-Version'
 
 /** 基础 URL（含版本） */
-const BASE_URL = import.meta.env.VITE_API_BASE_URL || `/api/${API_VERSION}`
+export const BASE_URL = import.meta.env.VITE_API_BASE_URL || `/api/${API_VERSION}`
 
 // ─────────────────────────────────────────────────────────
 // 5. 请求 ID 生成（用于链路追踪）
@@ -211,6 +308,18 @@ function createHttpClient(basePath = '', retryOverride?: Partial<RetryConfig>): 
         config._retryMeta = { retryCount: 0, retryConfig }
       }
 
+      // 请求体 camelCase → snake_case (仅 JSON body)
+      if (
+        config.data &&
+        typeof config.data === 'object' &&
+        !(config.data instanceof FormData) &&
+        !(config.data instanceof Blob) &&
+        !(config.data instanceof ArrayBuffer) &&
+        !(config.data instanceof URLSearchParams)
+      ) {
+        config.data = camelToSnake(config.data)
+      }
+
       return config
     },
     (error) => Promise.reject(error)
@@ -238,6 +347,23 @@ function createHttpClient(basePath = '', retryOverride?: Partial<RetryConfig>): 
           config.url
         )
         return Promise.reject(err)
+      }
+
+      // Phase 13 P0 #1: 分页结构归一化
+      if (config.expectPageShape && data && typeof data === 'object' && 'data' in data) {
+        data.data = unwrapPageData(data.data)
+      } else if (config.expectPageShape && Array.isArray(data)) {
+        // 兼容后端直接返回数组的场景
+        response.data = {
+          code: 0,
+          message: 'ok',
+          data: unwrapPageData({ items: data }),
+        } as any
+      }
+
+      // Phase 13 P1: 时间戳归一化 (unix_ms → ISO)
+      if (data && typeof data === 'object' && 'data' in data && data.data) {
+        data.data = normalizeTimestamps(data.data)
       }
 
       return response

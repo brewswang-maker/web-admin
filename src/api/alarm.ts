@@ -18,14 +18,14 @@ export const alarmApi = {
     return alarmHttp.get<ApiResponse<AlarmEvent>>(`/${id}`)
   },
 
-  /** 处理告警 */
+  /** 处理告警 — Phase 13 P0 #4: 后端注册的是 PUT,前端用 POST 会 405 */
   handle(id: string, form: AlarmHandleForm) {
-    return alarmHttp.post<ApiResponse<void>>(`/${id}/handle`, form)
+    return alarmHttp.put<ApiResponse<void>>(`/${id}/handle`, form)
   },
 
-  /** 批量处理告警 */
+  /** 批量处理告警 — Phase 13 P0 #5: 后端新增 /alarms/batch-handle 端点 */
   batchHandle(ids: string[], form: AlarmHandleForm) {
-    return alarmHttp.post<ApiResponse<{ handled: number }>>('/batch-handle', { ids, ...form })
+    return alarmHttp.post<ApiResponse<{ ok: number; fail: number }>>('/batch-handle', { ids, form })
   },
 
   /** 批量确认 */

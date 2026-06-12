@@ -3,7 +3,8 @@
  * api/ai.ts — AI助手、对话、Agent调用相关接口
  */
 
-import { aiHttp } from './http'
+import { aiHttp, BASE_URL } from './http'
+import { getAuthToken } from '@/utils/auth'
 import type { ApiResponse } from '@/types/common'
 
 /** 对话消息 */
@@ -64,11 +65,76 @@ export const aiApi = {
     return aiHttp.post<ApiResponse<ChatResponse>>('/chat', data)
   },
 
-  /** 流式对话（SSE） */
-  chatStream(data: ChatRequest): EventSource {
-    const url = `${aiHttp.defaults.baseURL}/chat/stream`
-    const es = new EventSource(url)
-    return es
+  /**
+   * 流式对话（SSE）— Phase 13 P0 #3 修复:
+   * 用 fetch + ReadableStream 替代 EventSource,可附加 Authorization header
+   * 返回 AbortController,调用方 .abort() 即可取消
+   */
+  chatStream(
+    data: ChatRequest,
+    onMessage: (payload: { type: string; content: string; [k: string]: unknown }) => void,
+    onError?: (err: Error) => void,
+    onOpen?: () => void
+  ): AbortController {
+    const controller = new AbortController()
+    const token = getAuthToken()
+    const baseURL = aiHttp.defaults.baseURL || `${BASE_URL}/ai`
+    const url = typeof baseURL === 'string' ? `${baseURL}/chat` : `${BASE_URL}/ai/chat`
+
+    fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'text/event-stream',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify({ ...data, stream: true }),
+      signal: controller.signal,
+    })
+      .then(async (resp) => {
+        if (!resp.ok) {
+          const text = await resp.text().catch(() => '')
+          throw new Error(`SSE ${resp.status} ${resp.statusText}: ${text.slice(0, 200)}`)
+        }
+        if (!resp.body) {
+          throw new Error('SSE response body is empty')
+        }
+        onOpen?.()
+        const reader = resp.body.getReader()
+        const decoder = new TextDecoder('utf-8')
+        let buf = ''
+        // 读取流直到关闭
+        // eslint-disable-next-line no-constant-condition
+        while (true) {
+          const { value, done } = await reader.read()
+          if (done) break
+          buf += decoder.decode(value, { stream: true })
+          // SSE event 边界: \n\n
+          const blocks = buf.split('\n\n')
+          buf = blocks.pop() ?? ''
+          for (const block of blocks) {
+            const dataLine = block
+              .split('\n')
+              .map((l) => l.trim())
+              .find((l) => l.startsWith('data: '))
+            if (!dataLine) continue
+            const raw = dataLine.slice(6).trim()
+            if (!raw || raw === '[DONE]') continue
+            try {
+              const payload = JSON.parse(raw)
+              onMessage(payload)
+            } catch {
+              // 跳过非 JSON 的 SSE 帧 (e.g. 心跳)
+            }
+          }
+        }
+      })
+      .catch((err) => {
+        if ((err as Error).name === 'AbortError') return
+        onError?.(err instanceof Error ? err : new Error(String(err)))
+      })
+
+    return controller
   },
 
   /** 获取对话历史 */
