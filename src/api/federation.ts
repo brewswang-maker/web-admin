@@ -4,7 +4,7 @@
  */
 
 import { federationHttp } from './http'
-import type { ApiResponse } from '@/types/common'
+import type { ApiResponse, PageResponse } from '@/types/common'
 
 /** 联邦任务状态 */
 export type FederationTaskStatus = 'pending' | 'running' | 'paused' | 'completed' | 'failed'
@@ -159,5 +159,53 @@ export const federationApi = {
       lastGradientAt: string
       dataVolume: number
     }>>>(`/tasks/${taskId}/boxes`)
+  },
+
+  // ===== Phase 13 P2 #1: 联邦轮次 + 节点管理 =====
+
+  /** 获取联邦学习轮次列表 (服务端分页) */
+  getRounds(params?: { page?: number; pageSize?: number }) {
+    return federationHttp.get<ApiResponse<PageResponse<{
+      id: string
+      roundNumber: number
+      status: 'pending' | 'running' | 'completed' | 'failed'
+      startedAt: string
+      completedAt: string
+      accuracy: number
+      loss: number
+      participatingNodes: number
+    }>>>('/rounds', { params })
+  },
+
+  /** 启动新一轮联邦训练 */
+  startRound() {
+    return federationHttp.post<ApiResponse<{ roundId: string; status: 'running' }>>('/rounds/start')
+  },
+
+  /** 停止当前联邦训练轮次 */
+  stopRound() {
+    return federationHttp.post<ApiResponse<{ message: string }>>('/rounds/stop')
+  },
+
+  /** 获取联邦学习参与节点列表 (服务端分页) */
+  getNodes(params?: { page?: number; pageSize?: number }) {
+    return federationHttp.get<ApiResponse<PageResponse<{
+      id: string
+      name: string
+      status: 'online' | 'offline' | 'idle'
+      contribution: number
+      lastSync: string
+    }>>>('/nodes', { params })
+  },
+
+  /** 获取联邦学习节点详情 */
+  getNodeDetail(id: string) {
+    return federationHttp.get<ApiResponse<{
+      id: string
+      name: string
+      status: 'online' | 'offline' | 'idle'
+      contribution: number
+      lastSync: string
+    }>>(`/nodes/${id}`)
   }
 }

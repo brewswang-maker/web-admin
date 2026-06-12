@@ -82,30 +82,18 @@ export interface PaginatedRecords {
 const faceApi = {
   /**
    * 上传人脸图片
+   * Phase 13 P0 #14: 后端期望 multipart/form-data (file + groupId),
+   * 原实现走 JSON + base64,改为走 http 实例以继承 Authorization 注入。
    */
-  uploadImage(file: File) {
-    return new Promise<any>((resolve, reject) => {
-      const reader = new FileReader()
-      reader.onload = async () => {
-        const base64 = reader.result as string
-        try {
-          const res = await fetch('/api/v1/face/database/upload', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              image_data: base64,
-              filename: file.name
-            })
-          })
-          const data = await res.json()
-          resolve({ data })
-        } catch (err) {
-          reject(err)
-        }
-      }
-      reader.onerror = () => reject(reader.error)
-      reader.readAsDataURL(file)
-    })
+  uploadImage(file: File, groupId?: string) {
+    const fd = new FormData()
+    fd.append('file', file)
+    if (groupId) fd.append('groupId', groupId)
+    // request 拦截器会跳过 FormData 的 body 转换,Content-Type 由浏览器自动加 boundary
+    return http.post<FaceDatabaseResponse<{ person_id: string; message: string }>>(
+      '/face/database/upload',
+      fd
+    )
   },
 
   /**

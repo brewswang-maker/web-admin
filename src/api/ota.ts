@@ -156,5 +156,39 @@ export const otaApi = {
       upgradedDevices: number
       pendingDevices: number
     }>>('/stats')
+  },
+
+  // ===== Phase 13 P2 #1: 升级进度 + 历史 + 回滚 =====
+
+  /** 获取当前升级任务实时进度 (轮询用, REST 快照) */
+  getProgress() {
+    return otaHttp.get<ApiResponse<{
+      inProgress: boolean
+      currentStep: string
+      percent: number
+      taskId?: string
+      startedAt?: string
+      estimatedCompletion?: string
+    }>>('/progress')
+  },
+
+  /** 获取升级历史记录 (服务端分页) */
+  getHistory(params?: { page?: number; pageSize?: number; status?: TaskStatus }) {
+    return otaHttp.get<ApiResponse<PageResponse<{
+      id: string
+      firmwareId: string
+      firmwareVer: string
+      status: TaskStatus
+      deviceCount: number
+      successCount: number
+      failedCount: number
+      startedAt: string
+      completedAt: string
+    }>>>('/history', { params })
+  },
+
+  /** 回滚到上一版本 */
+  rollback(data: { taskId: string; reason?: string }) {
+    return otaHttp.post<ApiResponse<{ message: string; rolledBackTo?: string }>>('/rollback', data)
   }
 }

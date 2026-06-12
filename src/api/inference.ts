@@ -87,16 +87,20 @@ export function startSchedule(
   channelId: string,
   deviceId: string,
   intervalMs: number = 3000,
-  algoPlugin: string = 'yolov8n'
+  algoPlugin: string = 'yolov8n',
+  extra?: { confidence?: number; nmsThreshold?: number; inferenceMode?: string }
 ) {
+  const payload: Record<string, any> = {
+    channel_id: channelId,
+    device_id: deviceId,
+    interval_ms: intervalMs,
+    algo_plugin: algoPlugin,
+  }
+  if (extra?.confidence != null) payload.confidence = extra.confidence
+  if (extra?.nmsThreshold != null) payload.nms_threshold = extra.nmsThreshold
+  if (extra?.inferenceMode) payload.inference_mode = extra.inferenceMode
   return inferenceHttp.post<ApiResponse<{ channel_id: string; scheduled: boolean; interval_ms: number }>>(
-    '/schedule/start',
-    {
-      channel_id: channelId,
-      device_id: deviceId,
-      interval_ms: intervalMs,
-      algo_plugin: algoPlugin,
-    }
+    '/schedule/start', payload
   )
 }
 
@@ -117,4 +121,56 @@ export function getInferenceChannels() {
 export function getLatestDetections(channelId?: string) {
   const params = channelId ? { channel_id: channelId } : {}
   return inferenceHttp.get<ApiResponse<{ channels: ChannelDetections[] }>>('/detections/latest', { params })
+}
+
+// ============================================================
+// Phase 13 P2 #1 — 流式推理 (continuous frame processing)
+// ============================================================
+
+/** 启动流式推理通道 */
+export function startStreamingInference(params: {
+  channel_id: string
+  device_id?: string
+  rtsp_url: string
+  algo_plugin?: string
+  target_fps?: number
+}) {
+  const payload = {
+    channel_id: params.channel_id,
+    device_id: params.device_id ?? '',
+    rtsp_url: params.rtsp_url,
+    algo_plugin: params.algo_plugin ?? 'yolov8n',
+    target_fps: params.target_fps ?? 15,
+  }
+  return inferenceHttp.post<ApiResponse<{
+    channel_id: string
+    mode: 'streaming'
+    rtsp_url: string
+    target_fps: number
+    algo_plugin: string
+  }>>('/streaming/start', payload)
+}
+
+/** 停止流式推理通道 */
+export function stopStreamingInference(channelId: string) {
+  return inferenceHttp.post<ApiResponse<{ channel_id: string; disabled: boolean }>>(
+    '/streaming/stop',
+    { channel_id: channelId }
+  )
+}
+
+/** 获取流式推理实时检测结果快照 (REST 轮询模式) */
+export function getStreamingLiveDetections(channelId: string) {
+  return inferenceHttp.get<ApiResponse<{
+    channel_id: string
+    worker_active: boolean
+    detections: Array<{
+      class_name: string
+      confidence: number
+      class_id: number
+      x1: number; y1: number; x2: number; y2: number
+    }>
+    last_inference_ms?: number
+    total_inferences?: number
+  }>>('/streaming/live', { params: { channel_id: channelId } })
 }
