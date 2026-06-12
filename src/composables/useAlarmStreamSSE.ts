@@ -1,9 +1,12 @@
 /**
  * 华盾AI智能视频盒子 v7.0 - 告警 SSE Stream Composable
- * composables/useAlarmStream.ts — 通过 fetch + ReadableStream 订阅 /api/v1/alarms/stream
+ * composables/useAlarmStreamSSE.ts — 通过 fetch + ReadableStream 订阅 /api/v1/alarms/stream
  *
  * Phase 13 P2 #2: 与 useWebSocket 互补的 SSE 通道, 当 WebSocket 不可用或鉴权 header 无法
  * 通过 EventSource 发送时, 使用本 composable 走 fetch+ReadableStream 拉取告警推送
+ *
+ * 注意: useWebSocket.ts 已导出 useAlarmStream(走 WebSocket), 本 composable 走 SSE 命名 SSE
+ * 后缀避免命名冲突
  */
 
 import { ref, onUnmounted } from 'vue'
