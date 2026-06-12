@@ -103,6 +103,7 @@ const zhCN = {
     topology: '网络拓扑',
     location: '定位与轨迹',
     face: '人脸库管理',
+    faceRealtime: '人脸实时识别',
     gb28181: 'GB28181',
     onvif: 'ONVIF 发现',
     openPlatform: '开放平台',
@@ -309,7 +310,61 @@ const zhCN = {
     falseRate: '误报率',
     trend: '告警趋势',
     ruleName: '告警规则',
-    message: '告警信息'
+    message: '告警信息',
+    // 🆕 v6.3: 多类别检测告警类型
+    type: {
+      personDetected:  '人员检测',
+      itemDetected:    '物品检测',
+      animalDetected:  '动物检测',
+      vehicleDetected: '车辆检测',
+      objectDetected:  '物体检测',
+      // 🆕 v7.2: Phase G - 18 个新告警类型
+      cameraTamper:        '摄像头异常',
+      brightnessAbnormal:  '亮度异常',
+      imageFreeze:         '画面冻结',
+      glare:               '逆光强光',
+      sleepOnDuty:         '睡岗检测',
+      personLineCross:     '人员越界',
+      objectRemoval:       '物品搬移',
+      dangerousItem:       '危险物品',
+      parkingOccupancy:    '车位占用',
+      queueLength:         '排队长度',
+      peopleCount:         '人流计数',
+      densityHeatmap:      '密度热图',
+      ocrText:             'OCR文字',
+      safetySign:          '安全标识',
+      birdDetect:          '鸟类检测',
+      rodentDetect:        '鼠类活动'
+    }
+  },
+
+  // 🆕 v6.3: 多类别检测目标标签翻译表（与后端 object_class_labels.json 同步）
+  objectClass: {
+    category: {
+      person:  '人形',
+      item:    '物品',
+      animal:  '动物',
+      vehicle: '车辆',
+      unknown: '物体'
+    },
+    item: {
+      person:     '人员',
+      bed:        '床',
+      umbrella:   '雨伞',
+      laptop:     '笔记本电脑',
+      backpack:   '背包',
+      suitcase:   '行李箱',
+      bottle:     '瓶子',
+      cup:        '杯子',
+      chair:      '椅子',
+      cat:        '猫',
+      dog:        '狗',
+      bird:       '鸟',
+      car:        '轿车',
+      truck:      '卡车',
+      bus:        '公交车',
+      motorcycle: '摩托车'
+    }
   },
 
   device: {
@@ -619,6 +674,60 @@ const zhCN = {
     confirm: '确定要退出登录吗?',
     confirmBtn: '退出',
     cancelBtn: '取消'
+  },
+  faceRealtime: {
+    title: '实时人脸事件流',
+    stats: {
+      total: '总识别',
+      blacklist: '黑名单',
+      whitelist: '白名单',
+      unknown: '未知'
+    },
+    conn: {
+      title: '推送通道',
+      connected: '已连接',
+      disconnected: '已断开'
+    },
+    filter: {
+      all: '全部',
+      blacklist: '黑名单',
+      whitelist: '白名单',
+      visitor: '访客',
+      unknown: '未知'
+    },
+    control: {
+      soundOn: '黑名单告警音',
+      autoScroll: '自动滚动',
+      window: '时间窗',
+      clear: '清空'
+    },
+    minutes: '分钟',
+    waiting: '等待人脸事件...',
+    empty: '暂无符合条件的人脸事件',
+    noSnapshot: '暂无抓拍图',
+    unknownPerson: '未识别',
+    unknownChannel: '未知通道',
+    cleared: '已清空事件流',
+    group: {
+      blacklist: '黑名单',
+      whitelist: '白名单',
+      visitor: '访客',
+      unknown: '未知'
+    },
+    field: {
+      similarity: '相似度',
+      liveness: '活体',
+      quality: '质量'
+    },
+    liveness: {
+      live: '活体',
+      fake: '照片'
+    },
+    time: {
+      justNow: '刚刚',
+      secondsAgo: '{n} 秒前',
+      minutesAgo: '{n} 分钟前'
+    }
   }
 }
 

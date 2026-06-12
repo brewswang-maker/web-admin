@@ -105,6 +105,7 @@ const enUS: MessageSchema = {
     topology: 'Topology',
     location: 'Location & Tracks',
     face: 'Face Database',
+    faceRealtime: 'Face Realtime',
     gb28181: 'GB28181',
     onvif: 'ONVIF Discovery',
     openPlatform: 'Open Platform',
@@ -311,7 +312,61 @@ const enUS: MessageSchema = {
     falseRate: 'False Rate',
     trend: 'Trend',
     ruleName: 'Rule',
-    message: 'Message'
+    message: 'Message',
+    // 🆕 v6.3: multi-category detection alarm types
+    type: {
+      personDetected:  'Person Detected',
+      itemDetected:    'Item Detected',
+      animalDetected:  'Animal Detected',
+      vehicleDetected: 'Vehicle Detected',
+      objectDetected:  'Object Detected',
+      // 🆕 v7.2: Phase G - 18 new alarm types
+      cameraTamper:        'Camera Tamper',
+      brightnessAbnormal:  'Brightness Anomaly',
+      imageFreeze:         'Image Freeze',
+      glare:               'Glare Detected',
+      sleepOnDuty:         'Sleep On Duty',
+      personLineCross:     'Person Line Crossing',
+      objectRemoval:       'Object Removal',
+      dangerousItem:       'Dangerous Item',
+      parkingOccupancy:    'Parking Occupancy',
+      queueLength:         'Queue Length',
+      peopleCount:         'People Count',
+      densityHeatmap:      'Density Heatmap',
+      ocrText:             'OCR Text',
+      safetySign:          'Safety Sign',
+      birdDetect:          'Bird Detected',
+      rodentDetect:        'Rodent Activity'
+    }
+  },
+
+  // 🆕 v6.3: multi-category detection label translation (mirrors backend object_class_labels.json)
+  objectClass: {
+    category: {
+      person:  'Person',
+      item:    'Item',
+      animal:  'Animal',
+      vehicle: 'Vehicle',
+      unknown: 'Object'
+    },
+    item: {
+      person:     'Person',
+      bed:        'Bed',
+      umbrella:   'Umbrella',
+      laptop:     'Laptop',
+      backpack:   'Backpack',
+      suitcase:   'Suitcase',
+      bottle:     'Bottle',
+      cup:        'Cup',
+      chair:      'Chair',
+      cat:        'Cat',
+      dog:        'Dog',
+      bird:       'Bird',
+      car:        'Car',
+      truck:      'Truck',
+      bus:        'Bus',
+      motorcycle: 'Motorcycle'
+    }
   },
 
   device: {
@@ -622,6 +677,60 @@ const enUS: MessageSchema = {
     confirm: 'Are you sure you want to sign out?',
     confirmBtn: 'Sign Out',
     cancelBtn: 'Cancel'
+  },
+  faceRealtime: {
+    title: 'Real-time Face Events',
+    stats: {
+      total: 'Total',
+      blacklist: 'Blacklist',
+      whitelist: 'Whitelist',
+      unknown: 'Unknown'
+    },
+    conn: {
+      title: 'Stream',
+      connected: 'Live',
+      disconnected: 'Offline'
+    },
+    filter: {
+      all: 'All',
+      blacklist: 'Blacklist',
+      whitelist: 'Whitelist',
+      visitor: 'Visitor',
+      unknown: 'Unknown'
+    },
+    control: {
+      soundOn: 'Alarm Sound',
+      autoScroll: 'Auto-scroll',
+      window: 'Window',
+      clear: 'Clear'
+    },
+    minutes: 'min',
+    waiting: 'Waiting for face events…',
+    empty: 'No face events match the current filter',
+    noSnapshot: 'No snapshot',
+    unknownPerson: 'Unidentified',
+    unknownChannel: 'Unknown channel',
+    cleared: 'Event stream cleared',
+    group: {
+      blacklist: 'Blacklist',
+      whitelist: 'Whitelist',
+      visitor: 'Visitor',
+      unknown: 'Unknown'
+    },
+    field: {
+      similarity: 'Similarity',
+      liveness: 'Liveness',
+      quality: 'Quality'
+    },
+    liveness: {
+      live: 'Live',
+      fake: 'Spoof'
+    },
+    time: {
+      justNow: 'just now',
+      secondsAgo: '{n}s ago',
+      minutesAgo: '{n}m ago'
+    }
   }
 }
 
