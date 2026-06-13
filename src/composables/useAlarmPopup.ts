@@ -292,10 +292,24 @@ export function pushLinkageLog(log: { action: string; status: string; icon?: str
 export async function showAlarmPopup(rawAlarm: any) {
   if (!rawAlarm) return
 
+  // 取消待执行的关闭定时器，防止新告警被旧 300ms 定时器清除
+  if (closeTimer) {
+    clearTimeout(closeTimer)
+    closeTimer = null
+  }
+
   console.log('[useAlarmPopup] showAlarmPopup called, id:', rawAlarm.id || rawAlarm.alarm_id, 'type:', rawAlarm.type || rawAlarm.alarm_type)
 
   // 1. 数据适配
   const alarm = normalizeAlarmPayload(rawAlarm)
+  console.log('[useAlarmPopup] normalized alarm:', {
+    id: alarm.id,
+    type: alarm.type,
+    channelId: alarm.channelId,
+    snapshotUrl: alarm.snapshotUrl,
+    videoClipUrl: alarm.videoClipUrl,
+    rawSnapshotUrl: rawAlarm.snapshot_url || rawAlarm.snapshotUrl || rawAlarm.snapshot_path,
+  })
 
   // 2. 先更新状态 + 打开弹窗（用户立即看到，不被下游 await 阻塞）
   currentAlarm.value = alarm
@@ -321,12 +335,14 @@ export async function showAlarmPopup(rawAlarm: any) {
 }
 
 // ── 关闭弹窗 ──
+let closeTimer: ReturnType<typeof setTimeout> | null = null
 export function closePopup() {
   popupVisible.value = false
   // 清理音频监听器
   audioUnlockCleanup?.()
   // 延迟清理，等 transition 结束
-  setTimeout(() => {
+  closeTimer = setTimeout(() => {
+    closeTimer = null
     currentAlarm.value = null
     matchedRule.value = null
     linkageLogs.value = []

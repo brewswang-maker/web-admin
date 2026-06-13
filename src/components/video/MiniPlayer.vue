@@ -145,8 +145,8 @@ async function fetchStreamUrls(chId: string): Promise<{ urls: Partial<Record<Pla
         }
       } catch { /* 可能已在推流 */ }
 
-      // start 后等待流就绪
-      for (let attempt = 0; attempt < 5; attempt++) {
+      // start 后等待流就绪 (GB28181 INVITE + RTP 建立需 2-5 秒，10×300ms = 3s)
+      for (let attempt = 0; attempt < 10; attempt++) {
         try {
           const { data } = await streamHttp.get(`/${chId}/multi-urls`)
           const d = data?.data || data
@@ -157,7 +157,7 @@ async function fetchStreamUrls(chId: string): Promise<{ urls: Partial<Record<Pla
             }
           }
         } catch { /* */ }
-        await new Promise(r => setTimeout(r, 200))
+        await new Promise(r => setTimeout(r, 300))
       }
     }
     return null

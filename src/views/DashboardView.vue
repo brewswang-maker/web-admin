@@ -63,10 +63,11 @@
           <template #header>
             <div class="card-header">
               <span class="card-header-title">🛡️ 全局安全态势</span>
-              <el-tag :type="scoreTagType" size="small" effect="plain">{{ scoreLabel }}</el-tag>
+              <el-tag v-if="securityScore" :type="scoreTagType" size="small" effect="plain">{{ scoreLabel }}</el-tag>
+              <el-tag v-else type="info" size="small" effect="plain">{{ securityScoreFailed ? '加载失败' : '加载中…' }}</el-tag>
             </div>
           </template>
-          <div class="score-body">
+          <div class="score-body" v-if="securityScore">
             <div class="score-ring-wrap">
               <div class="score-ring" :style="{ '--score-deg': scoreDeg }">
                 <div class="score-ring-inner">
@@ -90,6 +91,12 @@
               </div>
             </div>
           </div>
+          <div v-else class="dashboard-empty">
+            <el-skeleton v-if="!securityScoreFailed" :rows="4" animated />
+            <el-empty v-else description="安全评分数据加载失败" :image-size="60">
+              <el-button size="small" type="primary" @click="refreshAll">重试</el-button>
+            </el-empty>
+          </div>
         </el-card>
       </el-col>
 
@@ -102,7 +109,7 @@
               <el-tag type="primary" size="small" effect="light">Hermes</el-tag>
             </div>
           </template>
-          <div class="agent-stats">
+          <div class="agent-stats" v-if="agentActivity">
             <div
               v-for="agent in agentStats"
               :key="agent.label"
@@ -119,7 +126,13 @@
               </div>
             </div>
           </div>
-          <div class="agent-confidence">
+          <div v-else class="dashboard-empty">
+            <el-skeleton v-if="!agentActivityFailed" :rows="3" animated />
+            <el-empty v-else description="Agent 数据加载失败" :image-size="60">
+              <el-button size="small" type="primary" @click="refreshAll">重试</el-button>
+            </el-empty>
+          </div>
+          <div class="agent-confidence" v-if="agentActivity">
             <div class="confidence-ring">
               <el-progress
                 type="circle"
@@ -185,12 +198,17 @@
           <template #header>
             <div class="card-header">
               <span class="card-header-title">📈 7日告警趋势</span>
-              <span class="card-header-extra" :class="alarmTrendUp ? 'up' : 'down'">
+              <span v-if="alarmTrendUp !== null && alarmTrendPercent !== null" class="card-header-extra" :class="alarmTrendUp ? 'up' : 'down'">
                 本周{{ alarmTrendUp ? '↑' : '↓' }}{{ alarmTrendPercent }}%
               </span>
+              <span v-else class="card-header-extra">{{ alarmTrendFailed ? '加载失败' : '加载中…' }}</span>
             </div>
           </template>
-          <LazyChart :option="alarmTrendOption" height="280px" />
+          <LazyChart v-if="alarmTrendData.length" :option="alarmTrendOption" height="280px" />
+          <el-skeleton v-else-if="!alarmTrendFailed" :rows="6" animated />
+          <el-empty v-else description="告警趋势加载失败" :image-size="60">
+            <el-button size="small" type="primary" @click="refreshAll">重试</el-button>
+          </el-empty>
         </el-card>
       </el-col>
 
@@ -203,7 +221,7 @@
               <el-button link size="small" type="primary" @click="$router.push('/projects')">全部项目 →</el-button>
             </div>
           </template>
-          <div class="project-heatmap">
+          <div v-if="projectHeatmap.length" class="project-heatmap">
             <div v-for="project in projectHeatmap" :key="project.name" class="heatmap-row">
               <div class="heatmap-info">
                 <span class="heatmap-name">{{ project.name }}</span>
@@ -230,6 +248,10 @@
               <span v-if="project.rate < 95" class="heatmap-warn">⚠</span>
             </div>
           </div>
+          <el-skeleton v-else-if="!projectHeatmapFailed" :rows="4" animated />
+          <el-empty v-else description="项目在线率加载失败" :image-size="60">
+            <el-button size="small" type="primary" @click="refreshAll">重试</el-button>
+          </el-empty>
         </el-card>
       </el-col>
     </el-row>
@@ -238,6 +260,7 @@
 
 <script setup lang="ts">
 import { ref, computed, reactive, onMounted, onUnmounted } from 'vue'
+import { ElMessage } from 'element-plus'
 import { useRouter } from 'vue-router'
 import {
   Odometer, Monitor, Bell, CircleCheck,
@@ -303,56 +326,144 @@ onUnmounted(() => {
 
 // ── API数据获取 ──
 async function fetchDashboardData() {
-  try {
-    const [overviewRes, trendRes, deviceRes, fedRes] = await Promise.allSettled([
-      statsHttp.get('/overview', { params: { project: selectedProject.value } }),
-      statsHttp.get('/alarm-trend', { params: { project: selectedProject.value, hours: 24 } }),
-      statsHttp.get('/device-status', { params: { project: selectedProject.value } }),
-      federationApi.getStatus(),
-    ])
-    if (overviewRes.status === 'fulfilled' && overviewRes.value.data) {
-      const d = overviewRes.value.data?.data || overviewRes.value.data
-      // 后端: security_score(number), online_devices, total_devices, today_alarms, alarm_trend
-      if (d.security_score !== undefined) {
-        securityScore.value = {
-          overall: d.security_score,
-          trend: d.alarm_trend ? Math.round(-d.alarm_trend) : 0,
+  // 清空失败标记
+  securityScoreFailed.value = false
+  scoreDimensionsFailed.value = false
+  agentActivityFailed.value = false
+  alarmTrendFailed.value = false
+  projectHeatmapFailed.value = false
+  federationStatusFailed.value = false
+
+  const [overviewRes, trendRes, deviceRes, fedRes, agentRes, dimsRes, heatmapRes] = await Promise.allSettled([
+    statsHttp.get('/overview', { params: { project: selectedProject.value } }),
+    statsHttp.get('/alarm-trend', { params: { project: selectedProject.value, hours: 24 } }),
+    statsHttp.get('/device-status', { params: { project: selectedProject.value } }),
+    federationApi.getStatus(),
+    statsHttp.get('/agent-activity', { params: { period: '24h' } }),
+    statsHttp.get('/security-score', { params: { period: '24h' } }),
+    statsHttp.get('/project-alarms', { params: { period: '7d' } }),
+  ])
+
+  if (overviewRes.status === 'fulfilled' && overviewRes.value.data) {
+    const d = overviewRes.value.data?.data || overviewRes.value.data
+    if (d.security_score !== undefined) {
+      securityScore.value = {
+        overall: d.security_score,
+        trend: d.alarm_trend ? Math.round(-d.alarm_trend) : 0,
+      }
+    } else {
+      securityScoreFailed.value = true
+    }
+    topStatsValues.deviceOnline = d.online_devices ?? 0
+    topStatsValues.deviceTotal = d.total_devices ?? 0
+    topStatsValues.alarmCount = d.today_alarms ?? 0
+    topStatsValues.handleRate = d.handle_rate ?? 0
+  } else {
+    securityScoreFailed.value = true
+  }
+
+  if (trendRes.status === 'fulfilled' && trendRes.value.data) {
+    const d = trendRes.value.data?.data || trendRes.value.data
+    if (d.trend) {
+      alarmTrendData.value = d.trend
+      // 计算趋势方向
+      if (d.trend.length >= 2) {
+        const half = Math.floor(d.trend.length / 2)
+        const prev = d.trend.slice(0, half).reduce((s: number, t: any) => s + (t.count ?? 0), 0)
+        const curr = d.trend.slice(half).reduce((s: number, t: any) => s + (t.count ?? 0), 0)
+        if (prev > 0) {
+          alarmTrendPercent.value = Math.round(((curr - prev) / prev) * 100)
+          alarmTrendUp.value = curr <= prev
         }
       }
-      topStatsValues.deviceOnline = d.online_devices ?? 0
-      topStatsValues.deviceTotal = d.total_devices ?? 0
-      topStatsValues.alarmCount = d.today_alarms ?? 0
-      topStatsValues.handleRate = d.handle_rate ?? 87.5
     }
-    if (trendRes.status === 'fulfilled' && trendRes.value.data) {
-      const d = trendRes.value.data?.data || trendRes.value.data
-      // 后端: trend:[{hour,count}], top_types:[{type,count}]
-      if (d.trend) alarmTrendData.value = d.trend
-      if (d.top_types) alarmTypes.value = d.top_types
+    if (d.top_types) alarmTypes.value = d.top_types
+  } else {
+    alarmTrendFailed.value = true
+  }
+
+  if (deviceRes.status === 'fulfilled' && deviceRes.value.data) {
+    const d = deviceRes.value.data?.data || deviceRes.value.data
+    if (d.online_count !== undefined) {
+      topStatsValues.deviceOnline = d.online_count
+      topStatsValues.deviceTotal = d.total_count
     }
-    if (deviceRes.status === 'fulfilled' && deviceRes.value.data) {
-      const d = deviceRes.value.data?.data || deviceRes.value.data
-      // 后端: online_count, total_count
-      if (d.online_count !== undefined) {
-        topStatsValues.deviceOnline = d.online_count
-        topStatsValues.deviceTotal = d.total_count
+  }
+
+  if (fedRes.status === 'fulfilled' && fedRes.value.data?.data) {
+    const f = fedRes.value.data.data as any
+    federationStatus.value = {
+      status: f.enabled ? 'running' : 'idle',
+      participatingBoxes: f.activeNodes ?? 0,
+      totalBoxes: f.totalNodes ?? 0,
+      currentRound: f.round ?? 0,
+      aggregationAccuracy: f.accuracy ?? 0,
+      privacyBudget: 0.65,
+      privacyBudgetTotal: 1.0,
+    }
+  } else {
+    federationStatusFailed.value = true
+  }
+
+  if (agentRes.status === 'fulfilled' && agentRes.value.data) {
+    const d = agentRes.value.data?.data || agentRes.value.data
+    if (d && (d.perceptionCalls !== undefined || d.calls_today !== undefined)) {
+      agentActivity.value = {
+        perceptionCalls: d.perceptionCalls ?? 0,
+        analysisCalls: d.analysisCalls ?? 0,
+        decisionCalls: d.decisionCalls ?? 0,
+        expertInvokes: d.expertInvokes ?? 0,
+        avgConfidence: d.avgConfidence ?? 0,
       }
+    } else {
+      agentActivityFailed.value = true
     }
-    if (fedRes.status === 'fulfilled' && fedRes.value.data?.data) {
-      const f = fedRes.value.data.data as any
-      // 后端: round, totalNodes, activeNodes, accuracy, enabled
-      federationStatus.value = {
-        status: f.enabled ? 'running' : 'idle',
-        participatingBoxes: f.activeNodes ?? 0,
-        totalBoxes: f.totalNodes ?? 0,
-        currentRound: f.round ?? 0,
-        aggregationAccuracy: f.accuracy ?? 0,
-        privacyBudget: 0.65,
-        privacyBudgetTotal: 1.0,
-      }
+  } else {
+    agentActivityFailed.value = true
+  }
+
+  if (dimsRes.status === 'fulfilled' && dimsRes.value.data) {
+    const d = dimsRes.value.data?.data || dimsRes.value.data
+    if (Array.isArray(d?.dimensions) && d.dimensions.length) {
+      scoreDimensions.value = d.dimensions.map((x: any) => ({
+        label: x.label ?? '',
+        value: Number(x.value ?? 0),
+        color: x.color ?? '#3B82F6',
+      }))
+    } else if (Array.isArray(d) && d.length) {
+      scoreDimensions.value = d.map((x: any) => ({
+        label: x.label ?? '',
+        value: Number(x.value ?? 0),
+        color: x.color ?? '#3B82F6',
+      }))
+    } else {
+      scoreDimensionsFailed.value = true
     }
-  } catch (e) {
-    console.warn('[Dashboard] 数据获取失败:', e)
+  } else {
+    scoreDimensionsFailed.value = true
+  }
+
+  if (heatmapRes.status === 'fulfilled' && heatmapRes.value.data) {
+    const d = heatmapRes.value.data?.data || heatmapRes.value.data
+    const items = Array.isArray(d) ? d : (d?.items ?? [])
+    if (items.length) {
+      projectHeatmap.value = items.map((x: any) => ({
+        name: x.projectName ?? x.name ?? '',
+        rate: Number(x.onlineRate ?? x.rate ?? 0),
+      }))
+    } else {
+      projectHeatmapFailed.value = true
+    }
+  } else {
+    projectHeatmapFailed.value = true
+  }
+
+  const failedCount = [
+    securityScoreFailed, scoreDimensionsFailed, agentActivityFailed,
+    alarmTrendFailed, projectHeatmapFailed, federationStatusFailed,
+  ].filter(v => v.value).length
+  if (failedCount >= 3) {
+    ElMessage.error('仪表盘关键数据加载失败,请检查后端服务或权限')
   }
 }
 
@@ -422,10 +533,8 @@ const topStats = computed(() => [
 ])
 
 // ── 安全评分 ──
-const securityScore = ref({
-  overall: 92,
-  trend: 3,
-})
+const securityScore = ref<{ overall: number; trend: number } | null>(null)
+const securityScoreFailed = ref(false)
 
 const scoreDeg = computed(() => `${((securityScore.value?.overall ?? 0) / 100) * 360}deg`)
 const scoreTagType = computed(() => {
@@ -437,21 +546,15 @@ const scoreLabel = computed(() => {
   return s >= 90 ? '优秀' : s >= 70 ? '良好' : '需关注'
 })
 
-const scoreDimensions = [
-  { label: '周界防护', value: 95, color: '#3B82F6' },
-  { label: '行为分析', value: 88, color: '#7C3AED' },
-  { label: '烟火检测', value: 97, color: '#10B981' },
-  { label: '设备健康', value: 89, color: '#F59E0B' },
-]
+const scoreDimensions = ref<Array<{ label: string; value: number; color: string }>>([])
+const scoreDimensionsFailed = ref(false)
 
 // ── Agent 活跃度 ──
-const agentActivity = ref({
-  perceptionCalls: 1245,
-  analysisCalls: 892,
-  decisionCalls: 456,
-  expertInvokes: 67,
-  avgConfidence: 0.912,
-})
+const agentActivity = ref<{
+  perceptionCalls: number; analysisCalls: number; decisionCalls: number;
+  expertInvokes: number; avgConfidence: number;
+} | null>(null)
+const agentActivityFailed = ref(false)
 
 const agentStats = computed(() => [
   {
@@ -490,32 +593,33 @@ const confidenceColor = computed(() => {
 })
 
 // ── 联邦学习 ──
-const federationStatus = ref({
-  status: 'idle' as 'running' | 'paused' | 'idle',
-  participatingBoxes: 0,
-  totalBoxes: 0,
-  currentRound: 0,
-  aggregationAccuracy: 0,
-  privacyBudget: 0,
-  privacyBudgetTotal: 0,
-})
+const federationStatus = ref<{
+  status: 'running' | 'paused' | 'idle';
+  participatingBoxes: number; totalBoxes: number; currentRound: number;
+  aggregationAccuracy: number; privacyBudget: number; privacyBudgetTotal: number;
+} | null>(null)
+const federationStatusFailed = ref(false)
 
 const alarmTrendData = ref<any[]>([])
 const alarmTypes = ref<any[]>([])
+const alarmTrendFailed = ref(false)
+const projectHeatmapFailed = ref(false)
 const fedStatusLabel = computed(() => {
-  const m = { running: '🟢 运行中', paused: '⏸ 已暂停', idle: '⚪ 空闲' }
-  return m[federationStatus.value.status] ?? '未知'
+  const m: Record<string, string> = { running: '🟢 运行中', paused: '⏸ 已暂停', idle: '⚪ 空闲' }
+  return m[federationStatus.value?.status ?? 'idle'] ?? '未知'
 })
 const fedAggregationAccuracy = computed(() =>
-  (federationStatus.value.aggregationAccuracy * 100).toFixed(1)
+  ((federationStatus.value?.aggregationAccuracy ?? 0) * 100).toFixed(1)
 )
-const fedPrivacyUsed = computed(() =>
-  Math.round((federationStatus.value.privacyBudget / federationStatus.value.privacyBudgetTotal) * 100)
-)
+const fedPrivacyUsed = computed(() => {
+  const f = federationStatus.value
+  if (!f || !f.privacyBudgetTotal) return 0
+  return Math.round((f.privacyBudget / f.privacyBudgetTotal) * 100)
+})
 
 // ── 7日告警趋势 ──
-const alarmTrendUp = ref(true)
-const alarmTrendPercent = ref(8)
+const alarmTrendUp = ref<boolean | null>(null)
+const alarmTrendPercent = ref<number | null>(null)
 const alarmTrendOption = computed<EChartsOption>(() => {
   const trend = alarmTrendData.value || []
   // 后端返回 [{hour:"00:00", count:1}, ...]
@@ -561,13 +665,7 @@ const alarmTrendOption = computed<EChartsOption>(() => {
 })
 
 // ── 项目热力图 ──
-const projectHeatmap = ref<Array<{ name: string; rate: number }>>([
-  { name: '智慧园区', rate: 98 },
-  { name: '智慧工地', rate: 94 },
-  { name: '停车场', rate: 91 },
-  { name: '商场客流', rate: 97 },
-  { name: '化工厂', rate: 86 },
-])
+const projectHeatmap = ref<Array<{ name: string; rate: number }>>([])
 </script>
 
 <style scoped>
@@ -580,6 +678,13 @@ const projectHeatmap = ref<Array<{ name: string; rate: number }>>([
   max-width: var(--content-max-width, 1440px);
   margin: 0 auto;
   animation: fadeIn 0.3s ease;
+}
+.dashboard-empty {
+  padding: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 200px;
 }
 
 /* ── 页面标题 ── */

@@ -47,9 +47,30 @@ export function getStream(id: string) {
   return streamHttp.get<ApiResponse<StreamInfo>>(`/${id}`)
 }
 
-/** 获取流播放地址 */
+/**
+ * 获取流播放地址
+ * Phase 14 P0 修复 14.2: BE 已有 /hls-url 返回包含 hls/flv/rtsp/rtmp/wsFlv/webrtc 全协议 URL 的响应,
+ * 前端调用 hls-url 即可,根据 protocol 提取对应字段
+ */
 export function getStreamPlayUrl(id: string, protocol: 'hls' | 'webrtc' | 'rtmp' = 'hls') {
-  return streamHttp.get<ApiResponse<{ url: string }>>(`/${id}/${protocol}-url`)
+  // hls-url handler 实际返回所有协议 URL,统一从此处取
+  return streamHttp.get<ApiResponse<{ hlsUrl: string; flvUrl: string; rtspUrl: string; rtmpUrl: string; wsFlvUrl: string; webrtcUrl: string }>>(`/${id}/hls-url`)
+    .then(resp => {
+      const data = resp.data?.data
+      if (!data) return resp
+      const urlMap: Record<string, string> = {
+        hls: data.hlsUrl,
+        webrtc: data.webrtcUrl,
+        rtmp: data.rtmpUrl,
+      }
+      return {
+        ...resp,
+        data: {
+          ...resp.data,
+          data: { url: urlMap[protocol] || data.hlsUrl },
+        },
+      } as typeof resp
+    })
 }
 
 /** 获取多协议播放地址（ZLM 全协议） */

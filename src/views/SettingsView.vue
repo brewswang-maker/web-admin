@@ -107,7 +107,7 @@
         <el-form :model="alarm" label-width="150px">
           <el-divider content-position="left">{{ $t('settings.alarmRule') }}</el-divider>
           <el-form-item :label="$t('settings.dedupWindow')">
-            <el-input-number v-model="alarm.dedupWindow" :min="1" :max="60" />
+            <el-input-number v-model="alarm.dedupWindow" :min="5" :max="300" />
           </el-form-item>
           <el-form-item :label="$t('settings.minConfidence')">
             <el-slider v-model="alarm.minConfidence" :min="0.3" :max="0.95" :step="0.05" show-input />
@@ -182,6 +182,7 @@
             </el-form>
           </el-card>
         </div>
+        <el-button type="primary" size="small" @click="saveAiAgents" style="margin-bottom:16px">{{ $t('settings.save') }}</el-button>
 
         <el-divider />
 
@@ -325,7 +326,7 @@ async function testConnection() {
 // ---- 告警策略 ----
 const alarmSaving = ref(false)
 const alarmDefaults: AlarmPolicySettings = {
-  dedupWindow: 5, minConfidence: 0.5, criticalMaxLatency: 500, linkageActions: ['ptz', 'record', 'push']
+  dedupWindow: 30, minConfidence: 0.5, criticalMaxLatency: 500, linkageActions: ['ptz', 'record', 'push']
 }
 const alarm = reactive<AlarmPolicySettings>({ ...alarmDefaults })
 
@@ -352,12 +353,34 @@ const alertNotify = reactive({
   diskThreshold: 80,
 })
 
-// ---- AI Agent 配置（来自 web-console AgentPanel） ----
-const aiAgents = reactive([
+// ---- AI Agent 配置 ----
+const aiAgentDefaults = [
   { id: 'agent-detect', nameKey: 'agentDetect', model: 'YOLOv8n', enabled: true, confidence: 0.75, fps: 15 },
   { id: 'agent-face', nameKey: 'agentFace', model: 'ArcFace-R50', enabled: false, confidence: 0.85, fps: 10 },
   { id: 'agent-anomaly', nameKey: 'agentAnomaly', model: 'ST-GCN', enabled: true, confidence: 0.70, fps: 12 },
-])
+]
+const aiAgents = reactive(aiAgentDefaults.map(a => ({ ...a })))
+
+async function saveAiAgents() {
+  try {
+    const agents = aiAgents.map(({ id, enabled, confidence }) => ({ id, enabled, confidence }))
+    await configApi.update({ ai_agents: agents })
+    ElMessage.success(t('settings.saveOk'))
+  } catch (e: any) {
+    ElMessage.error(t('settings.saveFail') + ': ' + (e.message || t('settings.unknownError')))
+  }
+}
+
+function loadAiAgents(config: any) {
+  if (!config?.ai_agents || !Array.isArray(config.ai_agents)) return
+  for (const saved of config.ai_agents) {
+    const agent = aiAgents.find(a => a.id === saved.id)
+    if (agent) {
+      if (saved.enabled != null) agent.enabled = saved.enabled
+      if (saved.confidence != null) agent.confidence = saved.confidence
+    }
+  }
+}
 
 // ---- AI模型 ----
 const modelsLoading = ref(false)
@@ -453,6 +476,11 @@ onMounted(async () => {
     if (cloudRes.status === 'fulfilled') Object.assign(cloud, cloudRes.value.data.data)
     if (alarmRes.status === 'fulfilled') Object.assign(alarm, alarmRes.value.data.data)
     if (infoRes.status === 'fulfilled') systemInfo.value = infoRes.value.data.data
+    // 加载 AI Agent 配置
+    try {
+      const { data: cfgRes } = await configApi.get()
+      loadAiAgents(cfgRes?.data)
+    } catch { /* 使用默认值 */ }
     if (netRes.status === 'fulfilled') {
       const n = netRes.value.data.data
       if (n) {

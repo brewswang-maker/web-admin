@@ -167,6 +167,12 @@ export function normalizeAlarmCore(raw: any): AlarmEvent {
     metadata: {
       bbox: raw.bbox || [],
       targetLabel: raw.target_label || raw.targetLabel || '',
+      // 🆕 v6.3: 多类别检测元数据（后端 AlarmLabels 注入 + 前端透传）
+      objectCategory: raw.object_category || raw.objectCategory || '',
+      targetLabelZh:  raw.target_label_zh || raw.targetLabelZh || '',
+      targetLabelEn:  raw.target_label_en || raw.targetLabelEn || '',
+      categoryZh:     raw.category_zh || raw.categoryZh || '',
+      categoryEn:     raw.category_en || raw.categoryEn || '',
       regionId: raw.region_id || '',
       severityNum,
       suggestedAction: raw.suggested_action || '',

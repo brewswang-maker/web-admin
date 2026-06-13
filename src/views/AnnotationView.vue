@@ -11,7 +11,7 @@
             </el-button>
           </div>
         </template>
-        <div class="project-list">
+        <div class="project-list" v-loading="projectsLoading">
           <div
             v-for="proj in projects"
             :key="proj.id"
@@ -21,7 +21,7 @@
           >
             <div class="project-info">
               <span class="project-name">{{ proj.name }}</span>
-              <span class="project-meta">{{ proj.sampleCount }} 张</span>
+              <span class="project-meta">{{ proj.sample_count }} 张</span>
             </div>
             <el-button
               type="danger"
@@ -32,7 +32,7 @@
               删除
             </el-button>
           </div>
-          <el-empty v-if="projects.length === 0" description="暂无项目" :image-size="48" />
+          <el-empty v-if="!projectsLoading && projects.length === 0" description="暂无项目,点击右上角新建" :image-size="48" />
         </div>
       </el-card>
     </div>
@@ -53,26 +53,26 @@
       <el-card shadow="never" class="toolbar-card">
         <div class="toolbar">
           <div class="toolbar-left">
-            <el-select v-model="labelFilter" style="width: 120px" @change="updateFilteredSamples">
+            <el-select v-model="labelFilter" style="width: 120px" @change="loadSamples">
               <el-option label="全部" value="all" />
               <el-option label="已标注" value="labeled" />
               <el-option label="未标注" value="unlabeled" />
             </el-select>
-            <el-select v-model="categoryFilter" style="width: 140px" clearable placeholder="类别筛选">
+            <el-select v-model="categoryFilter" style="width: 140px" clearable placeholder="类别筛选" @change="loadSamples">
               <el-option v-for="c in categories" :key="c" :label="c" :value="c" />
             </el-select>
             <el-upload
-              :auto-upload="false"
+              :auto-upload="true"
               :show-file-list="false"
               accept="image/*"
-              :on-change="handleUpload"
+              :http-request="handleUpload"
               multiple
             >
-              <el-button type="primary" plain size="default">上传图片</el-button>
+              <el-button type="primary" plain size="default" :loading="uploading">上传图片</el-button>
             </el-upload>
           </div>
           <div class="toolbar-right">
-            <el-button :disabled="selectedSamples.length === 0" @click="batchDelete">
+            <el-button :disabled="selectedSamples.length === 0" @click="batchDelete" :loading="batchBusy">
               批量删除 ({{ selectedSamples.length }})
             </el-button>
             <el-button :disabled="selectedSamples.length === 0" type="success" @click="batchExport">
@@ -83,7 +83,7 @@
       </el-card>
 
       <!-- Sample Grid -->
-      <div class="sample-grid" v-loading="loading">
+      <div class="sample-grid" v-loading="samplesLoading">
         <div
           v-for="sample in filteredSamples"
           :key="sample.id"
@@ -110,7 +110,8 @@
             </el-tag>
           </div>
         </div>
-        <el-empty v-if="filteredSamples.length === 0 && !loading" description="暂无样本数据" />
+        <el-empty v-if="!samplesLoading && filteredSamples.length === 0 && activeProjectId !== null" description="暂无样本数据,点击上方上传" />
+        <el-empty v-if="activeProjectId === null && !samplesLoading" description="请选择或新建左侧项目" />
       </div>
     </div>
 
@@ -120,86 +121,64 @@
         <el-form-item label="项目名称">
           <el-input v-model="newProjectName" placeholder="输入项目名称" />
         </el-form-item>
+        <el-form-item label="项目描述">
+          <el-input v-model="newProjectDescription" type="textarea" :rows="2" placeholder="可选" />
+        </el-form-item>
         <el-form-item label="标注类别">
           <el-input v-model="newProjectCategories" placeholder="逗号分隔，如: person,car,fire" />
         </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="showCreateDialog = false">取消</el-button>
-        <el-button type="primary" @click="createProject">创建</el-button>
+        <el-button type="primary" :loading="creatingProject" @click="createProject">创建</el-button>
       </template>
     </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { annotationApi, type AnnotationProject, type AnnotationSample, type BoundingBox } from '@/api/annotation'
 
-// ── Types ──
-interface Project {
-  id: string
-  name: string
-  sampleCount: number
-  categories: string[]
-}
-interface Sample {
-  id: string
-  filename: string
-  labeled: boolean
-  label: string
-  category: string
-  boxes: { x: number; y: number; w: number; h: number }[]
-}
-
-// ── Mock Data ──
-const projects = ref<Project[]>([
-  { id: 'p1', name: '周界入侵检测', sampleCount: 6, categories: ['person', 'vehicle'] },
-  { id: 'p2', name: '安全帽识别', sampleCount: 3, categories: ['helmet', 'no_helmet'] },
-  { id: 'p3', name: '烟火检测', sampleCount: 4, categories: ['fire', 'smoke'] },
-])
-const activeProjectId = ref('p1')
-
-const sampleStore: Record<string, Sample[]> = {
-  p1: [
-    { id: 's1', filename: 'cam01_001.jpg', labeled: true, label: 'person', category: 'person', boxes: [{ x: 30, y: 40, w: 60, h: 80 }] },
-    { id: 's2', filename: 'cam01_002.jpg', labeled: true, label: 'vehicle', category: 'vehicle', boxes: [{ x: 100, y: 20, w: 80, h: 50 }] },
-    { id: 's3', filename: 'cam02_001.jpg', labeled: false, label: '', category: '', boxes: [] },
-    { id: 's4', filename: 'cam02_002.jpg', labeled: true, label: 'person', category: 'person', boxes: [{ x: 50, y: 30, w: 40, h: 90 }] },
-    { id: 's5', filename: 'cam03_001.jpg', labeled: false, label: '', category: '', boxes: [] },
-    { id: 's6', filename: 'cam03_002.jpg', labeled: true, label: 'vehicle', category: 'vehicle', boxes: [{ x: 10, y: 60, w: 120, h: 70 }] },
-  ],
-  p2: [
-    { id: 's7', filename: 'site_a_001.jpg', labeled: true, label: 'helmet', category: 'helmet', boxes: [{ x: 40, y: 10, w: 35, h: 30 }] },
-    { id: 's8', filename: 'site_a_002.jpg', labeled: false, label: '', category: '', boxes: [] },
-    { id: 's9', filename: 'site_b_001.jpg', labeled: true, label: 'no_helmet', category: 'no_helmet', boxes: [{ x: 60, y: 15, w: 40, h: 35 }] },
-  ],
-  p3: [
-    { id: 's10', filename: 'zone1_fire.jpg', labeled: true, label: 'fire', category: 'fire', boxes: [{ x: 70, y: 50, w: 90, h: 60 }] },
-    { id: 's11', filename: 'zone1_smoke.jpg', labeled: true, label: 'smoke', category: 'smoke', boxes: [{ x: 20, y: 30, w: 110, h: 50 }] },
-    { id: 's12', filename: 'zone2_001.jpg', labeled: false, label: '', category: '', boxes: [] },
-    { id: 's13', filename: 'zone2_002.jpg', labeled: false, label: '', category: '', boxes: [] },
-  ],
-}
+// ── Types (view-local aliases) ──
+type Project = AnnotationProject
+type Sample = AnnotationSample
 
 // ── State ──
-const loading = ref(false)
-const labelFilter = ref('all')
-const categoryFilter = ref('')
-const selectedSamples = ref<string[]>([])
+const projects = ref<Project[]>([])
+const projectsLoading = ref(false)
+const activeProjectId = ref<number | null>(null)
+
+const samples = ref<Sample[]>([])
+const samplesLoading = ref(false)
+
+const labelFilter = ref<'all' | 'labeled' | 'unlabeled'>('all')
+const categoryFilter = ref<string>('')
+const selectedSamples = ref<number[]>([])
+const uploading = ref(false)
+const batchBusy = ref(false)
+
 const showCreateDialog = ref(false)
 const newProjectName = ref('')
+const newProjectDescription = ref('')
 const newProjectCategories = ref('')
+const creatingProject = ref(false)
 
 // ── Computed ──
-const currentSamples = computed(() => sampleStore[activeProjectId.value] || [])
-const categories = computed(() => {
+const categories = computed<string[]>(() => {
   const proj = projects.value.find(p => p.id === activeProjectId.value)
-  return proj?.categories || []
+  if (!proj) return []
+  try {
+    const cats = typeof proj.categories === 'string' ? JSON.parse(proj.categories) : proj.categories
+    return Array.isArray(cats) ? cats : []
+  } catch {
+    return []
+  }
 })
 
-const filteredSamples = computed(() => {
-  let list = currentSamples.value
+const filteredSamples = computed<Sample[]>(() => {
+  let list = samples.value
   if (labelFilter.value === 'labeled') list = list.filter(s => s.labeled)
   else if (labelFilter.value === 'unlabeled') list = list.filter(s => !s.labeled)
   if (categoryFilter.value) list = list.filter(s => s.category === categoryFilter.value)
@@ -207,84 +186,194 @@ const filteredSamples = computed(() => {
 })
 
 const statCards = computed(() => {
-  const all = currentSamples.value
+  const all = samples.value
+  const negLabelSet = new Set(['no_helmet', 'negative', 'no_smoke', 'fire_false', 'helmet_violation'])
   return [
     { label: '总数', value: all.length, color: '#6366F1' },
     { label: '已标注', value: all.filter(s => s.labeled).length, color: '#10B981' },
     { label: '未标注', value: all.filter(s => !s.labeled).length, color: '#F59E0B' },
-    { label: '正样本', value: all.filter(s => s.label && s.label !== 'no_helmet').length, color: '#3B82F6' },
-    { label: '负样本', value: all.filter(s => s.label === 'no_helmet').length, color: '#EF4444' },
+    { label: '正样本', value: all.filter(s => s.label && !negLabelSet.has(s.label)).length, color: '#3B82F6' },
+    { label: '负样本', value: all.filter(s => negLabelSet.has(s.label)).length, color: '#EF4444' },
     { label: '选中', value: selectedSamples.value.length, color: '#8B5CF6' },
   ]
 })
 
-// ── Actions ──
-function selectProject(id: string) {
+// ── Lifecycle ──
+onMounted(async () => {
+  await loadProjects()
+})
+
+watch(activeProjectId, (id) => {
+  if (id !== null) {
+    loadSamples()
+  } else {
+    samples.value = []
+    selectedSamples.value = []
+  }
+})
+
+// ── API calls ──
+async function loadProjects() {
+  projectsLoading.value = true
+  try {
+    const { data } = await annotationApi.listProjects()
+    projects.value = data?.items ?? []
+    if (projects.value.length > 0 && activeProjectId.value === null) {
+      activeProjectId.value = projects.value[0].id
+    }
+  } catch (e: any) {
+    ElMessage.error(`加载项目失败: ${e?.message ?? e}`)
+    projects.value = []
+  } finally {
+    projectsLoading.value = false
+  }
+}
+
+async function loadSamples() {
+  if (activeProjectId.value === null) return
+  samplesLoading.value = true
+  selectedSamples.value = []
+  try {
+    const { data } = await annotationApi.listSamples(activeProjectId.value, {
+      category: categoryFilter.value || undefined,
+      labelFilter: labelFilter.value,
+    })
+    // boxes_json string -> boxes array
+    samples.value = (data?.items ?? []).map((s: any) => {
+      let boxes: BoundingBox[] = []
+      if (typeof s.boxes === 'string' && s.boxes) {
+        try { boxes = JSON.parse(s.boxes) } catch { boxes = [] }
+      } else if (Array.isArray(s.boxes)) {
+        boxes = s.boxes
+      }
+      return { ...s, boxes } as Sample
+    })
+  } catch (e: any) {
+    ElMessage.error(`加载样本失败: ${e?.message ?? e}`)
+    samples.value = []
+  } finally {
+    samplesLoading.value = false
+  }
+}
+
+async function createProject() {
+  const name = newProjectName.value.trim()
+  if (!name) { ElMessage.warning('请输入项目名称'); return }
+  creatingProject.value = true
+  try {
+    const cats = newProjectCategories.value.split(',').map(c => c.trim()).filter(Boolean)
+    const { data } = await annotationApi.createProject({
+      name,
+      description: newProjectDescription.value.trim(),
+      categories: cats,
+    })
+    ElMessage.success('项目已创建')
+    showCreateDialog.value = false
+    newProjectName.value = ''
+    newProjectDescription.value = ''
+    newProjectCategories.value = ''
+    await loadProjects()
+    if (data?.id) activeProjectId.value = data.id
+  } catch (e: any) {
+    ElMessage.error(`创建失败: ${e?.message ?? e}`)
+  } finally {
+    creatingProject.value = false
+  }
+}
+
+async function deleteProject(id: number) {
+  try {
+    await ElMessageBox.confirm('确定删除该项目及其所有样本?', '删除项目', { type: 'warning' })
+  } catch { return }
+  try {
+    await annotationApi.deleteProject(id)
+    ElMessage.success('已删除')
+    if (activeProjectId.value === id) activeProjectId.value = null
+    await loadProjects()
+    if (projects.value.length > 0 && activeProjectId.value === null) {
+      activeProjectId.value = projects.value[0].id
+    }
+  } catch (e: any) {
+    ElMessage.error(`删除失败: ${e?.message ?? e}`)
+  }
+}
+
+async function handleUpload(req: any) {
+  if (activeProjectId.value === null) {
+    ElMessage.warning('请先选择项目')
+    return
+  }
+  uploading.value = true
+  try {
+    const fd = new FormData()
+    if (req?.file) fd.append('file', req.file)
+    else if (req?.raw) fd.append('file', req.raw)
+    else return
+    await annotationApi.addSample(activeProjectId.value, fd)
+    ElMessage.success('已上传')
+    await loadSamples()
+    // 更新项目 sample_count
+    await loadProjects()
+  } catch (e: any) {
+    ElMessage.error(`上传失败: ${e?.message ?? e}`)
+  } finally {
+    uploading.value = false
+  }
+}
+
+async function batchDelete() {
+  if (selectedSamples.value.length === 0) return
+  try {
+    await ElMessageBox.confirm(`删除 ${selectedSamples.value.length} 个样本?`, '批量删除', { type: 'warning' })
+  } catch { return }
+  batchBusy.value = true
+  let ok = 0, fail = 0
+  for (const sid of selectedSamples.value) {
+    try {
+      await annotationApi.deleteSample(sid)
+      ok++
+    } catch {
+      fail++
+    }
+  }
+  batchBusy.value = false
+  if (ok > 0) ElMessage.success(`已删除 ${ok} 个${fail > 0 ? `,失败 ${fail} 个` : ''}`)
+  else ElMessage.error('删除失败')
+  await loadSamples()
+  await loadProjects()
+}
+
+function batchExport() {
+  const items = samples.value.filter(s => selectedSamples.value.includes(s.id))
+  if (items.length === 0) return
+  const blob = new Blob([JSON.stringify(items.map(s => ({
+    filename: s.filename,
+    category: s.category,
+    label: s.label,
+    boxes: s.boxes,
+  })), null, 2)], { type: 'application/json' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `annotations-${Date.now()}.json`
+  a.click()
+  URL.revokeObjectURL(url)
+  ElMessage.success(`已导出 ${items.length} 个标注`)
+}
+
+// ── UI handlers ──
+function selectProject(id: number) {
   activeProjectId.value = id
   selectedSamples.value = []
   labelFilter.value = 'all'
   categoryFilter.value = ''
 }
 
-function toggleSelect(id: string) {
+function toggleSelect(id: number) {
   const idx = selectedSamples.value.indexOf(id)
   if (idx >= 0) selectedSamples.value.splice(idx, 1)
   else selectedSamples.value.push(id)
 }
-
-function deleteProject(id: string) {
-  ElMessageBox.confirm('确定删除该项目及其所有样本?', '删除项目', { type: 'warning' }).then(() => {
-    projects.value = projects.value.filter(p => p.id !== id)
-    delete sampleStore[id]
-    if (activeProjectId.value === id && projects.value.length > 0) {
-      selectProject(projects.value[0].id)
-    }
-    ElMessage.success('已删除')
-  }).catch(() => {})
-}
-
-function createProject() {
-  if (!newProjectName.value.trim()) { ElMessage.warning('请输入项目名称'); return }
-  const id = 'p' + Date.now()
-  const cats = newProjectCategories.value.split(',').map(c => c.trim()).filter(Boolean)
-  projects.value.push({ id, name: newProjectName.value.trim(), sampleCount: 0, categories: cats })
-  sampleStore[id] = []
-  showCreateDialog.value = false
-  newProjectName.value = ''
-  newProjectCategories.value = ''
-  selectProject(id)
-  ElMessage.success('项目已创建')
-}
-
-function handleUpload(file: any) {
-  const id = 's' + Date.now() + Math.random().toString(36).slice(2, 6)
-  const sample: Sample = { id, filename: file.name, labeled: false, label: '', category: '', boxes: [] }
-  if (!sampleStore[activeProjectId.value]) sampleStore[activeProjectId.value] = []
-  sampleStore[activeProjectId.value].push(sample)
-  const proj = projects.value.find(p => p.id === activeProjectId.value)
-  if (proj) proj.sampleCount++
-  ElMessage.success(`已添加: ${file.name}`)
-}
-
-function batchDelete() {
-  ElMessageBox.confirm(`删除 ${selectedSamples.value.length} 个样本?`, '批量删除', { type: 'warning' }).then(() => {
-    const samples = sampleStore[activeProjectId.value]
-    if (samples) {
-      sampleStore[activeProjectId.value] = samples.filter(s => !selectedSamples.value.includes(s.id))
-      const proj = projects.value.find(p => p.id === activeProjectId.value)
-      if (proj) proj.sampleCount = sampleStore[activeProjectId.value].length
-    }
-    selectedSamples.value = []
-    ElMessage.success('已删除')
-  }).catch(() => {})
-}
-
-function batchExport() {
-  const count = selectedSamples.value.length
-  ElMessage.success(`已导出 ${count} 个样本标注`)
-}
-
-function updateFilteredSamples() { /* filter is reactive via computed */ }
 
 // ── Canvas placeholder drawing ──
 const COLORS: Record<string, string> = {
@@ -296,15 +385,12 @@ function drawPlaceholder(canvas: HTMLCanvasElement, sample: Sample) {
   const ctx = canvas.getContext('2d')
   if (!ctx) return
   const w = canvas.width, h = canvas.height
-  // background
   ctx.fillStyle = '#1E293B'
   ctx.fillRect(0, 0, w, h)
-  // grid
   ctx.strokeStyle = '#334155'
   ctx.lineWidth = 0.5
   for (let i = 0; i < w; i += 40) { ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, h); ctx.stroke() }
   for (let i = 0; i < h; i += 40) { ctx.beginPath(); ctx.moveTo(0, i); ctx.lineTo(w, i); ctx.stroke() }
-  // bounding boxes
   const color = COLORS[sample.label] || '#6366F1'
   for (const box of sample.boxes) {
     ctx.strokeStyle = color
@@ -318,7 +404,6 @@ function drawPlaceholder(canvas: HTMLCanvasElement, sample: Sample) {
       ctx.fillText(sample.label, box.x + 3, box.y - 4)
     }
   }
-  // filename watermark
   ctx.fillStyle = '#64748B'
   ctx.font = '10px monospace'
   ctx.fillText(sample.filename, 6, h - 6)
@@ -336,7 +421,6 @@ function drawPlaceholder(canvas: HTMLCanvasElement, sample: Sample) {
   animation: fadeIn 0.3s ease;
 }
 
-/* ── Sidebar ── */
 .sidebar {
   width: 240px;
   flex-shrink: 0;
@@ -400,7 +484,6 @@ function drawPlaceholder(canvas: HTMLCanvasElement, sample: Sample) {
   color: var(--app-text-secondary);
 }
 
-/* ── Main Content ── */
 .main-content {
   flex: 1;
   min-width: 0;
@@ -410,7 +493,6 @@ function drawPlaceholder(canvas: HTMLCanvasElement, sample: Sample) {
   overflow: hidden;
 }
 
-/* ── Stats ── */
 .stats-row {
   flex-shrink: 0;
 }
@@ -437,7 +519,6 @@ function drawPlaceholder(canvas: HTMLCanvasElement, sample: Sample) {
   color: var(--app-text-secondary);
 }
 
-/* ── Toolbar ── */
 .toolbar-card {
   flex-shrink: 0;
   border-radius: var(--radius-lg, 8px);
@@ -465,7 +546,6 @@ function drawPlaceholder(canvas: HTMLCanvasElement, sample: Sample) {
   gap: 8px;
 }
 
-/* ── Sample Grid ── */
 .sample-grid {
   flex: 1;
   overflow-y: auto;

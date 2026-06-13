@@ -9,6 +9,7 @@
  */
 import { ref } from 'vue'
 import { useAlarmStore } from '@/stores/alarm'
+import { settingsApi } from '@/api/settings'
 import { showAlarmPopup, pushLinkageLog, normalizeAlarmPayload, playAlarmSound } from './useAlarmPopup'
 
 // ── 单例状态（模块级，不随组件销毁） ──
@@ -22,6 +23,23 @@ const reconnectDelay = 3000
 export const connected = ref(false)
 
 let started = false
+
+// ── 报警弹窗防抖（参考主流安防厂商：TP-LINK 30s, 海康可配置, 小米 3-10min） ──
+// 同一通道 + 同一告警类型在窗口内只弹一次弹窗，告警仍然入库
+// 值从后端 /settings/alarm-policy 动态加载，默认 30 秒
+let popupDebounceMs = 30_000
+const lastPopupTime = new Map<string, number>()  // key: "channelId:alarmType" → timestamp
+
+async function loadAlarmConfig() {
+  try {
+    const { data: res } = await settingsApi.getAlarmPolicy()
+    const d = res?.data
+    if (d?.dedupWindow) {
+      popupDebounceMs = d.dedupWindow * 1000  // 秒 → 毫秒
+      console.log('[useGlobalAlarm] popup debounce loaded:', d.dedupWindow, 's')
+    }
+  } catch { /* 使用默认值 */ }
+}
 
 // ── 告警类型中文映射 ──
 const alarmTypeCn: Record<string, string> = {
@@ -165,26 +183,39 @@ function handleAlarm(alarm: any) {
     console.warn('[useGlobalAlarm] handleAlarm called with null payload')
     return
   }
-  console.log('[useGlobalAlarm] handleAlarm type:', alarm.alarm_type || alarm.type, 'ch:', alarm.channel_id || alarm.channelId)
-
-  // 1. 规整: WS 推过来的原始 payload 字段是 snake_case, 前端需要驼峰 + status='unhandled'
-  const normalized = normalizeAlarmPayload(alarm)
-
-  // 2. 推入 alarmStore（更新 realtimeAlarms + unhandledCount）
   try {
-    const alarmStore = useAlarmStore()
-    alarmStore.pushRealtimeAlarm(normalized)
-  } catch {
-    // Store 未初始化时忽略
+    console.log('[useGlobalAlarm] handleAlarm type:', alarm.alarm_type || alarm.type, 'ch:', alarm.channel_id || alarm.channelId)
+
+    // 1. 规整: WS 推过来的原始 payload 字段是 snake_case, 前端需要驼峰 + status='unhandled'
+    const normalized = normalizeAlarmPayload(alarm)
+    console.log('[useGlobalAlarm] normalized alarm:', normalized.id, 'type:', normalized.type)
+
+    // 2. 推入 alarmStore（更新 realtimeAlarms + unhandledCount）
+    try {
+      const alarmStore = useAlarmStore()
+      alarmStore.pushRealtimeAlarm(normalized)
+    } catch (e) {
+      console.warn('[useGlobalAlarm] pushRealtimeAlarm failed:', e)
+    }
+
+    // 3. 弹窗防抖: 同一通道+同一类型在 POPUP_DEBOUNCE_MS 内不重复弹窗
+    //    (参考: TP-LINK 30s / 海康可配置 / 小米 3-10min)
+    const debounceKey = `${normalized.channelId || ''}:${normalized.type || ''}`
+    const now = Date.now()
+    const lastTime = lastPopupTime.get(debounceKey) || 0
+    if (now - lastTime < popupDebounceMs) {
+      console.log('[useGlobalAlarm] popup debounced, key:', debounceKey,
+        'elapsed:', Math.round((now - lastTime) / 1000) + 's')
+    } else {
+      lastPopupTime.set(debounceKey, now)
+      showAlarmPopup(normalized)
+    }
+
+    // 4. 每条告警都播报 TTS（不依赖联动规则的 tts_broadcast 动作）
+    speakAlarm(normalized)
+  } catch (e) {
+    console.error('[useGlobalAlarm] handleAlarm exception:', e)
   }
-
-  // 3. 弹窗交给 showAlarmPopup 决定"切 vs 排队"
-  //    §13 Fix P: 旧版按 type+channel 节流 10s, 导致同 camera 连续告警第 2 条起永远不弹;
-  //    现在删除节流, 弹窗总是更新 currentAlarm, 用户可在队列中切换
-  showAlarmPopup(normalized)
-
-  // 4. 每条告警都播报 TTS（不依赖联动规则的 tts_broadcast 动作）
-  speakAlarm(normalized)
 }
 
 // ── 告警 TTS 播报（每条告警都触发，不依赖联动动作） ──
@@ -255,6 +286,7 @@ export function startGlobalAlarm() {
   }
   started = true
   console.log('[useGlobalAlarm] starting WS connection...')
+  loadAlarmConfig()  // 异步加载弹窗防抖配置
   doConnect()
 }
 
@@ -275,5 +307,5 @@ export function stopGlobalAlarm() {
     ws = null
   }
   connected.value = false
-  // §13 Fix P: 节流键已删除, 无需清理
+  lastPopupTime.clear()
 }

@@ -130,6 +130,10 @@
             <el-icon><User /></el-icon>
             <template #title>{{ $t('menu.face') }}</template>
           </el-menu-item>
+          <el-menu-item index="/face-realtime">
+            <el-icon><Aim /></el-icon>
+            <template #title>{{ $t('menu.faceRealtime') }}</template>
+          </el-menu-item>
         </el-menu-item-group>
 
         <!-- ===== ⚙️ 管理 ===== -->

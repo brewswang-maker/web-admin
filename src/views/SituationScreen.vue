@@ -15,15 +15,29 @@
       <div class="ss-col left-col">
         <div class="ss-panel">
           <div class="panel-title">📊 安全评分</div>
-          <div class="score-gauge" ref="scoreGaugeRef"></div>
+          <div class="score-gauge" ref="scoreGaugeRef" v-if="!overviewFailed"></div>
+          <div v-else class="empty-state error">
+            <span>概览数据加载失败</span>
+            <el-button size="small" link type="primary" @click="fetchSituationData">重试</el-button>
+          </div>
         </div>
         <div class="ss-panel">
           <div class="panel-title">🚨 告警趋势 (24h)</div>
-          <div class="chart-box" ref="alarmTrendRef"></div>
+          <div class="chart-box" ref="alarmTrendRef" v-if="!hourlyFailed && hourlyData.length"></div>
+          <div v-else-if="!hourlyFailed" class="empty-state">暂无时段数据</div>
+          <div v-else class="empty-state error">
+            <span>时段统计加载失败</span>
+            <el-button size="small" link type="primary" @click="fetchSituationData">重试</el-button>
+          </div>
         </div>
         <div class="ss-panel">
           <div class="panel-title">📹 设备状态</div>
-          <div class="chart-box" ref="devicePieRef"></div>
+          <div class="chart-box" ref="devicePieRef" v-if="!overviewFailed && overview"></div>
+          <div v-else-if="!overviewFailed" class="empty-state">暂无设备数据</div>
+          <div v-else class="empty-state error">
+            <span>设备数据加载失败</span>
+            <el-button size="small" link type="primary" @click="fetchSituationData">重试</el-button>
+          </div>
         </div>
       </div>
 
@@ -33,11 +47,16 @@
           <div class="panel-title">🗺️ 3D 厂区态势地图
             <span style="font-size:11px;color:#9AA0A6;margin-left:8px">拖拽旋转 · 滚轮缩放</span>
           </div>
-          <Scene3D class="scene3d-wrapper" :devices="sceneDevices" :buildings="sceneBuildings" />
+          <Scene3D v-if="sceneDevices.length" class="scene3d-wrapper" :devices="sceneDevices" :buildings="sceneBuildings" />
+          <div v-else-if="devicesFailed" class="empty-state error scene-empty">
+            <span>地图设备数据加载失败</span>
+            <el-button size="small" link type="primary" @click="fetchSituationData">重试</el-button>
+          </div>
+          <div v-else class="empty-state scene-empty">暂无地图设备</div>
         </div>
         <div class="ss-panel">
           <div class="panel-title">🚨 最新告警</div>
-          <div class="alarm-scroll">
+          <div class="alarm-scroll" v-if="!alarmsFailed">
             <div v-for="alarm in latestAlarms" :key="alarm.id"
                  :class="['alarm-row', alarm.level]">
               <span class="alarm-dot"></span>
@@ -48,6 +67,11 @@
                 {{ alarm.status }}
               </el-tag>
             </div>
+            <div v-if="!latestAlarms.length" class="empty-state">暂无最新告警</div>
+          </div>
+          <div v-else class="empty-state error">
+            <span>告警数据加载失败</span>
+            <el-button size="small" link type="primary" @click="fetchSituationData">重试</el-button>
           </div>
         </div>
       </div>
@@ -56,19 +80,33 @@
       <div class="ss-col right-col">
         <div class="ss-panel">
           <div class="panel-title">🥧 告警类型分布</div>
-          <div class="chart-box" ref="alarmTypeRef"></div>
+          <div class="chart-box" ref="alarmTypeRef" v-if="!overviewFailed && overview"></div>
+          <div v-else-if="!overviewFailed" class="empty-state">暂无告警类型数据</div>
+          <div v-else class="empty-state error">
+            <span>告警类型数据加载失败</span>
+            <el-button size="small" link type="primary" @click="fetchSituationData">重试</el-button>
+          </div>
         </div>
         <div class="ss-panel">
           <div class="panel-title">🧠 Agent活跃度</div>
-          <div class="chart-box" ref="agentBarRef"></div>
+          <div class="chart-box" ref="agentBarRef" v-if="!agentsFailed && agentData.length"></div>
+          <div v-else-if="!agentsFailed" class="empty-state">暂无Agent数据</div>
+          <div v-else class="empty-state error">
+            <span>Agent数据加载失败</span>
+            <el-button size="small" link type="primary" @click="fetchSituationData">重试</el-button>
+          </div>
         </div>
         <div class="ss-panel">
           <div class="panel-title">⚡ 今日统计</div>
-          <div class="stats-grid">
+          <div class="stats-grid" v-if="!overviewFailed">
             <div class="stat-card" v-for="s in todayStats" :key="s.label">
               <div class="stat-value" :style="{ color: s.color }">{{ s.value }}</div>
               <div class="stat-label">{{ s.label }}</div>
             </div>
+          </div>
+          <div v-else class="empty-state error">
+            <span>今日统计数据加载失败</span>
+            <el-button size="small" link type="primary" @click="fetchSituationData">重试</el-button>
           </div>
         </div>
       </div>
@@ -78,6 +116,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, nextTick } from 'vue'
+import { ElMessage } from 'element-plus'
 import * as echarts from 'echarts/core'
 import { GaugeChart, LineChart, PieChart, BarChart } from 'echarts/charts'
 import {
@@ -116,46 +155,18 @@ const todayStats = ref([
   { label: 'Agent调用', value: '--', color: '#7C3AED' },
 ])
 
-// ── Fallback 假数据（API 不可用时使用，确保大屏始终有内容展示） ──
-const fallbackOverview: SituationOverview = {
-  securityScore: { overall: 85, trend: 2 },
-  systemHealth: { apiLatency: 12, dbLatency: 3, cacheHitRate: 0.95, uptime: 864000, version: '7.0.0' },
-  deviceStats: { total: 132, online: 128, offline: 3, maintaining: 0, maintenance: 1, onlineRate: 0.97, alarming: 1 },
-  alarmStats: { total: 156, critical: 4, high: 8, medium: 7, low: 4, todayTotal: 23 },
-  totalAgents: 4,
-  activeAgents: 4,
-}
-const fallbackHourlyData = Array.from({ length: 24 }, (_, i) => ({
-  hour: i,
-  alarmCount: [2, 1, 0, 1, 0, 3, 5, 8, 12, 9, 7, 6, 8, 10, 11, 9, 6, 4, 7, 8, 5, 3, 2, 1][i],
-  onlineDevices: 128,
-}))
-const fallbackAgentData: SituationAgentStatus[] = [
-  { name: '感知Agent', type: 'perception', status: 'active', calls: 1245, avgLatency: 32, lastActiveAt: '' },
-  { name: '研判Agent', type: 'analysis', status: 'active', calls: 892, avgLatency: 45, lastActiveAt: '' },
-  { name: '决策Agent', type: 'decision', status: 'active', calls: 456, avgLatency: 28, lastActiveAt: '' },
-  { name: '专家Agent', type: 'expert', status: 'idle', calls: 67, avgLatency: 15, lastActiveAt: '' },
-]
-const fallbackAlarms: Alarm[] = Array.from({ length: 8 }, (_, i) => {
-  const types = ['周界入侵', '安全帽未佩戴', '人员聚集', '烟火检测', '绊线告警', '离岗检测']
-  const locations = ['3号厂区东围墙', '2号车间入口', '1号大门', '仓库区域', '停车场B区']
-  const levels = ['critical', 'high', 'medium']
-  const now = new Date()
-  now.setMinutes(now.getMinutes() - i * 15)
-  return {
-    id: `a${i}`,
-    time: now.toLocaleTimeString('zh-CN', { hour12: false }),
-    location: locations[i % locations.length],
-    type: types[i % types.length],
-    level: levels[i % levels.length],
-    status: i < 3 ? '已处置' : '未处理',
-  }
-})
-
 // ── API 返回的原始数据（用于图表更新） ──
 const overview = ref<SituationOverview | null>(null)
 const hourlyData = ref<Array<{ hour: number; alarmCount: number; onlineDevices: number }>>([])
 const agentData = ref<SituationAgentStatus[]>([])
+
+// 各端点的加载/失败状态（用于显式提示）
+const overviewLoading = ref(false)
+const overviewFailed = ref(false)
+const devicesFailed = ref(false)
+const alarmsFailed = ref(false)
+const agentsFailed = ref(false)
+const hourlyFailed = ref(false)
 
 // ── 3D场景数据 ──
 const sceneBuildings = [
@@ -173,20 +184,6 @@ interface Device3D {
   location: string; fov?: number; rotation?: number; alarmType?: string
 }
 const sceneDevices = ref<Device3D[]>([])
-
-// Fallback 3D 设备数据（API不可用时展示）
-const fallbackDevices: Device3D[] = [
-  { id: 'cam1', name: 'CAM_01 东门', x: -40, y: 4, z: -35, status: 'online', location: '1号厂区东门', fov: 60, rotation: 0 },
-  { id: 'cam2', name: 'CAM_02 围墙北', x: 20, y: 4, z: -38, status: 'online', location: '北围墙', fov: 75, rotation: Math.PI / 4 },
-  { id: 'cam3', name: 'CAM_03 车间A', x: -15, y: 5, z: 5, status: 'online', location: '2号车间入口', fov: 60, rotation: Math.PI / 2 },
-  { id: 'cam4', name: 'CAM_04 车间B', x: 25, y: 5, z: 10, status: 'alarm', location: '3号厂区东围墙', alarmType: '周界入侵', fov: 65, rotation: -Math.PI / 3 },
-  { id: 'cam5', name: 'CAM_05 仓库', x: -30, y: 4, z: 20, status: 'online', location: '仓库区域', fov: 70, rotation: Math.PI },
-  { id: 'cam6', name: 'CAM_06 停车场', x: 35, y: 4, z: 25, status: 'online', location: '停车场B区', fov: 80, rotation: Math.PI / 6 },
-  { id: 'cam7', name: 'CAM_07 大门', x: 0, y: 5, z: 40, status: 'online', location: '1号大门', fov: 60, rotation: Math.PI },
-  { id: 'cam8', name: 'CAM_08 办公楼', x: -35, y: 6, z: -10, status: 'maintenance', location: '办公楼', fov: 55, rotation: -Math.PI / 2 },
-  { id: 'cam9', name: 'CAM_09 配电房', x: 40, y: 4, z: -15, status: 'offline', location: '配电房', fov: 60, rotation: 0 },
-  { id: 'cam10', name: 'CAM_10 围墙南', x: -10, y: 4, z: 38, status: 'online', location: '南围墙', fov: 75, rotation: Math.PI },
-]
 
 /** 将经纬度映射到3D场景坐标（bounding box 归一化到 [-40, 40]） */
 function mapDevicesToScene(points: MapDevicePoint[]): Device3D[] {
@@ -350,82 +347,93 @@ function toAlarm(s: SituationAlarmStream): Alarm {
   }
 }
 
-/** 当 API 全部不可用时，使用 fallback 假数据确保大屏始终有内容 */
-function applyFallbackData() {
-  if (!overview.value) {
-    overview.value = fallbackOverview
-    const ds = fallbackOverview.deviceStats
-    const aStats = fallbackOverview.alarmStats
-    todayStats.value = [
-      { label: '在线设备', value: String(ds.online), color: '#0F9D58' },
-      { label: '今日告警', value: String(aStats.todayTotal), color: '#F4B400' },
-      { label: '处置率', value: `${(ds.onlineRate * 100).toFixed(1)}%`, color: '#1A73E8' },
-      { label: 'Agent调用', value: String(fallbackOverview.totalAgents), color: '#7C3AED' },
-    ]
-  }
-  if (!sceneDevices.value.length) sceneDevices.value = fallbackDevices
-  if (!latestAlarms.value.length) latestAlarms.value = fallbackAlarms
-  if (!agentData.value.length) agentData.value = fallbackAgentData
-  if (!hourlyData.value.length) hourlyData.value = fallbackHourlyData
-}
-
+/** 加载态势大屏数据（任一端点失败即置 failed 标记，UI 显式空态） */
 async function fetchSituationData() {
-  try {
-    const [overviewRes, devicesRes, alarmsRes, agentsRes, hourlyRes] = await Promise.allSettled([
-      situationApi.getOverview(),
-      situationApi.getMapDevices(),
-      situationApi.getRealtimeAlarms({ limit: 20 }),
-      situationApi.getAgentStatuses(),
-      situationApi.getHourlyStats(),
-    ])
+  overviewLoading.value = true
+  overviewFailed.value = false
+  devicesFailed.value = false
+  alarmsFailed.value = false
+  agentsFailed.value = false
+  hourlyFailed.value = false
 
-    // 概览数据
-    if (overviewRes.status === 'fulfilled') {
-      const d = overviewRes.value.data?.data
-      if (d) {
-        overview.value = d
-        const ds = d.deviceStats
-        const aStats = d.alarmStats
-        todayStats.value = [
-          { label: '在线设备', value: String(ds?.online ?? 0), color: '#0F9D58' },
-          { label: '今日告警', value: String(aStats?.todayTotal ?? 0), color: '#F4B400' },
-          { label: '处置率', value: ds?.onlineRate != null ? `${(ds.onlineRate * 100).toFixed(1)}%` : '--', color: '#1A73E8' },
-          { label: 'Agent调用', value: d.totalAgents > 0 ? String(d.activeAgents) : '--', color: '#7C3AED' },
-        ]
-      }
+  const results = await Promise.allSettled([
+    situationApi.getOverview(),
+    situationApi.getMapDevices(),
+    situationApi.getRealtimeAlarms({ limit: 20 }),
+    situationApi.getAgentStatuses(),
+    situationApi.getHourlyStats(),
+  ])
+
+  const [overviewRes, devicesRes, alarmsRes, agentsRes, hourlyRes] = results
+
+  // 概览
+  if (overviewRes.status === 'fulfilled') {
+    const d = overviewRes.value.data?.data
+    if (d) {
+      overview.value = d
+      const ds = d.deviceStats
+      const aStats = d.alarmStats
+      todayStats.value = [
+        { label: '在线设备', value: String(ds?.online ?? 0), color: '#0F9D58' },
+        { label: '今日告警', value: String(aStats?.todayTotal ?? 0), color: '#F4B400' },
+        { label: '处置率', value: ds?.onlineRate != null ? `${(ds.onlineRate * 100).toFixed(1)}%` : '--', color: '#1A73E8' },
+        { label: 'Agent调用', value: d.totalAgents > 0 ? String(d.activeAgents) : '--', color: '#7C3AED' },
+      ]
+    } else {
+      overviewFailed.value = true
     }
+  } else {
+    overviewFailed.value = true
+    const reason = (overviewRes as PromiseRejectedResult).reason
+    console.warn('[situation] overview 加载失败:', reason)
+  }
 
-    // 地图设备 → 3D场景
-    if (devicesRes.status === 'fulfilled') {
-      const points = devicesRes.value.data?.data
-      if (points?.length) {
-        sceneDevices.value = mapDevicesToScene(points)
-      }
-    }
+  // 地图设备 → 3D场景
+  if (devicesRes.status === 'fulfilled') {
+    const points = devicesRes.value.data?.data
+    if (points?.length) sceneDevices.value = mapDevicesToScene(points)
+    else devicesFailed.value = true
+  } else {
+    devicesFailed.value = true
+    console.warn('[situation] map devices 加载失败:', (devicesRes as PromiseRejectedResult).reason)
+  }
 
-    // 实时告警
-    if (alarmsRes.status === 'fulfilled') {
-      const alarms = alarmsRes.value.data?.data
-      if (alarms?.length) {
-        latestAlarms.value = alarms.map(toAlarm)
-      }
-    }
+  // 实时告警
+  if (alarmsRes.status === 'fulfilled') {
+    const alarms = alarmsRes.value.data?.data
+    if (alarms?.length) latestAlarms.value = alarms.map(toAlarm)
+    else alarmsFailed.value = true
+  } else {
+    alarmsFailed.value = true
+    console.warn('[situation] alarms 加载失败:', (alarmsRes as PromiseRejectedResult).reason)
+  }
 
-    // Agent状态
-    if (agentsRes.status === 'fulfilled') {
-      const agents = agentsRes.value.data?.data
-      if (agents?.length) agentData.value = agents
-    }
+  // Agent状态
+  if (agentsRes.status === 'fulfilled') {
+    const agents = agentsRes.value.data?.data
+    if (agents?.length) agentData.value = agents
+    else agentsFailed.value = true
+  } else {
+    agentsFailed.value = true
+    console.warn('[situation] agents 加载失败:', (agentsRes as PromiseRejectedResult).reason)
+  }
 
-    // 时段统计
-    if (hourlyRes.status === 'fulfilled') {
-      const hourly = hourlyRes.value.data?.data
-      if (hourly?.length) hourlyData.value = hourly
-    }
-  } catch { /* keep defaults */ }
+  // 时段统计
+  if (hourlyRes.status === 'fulfilled') {
+    const hourly = hourlyRes.value.data?.data
+    if (hourly?.length) hourlyData.value = hourly
+    else hourlyFailed.value = true
+  } else {
+    hourlyFailed.value = true
+    console.warn('[situation] hourly stats 加载失败:', (hourlyRes as PromiseRejectedResult).reason)
+  }
 
-  // API 返回空数据时，使用 fallback 确保大屏始终有内容展示
-  applyFallbackData()
+  overviewLoading.value = false
+
+  // 关键端点（概览/告警）全失败时给一次性提示
+  if (overviewFailed.value && alarmsFailed.value) {
+    ElMessage.error('态势大屏核心数据加载失败,请检查后端服务或权限')
+  }
 }
 
 /** WebSocket 推送新告警时更新列表 */
@@ -564,4 +572,18 @@ onUnmounted(() => {
 .stat-card { text-align: center; padding: 10px; background: rgba(255,255,255,0.02); border-radius: 6px; }
 .stat-value { font-size: 22px; font-weight: 700; }
 .stat-label { font-size: 11px; color: #9AA0A6; margin-top: 4px; }
+
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 24px;
+  color: #6b7280;
+  font-size: 13px;
+  min-height: 80px;
+}
+.empty-state.error { color: #ef4444; }
+.scene-empty { min-height: 200px; }
 </style>

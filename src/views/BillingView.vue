@@ -137,8 +137,9 @@ function planTagType(plan: string) {
 async function fetchBillingRecords() {
   try {
     const res = await fetchBillingList({ page: currentPage.value, pageSize })
-    const d = res.data?.data
-    records.value = d?.list ?? []
+    // Phase 13 P0 #1: 后端 /billing/invoices 已通过 http unwrapPageData 归一化为 {items, total}
+    const d = res.data?.data as { items?: any[]; total?: number } | undefined
+    records.value = (d?.items as any) ?? []
     totalRecords.value = d?.total ?? 0
   } catch (e) {
     console.warn('[BillingView] fetchBillingRecords failed:', e)
@@ -163,8 +164,8 @@ async function fetchBillingData() {
       }
     }
     if (listRes.status === 'fulfilled') {
-      const d = listRes.value.data?.data
-      records.value = d?.list ?? []
+      const d = listRes.value.data?.data as { items?: any[]; total?: number } | undefined
+      records.value = (d?.items as any) ?? []
       totalRecords.value = d?.total ?? 0
     }
   } catch (e) {

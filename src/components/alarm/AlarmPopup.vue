@@ -9,6 +9,9 @@
             <div class="alarm-popup__header-left">
               <span class="alarm-popup__blink-dot" :style="{ background: levelColor }" />
               <span class="alarm-popup__type">{{ alarmTypeLabel }}</span>
+              <el-tag v-if="targetCategoryLabel" size="small" type="info" effect="plain" class="alarm-popup__category-tag">
+                {{ targetCategoryLabel }}: {{ targetNameLabel }}
+              </el-tag>
               <el-tag :type="levelTagType" size="small" effect="dark" class="alarm-popup__level-tag">
                 {{ levelLabel }}
               </el-tag>
@@ -40,7 +43,7 @@
                     :key="currentAlarm?.channelId || 'none'"
                     :channel-id="currentAlarm?.channelId || ''"
                     :show-controls="true"
-                    stream-type="sub"
+                    stream-type="main"
                     :visible="activeTab === 'live'"
                     :skip-start-api="false"
                     @snapshot="onPlayerSnapshot"
@@ -53,8 +56,8 @@
                   </div>
                 </el-tab-pane>
 
-                <!-- 录像回放 -->
-                <el-tab-pane v-if="hasAction('WEB_SHOW_PLAYBACK')" label="📼 录像回放" name="playback">
+                <!-- 录像回放 (WEB_SHOW_PLAYBACK 或 WEB_RECORD_EVENT 时显示) -->
+                <el-tab-pane v-if="hasAction('WEB_SHOW_PLAYBACK') || hasAction('WEB_RECORD_EVENT')" label="📼 录像回放" name="playback">
                   <div class="alarm-popup__tab-content">
                     <MiniPlayer
                       v-if="currentAlarm.videoClipUrl"
@@ -63,6 +66,16 @@
                       :channel-id="currentAlarm.channelId"
                       autoplay
                     />
+                    <!-- 录像进行中：等待 record_complete 回调 -->
+                    <div v-else-if="isRecordingInProgress" class="alarm-popup__recording-list">
+                      <div class="alarm-popup__recording-state">
+                        <div class="alarm-popup__recording-indicator">
+                          <span class="alarm-popup__rec-dot" />
+                          <span>录像中...</span>
+                        </div>
+                        <p class="alarm-popup__hint">告警事件录像正在录制中，预计 30~40 秒后完成</p>
+                      </div>
+                    </div>
                     <div v-else class="alarm-popup__recording-list">
                       <div v-if="recordingsLoading" style="text-align:center;color:#4A4D58;padding:20px">
                         <el-icon class="is-loading" :size="20"><Loading /></el-icon>
@@ -144,7 +157,14 @@
                       <span class="alarm-popup__info-key">置信度</span>
                       <span class="alarm-popup__info-val" style="color:#00D4AA">{{ Math.round(currentAlarm.confidence * 100) }}%</span>
                       <span class="alarm-popup__info-key">目标</span>
-                      <span class="alarm-popup__info-val">{{ (currentAlarm.metadata?.targetLabel as string) || '-' }}</span>
+                      <span class="alarm-popup__info-val">
+                        <template v-if="targetCategoryLabel">
+                          <el-tag size="small" type="info" effect="plain" style="margin-right:6px">
+                            {{ targetCategoryLabel }}
+                          </el-tag>
+                        </template>
+                        {{ targetNameLabel }}
+                      </span>
                     </div>
                   </div>
 
@@ -234,15 +254,10 @@ import { ACTION_TYPE_REVERSE_MAP } from '@/api/linkage'
 import { alarmApi } from '@/api/alarm'
 import { queryRecordings, type DeviceRecording } from '@/api/recording'
 import { recordingHttp } from '@/api/http'
+import { useObjectLabel, type ObjectLabelMeta } from '@/composables/useObjectLabel'
 
-// ── 告警类型中文 ──
-const ALARM_TYPE_CN: Record<string, string> = {
-  person_detected: '人员检测', intrusion: '入侵检测', fire: '烟火检测',
-  smoke: '烟雾检测', fall: '倒地检测', violence: '打架检测',
-  loitering: '徘徊检测', gathering: '聚集检测', vehicle_detected: '车辆检测',
-  object_detected: '物体检测', face_blacklist: '黑名单告警', gb28181_alarm: '设备告警',
-  ppe: '安全帽检测', crowd: '人群密度', plate: '车牌识别',
-}
+// 🆕 v6.3: 多类别检测标签翻译 (集中走 i18n + 后端 metadata 兜底)
+const { getCategoryName, getTargetName, getAlarmTypeName } = useObjectLabel()
 
 // ── 自动激活 Tab ──
 const activeTab = ref('fallback')
@@ -256,6 +271,43 @@ watch(defaultTab, (tab) => {
   if (tab) activeTab.value = tab
 }, { immediate: true })
 
+// ── 录像进行中状态（告警后 2 分钟内，无 clip URL 时视为正在录像） ──
+const isRecordingInProgress = computed(() => {
+  if (!currentAlarm.value) return false
+  if (currentAlarm.value.videoClipUrl) return false
+  if (!hasAction('WEB_RECORD_EVENT') && !hasAction('WEB_SHOW_PLAYBACK')) return false
+  const age = Date.now() - new Date(currentAlarm.value.createdAt).getTime()
+  return age < 120_000  // 2 minutes
+})
+
+// ── 录像完成轮询（每 8 秒查询一次 evidence API） ──
+let recordingPollTimer: ReturnType<typeof setInterval> | null = null
+
+function startRecordingPoll() {
+  stopRecordingPoll()
+  recordingPollTimer = setInterval(async () => {
+    if (!isRecordingInProgress.value || !currentAlarm.value?.id) {
+      stopRecordingPoll()
+      return
+    }
+    try {
+      const ev = await alarmApi.getEvidence(currentAlarm.value.id)
+      if (ev?.videoClipUrl) {
+        currentAlarm.value.videoClipUrl = ev.videoClipUrl
+        activeTab.value = 'playback'
+        stopRecordingPoll()
+      }
+    } catch { /* continue polling */ }
+  }, 8000)
+}
+
+function stopRecordingPoll() {
+  if (recordingPollTimer) {
+    clearInterval(recordingPollTimer)
+    recordingPollTimer = null
+  }
+}
+
 // ── 自动关闭倒计时 ──
 const AUTO_CLOSE_SECONDS = 30
 const countdown = ref(AUTO_CLOSE_SECONDS)
@@ -265,6 +317,11 @@ function startCountdown() {
   countdown.value = AUTO_CLOSE_SECONDS
   stopCountdown()
   countdownTimer = setInterval(() => {
+    // 录像进行中时，倒计时到 5 秒自动续期（等 record_complete 到达）
+    if (countdown.value <= 5 && isRecordingInProgress.value) {
+      countdown.value = 15
+      return
+    }
     countdown.value--
     if (countdown.value <= 0) {
       closePopup()
@@ -282,17 +339,38 @@ function stopCountdown() {
 watch(popupVisible, (v) => {
   if (v) {
     startCountdown()
-    // 弹窗打开时自动加载证据（快照和录像URL）
     loadPlayback()
+    // 无 clip URL 时启动轮询（等待 record_complete）
+    if (!currentAlarm.value?.videoClipUrl) {
+      startRecordingPoll()
+    }
   } else {
     stopCountdown()
+    stopRecordingPoll()
   }
 })
 
 // ── 计算属性 ──
-const alarmTypeLabel = computed(() =>
-  ALARM_TYPE_CN[currentAlarm.value?.type || ''] || currentAlarm.value?.type || '告警'
-)
+// 🆕 v6.3: 改用 useObjectLabel 集中翻译，删除 ALARM_TYPE_CN 硬编码表
+const alarmTypeLabel = computed(() => {
+  const type = currentAlarm.value?.type || ''
+  if (!type) return '告警'
+  return getAlarmTypeName(type) || type
+})
+
+// 🆕 v6.3: 目标翻译元数据（类别 + 目标名）
+const targetMeta = computed<ObjectLabelMeta>(() => {
+  const m = (currentAlarm.value?.metadata || {}) as Record<string, unknown>
+  return {
+    objectCategory: m.objectCategory as string | undefined,
+    targetLabel:    m.targetLabel as string | undefined,
+    targetLabelZh:  m.targetLabelZh as string | undefined,
+    targetLabelEn:  m.targetLabelEn as string | undefined,
+  }
+})
+
+const targetCategoryLabel = computed(() => getCategoryName(targetMeta.value))
+const targetNameLabel = computed(() => getTargetName(targetMeta.value) || '-')
 
 const levelColor = computed(() => {
   switch (currentAlarm.value?.level) {
@@ -456,6 +534,8 @@ function onAlarmClipUpdated(e: Event) {
   const detail = (e as CustomEvent).detail
   if (currentAlarm.value?.id === detail.alarmId && detail.videoClipUrl) {
     currentAlarm.value.videoClipUrl = detail.videoClipUrl
+    activeTab.value = 'playback'
+    stopRecordingPoll()
   }
 }
 
@@ -467,6 +547,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKeydown)
   window.removeEventListener('alarm-clip-updated', onAlarmClipUpdated)
   stopCountdown()
+  stopRecordingPoll()
 })
 </script>
 
@@ -479,6 +560,34 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   background: #000;
+}
+.alarm-popup__recording-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  min-height: 280px;
+  background: #000;
+}
+.alarm-popup__recording-indicator {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 18px;
+  color: #FF3D71;
+  font-weight: bold;
+}
+.alarm-popup__rec-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #FF3D71;
+  animation: rec-pulse 1s ease-in-out infinite;
+}
+@keyframes rec-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.3; transform: scale(0.8); }
 }
 .alarm-popup__rec-item {
   display: flex;

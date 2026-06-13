@@ -44,6 +44,7 @@ const TopologyView = () => import('@/views/TopologyView.vue')
 const AlgorithmStoreView = () => import('@/views/AlgorithmStoreView.vue')
 const BillingView = () => import('@/views/BillingView.vue')
 const FaceDatabaseView = () => import('@/views/FaceDatabaseView.vue')
+const FaceRealtimeView = () => import('@/views/FaceRealtimeView.vue')
 const SystemLogsView = () => import('@/views/SystemLogsView.vue')
 const AlgoConfigView = () => import('@/views/AlgoConfigView.vue')
 const AlgoQualityView = () => import('@/views/AlgoQualityView.vue')
@@ -224,6 +225,12 @@ export const asyncRoutes: RouteRecordRaw[] = [
         name: 'FaceDatabase',
         component: FaceDatabaseView,
         meta: { title: '人脸库管理', icon: 'User', roles: ['admin', 'user'] }
+      },
+      {
+        path: 'face-realtime',
+        name: 'FaceRealtime',
+        component: FaceRealtimeView,
+        meta: { title: '人脸实时识别', icon: 'Aim', roles: ['admin', 'user', 'viewer'] }
       },
       {
         path: 'topology',

@@ -61,6 +61,35 @@ export interface ProjectAlarmResponse {
   items: Array<{ projectName: string; critical: number; high: number; medium: number; low: number }>
 }
 
+/** 算法性能指标 (P14 修复 14.11) */
+export interface AlgoPerformanceItem {
+  name: string
+  algo_id: string
+  precision: number
+  recall: number
+  f1_score: number
+  mAP50: number
+  avg_inference_ms: number
+  fps: number
+  sample_count: number
+  last_benchmark_time: string
+  status: 'active' | 'beta' | 'deprecated'
+}
+
+export interface AlgoPerformanceTrendPoint {
+  date: string
+  avg_latency_ms: number
+  avg_fps: number
+  run_count: number
+}
+
+export interface AlgoPerformanceResponse {
+  items: AlgoPerformanceItem[]
+  trend: AlgoPerformanceTrendPoint[]
+  last_updated: string
+  total: number
+}
+
 export const statisticsApi = {
   /** 获取安全评分 */
   getSecurityScore(params?: { period?: '7d' | '30d' | '90d'; projectId?: string }) {
@@ -106,5 +135,10 @@ export const statisticsApi = {
       activeAgents: number
       recentAlarms: Array<{ id: string; description: string; level: string; createdAt: string }>
     }>>('/dashboard-summary', { params })
+  },
+
+  /** P14 修复 14.11: 获取算法性能统计 (从 IRM algo_perf_logs) */
+  getAlgorithmPerformance(params?: { algoId?: string; days?: number }) {
+    return statsHttp.get<ApiResponse<AlgoPerformanceResponse>>('/algorithm-performance', { params })
   }
 }

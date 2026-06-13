@@ -32,7 +32,7 @@
     </el-row>
 
     <!-- Quality table -->
-    <el-card class="table-card">
+    <el-card class="table-card" v-loading="loading">
       <template #header>
         <div class="card-header">
           <span>算法质量详情</span>
@@ -70,7 +70,12 @@
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="基准测试时间" width="170" align="center">
+        <el-table-column label="FPS" width="90" align="center">
+          <template #default="{ row }">
+            <span>{{ row.fps ? row.fps.toFixed(1) : '-' }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="最近运行" width="170" align="center">
           <template #default="{ row }">{{ row.last_benchmark_time }}</template>
         </el-table-column>
         <el-table-column label="状态" width="100" align="center">
@@ -81,30 +86,32 @@
           </template>
         </el-table-column>
       </el-table>
+      <el-empty v-if="!loading && filteredAlgos.length === 0" description="尚无算法性能数据,请先在系统中运行推理任务" />
     </el-card>
 
     <!-- Benchmark history timeline -->
-    <el-card class="timeline-card">
-      <template #header><span>基准测试历史</span></template>
-      <el-timeline>
+    <el-card class="timeline-card" v-loading="loading">
+      <template #header><span>最近 7 天运行趋势</span></template>
+      <el-empty v-if="!loading && benchmarkHistory.length === 0" description="近 7 天无推理运行记录" :image-size="80" />
+      <el-timeline v-else>
         <el-timeline-item
           v-for="run in benchmarkHistory"
           :key="run.id"
           :timestamp="run.time"
           placement="top"
-          :type="run.passed ? 'success' : 'danger'"
+          :type="run.run_count > 0 ? 'success' : 'info'"
         >
           <el-card shadow="never" class="timeline-item-card">
             <div class="run-header">
               <strong>{{ run.title }}</strong>
-              <el-tag :type="run.passed ? 'success' : 'danger'" size="small">
-                {{ run.passed ? '通过' : '未通过' }}
+              <el-tag :type="run.run_count > 0 ? 'success' : 'info'" size="small">
+                {{ run.run_count }} 次推理
               </el-tag>
             </div>
             <div class="run-detail">
-              <span>算法: {{ run.algoCount }}</span>
-              <span>均值mAP: {{ run.avgMAP }}%</span>
-              <span>最大延迟: {{ run.maxLatencyMs }}ms</span>
+              <span>平均耗时: {{ run.avgLatencyMs.toFixed(1) }} ms</span>
+              <span>平均FPS: {{ run.avgFps.toFixed(1) }}</span>
+              <span>运行次数: {{ run.run_count }}</span>
             </div>
           </el-card>
         </el-timeline-item>
@@ -114,54 +121,32 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
-
-interface AlgoMetric {
-  name: string
-  precision: number
-  recall: number
-  f1_score: number
-  mAP50: number
-  avg_inference_ms: number
-  last_benchmark_time: string
-  status: 'active' | 'beta' | 'deprecated'
-}
+import { ref, computed, onMounted } from 'vue'
+import { ElMessage } from 'element-plus'
+import { statisticsApi, type AlgoPerformanceItem } from '@/api/statistics'
 
 interface BenchmarkRun {
   id: number
   time: string
   title: string
-  passed: boolean
-  algoCount: number
-  avgMAP: number
-  maxLatencyMs: number
+  run_count: number
+  avgLatencyMs: number
+  avgFps: number
 }
 
 const keyword = ref('')
-const lastUpdated = '2026-05-31 10:30'
+const lastUpdated = ref('加载中...')
+const loading = ref(false)
 
-const algorithms = ref<AlgoMetric[]>([
-  { name: '行人检测 v3.2', precision: 94.5, recall: 91.2, f1_score: 0.93, mAP50: 93.8, avg_inference_ms: 32, last_benchmark_time: '2026-05-30 14:22', status: 'active' },
-  { name: '车辆检测 v2.8', precision: 96.1, recall: 93.7, f1_score: 0.95, mAP50: 95.2, avg_inference_ms: 28, last_benchmark_time: '2026-05-30 14:22', status: 'active' },
-  { name: '车牌识别 v4.1', precision: 97.3, recall: 95.8, f1_score: 0.97, mAP50: 96.9, avg_inference_ms: 45, last_benchmark_time: '2026-05-29 09:15', status: 'active' },
-  { name: '人脸检测 v5.0', precision: 92.0, recall: 88.6, f1_score: 0.90, mAP50: 90.4, avg_inference_ms: 38, last_benchmark_time: '2026-05-28 16:40', status: 'active' },
-  { name: '火焰烟雾检测 v1.3', precision: 89.4, recall: 85.1, f1_score: 0.87, mAP50: 87.0, avg_inference_ms: 55, last_benchmark_time: '2026-05-27 11:00', status: 'beta' },
-  { name: '奔跑检测 v1.0', precision: 82.6, recall: 78.3, f1_score: 0.80, mAP50: 79.5, avg_inference_ms: 62, last_benchmark_time: '2026-05-25 08:30', status: 'beta' },
-  { name: '越界检测 v2.1', precision: 91.0, recall: 87.5, f1_score: 0.89, mAP50: 88.7, avg_inference_ms: 41, last_benchmark_time: '2026-05-24 13:20', status: 'active' },
-  { name: '遗留物检测 v0.9', precision: 75.2, recall: 70.8, f1_score: 0.73, mAP50: 72.1, avg_inference_ms: 88, last_benchmark_time: '2026-05-20 17:50', status: 'deprecated' },
-])
-
-const benchmarkHistory = ref<BenchmarkRun[]>([
-  { id: 1, time: '2026-05-30 14:22', title: '全量回归测试 #38', passed: true, algoCount: 8, avgMAP: 88.2, maxLatencyMs: 88 },
-  { id: 2, time: '2026-05-25 09:00', title: '新增算法准入测试 #37', passed: true, algoCount: 7, avgMAP: 86.5, maxLatencyMs: 65 },
-  { id: 3, time: '2026-05-20 17:50', title: '遗留物检测模型迭代 #36', passed: false, algoCount: 7, avgMAP: 84.1, maxLatencyMs: 92 },
-  { id: 4, time: '2026-05-15 10:10', title: '周度例行基准测试 #35', passed: true, algoCount: 6, avgMAP: 90.3, maxLatencyMs: 55 },
-  { id: 5, time: '2026-05-10 08:30', title: '车牌识别升级验证 #34', passed: true, algoCount: 6, avgMAP: 89.8, maxLatencyMs: 60 },
-])
+const algorithms = ref<AlgoPerformanceItem[]>([])
+const trend = ref<BenchmarkRun[]>([])
 
 const summary = computed(() => {
   const list = algorithms.value
   const active = list.filter(a => a.status === 'active')
+  if (list.length === 0) {
+    return { totalAlgos: 0, avgPrecision: 0, avgRecall: 0, activeModels: 0 }
+  }
   return {
     totalAlgos: list.length,
     avgPrecision: list.reduce((s, a) => s + a.precision, 0) / list.length,
@@ -174,6 +159,17 @@ const filteredAlgos = computed(() => {
   const kw = keyword.value.trim().toLowerCase()
   if (!kw) return algorithms.value
   return algorithms.value.filter(a => a.name.toLowerCase().includes(kw))
+})
+
+const benchmarkHistory = computed<BenchmarkRun[]>(() => {
+  return trend.value.map((t, idx) => ({
+    id: idx + 1,
+    time: t.time || t.date || '',
+    title: `${t.date} 推理运行汇总`,
+    run_count: t.run_count ?? 0,
+    avgLatencyMs: t.avg_latency_ms ?? 0,
+    avgFps: t.avg_fps ?? 0,
+  }))
 })
 
 function metricClass(val: number): string {
@@ -190,6 +186,32 @@ function statusLabel(s: string): string {
   const map: Record<string, string> = { active: '已上线', beta: '测试中', deprecated: '已下线' }
   return map[s] ?? s
 }
+
+async function load() {
+  loading.value = true
+  try {
+    const { data } = await statisticsApi.getAlgorithmPerformance({ days: 7 })
+    algorithms.value = data?.items ?? []
+    trend.value = (data?.trend ?? []).map(t => ({
+      ...t,
+      time: t.date,
+      title: `${t.date} 推理运行汇总`,
+    }))
+    lastUpdated.value = data?.last_updated ?? new Date().toISOString().slice(0, 16).replace('T', ' ')
+    if (algorithms.value.length === 0 && (data?.total ?? 0) === 0) {
+      // 首次访问可能无 perf_logs 数据,这是正常的
+      ElMessage.info('尚无算法性能数据,运行推理后将在此显示')
+    }
+  } catch (e: any) {
+    ElMessage.error(`加载算法性能失败: ${e?.message ?? e}`)
+    algorithms.value = []
+    trend.value = []
+  } finally {
+    loading.value = false
+  }
+}
+
+onMounted(load)
 </script>
 
 <style scoped>

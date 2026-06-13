@@ -99,14 +99,39 @@
           <el-card shadow="never" class="roi-card">
             <template #header>
               <div class="config-header">
-                <span>ROI {{ $t('detectionZone', '检测区域') }}</span>
-                <el-button type="primary" text size="small" @click="clearRoi">{{ $t('clearZone', '清除区域') }}</el-button>
+                <span>ROI {{ $t('detectionZone', '检测区域') }} / {{ $t('tripwire', '绊线') }} / {{ $t('countingZone', '计数区') }}</span>
+                <el-button type="primary" text size="small" @click="loadRegions">{{ $t('refresh', '刷新') }}</el-button>
               </div>
             </template>
-            <div class="roi-placeholder">
-              <div class="roi-message">{{ $t('roiEditorHint', 'ROI Editor - 选择通道配置检测区域') }}</div>
-              <div class="roi-hint">{{ $t('roiDrawHint', '在画布上绘制多边形来定义检测区域，未绘制则默认全帧检测') }}</div>
-            </div>
+            <el-tabs v-model="roiTab">
+              <el-tab-pane :label="$t('detectionZone', '检测区域')" name="region">
+                <RoiPolygonEditor
+                  v-if="selected"
+                  :rois="regions"
+                  :device-id="String(selected.channelId)"
+                  @update:rois="onRegionsChange"
+                />
+              </el-tab-pane>
+              <el-tab-pane :label="$t('tripwire', '绊线')" name="tripwire">
+                <TripwireEditor
+                  v-if="selected"
+                  @confirm="onTripwireConfirm"
+                />
+                <div v-if="tripwires.length" class="tripwire-list">
+                  <div v-for="tw in tripwires" :key="tw.id" class="tripwire-list__item">
+                    <span>{{ tw.name }} ({{ tw.direction }})</span>
+                    <el-button text size="small" type="danger" @click="deleteTripwire(tw.id)">
+                      {{ $t('delete', '删除') }}
+                    </el-button>
+                  </div>
+                </div>
+              </el-tab-pane>
+              <el-tab-pane :label="$t('countingZone', '计数区')" name="counting">
+                <div class="roi-placeholder">
+                  <div class="roi-hint">{{ $t('countingZoneHint', '计数区沿用 ROI 多边形编辑器 + target_class 配置') }}</div>
+                </div>
+              </el-tab-pane>
+            </el-tabs>
           </el-card>
         </template>
       </div>
@@ -137,6 +162,10 @@ import { startSchedule, stopSchedule, getInferenceChannels } from '@/api/inferen
 import type { ScheduledChannel } from '@/api/inference'
 import algorithmsApi from '@/api/algorithms'
 import type { AlgorithmInfo } from '@/api/algorithms'
+import { regionApi } from '@/api/region'
+import type { RegionDef, TripwireDef } from '@/types/region'
+import RoiPolygonEditor from '@/components/RoiPolygonEditor.vue'
+import TripwireEditor from '@/components/TripwireEditor.vue'
 
 /** 通道项（合并通道信息 + 推理调度状态） */
 interface ChannelItem {
@@ -171,6 +200,86 @@ const form = reactive({
   interval: 3000,
   inferenceMode: 'snapshot' as 'snapshot' | 'streaming',
 })
+
+// 🆕 v7.1 (28 算法补齐 P0-A5): 区域/绊线/计数区持久化
+const roiTab = ref<'region' | 'tripwire' | 'counting'>('region')
+const regions = ref<RegionDef[]>([])
+const tripwires = ref<TripwireDef[]>([])
+
+async function loadRegions() {
+  if (!selected.value) return
+  const chId = Number(selected.value.channelId)
+  if (!Number.isFinite(chId)) return
+  try {
+    const [rRes, tRes] = await Promise.all([
+      regionApi.listRegions({ channel_id: chId }),
+      regionApi.listTripwires({ channel_id: chId })
+    ])
+    regions.value = rRes.data?.regions ?? []
+    tripwires.value = tRes.data?.tripwires ?? []
+  } catch (e: any) {
+    ElMessage.warning(`加载区域失败: ${e?.message ?? e}`)
+  }
+}
+
+async function onRegionsChange(updated: any[]) {
+  // 简化: 接受前端已编辑的 ROI, 同步到后端 (此处用 RoiPolygonEditor 内部 v-model)
+  if (!selected.value) return
+  const chId = Number(selected.value.channelId)
+  // 仅对新创建的调用 create
+  for (const r of updated) {
+    if (!r.id && r.algo_id) {
+      try {
+        await regionApi.createRegion({
+          channel_id: chId,
+          algo_id: r.algo_id,
+          name: r.roi_name ?? r.name ?? 'ROI',
+          region_type: 'detection_zone',
+          polygon: (r.polygon ?? []).map((p: any) => [p[0], p[1]] as [number, number]),
+          enabled: r.is_active ?? true
+        })
+      } catch (e) {
+        console.warn('[AlgoConfigView] createRegion failed', e)
+      }
+    }
+  }
+  await loadRegions()
+}
+
+async function onTripwireConfirm(payload: {
+  point_a: [number, number]
+  point_b: [number, number]
+  direction: 'both' | 'a_to_b' | 'b_to_a'
+}) {
+  if (!selected.value) return
+  const chId = Number(selected.value.channelId)
+  const algoId = form.algorithm || 'shield.algo.perimeter.tripwire'
+  try {
+    await regionApi.createTripwire({
+      channel_id: chId,
+      algo_id: algoId,
+      name: `${algoId.split('.').pop()}_${Date.now() % 10000}`,
+      point_a: payload.point_a,
+      point_b: payload.point_b,
+      direction: payload.direction,
+      enabled: true
+    })
+    ElMessage.success('绊线已添加')
+    await loadRegions()
+  } catch (e: any) {
+    ElMessage.error(`添加绊线失败: ${e?.message ?? e}`)
+  }
+}
+
+async function deleteTripwire(id: number) {
+  try {
+    await regionApi.deleteTripwire(id)
+    ElMessage.success('已删除')
+    await loadRegions()
+  } catch (e: any) {
+    ElMessage.error(`删除失败: ${e?.message ?? e}`)
+  }
+}
 
 onMounted(() => {
   loadData()
@@ -280,6 +389,8 @@ function onChannelSelect(row: ChannelItem | null) {
     form.nmsThreshold = row.nmsThreshold
     form.interval = row.interval
     form.inferenceMode = row.inferenceMode
+    // 🆕 v7.1: 加载该通道的 ROI/绊线/计数区
+    loadRegions()
   }
 }
 
@@ -311,6 +422,7 @@ async function saveConfig() {
         deviceId,
         form.interval,
         form.algorithm || 'yolov8n',
+        { confidence: form.confidence, nmsThreshold: form.nmsThreshold, inferenceMode: form.inferenceMode }
       )
       ch.algoPlugin = form.algorithm
       ch.inferenceEnabled = true
@@ -357,6 +469,11 @@ async function saveConfig() {
 }
 .roi-message { font-size: 15px; color: var(--text-primary); font-weight: 500; }
 .roi-hint { font-size: 12px; color: var(--text-secondary); }
+.tripwire-list { margin-top: 12px; display: flex; flex-direction: column; gap: 6px; }
+.tripwire-list__item {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 6px 10px; background: var(--bg-page); border-radius: 4px;
+}
 .bottom-bar {
   padding: 12px 24px; background: var(--bg-card); border-top: 1px solid var(--border-light);
   display: flex; justify-content: flex-end; gap: 12px;
