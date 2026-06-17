@@ -101,6 +101,85 @@
             <el-button @click="testConnection" :loading="testConnLoading">{{ $t('settings.testConnection') }}</el-button>
           </el-form-item>
         </el-form>
+
+        <el-divider />
+
+        <!-- AI 模型配置 (本地/云端切换) -->
+        <h4 style="margin-bottom:16px;color:#303133">🤖 AI 模型配置</h4>
+        <el-form label-width="160px">
+          <el-form-item label="当前后端">
+            <el-tag :type="llmStatus.ready ? 'success' : 'danger'" size="large">
+              {{ llmStatus.backend || '未加载' }}
+            </el-tag>
+            <el-tag v-if="llmStatus.multimodal_supported" type="warning" size="small" style="margin-left:8px">
+              多模态
+            </el-tag>
+            <el-tag :type="llmStatus.backend_mode === 'real' ? 'success' : 'info'" size="small" style="margin-left:8px">
+              {{ llmStatus.backend_mode === 'real' ? '真实推理' : 'Stub' }}
+            </el-tag>
+            <el-button size="small" style="margin-left:12px" @click="refreshLlmStatus" :loading="llmStatusLoading">
+              刷新
+            </el-button>
+          </el-form-item>
+
+          <el-form-item label="模型模式">
+            <el-radio-group v-model="llmConfig.mode">
+              <el-radio label="auto">自动 (TPU优先→云端→本地)</el-radio>
+              <el-radio label="builtin">本地推理 (TPU/llama.cpp)</el-radio>
+              <el-radio label="external">云端 (HTTP/OneAPI)</el-radio>
+            </el-radio-group>
+          </el-form-item>
+
+          <!-- 本地模型配置 -->
+          <template v-if="llmConfig.mode === 'builtin' || llmConfig.mode === 'auto'">
+            <el-divider content-position="left">本地模型 (llama.cpp / SophonTpu)</el-divider>
+            <el-form-item label="模型路径">
+              <el-input v-model="llmConfig.localModelPath" placeholder="/path/to/model.gguf" style="width:400px" />
+            </el-form-item>
+            <el-form-item label="上下文窗口">
+              <el-input-number v-model="llmConfig.localContextWindow" :min="512" :max="32768" :step="512" />
+            </el-form-item>
+            <el-form-item label="线程数">
+              <el-input-number v-model="llmConfig.localThreads" :min="1" :max="16" />
+            </el-form-item>
+          </template>
+
+          <!-- 云端模型配置 -->
+          <template v-if="llmConfig.mode === 'external' || llmConfig.mode === 'auto'">
+            <el-divider content-position="left">云端模型 (HTTP / OneAPI / LiteLLM)</el-divider>
+            <el-form-item label="API Base URL">
+              <el-input v-model="llmConfig.cloudBaseUrl" placeholder="https://api.openai.com/v1" style="width:400px" />
+            </el-form-item>
+            <el-form-item label="API Key">
+              <el-input v-model="llmConfig.cloudApiKey" type="password" show-password placeholder="sk-..." style="width:400px" />
+            </el-form-item>
+            <el-form-item label="模型名称">
+              <el-input v-model="llmConfig.cloudModel" placeholder="gpt-4o / qwen-plus / ..." style="width:300px" />
+            </el-form-item>
+            <el-form-item label="超时(秒)">
+              <el-input-number v-model="llmConfig.cloudTimeout" :min="5" :max="120" />
+            </el-form-item>
+          </template>
+
+          <el-form-item label="温度">
+            <el-slider v-model="llmConfig.temperature" :min="0" :max="2" :step="0.1" show-input style="width:300px" />
+          </el-form-item>
+          <el-form-item label="最大 Token">
+            <el-input-number v-model="llmConfig.maxTokens" :min="64" :max="4096" :step="64" />
+          </el-form-item>
+
+          <el-form-item>
+            <el-button type="primary" @click="switchLlmBackend" :loading="llmSwitching">
+              应用切换
+            </el-button>
+            <el-button @click="testLlm" :loading="llmTesting">测试对话</el-button>
+          </el-form-item>
+
+          <!-- 测试结果 -->
+          <el-form-item v-if="llmTestResult" label="测试结果">
+            <el-alert :title="llmTestResult" :type="llmTestSuccess ? 'success' : 'error'" :closable="true" />
+          </el-form-item>
+        </el-form>
       </el-tab-pane>
 
       <el-tab-pane :label="$t('settings.tabAlarm')">
@@ -330,6 +409,118 @@ const alarmDefaults: AlarmPolicySettings = {
 }
 const alarm = reactive<AlarmPolicySettings>({ ...alarmDefaults })
 
+// ---- AI 模型配置 (本地/云端切换) ----
+const llmStatusLoading = ref(false)
+const llmSwitching = ref(false)
+const llmTesting = ref(false)
+const llmTestResult = ref('')
+const llmTestSuccess = ref(false)
+const llmStatus = reactive({
+  backend: '', ready: false, multimodal_supported: false,
+  backend_mode: '', model_loaded: false
+})
+const llmConfig = reactive({
+  mode: 'auto' as 'auto' | 'builtin' | 'external',
+  localModelPath: '',
+  localContextWindow: 4096,
+  localThreads: 4,
+  cloudBaseUrl: '',
+  cloudApiKey: '',
+  cloudModel: 'gpt-4o',
+  cloudTimeout: 30,
+  temperature: 0.7,
+  maxTokens: 256,
+})
+
+async function refreshLlmStatus() {
+  llmStatusLoading.value = true
+  try {
+    const resp = await fetch('/api/v1/llm/status')
+    const data = await resp.json()
+    llmStatus.backend = data.backend || ''
+    llmStatus.ready = data.ready || false
+    llmStatus.multimodal_supported = data.multimodal_supported || false
+    llmStatus.backend_mode = data.backend_mode || ''
+    llmStatus.model_loaded = data.model_loaded || false
+  } catch (e) {
+    console.error('refreshLlmStatus failed', e)
+  } finally {
+    llmStatusLoading.value = false
+  }
+}
+
+async function switchLlmBackend() {
+  llmSwitching.value = true
+  llmTestResult.value = ''
+  try {
+    // 构造 backends 配置 (跟 LlmBackendFactory 格式一致)
+    const backends: Record<string, any> = {}
+    if (llmConfig.localModelPath) {
+      backends.llama_cpp = {
+        model_path: llmConfig.localModelPath,
+        context_window: llmConfig.localContextWindow,
+        threads: llmConfig.localThreads,
+        temperature: llmConfig.temperature,
+        max_tokens: llmConfig.maxTokens,
+      }
+    }
+    if (llmConfig.cloudBaseUrl) {
+      backends.http = {
+        base_url: llmConfig.cloudBaseUrl,
+        api_key: llmConfig.cloudApiKey,
+        model: llmConfig.cloudModel,
+        timeout_sec: llmConfig.cloudTimeout,
+        temperature: llmConfig.temperature,
+        max_tokens: llmConfig.maxTokens,
+      }
+    }
+    const resp = await fetch('/api/v1/llm/switch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ backend: llmConfig.mode, backends }),
+    })
+    const data = await resp.json()
+    if (data.code === 200) {
+      llmTestResult.value = `切换成功: ${data.new_backend}`
+      llmTestSuccess.value = true
+      await refreshLlmStatus()
+    } else {
+      llmTestResult.value = `切换失败: ${data.message}`
+      llmTestSuccess.value = false
+    }
+  } catch (e: any) {
+    llmTestResult.value = `请求失败: ${e.message}`
+    llmTestSuccess.value = false
+  } finally {
+    llmSwitching.value = false
+  }
+}
+
+async function testLlm() {
+  llmTesting.value = true
+  llmTestResult.value = ''
+  try {
+    const resp = await fetch('/api/v1/llm/chat/json', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt: '你好，请用一句话介绍你自己', max_tokens: 64 }),
+    })
+    const data = await resp.json()
+    if (data.code === 200 && data.response) {
+      llmTestResult.value = `回复: ${data.response.substring(0, 100)}`
+      llmTestSuccess.value = true
+    } else {
+      llmTestResult.value = `对话失败: ${data.error || data.message || '未知错误'}`
+      llmTestSuccess.value = false
+    }
+  } catch (e: any) {
+    llmTestResult.value = `请求失败: ${e.message}`
+    llmTestSuccess.value = false
+  } finally {
+    llmTesting.value = false
+  }
+}
+
 async function saveAlarm() {
   alarmSaving.value = true
   try {
@@ -464,6 +655,7 @@ async function handleImportConfig() {
 // ---- 初始化加载 ----
 onMounted(async () => {
   loading.value = true
+  refreshLlmStatus()  // AI 模型状态 (异步, 不阻塞)
   try {
     const [basicRes, cloudRes, alarmRes, infoRes, netRes] = await Promise.allSettled([
       settingsApi.getBasic(),
