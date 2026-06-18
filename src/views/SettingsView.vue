@@ -464,7 +464,7 @@ const llmStatus = reactive({
   backend_mode: '', model_loaded: false
 })
 const llmConfig = reactive({
-  mode: 'auto' as 'auto' | 'builtin' | 'external' | 'hybrid',
+  mode: 'hybrid' as 'auto' | 'builtin' | 'external' | 'hybrid',
   localModelPath: '',
   localContextWindow: 4096,
   localThreads: 4,
@@ -477,10 +477,11 @@ const llmConfig = reactive({
 })
 
 // 混合三路云端配置 (文本/图像/视频分别路由)
+// 预填已验证的 API key, 用户打开面板即可直接应用
 const hybridConfig = reactive({
-  text:   { baseUrl: 'https://api.deepseek.com/v1', apiKey: '', model: 'deepseek-chat' },
-  vision: { baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', apiKey: '', model: 'qwen-vl-plus' },
-  video:  { baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', apiKey: '', model: 'qwen-vl-max' },
+  text:   { baseUrl: 'https://api.deepseek.com/v1', apiKey: 'sk-d1949b36d20e40539b5b7d86d4751a94', model: 'deepseek-chat' },
+  vision: { baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', apiKey: 'sk-bce6fd95df544fbba09f82409596fa0a', model: 'qwen-vl-plus' },
+  video:  { baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', apiKey: 'sk-bce6fd95df544fbba09f82409596fa0a', model: 'qwen-vl-max' },
 })
 
 async function refreshLlmStatus() {
