@@ -359,8 +359,8 @@ function buildSnapshotUrl(b64: string, format: string): string {
   if (!b64) return ''
   // b64 已带 data: 前缀直接用
   if (b64.startsWith('data:')) return b64
-  // raw_bgr 暂无法浏览器显示,尝试当 jpeg 处理
-  const mime = format === 'raw_bgr' ? 'image/jpeg' : `image/${format || 'jpeg'}`
+  // F5: 后端现在输出 bmp 格式, 浏览器原生支持; raw_bgr 降级处理
+  const mime = format === 'raw_bgr' ? 'image/bmp' : `image/${format || 'jpeg'}`
   // 后端有可能直接给 raw bytes 的 base64,无 padding 修正
   const padded = b64.replace(/[^A-Za-z0-9+/=]/g, '')
   const fixed = padded + '='.repeat((4 - (padded.length % 4)) % 4)
