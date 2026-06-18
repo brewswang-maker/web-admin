@@ -315,7 +315,49 @@ async function sendMessage() {
 
   try {
     const endpoint = images.length ? '/api/v1/ai/chat/multimodal' : '/api/v1/ai/chat'
-    const body: Record<string, any> = { message: text || '请描述这张图片', conversation_id: currentConvId.value, stream: true }
+
+    // 查询真实系统状态注入 message (避免 LLM 编造假数据)
+    let contextData = ''
+    try {
+      const [chRes, devRes] = await Promise.allSettled([
+        fetch('/api/v1/channels').then(r => r.json()),
+        fetch('/api/v1/devices').then(r => r.json()),
+      ])
+
+      const channels = chRes.status === 'fulfilled' ? (chRes.value.data?.channels || chRes.value.data || []) : []
+      const devices = devRes.status === 'fulfilled' ? (devRes.value.data?.devices || devRes.value.data || []) : []
+
+      if (channels.length > 0 || devices.length > 0) {
+        contextData = '\n\n[当前系统真实数据]\n'
+        if (channels.length > 0) {
+          contextData += `视频通道 (${channels.length} 个):\n`
+          channels.forEach((ch: any) => {
+            const id = ch.channel_id || ch.id || '?'
+            const name = ch.name || ch.device_name || id
+            const state = ch.state || ch.status || (ch.enabled ? '在线' : '离线')
+            contextData += `  - ${name} (ID:${id}): ${state}\n`
+          })
+        }
+        if (devices.length > 0) {
+          contextData += `设备 (${devices.length} 个):\n`
+          devices.forEach((dev: any) => {
+            const id = dev.device_id || dev.id || '?'
+            const name = dev.name || dev.device_name || id
+            const online = dev.online !== undefined ? (dev.online ? '在线' : '离线') : '未知'
+            contextData += `  - ${name} (ID:${id}): ${online}\n`
+          })
+        }
+        contextData += '请基于以上真实数据回答用户问题，不要编造设备信息。'
+      }
+    } catch (e) {
+      console.warn('Failed to fetch system context', e)
+    }
+
+    const body: Record<string, any> = {
+      message: text + contextData,
+      conversation_id: currentConvId.value,
+      stream: true,
+    }
     if (images.length) body.images = images
 
     const response = await fetch(endpoint, {
