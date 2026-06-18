@@ -319,35 +319,63 @@ async function sendMessage() {
     // 查询真实系统状态注入 message (避免 LLM 编造假数据)
     let contextData = ''
     try {
-      const [chRes, devRes] = await Promise.allSettled([
+      const now = new Date()
+      const dateStr = now.toLocaleDateString('zh-CN') + ' ' + now.toLocaleTimeString('zh-CN', {hour:'2-digit',minute:'2-digit'})
+
+      const [chRes, devRes, alarmRes] = await Promise.allSettled([
         fetch('/api/v1/channels').then(r => r.json()),
         fetch('/api/v1/devices').then(r => r.json()),
+        fetch('/api/v1/alarms/history?limit=20').then(r => r.json()),
       ])
 
       const channels = chRes.status === 'fulfilled' ? (chRes.value.data?.channels || chRes.value.data || []) : []
       const devices = devRes.status === 'fulfilled' ? (devRes.value.data?.devices || devRes.value.data || []) : []
+      const alarms = alarmRes.status === 'fulfilled'
+        ? (alarmRes.value.data?.alarms || alarmRes.value.data?.items || alarmRes.value.data || [])
+        : []
 
-      if (channels.length > 0 || devices.length > 0) {
-        contextData = '\n\n[当前系统真实数据]\n'
-        if (channels.length > 0) {
-          contextData += `视频通道 (${channels.length} 个):\n`
-          channels.forEach((ch: any) => {
-            const id = ch.channel_id || ch.id || '?'
-            const name = ch.name || ch.device_name || id
-            const state = ch.state || ch.status || (ch.enabled ? '在线' : '离线')
-            contextData += `  - ${name} (ID:${id}): ${state}\n`
-          })
-        }
+      if (channels.length > 0 || devices.length > 0 || alarms.length > 0) {
+        contextData = `\n\n[当前系统真实数据 — 时间: ${dateStr}]\n`
+
+        // 设备列表
         if (devices.length > 0) {
-          contextData += `设备 (${devices.length} 个):\n`
-          devices.forEach((dev: any) => {
-            const id = dev.device_id || dev.id || '?'
-            const name = dev.name || dev.device_name || id
-            const online = dev.online !== undefined ? (dev.online ? '在线' : '离线') : '未知'
-            contextData += `  - ${name} (ID:${id}): ${online}\n`
+          const onlineDevs = devices.filter((d:any) => d.status === 'online').length
+          contextData += `\n## 设备 (${devices.length}台, 在线${onlineDevs}台)\n`
+          devices.forEach((dev:any) => {
+            contextData += `- 设备名: ${dev.name || dev.id}, ID: ${dev.id}, 类型: ${dev.deviceType || '未知'}, 状态: ${dev.status || '未知'}, IP: ${dev.ip || '-'}, 厂商: ${dev.vendor || '-'}\n`
           })
         }
-        contextData += '请基于以上真实数据回答用户问题，不要编造设备信息。'
+
+        // 通道列表
+        if (channels.length > 0) {
+          const onlineChs = channels.filter((c:any) => c.status === 'online' || c.enabled).length
+          contextData += `\n## 视频通道 (${channels.length}个, 在线${onlineChs}个)\n`
+          channels.forEach((ch:any) => {
+            contextData += `- 通道名: ${ch.name || ch.channel_id}, ID: ${ch.channel_id}, 协议: ${ch.protocol || '-'}, 状态: ${ch.status || (ch.enabled ? '启用' : '禁用')}\n`
+          })
+        }
+
+        // 告警统计
+        if (alarms.length > 0) {
+          contextData += `\n## 最近告警 (${alarms.length}条)\n`
+          // 统计告警类型
+          const typeCount: Record<string, number> = {}
+          alarms.forEach((a:any) => {
+            const t = a.alarm_type || a.type || 'unknown'
+            typeCount[t] = (typeCount[t] || 0) + 1
+          })
+          contextData += '告警类型统计:\n'
+          Object.entries(typeCount).forEach(([type, count]) => {
+            contextData += `  - ${type}: ${count}次\n`
+          })
+          // 最近5条详情
+          contextData += '最近5条:\n'
+          alarms.slice(0, 5).forEach((a:any) => {
+            contextData += `  - [级别${a.level || '?'}] ${a.alarm_type || a.type || '?'}: ${a.description || ''} (设备:${a.device_id || '-'})\n`
+          })
+        }
+
+        contextData += '\n请严格基于以上真实数据回答用户问题。不要编造任何设备ID、设备名、数值或时间。'
       }
     } catch (e) {
       console.warn('Failed to fetch system context', e)
