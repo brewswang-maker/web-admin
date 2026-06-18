@@ -124,9 +124,10 @@
 
           <el-form-item label="模型模式">
             <el-radio-group v-model="llmConfig.mode">
-              <el-radio label="auto">自动 (TPU优先→云端→本地)</el-radio>
+              <el-radio label="hybrid">混合三路 (文本/图像/视频分别路由)</el-radio>
+              <el-radio label="external">单一云端</el-radio>
+              <el-radio label="auto">自动 (TPU→云端→本地)</el-radio>
               <el-radio label="builtin">本地推理 (TPU/llama.cpp)</el-radio>
-              <el-radio label="external">云端 (HTTP/OneAPI)</el-radio>
             </el-radio-group>
           </el-form-item>
 
@@ -144,8 +145,8 @@
             </el-form-item>
           </template>
 
-          <!-- 云端模型配置 -->
-          <template v-if="llmConfig.mode === 'external' || llmConfig.mode === 'auto'">
+          <!-- 单一云端模型配置 -->
+          <template v-if="llmConfig.mode === 'external'">
             <el-divider content-position="left">云端模型 (HTTP / OneAPI / LiteLLM)</el-divider>
             <el-form-item label="API Base URL">
               <el-input v-model="llmConfig.cloudBaseUrl" placeholder="https://api.openai.com/v1" style="width:400px" />
@@ -158,6 +159,49 @@
             </el-form-item>
             <el-form-item label="超时(秒)">
               <el-input-number v-model="llmConfig.cloudTimeout" :min="5" :max="120" />
+            </el-form-item>
+          </template>
+
+          <!-- 混合三路云端配置 (文本/图像/视频分别路由) -->
+          <template v-if="llmConfig.mode === 'hybrid'">
+            <el-alert type="info" :closable="false" style="margin-bottom:16px">
+              💡 系统按请求内容自动路由：纯文本→DeepSeek，图像→Qwen-VL-Plus，视频审核→Qwen-VL-Max
+            </el-alert>
+
+            <!-- 文本路由 → DeepSeek -->
+            <el-divider content-position="left">📝 文本路由 → DeepSeek (对话/NL搜索/告警描述)</el-divider>
+            <el-form-item label="Base URL">
+              <el-input v-model="hybridConfig.text.baseUrl" placeholder="https://api.deepseek.com/v1" style="width:400px" />
+            </el-form-item>
+            <el-form-item label="API Key">
+              <el-input v-model="hybridConfig.text.apiKey" type="password" show-password placeholder="sk-..." style="width:400px" />
+            </el-form-item>
+            <el-form-item label="模型">
+              <el-input v-model="hybridConfig.text.model" placeholder="deepseek-chat" style="width:250px" />
+            </el-form-item>
+
+            <!-- 视觉路由 → Qwen-VL-Plus -->
+            <el-divider content-position="left">👁️ 视觉路由 → Qwen-VL-Plus (告警验证/OCR/场景理解)</el-divider>
+            <el-form-item label="Base URL">
+              <el-input v-model="hybridConfig.vision.baseUrl" placeholder="https://dashscope.aliyuncs.com/compatible-mode/v1" style="width:400px" />
+            </el-form-item>
+            <el-form-item label="API Key">
+              <el-input v-model="hybridConfig.vision.apiKey" type="password" show-password placeholder="sk-..." style="width:400px" />
+            </el-form-item>
+            <el-form-item label="模型">
+              <el-input v-model="hybridConfig.vision.model" placeholder="qwen-vl-plus" style="width:250px" />
+            </el-form-item>
+
+            <!-- 视频路由 → Qwen-VL-Max -->
+            <el-divider content-position="left">🎬 视频路由 → Qwen-VL-Max (视频审核/录像回放分析)</el-divider>
+            <el-form-item label="Base URL">
+              <el-input v-model="hybridConfig.video.baseUrl" placeholder="https://dashscope.aliyuncs.com/compatible-mode/v1" style="width:400px" />
+            </el-form-item>
+            <el-form-item label="API Key">
+              <el-input v-model="hybridConfig.video.apiKey" type="password" show-password placeholder="sk-..." style="width:400px" />
+            </el-form-item>
+            <el-form-item label="模型">
+              <el-input v-model="hybridConfig.video.model" placeholder="qwen-vl-max" style="width:250px" />
             </el-form-item>
           </template>
 
@@ -420,7 +464,7 @@ const llmStatus = reactive({
   backend_mode: '', model_loaded: false
 })
 const llmConfig = reactive({
-  mode: 'auto' as 'auto' | 'builtin' | 'external',
+  mode: 'auto' as 'auto' | 'builtin' | 'external' | 'hybrid',
   localModelPath: '',
   localContextWindow: 4096,
   localThreads: 4,
@@ -430,6 +474,13 @@ const llmConfig = reactive({
   cloudTimeout: 30,
   temperature: 0.7,
   maxTokens: 256,
+})
+
+// 混合三路云端配置 (文本/图像/视频分别路由)
+const hybridConfig = reactive({
+  text:   { baseUrl: 'https://api.deepseek.com/v1', apiKey: '', model: 'deepseek-chat' },
+  vision: { baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', apiKey: '', model: 'qwen-vl-plus' },
+  video:  { baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', apiKey: '', model: 'qwen-vl-max' },
 })
 
 async function refreshLlmStatus() {
@@ -453,31 +504,49 @@ async function switchLlmBackend() {
   llmSwitching.value = true
   llmTestResult.value = ''
   try {
-    // 构造 backends 配置 (跟 LlmBackendFactory 格式一致)
-    const backends: Record<string, any> = {}
-    if (llmConfig.localModelPath) {
-      backends.llama_cpp = {
-        model_path: llmConfig.localModelPath,
-        context_window: llmConfig.localContextWindow,
-        threads: llmConfig.localThreads,
-        temperature: llmConfig.temperature,
-        max_tokens: llmConfig.maxTokens,
+    let body: any
+
+    if (llmConfig.mode === 'hybrid') {
+      // 三路云端路由
+      body = {
+        backend: 'hybrid',
+        backends: {
+          hybrid: {
+            text:   { base_url: hybridConfig.text.baseUrl, api_key: hybridConfig.text.apiKey, model: hybridConfig.text.model },
+            vision: { base_url: hybridConfig.vision.baseUrl, api_key: hybridConfig.vision.apiKey, model: hybridConfig.vision.model },
+            video:  { base_url: hybridConfig.video.baseUrl, api_key: hybridConfig.video.apiKey, model: hybridConfig.video.model },
+          }
+        }
       }
-    }
-    if (llmConfig.cloudBaseUrl) {
-      backends.http = {
-        base_url: llmConfig.cloudBaseUrl,
-        api_key: llmConfig.cloudApiKey,
-        model: llmConfig.cloudModel,
-        timeout_sec: llmConfig.cloudTimeout,
-        temperature: llmConfig.temperature,
-        max_tokens: llmConfig.maxTokens,
+    } else {
+      // 单 backend 模式
+      const backends: Record<string, any> = {}
+      if (llmConfig.localModelPath) {
+        backends.llama_cpp = {
+          model_path: llmConfig.localModelPath,
+          context_window: llmConfig.localContextWindow,
+          threads: llmConfig.localThreads,
+          temperature: llmConfig.temperature,
+          max_tokens: llmConfig.maxTokens,
+        }
       }
+      if (llmConfig.cloudBaseUrl) {
+        backends.http = {
+          base_url: llmConfig.cloudBaseUrl,
+          api_key: llmConfig.cloudApiKey,
+          model: llmConfig.cloudModel,
+          timeout_sec: llmConfig.cloudTimeout,
+          temperature: llmConfig.temperature,
+          max_tokens: llmConfig.maxTokens,
+        }
+      }
+      body = { backend: llmConfig.mode, backends }
     }
+
     const resp = await fetch('/api/v1/llm/switch', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ backend: llmConfig.mode, backends }),
+      body: JSON.stringify(body),
     })
     const data = await resp.json()
     if (data.code === 200) {
