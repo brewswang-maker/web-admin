@@ -65,6 +65,21 @@ export interface FaceAlarmEvent {
   snapshot_base64?: string
 }
 
+/** 通行记录类型（后端 FacePassRecord） */
+export interface FacePassRecord {
+  pass_type: 'whitelist' | 'visitor' | 'blacklist_hit' | 'unknown' | 'unknown_type'
+  timestamp: number
+  channel_id: number
+  device_id: string
+  person_id: string
+  name: string
+  group_type: string
+  similarity: number
+  liveness_score: number
+  is_live: boolean
+  description: string
+}
+
 export interface FaceDatabaseResponse<T> {
   code: number
   message: string
@@ -204,6 +219,16 @@ const faceApi = {
   getAlarms(params: { since?: number; limit?: number } = {}) {
     return http.get<FaceDatabaseResponse<{ alarms: FaceAlarmEvent[]; total: number }>>(
       '/face/database/alarms',
+      { params }
+    )
+  },
+
+  /**
+   * 获取通行记录
+   */
+  getPassRecords(params: { hours?: number; limit?: number } = {}) {
+    return http.get<FaceDatabaseResponse<{ pass_records: FacePassRecord[]; total: number }>>(
+      '/face/database/pass-records',
       { params }
     )
   },

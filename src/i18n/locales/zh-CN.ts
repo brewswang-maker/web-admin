@@ -727,6 +727,26 @@ const zhCN = {
       justNow: '刚刚',
       secondsAgo: '{n} 秒前',
       minutesAgo: '{n} 分钟前'
+    },
+    hours: '小时',
+    refresh: '刷新',
+    passRecords: {
+      title: '通行记录',
+      time: '通行时间',
+      type: '类型',
+      name: '姓名',
+      personId: '人员ID',
+      similarity: '相似度',
+      liveness: '活体',
+      channel: '通道',
+      description: '备注',
+      empty: '暂无通行记录',
+      loadFailed: '加载通行记录失败',
+      type_whitelist: '白名单',
+      type_visitor: '访客',
+      type_blacklist_hit: '黑名单比对',
+      type_unknown: '陌生人',
+      type_unknown_type: '未知'
     }
   }
 }

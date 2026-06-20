@@ -148,6 +148,7 @@ export type {
   FaceDatabaseStats,
   FaceMatchResult,
   FaceAlarmEvent,
+  FacePassRecord,
   FaceDatabaseResponse,
   PaginatedRecords
 } from './face'

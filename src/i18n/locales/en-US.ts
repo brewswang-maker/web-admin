@@ -730,6 +730,26 @@ const enUS: MessageSchema = {
       justNow: 'just now',
       secondsAgo: '{n}s ago',
       minutesAgo: '{n}m ago'
+    },
+    hours: 'h',
+    refresh: 'Refresh',
+    passRecords: {
+      title: 'Pass Records',
+      time: 'Time',
+      type: 'Type',
+      name: 'Name',
+      personId: 'Person ID',
+      similarity: 'Similarity',
+      liveness: 'Liveness',
+      channel: 'Channel',
+      description: 'Note',
+      empty: 'No pass records',
+      loadFailed: 'Failed to load pass records',
+      type_whitelist: 'Whitelist',
+      type_visitor: 'Visitor',
+      type_blacklist_hit: 'Blacklist Hit',
+      type_unknown: 'Unknown',
+      type_unknown_type: 'Unknown'
     }
   }
 }

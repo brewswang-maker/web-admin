@@ -109,7 +109,76 @@
     <!-- 事件流 -->
     <el-card class="event-card">
       <template #header>
-        <div class="event-card-header">
+        <el-tabs v-model="activeTab" class="event-tabs">
+          <el-tab-pane name="realtime">
+            <template #label>
+              <span class="tab-label">
+                <el-icon><VideoCamera /></el-icon>
+                {{ $t('faceRealtime.title') }}
+                <el-tag v-if="filteredEvents.length" type="info" size="small">
+                  {{ filteredEvents.length }}
+                </el-tag>
+              </span>
+            </template>
+          </el-tab-pane>
+          <el-tab-pane name="passrecords" lazy>
+            <template #label>
+              <span class="tab-label">
+                <el-icon><Histogram /></el-icon>
+                {{ $t('faceRealtime.passRecords.title') }}
+                <el-tag v-if="passRecords.length" type="success" size="small">
+                  {{ passRecords.length }}
+                </el-tag>
+              </span>
+            </template>
+            <!-- 通行记录查询栏 -->
+            <div class="pass-record-toolbar">
+              <el-select v-model="passRecordHours" style="width: 120px" @change="loadPassRecords">
+                <el-option :value="1" :label="`1 ${$t('faceRealtime.hours')}`" />
+                <el-option :value="6" :label="`6 ${$t('faceRealtime.hours')}`" />
+                <el-option :value="24" :label="`24 ${$t('faceRealtime.hours')}`" />
+                <el-option :value="72" :label="`72 ${$t('faceRealtime.hours')}`" />
+              </el-select>
+              <el-button :icon="Refresh" size="small" :loading="passLoading" @click="loadPassRecords">
+                {{ $t('faceRealtime.refresh') }}
+              </el-button>
+            </div>
+            <!-- 通行记录表格 -->
+            <el-table :data="passRecords" v-loading="passLoading" stripe border size="small" class="pass-record-table">
+              <el-table-column :label="$t('faceRealtime.passRecords.time')" prop="timestamp" width="160">
+                <template #default="{ row }">
+                  {{ new Date(row.timestamp).toLocaleString('zh-CN', { hour12: false }) }}
+                </template>
+              </el-table-column>
+              <el-table-column :label="$t('faceRealtime.passRecords.type')" prop="pass_type" width="120">
+                <template #default="{ row }">
+                  <el-tag :type="passTypeTag(row.pass_type)" size="small">
+                    {{ $t(`faceRealtime.passRecords.type_${row.pass_type}`) }}
+                  </el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column :label="$t('faceRealtime.passRecords.name')" prop="name" min-width="100" show-overflow-tooltip />
+              <el-table-column :label="$t('faceRealtime.passRecords.personId')" prop="person_id" width="140" show-overflow-tooltip />
+              <el-table-column :label="$t('faceRealtime.passRecords.similarity')" prop="similarity" width="100">
+                <template #default="{ row }">
+                  <span :class="similarityClass(row.similarity)">{{ (row.similarity * 100).toFixed(1) }}%</span>
+                </template>
+              </el-table-column>
+              <el-table-column :label="$t('faceRealtime.passRecords.liveness')" prop="is_live" width="90">
+                <template #default="{ row }">
+                  <el-tag v-if="row.liveness_score > 0" :type="row.is_live ? 'success' : 'danger'" size="small">
+                    {{ row.is_live ? $t('faceRealtime.liveness.live') : $t('faceRealtime.liveness.fake') }}
+                  </el-tag>
+                  <span v-else class="text-muted">—</span>
+                </template>
+              </el-table-column>
+              <el-table-column :label="$t('faceRealtime.passRecords.channel')" prop="device_id" width="120" show-overflow-tooltip />
+              <el-table-column :label="$t('faceRealtime.passRecords.description')" prop="description" min-width="120" show-overflow-tooltip />
+            </el-table>
+            <el-empty v-if="!passLoading && !passRecords.length" :description="$t('faceRealtime.passRecords.empty')" :image-size="80" />
+          </el-tab-pane>
+        </el-tabs>
+        <div v-if="activeTab === 'realtime'" class="event-card-header">
           <span class="card-title">
             <el-icon><VideoCamera /></el-icon>
             {{ $t('faceRealtime.title') }}
@@ -224,10 +293,11 @@ import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import {
   Delete, Loading, User, Bell, VideoCamera, Clock, Aim, Histogram, Star,
-  WarningFilled, CircleCheckFilled, QuestionFilled, Picture, Connection, CircleClose
+  WarningFilled, CircleCheckFilled, QuestionFilled, Picture, Connection, CircleClose, Refresh
 } from '@element-plus/icons-vue'
 import { useWebSocket } from '@/composables/useWebSocket'
 import { useI18n } from 'vue-i18n'
+import { faceApi, FacePassRecord } from '@/api'
 
 const { t } = useI18n()
 
@@ -264,6 +334,38 @@ const autoScroll = ref(true)
 const windowMinutes = ref(30)
 const scrollContainer = ref<HTMLElement | null>(null)
 const channelNameCache = new Map<string | number, string>()
+
+// ── 通行记录状态 ──
+const activeTab = ref<'realtime' | 'passrecords'>('realtime')
+const passRecords = ref<FacePassRecord[]>([])
+const passLoading = ref(false)
+const passRecordHours = ref(24)
+
+async function loadPassRecords() {
+  passLoading.value = true
+  try {
+    const res = await faceApi.getPassRecords({ hours: passRecordHours.value, limit: 500 })
+    if (res.data.code === 0) {
+      passRecords.value = res.data.data?.pass_records ?? []
+    } else {
+      ElMessage.error(res.data.message || t('faceRealtime.passRecords.loadFailed'))
+    }
+  } catch (e) {
+    ElMessage.error(t('faceRealtime.passRecords.loadFailed'))
+  } finally {
+    passLoading.value = false
+  }
+}
+
+function passTypeTag(type: string): 'success' | 'warning' | 'danger' | 'info' {
+  switch (type) {
+    case 'whitelist':    return 'success'
+    case 'visitor':      return 'warning'
+    case 'blacklist_hit': return 'danger'
+    case 'unknown':      return 'info'
+    default:             return 'info'
+  }
+}
 
 let alarmAudio: HTMLAudioElement | null = null
 let audioUnlocked = false
@@ -454,6 +556,13 @@ function clearList() {
   ElMessage.success(t('faceRealtime.cleared'))
 }
 
+// ── 通行记录 tab 懒加载 ──
+watch(activeTab, (tab) => {
+  if (tab === 'passrecords' && !passRecords.value.length) {
+    loadPassRecords()
+  }
+})
+
 // ── 自动滚动 ──
 watch(filteredEvents, async () => {
   if (!autoScroll.value) return
@@ -626,6 +735,16 @@ defineOptions({ name: 'FaceRealtimeView' })
 .val-good  { color: #67C23A; }
 .val-mid   { color: #E6A23C; }
 .val-bad   { color: #F56C6C; }
+
+/* ── 通行记录 ── */
+.event-tabs :deep(.el-tabs__header) { margin-bottom: 12px; }
+.tab-label { display: flex; align-items: center; gap: 6px; }
+.pass-record-toolbar {
+  display: flex; align-items: center; gap: 12px;
+  margin-bottom: 12px;
+}
+.pass-record-table { max-height: calc(100vh - 440px); overflow-y: auto; }
+.text-muted { color: #c0c4cc; }
 
 /* ── 进入动画 ── */
 .event-fade-enter-active { transition: all 0.3s ease-out; }
