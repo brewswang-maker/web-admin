@@ -1150,7 +1150,8 @@ function openEditor(rule: LinkageRule | null) {
       config: {
         types: src.algorithm_ids?.length ? src.algorithm_ids : (src.event_types || []),
         minSeverity: src.min_severity ?? 3,
-        minConfidence: Math.round((src.min_confidence ?? 0.5) * 100),
+        // 后端 GET 时已将小数乘以 100 转成百分比,这里直接 round 即可,不要重复 * 100
+        minConfidence: Math.round(src.min_confidence ?? 50),
       },
     }
     form.conditions.eventSource = {

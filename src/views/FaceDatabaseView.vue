@@ -304,6 +304,7 @@ import { ref, reactive, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { User, Warning, CircleCheck, UserFilled, Search, Plus, Upload, Download, Delete } from '@element-plus/icons-vue'
 import faceApi, { FaceRecord, FaceDatabaseStats } from '@/api/face'
+import { evaluateImageQuality, evaluateImageQualityFromDataUrl } from '@/utils/imageQuality'
 
 const loading = ref(false)
 const cleaning = ref(false)
@@ -450,6 +451,35 @@ async function handleSubmit() {
     if (currentImageFile.value) {
       submitData.image_data = formData.imagePreview
     }
+
+    // 计算并附带图片质量分（对齐后端 checkQuality 检查项）
+    // 后端默认值 quality_score=0.0 会触发 low quality 拦截, 必须显式传 >= 0.3
+    try {
+      let quality
+      if (currentImageFile.value) {
+        quality = await evaluateImageQuality(currentImageFile.value)
+      } else if (submitData.image_data) {
+        quality = await evaluateImageQualityFromDataUrl(submitData.image_data)
+      }
+      if (quality) {
+        submitData.quality_score = quality.quality_score
+        submitData.clarity = quality.clarity
+        submitData.brightness = quality.brightness
+        submitData.occlusion = quality.occlusion
+        submitData.pose_angle = quality.pose_angle
+        if (quality.quality_score < 0.3) {
+          ElMessage.warning(`图片质量较低 (${(quality.quality_score * 100).toFixed(0)}%), 仍会提交但可能被后端拒收`)
+        }
+      }
+    } catch (qErr) {
+      console.warn('图片质量评估失败, 使用保守默认分:', qErr)
+      submitData.quality_score = 0.5
+      submitData.clarity = 0.95
+      submitData.occlusion = 0.05
+      submitData.pose_angle = 5.0
+      submitData.brightness = 0.5
+    }
+
     const res = editingRecord.value
       ? await faceApi.updateRecord(editingRecord.value.person_id, submitData)
       : await faceApi.addRecord(submitData)
