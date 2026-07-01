@@ -556,39 +556,43 @@ const agentActivity = ref<{
 } | null>(null)
 const agentActivityFailed = ref(false)
 
-const agentStats = computed(() => [
-  {
-    label: '感知Agent',
-    desc: '视频/音频/传感器',
-    value: agentActivity.value.perceptionCalls.toLocaleString(),
-    unit: '次/天',
-    color: '#3B82F6',
-  },
-  {
-    label: '研判Agent',
-    desc: '事件分析/推理',
-    value: agentActivity.value.analysisCalls.toLocaleString(),
-    unit: '次/天',
-    color: '#7C3AED',
-  },
-  {
-    label: '决策Agent',
-    desc: '策略生成/调度',
-    value: agentActivity.value.decisionCalls.toLocaleString(),
-    unit: '次/天',
-    color: '#F59E0B',
-  },
-  {
-    label: '专家唤醒',
-    desc: '领域专家调用',
-    value: agentActivity.value.expertInvokes.toString(),
-    unit: '次',
-    color: '#10B981',
-  },
-])
+const agentStats = computed(() => {
+  const a = agentActivity.value
+  if (!a) return []
+  return [
+    {
+      label: '感知Agent',
+      desc: '视频/音频/传感器',
+      value: a.perceptionCalls.toLocaleString(),
+      unit: '次/天',
+      color: '#3B82F6',
+    },
+    {
+      label: '研判Agent',
+      desc: '事件分析/推理',
+      value: a.analysisCalls.toLocaleString(),
+      unit: '次/天',
+      color: '#7C3AED',
+    },
+    {
+      label: '决策Agent',
+      desc: '策略生成/调度',
+      value: a.decisionCalls.toLocaleString(),
+      unit: '次/天',
+      color: '#F59E0B',
+    },
+    {
+      label: '专家唤醒',
+      desc: '领域专家调用',
+      value: a.expertInvokes.toString(),
+      unit: '次',
+      color: '#10B981',
+    },
+  ]
+})
 
 const confidenceColor = computed(() => {
-  const c = agentActivity.value.avgConfidence ?? 0
+  const c = agentActivity.value?.avgConfidence ?? 0
   return c >= 0.9 ? '#10B981' : c >= 0.8 ? '#F59E0B' : '#EF4444'
 })
 

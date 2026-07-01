@@ -287,7 +287,14 @@
 <script setup lang="ts">
 /**
  * 人脸识别实时叠加视图
- * 订阅 /ws/alarms,过滤 face_* 类型,实时渲染人脸告警
+ * 订阅 /ws,过滤 face_* 类型,实时渲染人脸告警
+ *
+ * [v6.2 2026-06-21 修复]
+ *  1. WebSocket 路径修正 /ws/alarms → /ws (与 DrogonWsAdapter 实际注册一致)
+ *  2. onMounted 时拉一次 /api/v1/alarms?count=20 加载历史 face_* 事件
+ *     (用户 SQL/手工录入的数据不会触发 pushAlarm 走 WS 链路,
+ *      但会落到 alarm_events 表,需要主动拉取才能在"实时"页看到)
+ *  3. WS 收流时按 alarm_type.startsWith('face_') 过滤,防非人脸告警噪音
  */
 import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { ElMessage } from 'element-plus'
@@ -297,7 +304,7 @@ import {
 } from '@element-plus/icons-vue'
 import { useWebSocket } from '@/composables/useWebSocket'
 import { useI18n } from 'vue-i18n'
-import { faceApi, FacePassRecord } from '@/api'
+import { faceApi, FacePassRecord, alarmApi } from '@/api'
 
 const { t } = useI18n()
 
@@ -322,9 +329,16 @@ interface FaceRealtimeEvent {
 }
 
 // ── WebSocket ──
-const { connected, subscribe } = useWebSocket('/ws/alarms')
+// [v6.2 2026-06-21 修复] 后端 DrogonWsAdapter 只注册 /ws 一条路径
+// (DrogonWsAdapter.cpp:70 WS_PATH_ADD("/ws")), 主题分发用 channel 名
+// (WebSocketServer.cpp:373 publish("alarms", msg)). 原代码 useWebSocket('/ws/alarms')
+// 永远 404 → connected=false, 即便真实 detector 推送 face 事件前端也收不到.
+// 对标 AlarmsView.vue:611 的正确写法.
+const { connected, subscribe } = useWebSocket('/ws')
 let unsubAlarm: (() => void) | null = null
 let unsubAlarmNew: (() => void) | null = null
+let unsubWildcard: (() => void) | null = null
+let recentLoadAbort: AbortController | null = null
 
 // ── 状态 ──
 const events = ref<FaceRealtimeEvent[]>([])
@@ -469,6 +483,14 @@ function buildSnapshotUrl(b64: string, format: string): string {
   return `data:${mime};base64,${fixed}`
 }
 
+// [v6.2 2026-06-21] 从 /api/v1/alarms 查到的快照是 URL, 需要转成绝对路径供 el-image 用
+function normalizeSnapshotUrl(url: string): string {
+  if (!url) return ''
+  if (url.startsWith('data:') || url.startsWith('http://') || url.startsWith('https://')) return url
+  if (url.startsWith('/')) return window.location.origin + url
+  return window.location.origin + '/' + url
+}
+
 function buildLivenessBadge(isLive: boolean, score: number) {
   if (score <= 0) return null
   return isLive
@@ -513,7 +535,11 @@ async function handleAlarmEvent(raw: any) {
   const livenessScore = Number(meta.liveness_score ?? meta.livenessScore ?? 0)
   const isLive = meta.is_live !== undefined ? !!meta.is_live : (meta.isLive !== undefined ? !!meta.isLive : false)
   const qualityScore = Number(meta.quality_score ?? meta.qualityScore ?? 0)
-  const channelId = raw.channel_id ?? raw.channelId ?? meta.channel_id ?? 0
+  // channel_id 优先取数字, 缺失时降级 device_id (GB28181 20位 ID), 再用 0
+  let channelId: number | string = raw.channel_id ?? raw.channelId ?? meta.channel_id ?? 0
+  if ((!channelId || channelId === '0' || channelId === 0) && raw.device_id) {
+    channelId = String(raw.device_id)
+  }
   const snapshotBase64 = meta.snapshot_base64 ?? meta.snapshotBase64 ?? raw.snapshot_base64 ?? ''
   const snapshotFormat = meta.snapshot_format ?? meta.snapshotFormat ?? 'jpeg'
 
@@ -523,6 +549,9 @@ async function handleAlarmEvent(raw: any) {
   if (group === 'blacklist' && isLive) playAlert()
 
   // 3. 构造 UI 事件
+  // [v6.2 2026-06-21] snapshot 优先用 base64, 其次用 /api/v1/alarms 返回的 URL (转绝对路径)
+  const snapshotDataUrl = buildSnapshotUrl(snapshotBase64, snapshotFormat)
+    || normalizeSnapshotUrl(raw.snapshot_url ?? raw.snapshotUrl ?? meta.snapshot_url ?? '')
   const evt: FaceRealtimeEvent = {
     uid: `evt-${Date.now()}-${++eventCounter}`,
     alarmId: raw.id ?? raw.alarm_id ?? '',
@@ -538,12 +567,46 @@ async function handleAlarmEvent(raw: any) {
     channelName,
     snapshotBase64,
     snapshotFormat,
-    snapshotDataUrl: buildSnapshotUrl(snapshotBase64, snapshotFormat),
+    snapshotDataUrl,
     livenessBadge: buildLivenessBadge(isLive, livenessScore),
   }
 
   // 4. 压入头部,保留最近 200 条
   events.value = [evt, ...events.value].slice(0, 200)
+}
+
+// [v6.2 2026-06-21] 历史人脸事件加载
+// 原因: SQL/手工录入或后端离线重放场景下, 事件只入 alarm_events DB, 不走 pushAlarm
+//      → WS 收不到。需要主动从 /api/v1/alarms 拉取, 按 alarm_type.startsWith('face_') 过滤
+// 注意: 该函数只负责"首次加载" + 后续周期拉取增量 (since = lastTimestamp - 1min)
+// 周期拉取可以补齐"后端离线期间" 遗漏的事件, 同时不与 WS 重复 (前端有去重: alarmId 唯一)
+let lastSeenAlarmId: string | null = null
+async function loadRecentFaceAlarms() {
+  if (recentLoadAbort) recentLoadAbort.abort()
+  recentLoadAbort = new AbortController()
+  try {
+    const res = await alarmApi.getList({ count: 20, pageSize: 20, page: 1 } as any)
+    const payload = (res as any).data?.data ?? (res as any).data ?? res
+    const items: any[] = payload?.items ?? payload?.alarms ?? []
+    if (!Array.isArray(items) || items.length === 0) return
+    // 过滤 face_*, 同时按时间倒序
+    const faceItems = items
+      .filter((a) => String(a?.alarm_type || '').toLowerCase().startsWith('face_'))
+      .sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0))
+    if (faceItems.length === 0) return
+    // 倒序压入, 保持 head=最新. 跳过已经在 events 里出现过的 alarmId.
+    for (let i = faceItems.length - 1; i >= 0; i--) {
+      const it = faceItems[i]
+      const id = String(it.alarm_id ?? it.id ?? '')
+      if (id && events.value.some((e) => String(e.alarmId) === id)) continue
+      await handleAlarmEvent(it)
+    }
+    if (!lastSeenAlarmId) lastSeenAlarmId = String(faceItems[0].alarm_id ?? faceItems[0].id ?? '')
+  } catch (e: any) {
+    if (e?.name !== 'CanceledError' && e?.code !== 'ERR_CANCELED') {
+      console.warn('[FaceRealtime] loadRecentFaceAlarms failed:', e?.message || e)
+    }
+  }
 }
 
 // ── 用户交互 ──
@@ -573,17 +636,24 @@ watch(filteredEvents, async () => {
 })
 
 // ── 生命周期 ──
+let recentLoadTimer: ReturnType<typeof setInterval> | null = null
 onMounted(() => {
   // 监听 alarm 消息
   unsubAlarm = subscribe('alarm', handleAlarmEvent)
   // 兼容 alarm.new 事件类型
   unsubAlarmNew = subscribe('alarm.new', handleAlarmEvent)
   // 也订阅 wildcard (某些推送会把整个消息直接当 alarm)
-  subscribe('*', (msg: any) => {
+  // [v6.2 2026-06-21 修复] 原代码遗漏了 subscribe 返回值的保存, 导致多次进入页面会重复订阅
+  unsubWildcard = subscribe('*', (msg: any) => {
     if (msg && (msg.alarm || msg.data)) {
       handleAlarmEvent(msg.alarm ?? msg.data)
     }
   })
+
+  // [v6.2 2026-06-21] 补齐历史 face 事件, 避免页面打开一片空白
+  loadRecentFaceAlarms()
+  // 周期拉取补齐后端离线期间遗漏事件 (与 WS 推送去重)
+  recentLoadTimer = setInterval(loadRecentFaceAlarms, 30_000)
 
   // 解锁音频
   const unlockHandler = () => {
@@ -596,6 +666,13 @@ onMounted(() => {
 onUnmounted(() => {
   unsubAlarm?.()
   unsubAlarmNew?.()
+  unsubWildcard?.()  // [v6.2 2026-06-21] 补全 cleanup
+  if (recentLoadTimer) {
+    clearInterval(recentLoadTimer)
+    recentLoadTimer = null
+  }
+  recentLoadAbort?.abort()
+  recentLoadAbort = null
 })
 
 defineOptions({ name: 'FaceRealtimeView' })

@@ -12,11 +12,16 @@ export interface PTZParams {
   deviceId: string
   channelId?: string
   direction?: 'up' | 'down' | 'left' | 'right' | 'home' | 'zoom_in' | 'zoom_out' | 'goto_preset'
+    | 'cruise_start' | 'cruise_stop' | 'track_start' | 'track_stop' | 'set_preset' | 'clear_preset'
   speed?: number
   preset?: number
   pan?: number
   tilt?: number
   zoom?: number
+  /** 巡航路径编号 */
+  cruisePath?: number
+  /** 轨迹编号 */
+  trackId?: number
 }
 
 /** PTZ控制(持续移动) */
@@ -47,4 +52,62 @@ export function setPreset(deviceId: string, params: { name: string; channelId?: 
 /** 删除预置位 */
 export function deletePreset(deviceId: string, presetId: number) {
   return ptzHttp.delete<ApiResponse<void>>(`/${deviceId}/presets/${presetId}`)
+}
+
+/** 启动巡航路径 */
+export function startCruise(deviceId: string, params: { channelId?: string; cruisePath: number; speed?: number }) {
+  return ptzHttp.post<ApiResponse<void>>('/control', {
+    deviceId,
+    channelId: params.channelId,
+    direction: 'cruise_start',
+    cruisePath: params.cruisePath,
+    speed: params.speed || 128,
+  })
+}
+
+/** 停止巡航 */
+export function stopCruise(deviceId: string, channelId?: string) {
+  return ptzHttp.post<ApiResponse<void>>('/control', {
+    deviceId,
+    channelId,
+    direction: 'cruise_stop',
+  })
+}
+
+/** 启动轨迹跟踪 */
+export function startTrack(deviceId: string, params: { channelId?: string; trackId: number }) {
+  return ptzHttp.post<ApiResponse<void>>('/control', {
+    deviceId,
+    channelId: params.channelId,
+    direction: 'track_start',
+    trackId: params.trackId,
+  })
+}
+
+/** 停止轨迹跟踪 */
+export function stopTrack(deviceId: string, channelId?: string) {
+  return ptzHttp.post<ApiResponse<void>>('/control', {
+    deviceId,
+    channelId,
+    direction: 'track_stop',
+  })
+}
+
+/** 3D 定位 (点击画面放大特定区域) */
+export function ptz3DPosition(deviceId: string, params: {
+  channelId?: string
+  /** 归一化坐标 0.0~1.0 */
+  centerPan: number
+  centerTilt: number
+  /** 放大倍数 1~8 */
+  zoomLevel: number
+}) {
+  return ptzHttp.post<ApiResponse<void>>('/control', {
+    deviceId,
+    channelId: params.channelId,
+    direction: 'goto_preset',
+    pan: params.centerPan,
+    tilt: params.centerTilt,
+    zoom: params.zoomLevel,
+  })
 }

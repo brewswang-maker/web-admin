@@ -14,7 +14,7 @@
       </el-col>
       <el-col :span="6">
         <el-card shadow="hover">
-          <el-statistic title="IRM Throughput (FPS)" :value="irmStats.throughput_fps.toFixed(1)" />
+          <el-statistic title="IRM Throughput (FPS)" :value="irmStats.throughput_fps" :precision="1" />
         </el-card>
       </el-col>
       <el-col :span="6">

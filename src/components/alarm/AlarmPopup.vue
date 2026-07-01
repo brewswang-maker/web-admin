@@ -532,8 +532,10 @@ function onKeydown(e: KeyboardEvent) {
 // 监听录像完成事件，更新当前告警的 videoClipUrl
 function onAlarmClipUpdated(e: Event) {
   const detail = (e as CustomEvent).detail
-  if (currentAlarm.value?.id === detail.alarmId && detail.videoClipUrl) {
-    currentAlarm.value.videoClipUrl = detail.videoClipUrl
+  // [v6.2 2026-06-21] TS strictNullChecks: currentAlarm 可能为 null, 加非空守卫
+  const cur = currentAlarm.value
+  if (cur && cur.id === detail.alarmId && detail.videoClipUrl) {
+    cur.videoClipUrl = detail.videoClipUrl
     activeTab.value = 'playback'
     stopRecordingPoll()
   }

@@ -128,7 +128,7 @@ watch(() => props.editPlan, (plan) => {
 
 onMounted(async () => {
   try {
-    const res = await linkageApi.getRules({ page: 1, page_size: 200 })
+    const res = await linkageApi.getRules({ page: 1, pageSize: 200 })
     allRules.value = (res.data as any)?.items || []
   } catch { /* ignore */ }
 })

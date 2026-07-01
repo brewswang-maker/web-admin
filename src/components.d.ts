@@ -96,6 +96,7 @@ declare module 'vue' {
     Grid: typeof import('@element-plus/icons-vue')['Grid']
     ImageUpload: typeof import('./components/ImageUpload.vue')['default']
     LazyChart: typeof import('./components/LazyChart.vue')['default']
+    LinkageFlowDiagram: typeof import('./components/LinkageFlowDiagram.vue')['default']
     Loading: typeof import('@element-plus/icons-vue')['Loading']
     Location: typeof import('@element-plus/icons-vue')['Location']
     Microphone: typeof import('@element-plus/icons-vue')['Microphone']

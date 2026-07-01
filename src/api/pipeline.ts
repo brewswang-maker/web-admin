@@ -8,6 +8,22 @@
 import { pipelineHttp } from './http'
 import type { ApiResponse } from '@/types/common'
 
+// [BUG 4 修复] Props 格式统一：使用数组格式（与 PipelineEditorView 一致）
+//   原因：前端 UI 需要每个 prop 的 label/type/min/max/options 等元数据渲染表单控件，
+//         对象格式 Record<string, any> 无法携带这些元数据。
+//         后端 buildNodeConfigStatic() 已兼容数组格式。
+export interface PropItem {
+  key: string
+  label: string
+  type: 'text' | 'number' | 'slider' | 'select' | 'switch'
+  value: any
+  min?: number
+  max?: number
+  step?: number
+  options?: string[]
+  multiline?: boolean
+}
+
 export interface PipelineNode {
   id: string
   type: string
@@ -17,7 +33,7 @@ export interface PipelineNode {
   y: number
   inputs: string[]
   outputs: string[]
-  props: Record<string, any>
+  props: PropItem[]
   hasROI?: boolean
   hasSchedule?: boolean
   hasActions?: boolean

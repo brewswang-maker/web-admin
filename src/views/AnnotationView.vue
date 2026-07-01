@@ -217,7 +217,8 @@ async function loadProjects() {
   projectsLoading.value = true
   try {
     const { data } = await annotationApi.listProjects()
-    projects.value = data?.items ?? []
+    const payload = (data?.data ?? data) as any
+    projects.value = payload?.items ?? []
     if (projects.value.length > 0 && activeProjectId.value === null) {
       activeProjectId.value = projects.value[0].id
     }
@@ -239,7 +240,8 @@ async function loadSamples() {
       labelFilter: labelFilter.value,
     })
     // boxes_json string -> boxes array
-    samples.value = (data?.items ?? []).map((s: any) => {
+    const samplePayload = (data?.data ?? data) as any
+    samples.value = (samplePayload?.items ?? []).map((s: any) => {
       let boxes: BoundingBox[] = []
       if (typeof s.boxes === 'string' && s.boxes) {
         try { boxes = JSON.parse(s.boxes) } catch { boxes = [] }
@@ -273,7 +275,8 @@ async function createProject() {
     newProjectDescription.value = ''
     newProjectCategories.value = ''
     await loadProjects()
-    if (data?.id) activeProjectId.value = data.id
+    const createdId = (data?.data ?? data) as any
+    if (createdId?.id) activeProjectId.value = createdId.id
   } catch (e: any) {
     ElMessage.error(`创建失败: ${e?.message ?? e}`)
   } finally {

@@ -30,6 +30,30 @@
       </el-col>
     </el-row>
 
+    <!-- 推理需求状态卡片 (需求驱动推理优化) -->
+    <el-row :gutter="16" style="margin-bottom:16px" v-if="demandStatus">
+      <el-col :span="8">
+        <el-card shadow="hover" class="stat-card">
+          <div class="stat-value" style="color:#52c41a">{{ demandStatus.active_count }}</div>
+          <div class="stat-label">推理活跃通道</div>
+        </el-card>
+      </el-col>
+      <el-col :span="8">
+        <el-card shadow="hover" class="stat-card">
+          <div class="stat-value" style="color:#8c8c8c">{{ demandStatus.idle_count }}</div>
+          <div class="stat-label">推理休眠通道 (资源节省)</div>
+        </el-card>
+      </el-col>
+      <el-col :span="8">
+        <el-card shadow="hover" class="stat-card">
+          <div class="stat-value" :style="{ color: demandStatus.resource_saving === 'on' ? '#52c41a' : '#faad14' }">
+            {{ demandStatus.resource_saving === 'on' ? '已启用' : '无休眠' }}
+          </div>
+          <div class="stat-label">需求驱动推理</div>
+        </el-card>
+      </el-col>
+    </el-row>
+
     <!-- 活跃流列表 -->
     <el-card>
       <template #header>
@@ -169,12 +193,19 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted, onBeforeUnmount } from 'vue'
 import { ElMessage } from 'element-plus'
 import { http, streamHttp } from '@/api/http'
 import type { ApiResponse } from '@/types/common'
+import { getInferenceDemandStatus, type DemandStatusResponse } from '@/api/inference'
+import Hls from 'hls.js'
+import flvjs from 'flv.js'
 
 // ===== 类型 =====
+
+// 推理需求状态
+const demandStatus = ref<DemandStatusResponse | null>(null)
+
 interface StreamInfo {
   streamId: string
   app: string
@@ -287,6 +318,8 @@ const playingStream = ref<StreamInfo | null>(null)
 const playerMode = ref<'flv' | 'webrtc'>('webrtc')
 const playerLoading = ref(false)
 let peerConnection: RTCPeerConnection | null = null
+let flvPlayer: flvjs.Player | null = null
+let hlsPlayer: Hls | null = null
 
 async function playStream(row: StreamInfo) {
   playingStream.value = row
@@ -329,24 +362,118 @@ async function playStream(row: StreamInfo) {
 }
 
 // HTTP-FLV 播放（降级备用，延迟 150-350ms）
+// [一次性设计修正 2026-06-21] 必须用 flv.js MSE 解码，浏览器原生 video 不支持 .flv 流封装
+//   之前直接 video.src=flvUrl 会导致 'DEMUXER_ERROR' → srcObject=null 黑屏循环
+//   对标海康/大华：DSS 客户端同样使用 flv.js (MSE) 而非 video.src
 function startFlvPlay(row: StreamInfo) {
   if (!videoRef.value) return
   stopWebRTC()
+  stopFlv()  // [Fix] 清理旧的 flv 实例，避免内存泄漏
   playerLoading.value = true
   playerMode.value = 'flv'
 
-  // ZLM HTTP-FLV 地址
+  // ZLM HTTP-FLV 地址 — 通过 Vite 代理 /rtp → http://127.0.0.1:9080/rtp
   const flvUrl = `/rtp/${row.stream}.live.flv`
 
   const video = videoRef.value
   video.srcObject = null
-  video.src = flvUrl
-  video.onloadeddata = () => { playerLoading.value = false }
-  video.onerror = () => {
-    playerLoading.value = false
-    ElMessage.warning('HTTP-FLV 播放失败，请尝试切换到 WebRTC')
-  }
+  video.removeAttribute('src')
   video.load()
+
+  if (!flvjs.isSupported()) {
+    // 浏览器不支持 flv.js (老 Safari) — 退回 HLS
+    return startHlsPlay(row)
+  }
+
+  const player = flvjs.createPlayer({
+    type: 'flv', url: flvUrl, isLive: true,
+    hasAudio: false, hasVideo: true,
+  }, {
+    enableStashBuffer: false,
+    stashInitialSize: 128,
+    autoCleanupSourceBuffer: false,
+    lazyLoad: false,
+    liveBufferLatencyChasing: true,
+    liveSyncDurationCount: 1,
+    liveMaxLatencyDurationCount: 1.5,
+  } as any)
+
+  player.attachMediaElement(video)
+  player.load()
+  const playPromise = player.play()
+  if (playPromise && typeof playPromise.catch === 'function') {
+    playPromise.catch(() => {})
+  }
+
+  player.on(flvjs.Events.LOADING_COMPLETE, () => {
+    playerLoading.value = false
+  })
+
+  player.on(flvjs.Events.ERROR, (errorType: any, errorDetail: any) => {
+    console.error('[StreamMgmt] flv.js ERROR:', errorType, errorDetail)
+    playerLoading.value = false
+    try { player.destroy() } catch {}
+    // FLV 失败 → 自动回退 HLS
+    ElMessage.warning('HTTP-FLV 播放失败，已切换到 HLS')
+    startHlsPlay(row)
+  })
+
+  flvPlayer = player
+}
+
+// HLS fallback (H.265 兼容)
+function startHlsPlay(row: StreamInfo) {
+  if (!videoRef.value) return
+  stopWebRTC()
+  stopFlv()
+  stopHls()
+  playerLoading.value = true
+  const video = videoRef.value
+  const hlsUrl = `/rtp/${row.stream}.live.m3u8`
+  if (Hls.isSupported()) {
+    hlsPlayer = new Hls({
+      enableWorker: true,
+      lowLatencyMode: true,
+      liveSyncDurationCount: 1,
+      liveMaxLatencyDurationCount: 2,
+      liveDurationInfinity: true,
+    })
+    hlsPlayer.loadSource(hlsUrl)
+    hlsPlayer.attachMedia(video)
+    hlsPlayer.on(Hls.Events.MANIFEST_PARSED, () => {
+      video.play().catch(() => {})
+      playerLoading.value = false
+    })
+    hlsPlayer.on(Hls.Events.ERROR, (_e, data) => {
+      if (data.fatal) {
+        if (data.type === Hls.ErrorTypes.NETWORK_ERROR) hlsPlayer?.startLoad()
+        else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) hlsPlayer?.recoverMediaError()
+      }
+    })
+  } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+    video.src = hlsUrl
+    video.play().catch(() => {})
+    video.onloadeddata = () => { playerLoading.value = false }
+  }
+}
+
+function stopFlv() {
+  if (flvPlayer) {
+    try { flvPlayer.destroy() } catch {}
+    flvPlayer = null
+  }
+  if (videoRef.value) {
+    videoRef.value.pause()
+    videoRef.value.removeAttribute('src')
+    videoRef.value.load()
+  }
+}
+
+function stopHls() {
+  if (hlsPlayer) {
+    try { hlsPlayer.destroy() } catch {}
+    hlsPlayer = null
+  }
 }
 
 // WebRTC 播放（超低延迟，默认首选）
@@ -399,12 +526,15 @@ function switchToFlv() {
   if (!playingStream.value) return
   playerMode.value = 'flv'
   stopWebRTC()
+  stopFlv()
   startFlvPlay(playingStream.value)
 }
 
 function switchToWebRTC() {
   if (!playingStream.value) return
   playerMode.value = 'webrtc'
+  stopFlv()
+  stopHls()
   if (videoRef.value) {
     videoRef.value.src = ''
     videoRef.value.load()
@@ -414,6 +544,8 @@ function switchToWebRTC() {
 
 function stopPlayer() {
   stopWebRTC()
+  stopFlv()
+  stopHls()
   if (videoRef.value) {
     videoRef.value.src = ''
     videoRef.value.load()
@@ -471,11 +603,23 @@ function formatTime(ts: string): string {
 onMounted(() => {
   fetchStreams()
   fetchZlmStatus()
+  fetchDemandStatus()
 })
 
-onUnmounted(() => {
+onBeforeUnmount(() => {
   stopPlayer()
 })
+
+async function fetchDemandStatus() {
+  try {
+    const res = await getInferenceDemandStatus()
+    if (res.data?.code === 0) {
+      demandStatus.value = res.data.data
+    }
+  } catch {
+    // 静默失败: 推理状态面板是辅助信息
+  }
+}
 </script>
 
 <style scoped>

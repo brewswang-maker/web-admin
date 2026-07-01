@@ -107,9 +107,9 @@
               <el-tab-pane :label="$t('detectionZone', '检测区域')" name="region">
                 <RoiPolygonEditor
                   v-if="selected"
-                  :rois="regions"
+                  :model-value="regions as any"
                   :device-id="String(selected.channelId)"
-                  @update:rois="onRegionsChange"
+                  @update:model-value="onRegionsChange"
                 />
               </el-tab-pane>
               <el-tab-pane :label="$t('tripwire', '绊线')" name="tripwire">
@@ -298,7 +298,7 @@ async function loadData() {
     // 解析推理调度通道（建立 channel_id → ScheduledChannel 映射）
     const sm = new Map<string, ScheduledChannel>()
     if (inferRes.status === 'fulfilled') {
-      const raw = inferRes.value?.data
+      const raw = inferRes.value?.data as any
       const list: ScheduledChannel[] = raw?.data?.channels ?? raw?.channels ?? []
       for (const sc of list) {
         sm.set(sc.channel_id, sc)
@@ -309,16 +309,16 @@ async function loadData() {
     // 解析通道列表
     const channelList: ChannelItem[] = []
     if (chRes.status === 'fulfilled') {
-      const raw = chRes.value?.data
-      const items = raw?.data?.items ?? raw?.data ?? raw?.items ?? []
+      const raw = chRes.value?.data as any
+      const items: any[] = raw?.data?.items ?? raw?.data ?? raw?.items ?? []
       for (const ch of items) {
-        const id = ch.channel_id ?? ch.channelId ?? ch.id ?? ''
+        const id = String(ch.channel_id ?? ch.channelId ?? ch.id ?? '')
         const scheduled = sm.get(id)
         channelList.push({
           channelId: id,
           name: ch.channel_name ?? ch.name ?? ch.channelName ?? id,
-          deviceId: ch.device_id ?? ch.deviceId ?? '',
-          parentDeviceId: ch.parent_device_id ?? ch.parentDeviceId ?? '',
+          deviceId: String(ch.device_id ?? ch.deviceId ?? ''),
+          parentDeviceId: String(ch.parent_device_id ?? ch.parentDeviceId ?? ''),
           online: ch.online ?? true,
           algoPlugin: scheduled?.algo_plugin ?? '',
           inferenceEnabled: scheduled?.enabled ?? false,
@@ -357,11 +357,11 @@ async function loadData() {
 
     // 解析算法列表
     if (algoRes.status === 'fulfilled') {
-      const raw = algoRes.value?.data
-      const algos: AlgorithmInfo[] = raw?.data?.algorithms ?? raw?.data ?? raw?.algorithms ?? []
+      const raw = algoRes.value?.data as any
+      const algos: any[] = raw?.data?.algorithms ?? raw?.data ?? raw?.algorithms ?? []
       algorithmOptions.value = algos
-        .filter(a => a.enabled)
-        .map(a => ({
+        .filter((a: any) => a.enabled)
+        .map((a: any) => ({
           label: a.name_zh || a.name_en || a.name || a.algo_id || a.id,
           value: a.algo_id || a.id,
         }))

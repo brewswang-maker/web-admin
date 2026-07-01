@@ -29,7 +29,7 @@
             <template #prefix><el-icon><Search /></el-icon></template>
           </el-input>
           <el-select v-model="enabledFilter" placeholder="状态筛选" style="width: 120px" clearable @change="fetchRules">
-            <el-option label="全部" :value="undefined as any" />
+            <el-option label="全部" value="" />
             <el-option label="已启用" :value="true" />
             <el-option label="已停用" :value="false" />
           </el-select>
@@ -53,6 +53,14 @@
           <el-button @click="openTemplateLibrary">
             <el-icon><CopyDocument /></el-icon>模板库
           </el-button>
+          <!-- P1-7: 规则模板导入导出 -->
+          <el-button @click="handleExportTemplates" title="导出模板">
+            <el-icon><Download /></el-icon>导出
+          </el-button>
+          <el-button @click="triggerImportFile" title="导入模板">
+            <el-icon><Upload /></el-icon>导入
+          </el-button>
+          <input ref="importFileInput" type="file" accept=".json" style="display:none" @change="handleImportTemplates" />
           <el-button type="primary" @click="openEditor(null)">
             <el-icon><Plus /></el-icon>新建规则
           </el-button>
@@ -233,11 +241,29 @@
 
               <!-- 事件类型 -->
               <template v-if="cond.type === 'eventType'">
+                <!-- v7.6 事件类型选择器: 分类分组 + 严重度颜色标签 (对标海康/大华事件配置) -->
+                <div class="event-type-severity-legend">
+                  <span class="legend-item"><i class="legend-dot" style="background:#F56C6C"></i>紧急</span>
+                  <span class="legend-item"><i class="legend-dot" style="background:#E6A23C"></i>高</span>
+                  <span class="legend-item"><i class="legend-dot" style="background:#409EFF"></i>中</span>
+                  <span class="legend-item"><i class="legend-dot" style="background:#67C23A"></i>低</span>
+                  <span class="legend-item"><i class="legend-dot" style="background:#909399"></i>提示</span>
+                </div>
                 <el-checkbox-group v-model="form.conditions.eventType.config.types" class="event-type-grid" v-loading="optionsLoading">
                   <template v-if="eventTypeOptions.length > 0">
                     <div v-for="(group, cat) in eventTypeGrouped" :key="cat" class="event-type-group">
                       <div class="event-type-group__title">{{ cat }}</div>
-                      <el-checkbox v-for="et in group" :key="et.value" :label="et.label" :value="et.value" size="small" />
+                      <el-checkbox v-for="et in group" :key="et.value" :value="et.value" size="small">
+                        <span class="event-type-label">
+                          <i
+                            v-if="et.severityLevel"
+                            class="severity-dot"
+                            :style="{ background: severityColor(et.severityLevel) }"
+                            :title="et.severityCn || `${et.severityLevel}级`"
+                          />
+                          {{ et.label }}
+                        </span>
+                      </el-checkbox>
                     </div>
                   </template>
                   <template v-else>
@@ -710,7 +736,7 @@
 import { ref, computed, reactive, onMounted, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { FormInstance, FormRules } from 'element-plus'
-import { Search, Plus, Document, Link, Bell, Setting, ArrowDown } from '@element-plus/icons-vue'
+import { Search, Plus, Document, Link, Bell, Setting, ArrowDown, Download, Upload } from '@element-plus/icons-vue'
 import { linkageApi, ACTION_TYPE_MAP, ACTION_TYPE_REVERSE_MAP, getTargetForActionType } from '@/api/linkage'
 import type { LinkageRule, LinkageAction, LinkageLog, TimeTemplate, LinkagePlan, CEPPattern, ConditionNode } from '@/api/linkage'
 import { useLinkageOptions } from '@/composables/useLinkageOptions'
@@ -738,7 +764,7 @@ const weekdays = [
 ]
 
 // 动态选项 (从后端加载)
-const { eventTypeOptions, eventTypeGrouped, channelOptions: channelOptionsDynamic, locationOptions: locationOptionsDynamic, loading: optionsLoading, fetchOptions } = useLinkageOptions()
+const { eventTypeOptions, eventTypeGrouped, severityColor, channelOptions: channelOptionsDynamic, locationOptions: locationOptionsDynamic, loading: optionsLoading, fetchOptions } = useLinkageOptions()
 
 // 静态回退选项
 const fallbackEventTypes = ['周界入侵', '绊线', '烟火', '安全帽', '人脸', '车牌', '人群', '摔倒']
@@ -855,7 +881,7 @@ const sysActions = [
 const loading = ref(false)
 const rules = ref<LinkageRule[]>([])
 const searchQuery = ref('')
-const enabledFilter = ref<boolean | undefined>(undefined)
+const enabledFilter = ref<boolean | string>('')
 const sortBy = ref('priority')
 const sortOrder = ref<'ascending' | 'descending'>('descending')
 const selectedRows = ref<LinkageRule[]>([])
@@ -875,7 +901,7 @@ const filteredRules = computed(() => {
     const q = searchQuery.value.toLowerCase()
     list = list.filter(r => r.name.toLowerCase().includes(q))
   }
-  if (enabledFilter.value !== undefined) list = list.filter(r => r.enabled === enabledFilter.value)
+  if (enabledFilter.value === true || enabledFilter.value === false) list = list.filter(r => r.enabled === enabledFilter.value)
   if (tagFilter.value.length > 0) {
     list = list.filter(r => {
       const ruleTags = r.tags || []
@@ -1526,6 +1552,51 @@ async function handleBatchDelete() {
   }
 }
 
+// ── P1-7: 规则模板导入导出 ──
+const importFileInput = ref<HTMLInputElement>()
+
+async function handleExportTemplates() {
+  try {
+    const blob = await linkageApi.exportRuleTemplates()
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `linkage-templates-${new Date().toISOString().slice(0, 10)}.json`
+    a.click()
+    URL.revokeObjectURL(url)
+    ElMessage.success('规则模板已导出')
+  } catch {
+    ElMessage.error('导出失败')
+  }
+}
+
+function triggerImportFile() {
+  importFileInput.value?.click()
+}
+
+async function handleImportTemplates(event: Event) {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  if (!file) return
+  try {
+    const text = await file.text()
+    const data = JSON.parse(text)
+    const templates = data.templates || data
+    if (!Array.isArray(templates) || templates.length === 0) {
+      ElMessage.warning('文件中未找到有效模板')
+      return
+    }
+    await ElMessageBox.confirm(`确定导入 ${templates.length} 个规则模板?`, '导入确认', { type: 'info' })
+    const res = await linkageApi.importRuleTemplates(templates)
+    const imported = res.data?.data?.imported ?? 0
+    ElMessage.success(`成功导入 ${imported} 个模板`)
+  } catch (e: any) {
+    if (e !== 'cancel') ElMessage.error('导入失败: ' + (e?.message || '格式错误'))
+  } finally {
+    input.value = ''
+  }
+}
+
 // ── 日志 ──
 
 async function fetchLogs() {
@@ -1740,6 +1811,26 @@ watch(mainTab, (tab) => {
 .event-type-group { width: 100%; margin-bottom: 4px; }
 .event-type-group__title { font-size: 11px; font-weight: 600; color: var(--color-primary-400, #3B82F6); margin-bottom: 2px; padding: 2px 0; }
 .channel-grid { display: flex; flex-wrap: wrap; gap: 4px; }
+
+/* v7.6 严重度颜色标签 (对标海康/大华事件配置) */
+.event-type-severity-legend {
+  display: flex; gap: 12px; margin-bottom: 8px; padding: 4px 8px;
+  background: var(--color-bg-1, #f5f7fa); border-radius: 4px;
+}
+.legend-item {
+  display: inline-flex; align-items: center; gap: 3px;
+  font-size: 11px; color: var(--color-text-secondary, #909399);
+}
+.legend-dot {
+  display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+}
+.severity-dot {
+  display: inline-block; width: 6px; height: 6px; border-radius: 50%;
+  margin-right: 4px; vertical-align: middle;
+}
+.event-type-label {
+  display: inline-flex; align-items: center;
+}
 
 /* ── 动作 Tabs ── */
 .action-tabs { margin-top: 4px; }

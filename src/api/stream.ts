@@ -69,7 +69,7 @@ export function getStreamPlayUrl(id: string, protocol: 'hls' | 'webrtc' | 'rtmp'
           ...resp.data,
           data: { url: urlMap[protocol] || data.hlsUrl },
         },
-      } as typeof resp
+      } as unknown as typeof resp
     })
 }
 

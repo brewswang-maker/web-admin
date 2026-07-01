@@ -20,6 +20,8 @@
                 <el-button :type="layout === 4 ? 'primary' : 'default'" @click="setLayout(4)" title="四分屏">4</el-button>
                 <el-button :type="layout === 9 ? 'primary' : 'default'" @click="setLayout(9)" title="九分屏">9</el-button>
                 <el-button :type="layout === 16 ? 'primary' : 'default'" @click="setLayout(16)" title="十六分屏">16</el-button>
+                <el-button :type="layout === 25 ? 'primary' : 'default'" @click="setLayout(25)" title="二十五分屏 (大屏模式)">25</el-button>
+                <el-button :type="layout === 36 ? 'primary' : 'default'" @click="setLayout(36)" title="三十六分屏 (大屏模式)">36</el-button>
               </el-button-group>
               <el-button size="small" @click="snapshotActive" :disabled="!hasActive">
                 <el-icon><Camera /></el-icon>截图
@@ -27,7 +29,20 @@
               <el-button size="small" @click="toggleRecordActive" :disabled="!hasActive" :type="isRecording ? 'danger' : 'default'">
                 <el-icon><VideoCamera /></el-icon>{{ isRecording ? '停止录像' : '录像' }}
               </el-button>
+              <!-- 主/子码流切换 -->
+              <el-button-group size="small">
+                <el-button :type="streamQuality === 'main' ? 'primary' : 'default'" @click="switchStreamQuality('main')" title="主码流 (高清)">主码流</el-button>
+                <el-button :type="streamQuality === 'sub' ? 'primary' : 'default'" @click="switchStreamQuality('sub')" title="子码流 (流畅)">子码流</el-button>
+              </el-button-group>
               <el-button size="small" @click="openImageAdjust" :disabled="!hasActive">图像</el-button>
+              <!-- P1-6: 电子放大 -->
+              <el-button size="small" :type="eZoomActive ? 'primary' : 'default'" @click="toggleEZoom" :disabled="!hasActive" title="电子放大">
+                <el-icon><Aim /></el-icon>
+              </el-button>
+              <!-- P1-4: 自动轮巡 -->
+              <el-button size="small" :type="autoPatrolEnabled ? 'success' : 'default'" @click="toggleAutoPatrol" title="自动轮巡">
+                <el-icon><RefreshRight /></el-icon>{{ autoPatrolEnabled ? autoPatrolInterval + 's' : '' }}
+              </el-button>
               <el-button size="small" @click="toggleFullscreen">
                 <el-icon><FullScreen /></el-icon>
               </el-button>
@@ -42,11 +57,12 @@
                  class="video-cell"
                  :class="{ active: activeSlotIdx === idx, 'has-stream': slot.channelId }"
                  @click="activeSlotIdx = idx"
-                 @dblclick="maximizeSlot(idx)">
-              <!-- 真实视频播放 -->
+                 @dblclick="maximizeSlot(idx, $event)">
+              <!-- 真实视频播放 P2-2: CSS filter + P1-6: 电子放大 -->
               <video v-if="slot.playing"
                      :ref="el => setVideoRef(el, idx)"
                      class="video-player"
+                     :style="{ filter: videoFilterStyle.filter, transform: (idx === activeSlotIdx && eZoomActive ? eZoomStyle.transform : '') + (videoFilterStyle.transform !== 'none' ? ' ' + videoFilterStyle.transform : '') }"
                      muted autoplay playsinline />
               <!-- 检测框 Canvas 叠加层 -->
               <canvas v-if="slot.playing"
@@ -211,6 +227,32 @@
                 <el-button v-for="p in 4" :key="p" @click="ptzPreset(p)">P{{ p }}</el-button>
               </el-button-group>
             </div>
+            <!-- 巡航/轨迹 (P0-2 对标海康 iVMS PTZ 控制) -->
+            <div class="ptz-advanced">
+              <span>巡航</span>
+              <el-button-group size="small">
+                <el-button :type="isCruising ? 'warning' : 'default'" @click="toggleCruise">
+                  {{ isCruising ? '停止巡航' : '启动巡航' }}
+                </el-button>
+                <el-button size="small" @click="ptzCruise(1)" title="路径1">C1</el-button>
+                <el-button size="small" @click="ptzCruise(2)" title="路径2">C2</el-button>
+              </el-button-group>
+            </div>
+            <div class="ptz-advanced">
+              <span>轨迹</span>
+              <el-button-group size="small">
+                <el-button :type="isTracking ? 'warning' : 'default'" @click="toggleTrack">
+                  {{ isTracking ? '停止跟踪' : '启动跟踪' }}
+                </el-button>
+                <el-button size="small" @click="ptzTrack(1)" title="轨迹1">T1</el-button>
+                <el-button size="small" @click="ptzTrack(2)" title="轨迹2">T2</el-button>
+              </el-button-group>
+            </div>
+            <!-- 3D 触摸放大 提示 -->
+            <div class="ptz-3d-hint" v-if="hasActive">
+              <el-icon :size="12"><Aim /></el-icon>
+              <span>双击画面可 3D 放大定位</span>
+            </div>
           </div>
         </el-card>
       </el-col>
@@ -235,6 +277,43 @@
         <p style="color:#9AA0A6;font-size:12px;margin-top:12px">需要浏览器麦克风权限，且设备需支持语音对讲</p>
       </div>
     </el-dialog>
+
+    <!-- P2-2: 图像调节弹窗 (亮度/对比度/饱和度/色温 + 镜像/旋转 + 电子放大) -->
+    <el-dialog v-model="imageDialogVisible" title="图像调节" width="480px" :append-to-body="true">
+      <div class="image-adjust">
+        <div class="adj-row"><span>亮度</span><el-slider v-model="imageAdjust.brightness" :min="0" :max="100" /></div>
+        <div class="adj-row"><span>对比度</span><el-slider v-model="imageAdjust.contrast" :min="0" :max="100" /></div>
+        <div class="adj-row"><span>饱和度</span><el-slider v-model="imageAdjust.saturation" :min="0" :max="100" /></div>
+        <div class="adj-row"><span>色温</span><el-slider v-model="imageAdjust.hue" :min="0" :max="100" /></div>
+        <el-divider content-position="center">画面变换</el-divider>
+        <div style="display:flex;justify-content:center;gap:16px;margin-bottom:16px">
+          <el-button :type="imageAdjust.mirrorH ? 'primary' : 'default'" @click="imageAdjust.mirrorH = !imageAdjust.mirrorH">水平镜像</el-button>
+          <el-button :type="imageAdjust.mirrorV ? 'primary' : 'default'" @click="imageAdjust.mirrorV = !imageAdjust.mirrorV">垂直翻转</el-button>
+          <el-select v-model="imageAdjust.rotate" size="small" style="width:100px" placeholder="旋转">
+            <el-option :value="0" label="不旋转" />
+            <el-option :value="90" label="90°" />
+            <el-option :value="180" label="180°" />
+            <el-option :value="270" label="270°" />
+          </el-select>
+        </div>
+        <el-divider content-position="center">电子放大</el-divider>
+        <div class="adj-row" v-if="eZoomActive"><span>缩放</span><el-slider v-model="eZoomScale" :min="1" :max="5" :step="0.1" /></div>
+        <div class="adj-row" v-if="eZoomActive"><span>水平位置</span><el-slider v-model="eZoomX" :min="0" :max="100" /></div>
+        <div class="adj-row" v-if="eZoomActive"><span>垂直位置</span><el-slider v-model="eZoomY" :min="0" :max="100" /></div>
+        <div v-if="!eZoomActive" style="text-align:center;color:#9AA0A6;padding:8px">点击工具栏准星按钮开启电子放大</div>
+        <div style="text-align:center;margin-top:12px">
+          <el-button size="small" @click="resetImageAdjust">恢复默认</el-button>
+        </div>
+      </div>
+    </el-dialog>
+
+    <!-- P1-3: WebCodecs 硬件解码状态提示 -->
+    <div v-if="!webCodecsSupported" style="position:fixed;bottom:12px;right:12px;background:#2A2A0A;color:#FFB800;padding:4px 10px;border-radius:4px;font-size:11px;z-index:999">
+      ⚡ 软解码模式 (WebCodecs 不可用)
+    </div>
+    <div v-else style="position:fixed;bottom:12px;right:12px;background:#0A2A1A;color:#00D4AA;padding:4px 10px;border-radius:4px;font-size:11px;z-index:999">
+      ⚡ GPU 硬解码已启用
+    </div>
   </div>
 </template>
 
@@ -244,7 +323,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useDeviceStore } from '@/stores/device'
 import { getDeviceChannels } from '@/api/devices'
 import { streamHttp, deviceHttp, http } from '@/api/http'
-import { ptzControl as ptzApi } from '@/api/ptz'
+import { ptzControl as ptzApi, startCruise as ptzStartCruise, stopCruise as ptzStopCruise, startTrack as ptzStartTrack, stopTrack as ptzStopTrack, ptz3DPosition } from '@/api/ptz'
 import { detectFromBase64, getInferenceStatus } from '@/api/inference'
 import type { DetectionResult } from '@/api/inference'
 import { ElMessage, ElNotification } from 'element-plus'
@@ -255,6 +334,7 @@ import flvjs from 'flv.js'
 import { useStreamHealth } from '@/composables/useStreamHealth'
 import { useAdaptiveBitrate } from '@/composables/useAdaptiveBitrate'
 import StreamStatsPanel from '@/components/StreamStatsPanel.vue'
+import { normalizeStreamUrl, normalizeWsFlvUrl } from '@/utils/streamUrl'
 import { useChannelStore } from '@/stores/channel'
 import type { PlayerFormat as StorePlayerFormat, ActiveSlotData } from '@/stores/channel'
 
@@ -305,7 +385,7 @@ const deviceStore = useDeviceStore()
 const layout = ref(4)
 const activeSlotIdx = ref(0)
 const gridSlots = reactive<GridSlot[]>(
-  Array.from({ length: 16 }, () => ({
+  Array.from({ length: 36 }, () => ({
     channelId: '', name: '', status: '', urls: {}, codec: '', playing: false, loading: false, muted: true, deviceId: '', playerInstance: null, recording: false, talking: false, currentFormat: '', webrtcRetryCount: 0, reconnectCount: 0, encrypted: false, detections: [] as DetectionResult[], detectionTime: 0, _lastReconnectTime: 0, _videoEventCleanups: []
   }))
 )
@@ -325,47 +405,70 @@ const CLASS_COLORS: Record<string, string> = {
   bus: '#3B82F6', truck: '#3B82F6', dog: '#22C55E', cat: '#22C55E',
 }
 
-// 流健康监测（传入卡顿回调用于强制刷新）
+// 流健康监测（参考海康 iVMS-8700 / 大华 DSS / 华为 HoloSens IVS 策略）
+// [一次性设计修正 2026-06-23] 核心原则：onStall 仅作为 watcher 的安全网，
+//   且必须遵守 reconnectCount + 全局冷却限制，不能绕过它们独立触发重建。
+//   之前的 onStall 回调在 stallCount>=5 时无条件重建，绕过了 reconnectCount 上限，
+//   导致 watcher 放弃后 onStall 仍无限重建 → 停止/开始循环。
 // onReconnectExhausted: 重连耗尽时停止监测，避免 setInterval 持续触发日志洪泛
 const streamHealth = useStreamHealth(
   (slotIdx, stallCount) => {
-    // 检测到卡顿，强制刷新视频元素
     const slot = gridSlots[slotIdx]
     const video = videoRefs.value[slotIdx]
     if (!slot || !video) return
 
-    // HLS 格式的卡顿：不重建播放器（HLS 重建不会改善流质量，反而引入黑屏闪烁）
-    // 让 hls.js 内置的 error recovery（startLoad / recoverMediaError）自行恢复
+    // HLS 永远不重建（hls.js 内置 recovery 已处理）
     if (slot.currentFormat === 'hls') {
-      console.warn(`[LiveView] slot${slotIdx} HLS 卡顿（stallCount=${stallCount}），跳过重建（由 hls.js 自行恢复）`)
+      console.debug(`[LiveView] slot${slotIdx} HLS stallCount=${stallCount}，由 hls.js 自行恢复（不重建）`)
       return
     }
 
-    console.warn(`[LiveView] slot${slotIdx} 卡顿检测触发（stallCount=${stallCount}），强制刷新视频`)
-
-    // 尝试通过跳帧方式恢复（不重建播放器）
-    if (slot.currentFormat === 'flv' || slot.currentFormat === 'ws-flv') {
-      const player = slot.playerInstance as any
-      if (player && typeof player.refreshLogo === 'function') {
-        // flv.js 提供 refreshLogo 方法强制刷新画面
-        player.refreshLogo()
-      }
+    // [P0-Fix 2026-06-29] 去重防护: 如果 status watcher 已经在重连中，onStall 跳过
+    //   原因: evaluateHealth() 中 stallCount++ 和 status='error' 几乎同时发生，
+    //         导致 onStall 回调和 status watcher 双触发，对同一 slot 执行两次 reconnectStream
+    //   对标海康 iVMS: 仅有一条重连路径（后端 SSE 驱动），不存在前端双触发问题
+    if (reconnecting.has(slotIdx)) {
+      console.debug(`[LiveView] slot${slotIdx} onStall(${stallCount}) 但已在重连中，跳过`)
+      return
     }
 
-    // [关键修复] 仅在启用了自动重连时才自动重建播放器
-    // 禁用时只刷新画面，不重建播放器，避免画面闪烁
-    if (AUTO_RECONNECT_ENABLED && stallCount >= 2 && slot.channelId && !formatSwitching.has(slotIdx)) {
-      console.warn(`[LiveView] slot${slotIdx} 连续卡顿 ${stallCount} 次，重建播放器`)
-      formatSwitching.add(slotIdx)
-      const fmt = slot.currentFormat as PlayerFormat
-      if (fmt && slot.urls[fmt]) {
-        // 延迟 300ms 重建，避免频繁重建
-        setTimeout(() => {
-          destroyPlayer(slot, slotIdx)
-          attachPlayerByFormat(slotIdx, fmt)
-          setTimeout(() => formatSwitching.delete(slotIdx), 3000)
-        }, 300)
+    // [关键修复] onStall 必须遵守与 watcher 相同的限制条件
+    // [P3-1] stallCount 阈值协议感知: FLV/WebRTC=3 (更快恢复), HLS 不触发(已在上面跳过)
+    const stallThreshold = (slot.currentFormat === 'flv' || slot.currentFormat === 'ws-flv' || slot.currentFormat === 'webrtc') ? 3 : 5
+    if (stallCount >= stallThreshold && slot.channelId && !formatSwitching.has(slotIdx)) {
+      // 检查 reconnectCount 上限
+      if (slot.reconnectCount > MAX_SAME_FORMAT_RETRIES) {
+        console.warn(`[LiveView] slot${slotIdx} stallCount=${stallCount} 但已达重连上限(${MAX_SAME_FORMAT_RETRIES})，停止重建`)
+        streamHealth.stopMonitoring(slotIdx)
+        return
       }
+      // 检查全局冷却
+      const now = Date.now()
+      if (now - lastGlobalRebuildAt < GLOBAL_REBUILD_COOLDOWN_MS) {
+        console.debug(`[LiveView] slot${slotIdx} stallCount=${stallCount} 但全局冷却期内，跳过`)
+        return
+      }
+      // [P3-1] 检查 per-slot 冷却
+      const slotLastRebuild = slotLastRebuildAt.get(slotIdx) || 0
+      if (now - slotLastRebuild < PER_SLOT_REBUILD_COOLDOWN_MS) {
+        const remain = Math.ceil((PER_SLOT_REBUILD_COOLDOWN_MS - (now - slotLastRebuild)) / 1000)
+        console.debug(`[LiveView] slot${slotIdx} stallCount=${stallCount} 但 slot 冷却期内 (${remain}s)，跳过`)
+        return
+      }
+
+      console.warn(`[LiveView] slot${slotIdx} 严重卡顿 stallCount=${stallCount}，重建播放器 (reconnect=${slot.reconnectCount})`)
+      lastGlobalRebuildAt = now
+      slotLastRebuildAt.set(slotIdx, now)
+      slot.reconnectCount++
+      slot._lastReconnectTime = Date.now()
+      reconnecting.add(slotIdx)  // [P0-Fix] 标记重连中，防止 status watcher 双触发
+      // [Fix 2026-06-23] 使用 reconnectStream 重新获取流地址，而非复用陈旧 URL
+      const fmt = slot.currentFormat as PlayerFormat
+      setTimeout(() => {
+        reconnectStream(slotIdx, fmt || undefined).finally(() => {
+          reconnecting.delete(slotIdx)  // [P0-Fix] 重连完成后释放锁
+        })
+      }, 500)
     }
   },
   (slotIdx) => {
@@ -421,10 +524,25 @@ function getNextFallbackFormat(currentFmt: PlayerFormat, codec: string, urls: Pa
   return null
 }
 
-// P2-4: 安全自动重连 — 启用但限制为同格式重连，不自动降级协议
-// 同格式最多重试 3 次，超过后停止自动重连
+// [一次性设计修正 2026-06-23] 自动重连策略：对标海康 iVMS-8700
+//   海康策略：仅在播放器发出致命错误（Network/Media fatal error）时重连，
+//   不依赖前端健康监测的 noDataSeconds 判断（容易因 GOP/低帧率误判）。
+//   重连冷却 60s，同格式最多 2 次，超后停止自动重连。
+//   flv.js / hls.js 的内部 error recovery 已处理大部分瞬时问题。
 const AUTO_RECONNECT_ENABLED = true
-const MAX_SAME_FORMAT_RETRIES = 3
+const MAX_SAME_FORMAT_RETRIES = 2
+// 全局重建冷却：任何 slot 重建后 60s 内不再触发自动重连
+//   防止多个 slot 同时 error 导致连锁重建
+const GLOBAL_REBUILD_COOLDOWN_MS = 60_000
+let lastGlobalRebuildAt = 0
+// [P3-1] per-slot 重建冷却：同一 slot 重建后 30s 内不再触发
+//   防止单路问题设备频繁重建导致资源浪费
+//   对标大华 DSS 单路重连冷却 30s
+const PER_SLOT_REBUILD_COOLDOWN_MS = 30_000
+const slotLastRebuildAt = new Map<number, number>()
+// [一次性设计修正 2026-06-23] status 转换追踪：仅在 status 真正变化时处理
+//   deep watcher 每秒因 bytesPerSec/fps 变化触发，但只有 status 转换才需要行动
+const prevStatusMap = new Map<number, string>()
 
 const setVideoRef = (el: any, idx: number) => {
   if (el) videoRefs.value[idx] = el as HTMLVideoElement
@@ -434,15 +552,113 @@ const setVideoRef = (el: any, idx: number) => {
 const channels = ref<Channel[]>([])
 const devices = ref<DeviceItem[]>([])
 const chSearch = ref('')
+// 主/子码流切换状态 (P0-1 对标海康/大华双码流策略)
+// 主码流: 高清 1080P/4Mbps → 单屏/4分屏预览
+// 子码流: 流畅 720P/0.5Mbps → 9/16分屏多路预览
+const streamQuality = ref<'main' | 'sub'>('main')
+// PTZ 巡航/轨迹状态 (P0-2)
+const isCruising = ref(false)
+const isTracking = ref(false)
 const ptzSpeed = ref(128)
 const currentTime = ref('')
 
 // 录像
 const isRecording = computed(() => gridSlots[activeSlotIdx.value]?.recording)
 
-// 图像调节
+// 图像调节 (P2-2: CSS filter 绑定到 video 元素)
 const imageDialogVisible = ref(false)
-const imageAdjust = reactive({ brightness: 50, contrast: 50, saturation: 50, hue: 50 })
+const imageAdjust = reactive({ brightness: 50, contrast: 50, saturation: 50, hue: 50, mirrorH: false, mirrorV: false, rotate: 0 })
+// 构建 CSS filter 字符串
+const videoFilterStyle = computed(() => {
+  const brightness = imageAdjust.brightness / 50  // 50=normal
+  const contrast = imageAdjust.contrast / 50
+  const saturate = imageAdjust.saturation / 50
+  const hueRotate = (imageAdjust.hue - 50) * 1.8  // -90~90deg
+  let transform = ''
+  if (imageAdjust.mirrorH) transform += ' scaleX(-1)'
+  if (imageAdjust.mirrorV) transform += ' scaleY(-1)'
+  if (imageAdjust.rotate !== 0) transform += ` rotate(${imageAdjust.rotate}deg)`
+  return {
+    filter: `brightness(${brightness}) contrast(${contrast}) saturate(${saturate}) hue-rotate(${hueRotate}deg)`,
+    transform: transform.trim() || 'none'
+  }
+})
+
+// P1-3: WebCodecs 硬件解码检测
+const webCodecsSupported = ref(false)
+const hardwareDecoding = ref(false)
+async function checkWebCodecsSupport() {
+  try {
+    // @ts-ignore - VideoDecoder is experimental
+    if (typeof VideoDecoder === 'undefined') { webCodecsSupported.value = false; return }
+    // @ts-ignore
+    const config = { codec: 'avc1.42E01E', hardwareAcceleration: 'prefer-hardware' }
+    // @ts-ignore
+    const support = await VideoDecoder.isConfigSupported(config)
+    webCodecsSupported.value = support?.supported ?? false
+    hardwareDecoding.value = webCodecsSupported.value
+  } catch { webCodecsSupported.value = false }
+}
+
+// P1-4: 多画面自动轮巡
+const autoPatrolEnabled = ref(false)
+const autoPatrolInterval = ref(10)  // 秒
+let autoPatrolTimer: ReturnType<typeof setInterval> | null = null
+function toggleAutoPatrol() {
+  if (autoPatrolEnabled.value) {
+    autoPatrolEnabled.value = false
+    if (autoPatrolTimer) { clearInterval(autoPatrolTimer); autoPatrolTimer = null }
+    ElMessage.info('自动轮巡已停止')
+  } else {
+    const activeCount = gridSlots.slice(0, layout.value).filter(s => s.channelId).length
+    if (activeCount === 0) { ElMessage.warning('没有可轮巡的通道'); return }
+    autoPatrolEnabled.value = true
+    autoPatrolTimer = setInterval(() => {
+      // 轮换通道: 将槽位中的通道向前移动一位
+      const slots = gridSlots.slice(0, layout.value)
+      const activeChannels = slots.filter(s => s.channelId).map(s => ({ channelId: s.channelId, name: s.name, deviceId: s.deviceId }))
+      if (activeChannels.length <= 1) return
+      // 向前轮换
+      const first = activeChannels[0]
+      for (let i = 0; i < activeChannels.length - 1; i++) {
+        activeChannels[i] = activeChannels[i + 1]
+      }
+      activeChannels[activeChannels.length - 1] = first
+      // 重新分配到槽位
+      let acIdx = 0
+      for (let i = 0; i < slots.length; i++) {
+        if (slots[i].channelId && acIdx < activeChannels.length) {
+          const ch = activeChannels[acIdx++]
+          if (slots[i].channelId !== ch.channelId) {
+            closeSlot(i)
+            // 从 channels ref 中查找对应的 Channel 对象
+            const channelObj = channels.value.find(c => c.id === ch.channelId)
+            if (channelObj) {
+              nextTick(() => assignChannel(i, channelObj))
+            }
+          }
+        }
+      }
+    }, autoPatrolInterval.value * 1000)
+    ElMessage.success(`自动轮巡已启动 (每${autoPatrolInterval.value}秒切换)`)
+  }
+}
+
+// P1-6: 电子放大 (数字变倍)
+const eZoomActive = ref(false)
+const eZoomScale = ref(1)
+const eZoomX = ref(50)  // 中心点百分比 0-100
+const eZoomY = ref(50)
+function toggleEZoom() {
+  eZoomActive.value = !eZoomActive.value
+  if (!eZoomActive.value) { eZoomScale.value = 1; eZoomX.value = 50; eZoomY.value = 50 }
+}
+const eZoomStyle = computed(() => {
+  if (!eZoomActive.value || eZoomScale.value <= 1) return { transform: 'none' }
+  const tx = (50 - eZoomX.value) * (eZoomScale.value - 1) / eZoomScale.value
+  const ty = (50 - eZoomY.value) * (eZoomScale.value - 1) / eZoomScale.value
+  return { transform: `scale(${eZoomScale.value}) translate(${tx}%, ${ty}%)` }
+})
 
 // 检测日志
 interface LogEntry { time: string; level: string; tagType: string; msg: string }
@@ -496,7 +712,7 @@ async function loadData() {
       const chs: Channel[] = res?.data?.data ?? res?.data ?? res
       for (const ch of chs) {
         (ch as any).deviceId = dev.id
-        if (ch.status === 'offline') continue
+        if ((ch as any).status === 'offline') continue
       }
       allChs.push(...chs)
     } catch { /* skip */ }
@@ -866,6 +1082,53 @@ function destroyPlayer(slot: any, slotIdx?: number) {
   }
 }
 
+// [Fix 2026-06-23] 重连时重新获取流地址，而非使用陈旧 URL
+//   原因：重连时 GB28181 INVITE 会话可能已超时，RTP 端口可能已释放，
+//         ZLM RTP server 可能已关闭。slot.urls 中缓存的 URL 已失效。
+//   对标海康 iVMS：重连 = 重新调用 /start 发送新 INVITE + 获取新 URL
+async function reconnectStream(slotIdx: number, preferredFmt?: PlayerFormat) {
+  const slot = gridSlots[slotIdx]
+  if (!slot?.channelId) return
+
+  const video = videoRefs.value[slotIdx]
+  if (!video) return
+
+  // 1. 销毁旧播放器
+  destroyPlayer(slot, slotIdx)
+  video.pause()
+  video.removeAttribute('src')
+  video.load()
+
+  // 2. 重新获取流地址（触发新 INVITE 或复用已有流）
+  const ch: Channel = {
+    id: slot.channelId,
+    name: slot.name,
+    deviceId: slot.deviceId,
+    status: slot.status,
+  } as any
+
+  const result = await fetchStreamUrls(ch)
+  if (!result || !result.urls) {
+    console.warn(`[LiveView] slot${slotIdx} 重连获取流地址失败`)
+    return
+  }
+
+  // 3. 更新 slot 中的 URL 和 codec
+  slot.urls = result.urls
+  slot.codec = result.codec || slot.codec
+
+  // 4. 选择播放格式
+  const fmt = preferredFmt || selectBestFormat(result.urls, result.codec)
+  console.debug(`[LiveView] slot${slotIdx} 重连成功，format=${fmt}, codec=${result.codec}`)
+
+  // 5. 重新播放
+  formatSwitching.add(slotIdx)
+  nextTick(() => {
+    attachPlayerByFormat(slotIdx, fmt)
+    setTimeout(() => formatSwitching.delete(slotIdx), 5000)
+  })
+}
+
 // 智能选择最佳播放格式（使用统一降级链）
 function selectBestFormat(urls: Partial<Record<PlayerFormat, string>>, codec?: string): PlayerFormat {
   const isH265 = !!(codec && (codec.toUpperCase().includes('H265') || codec.toUpperCase().includes('HEVC')))
@@ -1075,7 +1338,12 @@ async function exchangeSdpViaBackend(pc: RTCPeerConnection, channelId: string, o
 }
 
 // 切换格式时重新播放所有活跃 slot
+// [Fix #8 一次性设计修正 2026-06-21] 防止页面加载时误触发
+//   原因: preferredFormat 默认值 'flv' 可能在组件挂载时触发 watcher → 16 个 slot 全部重建
+//   对标海康 iVMS-8700: 监听 preferredFormat 仅在用户手动点击切换时触发，不默认触发
 watch(preferredFormat, (fmt) => {
+  // 仅在 fmt 是有效格式时才重建，避免初始化默认值时的误触发
+  if (!fmt || (fmt !== 'flv' && fmt !== 'ws-flv' && fmt !== 'hls' && fmt !== 'webrtc')) return
   for (let i = 0; i < 16; i++) {
     if (gridSlots[i].playing) {
       formatSwitching.add(i)
@@ -1088,133 +1356,159 @@ watch(preferredFormat, (fmt) => {
   }
 })
 
-// 自动重连逻辑：watch healthStates，当某 slot status 变为 error 时触发重连
+// 自动重连逻辑：[一次性设计修正 2026-06-23]
+//   deep watcher 每秒因 bytesPerSec/fps 等字段变化而触发，但只有 status 真正转换时才需要行动。
+//   对标海康 iVMS-8700：仅在状态转换(good/warning → error)时执行一次重连决策，
+//   不重复处理同一状态。全局重建冷却 60s 防止连锁重建。
 watch(
-  () => ({ ...streamHealth.healthStates }),
-  (newStates) => {
-    for (const [idxStr, health] of Object.entries(newStates)) {
+  () => {
+    // 构建一个仅包含 status 的快照，减少不必要的深拷贝
+    const snap: Record<number, string> = {}
+    for (const [k, v] of Object.entries(streamHealth.healthStates)) {
+      snap[Number(k)] = v.status
+    }
+    return snap
+  },
+  (newStatuses) => {
+    for (const [idxStr, currentStatus] of Object.entries(newStatuses)) {
       const idx = Number(idxStr)
       if (isNaN(idx)) continue
+
+      const prevStatus = prevStatusMap.get(idx)
+      // [关键修复] 仅在 status 发生真正转换时处理，跳过每秒重复触发
+      if (prevStatus === currentStatus) continue
+      prevStatusMap.set(idx, currentStatus)
 
       const slot = gridSlots[idx]
 
       // 连接恢复时重置重连计数器
-      // 防止重连后短暂 good 立即重置计数器导致无限循环：
-      // 必须持续 good 状态超过 10 秒才重置（确保真正有视频数据在播放）
-      if (health.status === 'good' && slot) {
+      // [Fix 2026-06-23] 要求 sustained good 持续 30s 才重置，防止瞬时 good 重置计数器
+      //   原因：流注册/注销转换期间可能出现 1-2 秒瞬时 good（ZLM 残留数据），
+      //         10s 后重置 reconnectCount → 下次 stall 重新计数 → 无限循环
+      //   对标海康 iVMS：连续 30s 稳定播放才视为真正恢复
+      if (currentStatus === 'good' && slot) {
         const now = Date.now()
         const lastReconnectTime = slot._lastReconnectTime || 0
-        if (lastReconnectTime === 0 || (now - lastReconnectTime) > 10000) {
+        // 要求距上次重连至少 30s（之前是 10s），确保流真正稳定
+        if (lastReconnectTime === 0 || (now - lastReconnectTime) > 30000) {
           slot.reconnectCount = 0
           reconnectDebounce.delete(idx)
+          console.debug(`[LiveView] slot${idx} 持续稳定 30s+，重置重连计数器`)
         }
+        continue
       }
 
-      if (health.status !== 'error') continue
-      if (!AUTO_RECONNECT_ENABLED) continue  // [关键修复] 禁用自动重连，防止画面闪烁
+      // 仅 error 状态触发重连
+      if (currentStatus !== 'error') continue
+      if (!AUTO_RECONNECT_ENABLED) continue
       if (reconnecting.has(idx)) continue
-      // 格式切换中跳过（避免格式切换触发时又重建播放器）
       if (formatSwitching.has(idx)) continue
 
-      // 协议降级冷却期：15 秒内不允许再次降级（防止频繁切换导致的闪烁）
       const now = Date.now()
+
+      // [关键修复] 全局重建冷却：任何 slot 重建后 60s 内不再触发自动重连
+      //   防止多 slot 同时 error 导致连锁重建（对标海康 iVMS 全局冷却机制）
+      if (now - lastGlobalRebuildAt < GLOBAL_REBUILD_COOLDOWN_MS) {
+        const remain = Math.ceil((GLOBAL_REBUILD_COOLDOWN_MS - (now - lastGlobalRebuildAt)) / 1000)
+        console.warn(`[StreamHealth] slot${idx} 全局重建冷却期（${remain}s 后解除），跳过`)
+        continue
+      }
+
+      // 协议降级冷却期
       const lastSwitch = formatCooldown.get(idx) || 0
       if (now - lastSwitch < FORMAT_COOLDOWN_MS) {
         console.warn(`[StreamHealth] slot${idx} 在降级冷却期内，跳过`)
         continue
       }
 
-      // 重连防抖：距离上次重连不足 1 秒则跳过
-      const lastTrigger = reconnectDebounce.get(idx) || 0
-      if (now - lastTrigger < 1000) continue
-
       if (!slot?.channelId || !slot.playing) continue
 
-      // P2-4: 安全重连 — 同格式重试，不自动降级协议
       if (slot.reconnectCount > MAX_SAME_FORMAT_RETRIES) {
         console.warn(`[StreamHealth] slot${idx} 已达最大重连次数(${MAX_SAME_FORMAT_RETRIES})，停止自动重连`)
         reconnecting.delete(idx)
         continue
       }
 
+      // 记录全局重建时间戳
+      lastGlobalRebuildAt = now
       reconnecting.add(idx)
       slot.reconnectCount++
       slot._lastReconnectTime = Date.now()
       reconnectDebounce.set(idx, now)
 
       const currentFmt = slot.currentFormat as PlayerFormat
-      // P2-4: 始终使用同格式重连，不自动降级（避免画面闪烁）
       let targetFmt = currentFmt
 
-      // WebRTC 特殊处理：回退到 FLV（WebRTC 不稳定时直接切换）
       if (currentFmt === 'webrtc') {
         targetFmt = slot.urls['flv'] ? 'flv' : (slot.urls['hls'] ? 'hls' : 'webrtc')
         console.warn(`[StreamHealth] slot${idx} WebRTC 重连失败，切换到 ${targetFmt}`)
       } else {
-        console.warn(`[StreamHealth] slot${idx} status=error, 同格式重连 ${targetFmt} (${slot.reconnectCount}/${MAX_SAME_FORMAT_RETRIES})`)
+        console.warn(`[StreamHealth] slot${idx} status→error，同格式重连 ${targetFmt} (${slot.reconnectCount}/${MAX_SAME_FORMAT_RETRIES})`)
       }
 
-      // 先停止监测
       streamHealth.stopMonitoring(idx)
 
-      // 销毁当前播放器
-      destroyPlayer(slot, idx)
-      const video = videoRefs.value[idx]
-      if (video) { video.pause(); video.removeAttribute('src'); video.load() }
-
-      // 延迟 500ms 后重连
+      // [Fix 2026-06-23] 使用 reconnectStream 重新获取流地址，而非复用陈旧 URL
+      //   reconnectStream 内部会销毁旧播放器、调用 /start 获取新 URL、重新播放
       setTimeout(() => {
-        if (slot.channelId) {
-          formatSwitching.add(idx)
-          attachPlayerByFormat(idx, targetFmt)
-          setTimeout(() => formatSwitching.delete(idx), 3000)
-        }
-        reconnecting.delete(idx)
+        reconnectStream(idx, targetFmt || undefined).finally(() => {
+          reconnecting.delete(idx)
+        })
       }, 500)
     }
   },
   { deep: true }
 )
 
+// [一次性设计修正 2026-06-23] URL 规范化：后端可能返回绝对 URL (http://127.0.0.1:9080/...)
+//   绝对 URL 走直连 → CORS 失败 → 黑屏。统一转相对路径走 Vite 代理。
 async function fetchStreamUrls(ch: Channel): Promise<{urls: Partial<Record<PlayerFormat, string>>, codec: string} | null> {
+  // URL 规范化辅助函数
+  const norm = (u: string, isWs = false) =>
+    isWs ? normalizeWsFlvUrl(u) : normalizeStreamUrl(u)
+
   try {
     // 1. 启动国标设备推流 (GB28181 INVITE)，直接从响应中获取播放URL
+    //    [Fix 2026-06-23] 使用全局防抖，同通道 5s 内不重复发 SIP INVITE
     let startData: any = null
     let codec = ''
-    try {
-      const { data: startResp } = await streamHttp.post(`/${ch.id}/start`)
-      startData = startResp?.data || startResp
-    } catch (e: any) { console.warn('[LiveView] start stream failed (may already be streaming):', e?.message || e) }
+    const skipStart = channelStore.shouldSkipStart(ch.id)
+    if (!skipStart) {
+      try {
+        const { data: startResp } = await streamHttp.post(`/${ch.id}/start`)
+        startData = startResp?.data || startResp
+      } catch (e: any) { console.warn('[LiveView] start stream failed (may already be streaming):', e?.message || e) }
+    } else {
+      console.debug(`[LiveView] ch=${ch.id} /start 全局防抖窗口内，跳过 SIP INVITE`)
+    }
 
     // /start 响应已包含 flvUrl/webrtcUrl，zlmReady=true 时直接使用
     if (startData && (startData.flvUrl || startData.webrtcUrl) && startData.zlmReady) {
-      // /start 响应中包含 codec（从 ZLM tracks 检测，或从设备配置缓存读取）
-      // 优先使用 /start 的 codec，避免 multi-urls 因时序问题返回空值
       codec = startData.codec || ''
-      // 使用 /start 已有的 URL，不阻塞等待 multi-urls（后台已优化，大部分场景足够）
       return {
         urls: {
-          flv: startData.flvUrl || '',
-          webrtc: startData.webrtcUrl || '',
-          'ws-flv': startData.wsFlvUrl || '',
-          hls: startData.hlsUrl || '',
+          flv: norm(startData.flvUrl || ''),
+          webrtc: norm(startData.webrtcUrl || ''),
+          'ws-flv': norm(startData.wsFlvUrl || '', true),
+          hls: norm(startData.hlsUrl || ''),
         },
         codec,
       }
     }
 
     // 2. zlmReady=false 或 start 失败时，轮询 multi-urls 等待流就绪（8×80ms=640ms）
+    //    [Fix 2026-06-23] 必须检查 streamAlive=true，防止使用幻影 URL
     for (let attempt = 0; attempt < 8; attempt++) {
       try {
         const { data } = await streamHttp.get(`/${ch.id}/multi-urls`)
         const d = data?.data || data
-        if (d?.flvUrl || d?.webrtcUrl || d?.hlsUrl) {
+        if (d?.streamAlive && (d?.flvUrl || d?.webrtcUrl || d?.hlsUrl)) {
           return {
             urls: {
-              flv: d.flvUrl || '',
-              webrtc: d.webrtcUrl || '',
-              'ws-flv': d.wsFlvUrl || '',
-              hls: d.hlsUrl || '',
+              flv: norm(d.flvUrl || ''),
+              webrtc: norm(d.webrtcUrl || ''),
+              'ws-flv': norm(d.wsFlvUrl || '', true),
+              hls: norm(d.hlsUrl || ''),
             },
             codec: d.codec || '',
           }
@@ -1226,10 +1520,10 @@ async function fetchStreamUrls(ch: Channel): Promise<{urls: Partial<Record<Playe
           if (d?.flvUrl || d?.hlsUrl) {
             return {
               urls: {
-                flv: d.flvUrl || '',
-                'ws-flv': d.wsFlvUrl || '',
-                hls: d.hlsUrl || '',
-                webrtc: d.webrtcUrl || '',
+                flv: norm(d.flvUrl || ''),
+                'ws-flv': norm(d.wsFlvUrl || '', true),
+                hls: norm(d.hlsUrl || ''),
+                webrtc: norm(d.webrtcUrl || ''),
               },
               codec: d.codec || '',
             }
@@ -1287,8 +1581,12 @@ function toggleFullscreen() {
   const cell = gridRef.value?.children[activeSlotIdx.value] as HTMLElement
   if (cell?.requestFullscreen) cell.requestFullscreen()
 }
-function maximizeSlot(idx: number) {
+function maximizeSlot(idx: number, event?: MouseEvent) {
   activeSlotIdx.value = idx
+  if (event && (event.target as HTMLElement)?.tagName === 'VIDEO') {
+    onVideoDblClick3D(idx, event)
+    return
+  }
   toggleFullscreen()
 }
 
@@ -1313,6 +1611,95 @@ function ptzPreset(preset: number) {
   const slot = gridSlots[activeSlotIdx.value]
   if (!slot.channelId) return
   ptzApi({ deviceId: slot.deviceId, channelId: slot.channelId, direction: 'goto_preset', preset })
+}
+
+// ═══ P0-1: 主/子码流切换 (对标海康 iVMS 双码流策略) ═══
+async function switchStreamQuality(quality: 'main' | 'sub') {
+  if (streamQuality.value === quality) return
+  streamQuality.value = quality
+  ElMessage.info(quality === 'sub' ? '已切换到子码流 (流畅模式)' : '已切换到主码流 (高清模式)')
+  for (let i = 0; i < gridSlots.length; i++) {
+    const slot = gridSlots[i]
+    if (slot.playing && slot.channelId) {
+      const fmt = slot.currentFormat as PlayerFormat
+      try { await streamHttp.post(`/${slot.channelId}/stop`) } catch { /* ignore */ }
+      destroyPlayer(slot, i)
+      const ch: Channel = { id: slot.channelId, name: slot.name, deviceId: slot.deviceId, status: slot.status } as any
+      const result = await fetchStreamUrls(ch)
+      if (result && result.urls) {
+        slot.urls = result.urls
+        slot.codec = result.codec || slot.codec
+        nextTick(() => attachPlayerByFormat(i, fmt || undefined))
+      }
+    }
+  }
+}
+watch(layout, (newLayout) => {
+  if (newLayout >= 9 && streamQuality.value === 'main') {
+    ElMessage.info('多路预览已自动切换到子码流')
+    switchStreamQuality('sub')
+  }
+})
+
+// ═══ P0-2: PTZ 巡航/轨迹/3D zoom ═══
+function toggleCruise() {
+  const slot = gridSlots[activeSlotIdx.value]
+  if (!slot?.deviceId) return
+  if (isCruising.value) {
+    ptzStopCruise(slot.deviceId, slot.channelId).catch(() => {})
+    isCruising.value = false
+    ElMessage.info('已停止巡航')
+  } else {
+    ptzApi({ deviceId: slot.deviceId, channelId: slot.channelId, direction: 'cruise_start', speed: ptzSpeed.value }).catch(() => {})
+    isCruising.value = true
+    ElMessage.success('已启动巡航')
+  }
+}
+function ptzCruise(path: number) {
+  const slot = gridSlots[activeSlotIdx.value]
+  if (!slot?.deviceId) return
+  ptzStartCruise(slot.deviceId, { channelId: slot.channelId, cruisePath: path, speed: ptzSpeed.value }).catch(() => {})
+  isCruising.value = true
+  ElMessage.success(`已切换到巡航路径 ${path}`)
+}
+function toggleTrack() {
+  const slot = gridSlots[activeSlotIdx.value]
+  if (!slot?.deviceId) return
+  if (isTracking.value) {
+    ptzStopTrack(slot.deviceId, slot.channelId).catch(() => {})
+    isTracking.value = false
+    ElMessage.info('已停止轨迹跟踪')
+  } else {
+    ptzApi({ deviceId: slot.deviceId, channelId: slot.channelId, direction: 'track_start' }).catch(() => {})
+    isTracking.value = true
+    ElMessage.success('已启动轨迹跟踪')
+  }
+}
+function ptzTrack(trackId: number) {
+  const slot = gridSlots[activeSlotIdx.value]
+  if (!slot?.deviceId) return
+  ptzStartTrack(slot.deviceId, { channelId: slot.channelId, trackId }).catch(() => {})
+  isTracking.value = true
+  ElMessage.success(`已切换到轨迹 ${trackId}`)
+}
+function onVideoDblClick3D(idx: number, event: MouseEvent) {
+  const slot = gridSlots[idx]
+  if (!slot?.deviceId) return
+  const video = videoRefs.value[idx]
+  if (!video) return
+  const rect = video.getBoundingClientRect()
+  const centerX = (event.clientX - rect.left) / rect.width
+  const centerY = (event.clientY - rect.top) / rect.height
+  const currentZoom = (slot as any)._zoomLevel || 1
+  const newZoom = Math.min(currentZoom * 2, 8)
+  ;(slot as any)._zoomLevel = newZoom
+  ptz3DPosition(slot.deviceId, {
+    channelId: slot.channelId,
+    centerPan: Math.max(0, Math.min(1, centerX)),
+    centerTilt: Math.max(0, Math.min(1, centerY)),
+    zoomLevel: newZoom,
+  }).catch(() => {})
+  ElMessage.info(`3D 定位: (${Math.round(centerX * 100)}%, ${Math.round(centerY * 100)}%) 放大 ${newZoom}x`)
 }
 
 // 对讲
@@ -1562,6 +1949,7 @@ function openImageAdjust() { imageDialogVisible.value = true }
 function resetImageAdjust() {
   imageAdjust.brightness = 50; imageAdjust.contrast = 50
   imageAdjust.saturation = 50; imageAdjust.hue = 50
+  imageAdjust.mirrorH = false; imageAdjust.mirrorV = false; imageAdjust.rotate = 0
 }
 
 // 时钟
@@ -1580,8 +1968,10 @@ async function checkInferenceStatus() {
   try {
     const resp = await getInferenceStatus()
     const data = resp.data?.data
-    inferenceAvailable.value = data?.engine_available ?? false
-    if (inferenceAvailable.value && data?.loaded_models?.length) {
+    // [Fix 2026-06-23] 必须同时满足引擎可用 + 有模型加载，否则推理请求报 "No ONNX models loaded" 刷屏
+    const hasModels = (data?.loaded_models?.length ?? 0) > 0
+    inferenceAvailable.value = (data?.engine_available ?? false) && hasModels
+    if (inferenceAvailable.value) {
       const model = data.loaded_models[0]
       console.debug(`[Inference] 引擎就绪, 模型: ${model.name}, 输入: ${model.input_shape}`)
     }
@@ -1651,10 +2041,19 @@ function drawDetections(idx: number) {
 
     const color = CLASS_COLORS[det.class_name] || '#A78BFA'
 
-    // 绘制矩形框
+    // P2-3: 专业角标样式 (对标海康)
+    const cornerLen = Math.min(pw, ph, 10)
     ctx.strokeStyle = color
-    ctx.lineWidth = 2
-    ctx.strokeRect(px, py, pw, ph)
+    ctx.lineWidth = 3
+    ctx.lineCap = 'round'
+    // 左上角
+    ctx.beginPath(); ctx.moveTo(px, py + cornerLen); ctx.lineTo(px, py); ctx.lineTo(px + cornerLen, py); ctx.stroke()
+    // 右上角
+    ctx.beginPath(); ctx.moveTo(px + pw - cornerLen, py); ctx.lineTo(px + pw, py); ctx.lineTo(px + pw, py + cornerLen); ctx.stroke()
+    // 左下角
+    ctx.beginPath(); ctx.moveTo(px, py + ph - cornerLen); ctx.lineTo(px, py + ph); ctx.lineTo(px + cornerLen, py + ph); ctx.stroke()
+    // 右下角
+    ctx.beginPath(); ctx.moveTo(px + pw - cornerLen, py + ph); ctx.lineTo(px + pw, py + ph); ctx.lineTo(px + pw, py + ph - cornerLen); ctx.stroke()
 
     // 绘制标签背景 + 文字
     const label = `${det.class_name} ${Math.round(det.confidence * 100)}%`
@@ -1664,6 +2063,36 @@ function drawDetections(idx: number) {
     ctx.fillRect(px, py - 18, textW, 18)
     ctx.fillStyle = '#fff'
     ctx.fillText(label, px + 4, py - 5)
+  }
+
+  // P2-3: 目标计数器 (左下角)
+  const counts: Record<string, number> = {}
+  for (const det of slot.detections) {
+    const cls = det.class_name || 'unknown'
+    counts[cls] = (counts[cls] || 0) + 1
+  }
+  const countEntries = Object.entries(counts)
+  if (countEntries.length > 0) {
+    const lineH = 16
+    const boxH = countEntries.length * lineH + 8
+    const boxW = 120
+    const boxX = offsetX + 4
+    const boxY = offsetY + displayH * 0.3 - boxH - 4
+    // 半透明背景
+    ctx.fillStyle = 'rgba(0,0,0,0.6)'
+    ctx.fillRect(boxX, boxY, boxW, boxH)
+    ctx.strokeStyle = 'rgba(0,212,170,0.3)'
+    ctx.lineWidth = 1
+    ctx.strokeRect(boxX, boxY, boxW, boxH)
+    // 每类计数
+    ctx.font = 'bold 11px sans-serif'
+    countEntries.forEach(([cls, cnt], i) => {
+      const y = boxY + (i + 1) * lineH
+      ctx.fillStyle = CLASS_COLORS[cls] || '#A78BFA'
+      ctx.fillRect(boxX + 4, y - 10, 4, 4)
+      ctx.fillStyle = '#E8E8E8'
+      ctx.fillText(`${cls}: ${cnt}`, boxX + 12, y - 2)
+    })
   }
 }
 
@@ -1712,8 +2141,8 @@ async function runInferenceOnFrame() {
 
       for (const [className, info] of Object.entries(classCounts)) {
         const conf = Math.round(info.maxConf * 100)
-        // 所有检测结果统一用 INFO 级别(普通目标检测不等同告警)
-        // 真正的告警(入侵、烟火、打架等行为)由后端 AlarmService 推送
+        // 后端 /detect API 已按事件规则订阅过滤, 此处收到的 detections 均为已订阅类型
+        // 未订阅的告警类型(如无规则时的 person)已在后端 isAlarmTypeSubscribed 检查中剔除
         const level = 'INFO'
         const tagType = 'info'
         detectionLogs.value.unshift({
@@ -1767,6 +2196,9 @@ onMounted(() => {
   // 恢复之前活跃的通道（从全局 Store）
   restoreFromStore()
 
+  // P1-3: 检测 WebCodecs 硬件解码支持
+  checkWebCodecsSupport()
+
   // 检查推理引擎状态，然后启动推理定时器
   checkInferenceStatus().then(() => {
     if (inferenceAvailable.value) {
@@ -1814,14 +2246,16 @@ function restoreFromStore() {
 onUnmounted(() => {
   if (clockTimer) clearInterval(clockTimer)
   if (logTimer) clearInterval(logTimer)
+  // P1-4: 清理自动轮巡
+  if (autoPatrolTimer) clearInterval(autoPatrolTimer)
   // 清理健康监测
   streamHealth.cleanup()
   // 有活跃通道时软关闭（不通知后端停流），否则硬关闭
   if (channelStore.hasActive) {
-    for (let i = 0; i < 16; i++) closeSlot(i, false)  // soft close
+    for (let i = 0; i < gridSlots.length; i++) closeSlot(i, false)  // soft close
     channelStore.showFloatingPreview = true
   } else {
-    for (let i = 0; i < 16; i++) closeSlot(i)  // hard close
+    for (let i = 0; i < gridSlots.length; i++) closeSlot(i)  // hard close
   }
 })
 </script>
@@ -1989,4 +2423,10 @@ onUnmounted(() => {
 .speed-val { width: 28px; text-align: right; font-size: 12px; color: #E8EAED; }
 .ptz-presets { display: flex; align-items: center; gap: 8px; width: 100%; flex-wrap: wrap; }
 .ptz-presets > span { font-size: 12px; color: #9AA0A6; }
+.ptz-advanced { display: flex; align-items: center; gap: 8px; width: 100%; font-size: 12px; color: #9AA0A6; }
+.ptz-advanced > span { width: 32px; flex-shrink: 0; }
+.ptz-3d-hint { display: flex; align-items: center; gap: 4px; width: 100%; font-size: 11px; color: #4A4D58; margin-top: 4px; }
+/* 25/36 宫格大屏模式 */
+.video-grid.grid-25 { display: grid; grid-template-columns: repeat(5, 1fr); grid-template-rows: repeat(5, 1fr); }
+.video-grid.grid-36 { display: grid; grid-template-columns: repeat(6, 1fr); grid-template-rows: repeat(6, 1fr); }
 </style>

@@ -772,7 +772,7 @@ onUnmounted(() => {
                   {{ isPaused ? '恢复' : '暂停' }}
                 </el-button>
                 <el-button-group size="small" class="speed-btn-group">
-                  <el-button v-for="spd in [0.5, 1, 2, 4]" :key="spd"
+                  <el-button v-for="spd in [0.5, 1, 2, 4, 8, 16]" :key="spd"
                     :type="playbackSpeed === spd ? 'primary' : 'default'"
                     @click="changeSpeed(spd)">
                     {{ spd }}x

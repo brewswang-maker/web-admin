@@ -50,6 +50,9 @@ interface MonitorContext {
   // FPS 统计：帧计数 + 上次计数时间
   frameCount: number
   lastFpsTime: number
+  // [P3-1] FPS 滑动窗口: 最近 2 秒内的采样点 [(time, totalFrames)]
+  //   用于平滑 FPS 计算，减少低帧率设备 (5-10fps) 的瞬时波动误判
+  fpsWindow: Array<{ time: number; frames: number }>
 }
 
 // 卡顿回调类型
@@ -106,6 +109,7 @@ export function useStreamHealth(onStall?: StallCallback, onReconnectExhausted?: 
       consecutiveErrorEvaluations: 0,
       frameCount: 0,
       lastFpsTime: Date.now(),
+      fpsWindow: [],
     }
 
     if (isWebRTC) {
@@ -369,12 +373,20 @@ export function useStreamHealth(onStall?: StallCallback, onReconnectExhausted?: 
     const state = healthStates[slotIdx]
     if (!state) return
 
+    // [Fix 2026-06-23] 启动宽限期内跳过 noDataSeconds 累加
+    //   原因：FLV 刚连接时 statistics_info 事件还没触发，lastSpeed=0，
+    //   导致 noDataSeconds 累加到 1，然后 console.warn 刷屏。
+    //   宽限期由 evaluateHealth 统一控制，此处不再累加。
+    const uptimeMs = Date.now() - ctx.createdAt
+    const startupGraceMs = ctx.type === 'hls' ? 25000 : 20000
+    const inStartupGrace = uptimeMs < startupGraceMs
+
     // 记录本次检测前的值
     const prevNoData = ctx.noDataSeconds
 
     // [简化逻辑] 只依赖 flv.js 的 speed 来判断是否有数据
     // video.currentTime 检测容易误触发（正常播放时也可能有 0.1s 不变）
-    if (ctx.videoElement) {
+    if (!inStartupGrace && ctx.videoElement) {
       const video = ctx.videoElement
       const currentTime = video.currentTime
 
@@ -409,7 +421,8 @@ export function useStreamHealth(onStall?: StallCallback, onReconnectExhausted?: 
     }
 
     // 基于 flv.js 速度判断（主要判断依据）
-    if (ctx.lastSpeed === 0 && ctx.noDataSeconds === prevNoData) {
+    // [Fix 2026-06-23] 宽限期内 lastSpeed=0 不累加 noDataSeconds（首帧延迟正常）
+    if (!inStartupGrace && ctx.lastSpeed === 0 && ctx.noDataSeconds === prevNoData) {
       ctx.noDataSeconds = Math.min(ctx.noDataSeconds + 1, 30)
     } else if (ctx.lastSpeed > 0) {
       ctx.noDataSeconds = 0
@@ -422,7 +435,9 @@ export function useStreamHealth(onStall?: StallCallback, onReconnectExhausted?: 
     evaluateHealth(slotIdx, ctx)
   }
 
-  /** 通过 getVideoPlaybackQuality 计算 FPS（FLV/HLS 通用） */
+  /** 通过 getVideoPlaybackQuality 计算 FPS（FLV/HLS 通用）
+   * [P3-1] 使用 2 秒滑动窗口平均 FPS，减少低帧率设备 (5-10fps) 的瞬时波动
+   *   对标海康 iVMS: FPS 显示基于 2s 平均值，避免单秒抖动 */
   function computeFpsFromVideo(slotIdx: number, ctx: MonitorContext) {
     const video = ctx.videoElement
     if (!video) return
@@ -431,16 +446,29 @@ export function useStreamHealth(onStall?: StallCallback, onReconnectExhausted?: 
 
     const now = Date.now()
     const elapsed = now - ctx.lastFpsTime
-    // 至少间隔 800ms 再计算一次 fps
+    // 至少间隔 800ms 再采样
     if (elapsed < 800) return
 
     try {
       const pq = (video as any).getVideoPlaybackQuality?.() as any
       if (pq && typeof pq.totalVideoFrames === 'number') {
         const totalFrames = pq.totalVideoFrames as number
-        const delta = totalFrames - ctx.frameCount
-        if (delta > 0 && ctx.frameCount > 0) {
-          state.fps = Math.round(delta / (elapsed / 1000))
+
+        // [P3-1] 添加到滑动窗口
+        if (ctx.frameCount > 0) {
+          ctx.fpsWindow.push({ time: now, frames: totalFrames })
+          // 清理超过 2 秒的旧样本
+          ctx.fpsWindow = ctx.fpsWindow.filter(s => now - s.time <= 2000)
+          // 窗口内至少 2 个样本才计算平均 FPS
+          if (ctx.fpsWindow.length >= 2) {
+            const oldest = ctx.fpsWindow[0]
+            const newest = ctx.fpsWindow[ctx.fpsWindow.length - 1]
+            const frameDelta = newest.frames - oldest.frames
+            const timeDeltaSec = (newest.time - oldest.time) / 1000
+            if (timeDeltaSec > 0 && frameDelta >= 0) {
+              state.fps = Math.round(frameDelta / timeDeltaSec)
+            }
+          }
         }
         ctx.frameCount = totalFrames
       }
@@ -453,29 +481,49 @@ export function useStreamHealth(onStall?: StallCallback, onReconnectExhausted?: 
     const state = healthStates[slotIdx]
     if (!state) return
 
-    // 启动宽限期：HLS 15秒（H.265 GOP可能很长），FLV/WebRTC 12秒
-    // GB28181 设备推流需要 SIP INVITE + RTP 传输建立，初始化时间较长
-    const startupGraceMs = ctx.type === 'hls' ? 15000 : 12000
+    // [P1-2] 协议差异化阈值 — 对标海康 iVMS / 大华 DSS
+    //   FLV/WebRTC 是实时流协议，对网络中断更敏感，应更快检测并恢复
+    //   HLS 有 segment 缓冲，容忍更长的无数据期（GOP 等待等）
+    const isRealtime = ctx.type === 'flv' || ctx.type === 'webrtc'
+
+    // 启动宽限期：HLS 25s / FLV-WebRTC 20s
+    //   GB28181 SIP INVITE + RTP 建立 + H.265 长 GOP 解码需 15-25s
+    //   参考海康 iVMS-8700 (30s) / 大华 DSS (25s)
+    const startupGraceMs = ctx.type === 'hls' ? 25000 : 20000
     const uptimeMs = Date.now() - ctx.createdAt
     const inStartupGrace = uptimeMs < startupGraceMs
 
     if (inStartupGrace) {
-      // 在宽限期内，无数据只标记 warning 而非 error
-      if (ctx.noDataSeconds >= 5) {
+      // 在宽限期内，无数据只标记 warning 而非 error（不触发 stallCount++）
+      if (ctx.noDataSeconds >= 10) {
         state.status = 'warning'
       }
       return
     }
 
-    // 连续 10 秒无数据或卡顿 → error
-    // GB28181 设备 GOP 间隔可能较长（低帧率设备），需要更宽松的阈值
-    if (ctx.noDataSeconds >= 10) {
-      // 连续 error 确认：需连续 2 次 error 评估才真正触发（防止单次网络抖动误判）
+    // [P1-2] 协议差异化 noDataSeconds 阈值
+    //   实时协议(FLV/WebRTC): warning@10s / error@20s
+    //   缓冲协议(HLS):        warning@15s / error@30s
+    //   原因：H.265 长 GOP（P 帧间隔 5-10s）+ GB28181 低帧率设备（5-10fps），
+    //         HLS 需更宽容。但 FLV/WebRTC 无 segment 缓冲，20s 足以确认网络中断。
+    const warnThreshold = isRealtime ? 10 : 15
+    const errorThreshold = isRealtime ? 20 : 30
+    //   实时协议连续确识 2 次即可（40s总），缓冲协议需 3 次（90s总）
+    const errorConfirmations = isRealtime ? 2 : 3
+
+    if (ctx.noDataSeconds >= warnThreshold && ctx.noDataSeconds < errorThreshold) {
+      if (state.status !== 'error') {
+        state.status = 'warning'
+      }
+      return
+    }
+
+    if (ctx.noDataSeconds >= errorThreshold) {
       ctx.consecutiveErrorEvaluations++
-      if (ctx.consecutiveErrorEvaluations >= 2) {
+      if (ctx.consecutiveErrorEvaluations >= errorConfirmations) {
         if (state.status !== 'error') {
           state.stallCount++
-          console.warn(`[StreamHealth] slot${slotIdx} 检测到持续卡顿（连续${ctx.consecutiveErrorEvaluations}次确认），stallCount=${state.stallCount}`)
+          console.warn(`[StreamHealth] slot${slotIdx} 检测到持续卡顿 (${ctx.type} 连续${ctx.consecutiveErrorEvaluations}次确认)，stallCount=${state.stallCount}`)
 
           // 触发卡顿回调，让上层强制刷新视频
           if (onStall) {
@@ -486,7 +534,7 @@ export function useStreamHealth(onStall?: StallCallback, onReconnectExhausted?: 
       } else {
         // 第一次检测到无数据，只标记 warning 不触发 error
         state.status = 'warning'
-        console.warn(`[StreamHealth] slot${slotIdx} 无数据检测（第${ctx.consecutiveErrorEvaluations}次），待下次确认`)
+        console.warn(`[StreamHealth] slot${slotIdx} 无数据检测 (${ctx.type} 第${ctx.consecutiveErrorEvaluations}/${errorConfirmations}次)，待下次确认`)
       }
       return
     }

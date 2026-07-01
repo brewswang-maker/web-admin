@@ -174,3 +174,53 @@ export function getStreamingLiveDetections(channelId: string) {
     total_inferences?: number
   }>>('/streaming/live', { params: { channel_id: channelId } })
 }
+
+// ============================================================
+// 需求驱动推理: 前端查看注册/注销
+// 当前端打开 LiveView 时注册查看者, 使该通道即使没有联动规则也会执行推理 (画检测框).
+// 关闭 LiveView 时注销, 让无规则通道恢复跳过推理, 节省 CPU/TPU 资源.
+// ============================================================
+
+/** 注册前端查看者 (LiveView 打开时调用) */
+export function registerInferenceViewer(channelId: string) {
+  return inferenceHttp.post<ApiResponse<{
+    channel_id: string
+    viewers: number
+    inference_active: boolean
+  }>>('/viewer/register', { channel_id: channelId })
+}
+
+/** 注销前端查看者 (LiveView 关闭时调用) */
+export function unregisterInferenceViewer(channelId: string) {
+  return inferenceHttp.post<ApiResponse<{
+    channel_id: string
+    viewers: number
+    inference_active: boolean
+  }>>('/viewer/unregister', { channel_id: channelId })
+}
+
+// ============================================================
+// 通道推理需求状态
+// ============================================================
+
+export interface ChannelDemandStatus {
+  channel_id: string
+  device_id: string
+  inference_running: boolean
+  has_rule_subscription: boolean
+  viewer_count: number
+  demand_reason: 'rule' | 'viewer' | 'none'
+}
+
+export interface DemandStatusResponse {
+  channels: ChannelDemandStatus[]
+  total: number
+  active_count: number
+  idle_count: number
+  resource_saving: 'on' | 'off'
+}
+
+/** 获取所有通道的推理需求状态 */
+export function getInferenceDemandStatus() {
+  return inferenceHttp.get<ApiResponse<DemandStatusResponse>>('/demand-status')
+}

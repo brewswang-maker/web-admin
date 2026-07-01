@@ -69,7 +69,7 @@
           </el-row>
         </div>
 
-        <el-button type="dashed" style="width: 100%; margin-top: 8px" @click="addStep">+ 添加步骤</el-button>
+        <el-button style="width: 100%; margin-top: 8px; border-style: dashed" @click="addStep">+ 添加步骤</el-button>
       </div>
     </el-form>
 
@@ -150,11 +150,12 @@ watch(() => props.editPattern, (p) => {
 }, { immediate: true })
 
 function opLabel(op: number): string { return OP_LABELS[op] || 'AND' }
-function opTagType(op: number): string {
+type TagType = 'success' | 'warning' | 'info' | 'danger' | 'primary' | undefined
+function opTagType(op: number): TagType {
   if (op === 1) return 'success'
   if (op === 2) return 'warning'
   if (op === 3) return 'danger'
-  if (op === 4) return ''
+  if (op === 4) return undefined
   if (op === 5) return 'info'
   return 'primary'
 }

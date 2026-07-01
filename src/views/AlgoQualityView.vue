@@ -162,13 +162,13 @@ const filteredAlgos = computed(() => {
 })
 
 const benchmarkHistory = computed<BenchmarkRun[]>(() => {
-  return trend.value.map((t, idx) => ({
+  return trend.value.map((t: any, idx: number) => ({
     id: idx + 1,
     time: t.time || t.date || '',
     title: `${t.date} 推理运行汇总`,
     run_count: t.run_count ?? 0,
-    avgLatencyMs: t.avg_latency_ms ?? 0,
-    avgFps: t.avg_fps ?? 0,
+    avgLatencyMs: t.avg_latency_ms ?? t.avgLatencyMs ?? 0,
+    avgFps: t.avg_fps ?? t.avgFps ?? 0,
   }))
 })
 
@@ -191,14 +191,15 @@ async function load() {
   loading.value = true
   try {
     const { data } = await statisticsApi.getAlgorithmPerformance({ days: 7 })
-    algorithms.value = data?.items ?? []
-    trend.value = (data?.trend ?? []).map(t => ({
+    const payload = (data?.data ?? data) as any
+    algorithms.value = payload?.items ?? []
+    trend.value = (payload?.trend ?? []).map((t: any) => ({
       ...t,
       time: t.date,
       title: `${t.date} 推理运行汇总`,
     }))
-    lastUpdated.value = data?.last_updated ?? new Date().toISOString().slice(0, 16).replace('T', ' ')
-    if (algorithms.value.length === 0 && (data?.total ?? 0) === 0) {
+    lastUpdated.value = payload?.last_updated ?? new Date().toISOString().slice(0, 16).replace('T', ' ')
+    if (algorithms.value.length === 0 && (payload?.total ?? 0) === 0) {
       // 首次访问可能无 perf_logs 数据,这是正常的
       ElMessage.info('尚无算法性能数据,运行推理后将在此显示')
     }

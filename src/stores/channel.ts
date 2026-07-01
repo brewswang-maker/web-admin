@@ -9,6 +9,7 @@
 
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
+import { registerInferenceViewer, unregisterInferenceViewer } from '@/api/inference'
 
 /** PlayerFormat 与 LiveView 一致 */
 export type PlayerFormat = 'flv' | 'ws-flv' | 'hls' | 'webrtc'
@@ -31,6 +32,14 @@ export const useChannelStore = defineStore('channel', () => {
   const showFloatingPreview = ref(false)
   const floatingPreviewChannelId = ref<string | null>(null)
 
+  // [Fix 2026-06-23] 全局 /start 跨组件防抖
+  //   原因：MiniPlayer 的防抖是 per-instance 的，AlarmPopup + FloatingPreview + LiveView
+  //         各有独立实例，无法协调。多个组件同时对同一 channelId 调 /start → SIP INVITE 风暴。
+  //   方案：防抖记录提升到 Pinia store，所有组件共享同一个 Map。
+  //   对标海康 iVMS：同通道 5s 内只允许一次 /start 调用。
+  const GLOBAL_START_DEBOUNCE_MS = 5000
+  const lastStartApiAt = ref<Map<string, number>>(new Map())
+
   // ===== Getters =====
   const hasActive = computed(() => slots.value.size > 0)
 
@@ -44,13 +53,40 @@ export const useChannelStore = defineStore('channel', () => {
 
   // ===== Actions =====
 
+  /**
+   * 全局 /start 防抖检查：判断指定通道是否在防抖窗口内
+   * @returns true = 应跳过 /start（防抖窗口内），false = 可以调用 /start
+   */
+  function shouldSkipStart(channelId: string): boolean {
+    const last = lastStartApiAt.value.get(channelId) || 0
+    const inDebounce = Date.now() - last < GLOBAL_START_DEBOUNCE_MS
+    if (!inDebounce) {
+      lastStartApiAt.value.set(channelId, Date.now())
+    }
+    return inDebounce
+  }
+
+  /** 手动标记 /start 已调用（用于非防抖路径记录） */
+  function markStartCalled(channelId: string) {
+    lastStartApiAt.value.set(channelId, Date.now())
+  }
+
   /** 注册一个活跃通道（LiveView assignChannel 成功后调用） */
   function registerSlot(idx: number, data: ActiveSlotData) {
     slots.value.set(idx, { ...data })
+    // 通知后端该通道有前端查看者 → 即使无联动规则也执行推理 (画检测框)
+    registerInferenceViewer(data.channelId).catch(() => {
+      // 静默失败: 查看者注册是优化项, 不影响核心功能
+    })
   }
 
   /** 注销通道（用户硬关闭时调用） */
   function unregisterSlot(idx: number) {
+    const old = slots.value.get(idx)
+    if (old) {
+      // 通知后端该通道的前端查看者减少 → 无规则时恢复跳过推理
+      unregisterInferenceViewer(old.channelId).catch(() => {})
+    }
     slots.value.delete(idx)
     // 如果浮窗显示的是被注销的通道，切换到下一个
     if (floatingPreviewChannelId.value) {
@@ -67,6 +103,10 @@ export const useChannelStore = defineStore('channel', () => {
 
   /** 清空全部（用户主动全部关闭或退出登录） */
   function clearAll() {
+    // 注销所有活跃通道的查看者
+    for (const [, data] of slots.value) {
+      unregisterInferenceViewer(data.channelId).catch(() => {})
+    }
     slots.value.clear()
     showFloatingPreview.value = false
     floatingPreviewChannelId.value = null
@@ -100,5 +140,7 @@ export const useChannelStore = defineStore('channel', () => {
     getSlot,
     snapshot,
     setFloatingChannel,
+    shouldSkipStart,
+    markStartCalled,
   }
 })

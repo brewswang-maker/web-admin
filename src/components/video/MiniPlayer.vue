@@ -41,6 +41,8 @@ import { Loading } from '@element-plus/icons-vue'
 import Hls from 'hls.js'
 import flvjs from 'flv.js'
 import { streamHttp } from '@/api/http'
+import { normalizeStreamUrl, normalizeWsFlvUrl } from '@/utils/streamUrl'
+import { useChannelStore } from '@/stores/channel'
 
 type PlayerFormat = 'flv' | 'ws-flv' | 'hls' | 'webrtc'
 
@@ -108,16 +110,35 @@ function destroyPlayer() {
 }
 
 // ── 获取流 URL ──
-async function fetchStreamUrls(chId: string): Promise<{ urls: Partial<Record<PlayerFormat, string>>, codec: string } | null> {
+// [一次性设计修正 2026-06-23] 增加 forceSkipStart 参数：防抖窗口内跳过 /start
+//   原因：startPlay() 中的防抖逻辑只记录日志但不 return，fetchStreamUrls 内部
+//   仍然调 /start → 多个 MiniPlayer 实例（AlarmPopup + FloatingPreview）同时
+//   对同一 channelId 发起 SIP INVITE → 设备 INVITE 冲突 → 流重建死循环
+async function fetchStreamUrls(
+  chId: string,
+  forceSkipStart = false,
+): Promise<{ urls: Partial<Record<PlayerFormat, string>>, codec: string } | null> {
+  // URL 规范化辅助：将后端返回的绝对 URL 转为相对路径走 Vite 代理
+  const norm = (u: string, isWs = false) =>
+    isWs ? normalizeWsFlvUrl(u) : normalizeStreamUrl(u)
+
   try {
     // 1. 先查现有流 URL（无副作用，复用已有流，不触发 GB28181 INVITE）
+    //    [Fix 2026-06-23] 必须检查 streamAlive=true，防止使用幻影 URL
+    //    后端 getMultiProtocolUrls 无条件拼接 URL，multi-urls 之前永远返回非空 URL
+    //    修复后后端会检查 ZLM 中流是否真实存在，streamAlive=false 时 URL 为空
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
         const { data } = await streamHttp.get(`/${chId}/multi-urls`)
         const d = data?.data || data
-        if (d?.flvUrl || d?.webrtcUrl || d?.hlsUrl) {
+        if (d?.streamAlive && (d?.flvUrl || d?.webrtcUrl || d?.hlsUrl)) {
           return {
-            urls: { flv: d.flvUrl || '', webrtc: d.webrtcUrl || '', 'ws-flv': d.wsFlvUrl || '', hls: d.hlsUrl || '' },
+            urls: {
+              flv: norm(d.flvUrl || ''),
+              webrtc: norm(d.webrtcUrl || ''),
+              'ws-flv': norm(d.wsFlvUrl || '', true),
+              hls: norm(d.hlsUrl || ''),
+            },
             codec: d.codec || '',
           }
         }
@@ -126,7 +147,8 @@ async function fetchStreamUrls(chId: string): Promise<{ urls: Partial<Record<Pla
     }
 
     // 2. 现有流不存在时才触发拉流（有副作用：可能触发 GB28181 INVITE）
-    if (!props.skipStartApi) {
+    //    forceSkipStart=true 时跳过（防抖窗口内复用现有流）
+    if (!props.skipStartApi && !forceSkipStart) {
       try {
         const { data: startResp } = await streamHttp.post(`/${chId}/start`, {
           stream_type: props.streamType,
@@ -135,10 +157,10 @@ async function fetchStreamUrls(chId: string): Promise<{ urls: Partial<Record<Pla
         if (startData && (startData.flvUrl || startData.webrtcUrl) && startData.zlmReady) {
           return {
             urls: {
-              flv: startData.flvUrl || '',
-              webrtc: startData.webrtcUrl || '',
-              'ws-flv': startData.wsFlvUrl || '',
-              hls: startData.hlsUrl || '',
+              flv: norm(startData.flvUrl || ''),
+              webrtc: norm(startData.webrtcUrl || ''),
+              'ws-flv': norm(startData.wsFlvUrl || '', true),
+              hls: norm(startData.hlsUrl || ''),
             },
             codec: startData.codec || '',
           }
@@ -146,13 +168,19 @@ async function fetchStreamUrls(chId: string): Promise<{ urls: Partial<Record<Pla
       } catch { /* 可能已在推流 */ }
 
       // start 后等待流就绪 (GB28181 INVITE + RTP 建立需 2-5 秒，10×300ms = 3s)
+      //    [Fix 2026-06-23] 同样检查 streamAlive
       for (let attempt = 0; attempt < 10; attempt++) {
         try {
           const { data } = await streamHttp.get(`/${chId}/multi-urls`)
           const d = data?.data || data
-          if (d?.flvUrl || d?.webrtcUrl || d?.hlsUrl) {
+          if (d?.streamAlive && (d?.flvUrl || d?.webrtcUrl || d?.hlsUrl)) {
             return {
-              urls: { flv: d.flvUrl || '', webrtc: d.webrtcUrl || '', 'ws-flv': d.wsFlvUrl || '', hls: d.hlsUrl || '' },
+              urls: {
+                flv: norm(d.flvUrl || ''),
+                webrtc: norm(d.webrtcUrl || ''),
+                'ws-flv': norm(d.wsFlvUrl || '', true),
+                hls: norm(d.hlsUrl || ''),
+              },
               codec: d.codec || '',
             }
           }
@@ -297,15 +325,27 @@ watch(() => props.src, (url) => {
 }, { immediate: true })
 
 // ── 启动播放 ──
+// [Fix 2026-06-23] 使用 Pinia store 全局防抖，替换 per-instance 防抖
+//   原因：per-instance 防抖无法跨组件协调（AlarmPopup + FloatingPreview + LiveView）
+//   方案：channelStore.shouldSkipStart() 全局共享，同通道 5s 内只允许一次 /start
+const channelStore = useChannelStore()
+
 async function startPlay() {
   if (!props.channelId) return
   const video = videoRef.value
   if (!video) return
 
+  // 全局防抖检查：同通道 5s 内复用已有流，跳过 /start（防止 SIP INVITE 风暴）
+  const inDebounce = channelStore.shouldSkipStart(props.channelId)
+  if (inDebounce) {
+    console.debug(`[MiniPlayer] ch=${props.channelId} /start 全局防抖窗口内，跳过 SIP INVITE`)
+  }
+
   loading.value = true
   errorMsg.value = ''
 
-  const result = await fetchStreamUrls(props.channelId)
+  // 防抖窗口内 forceSkipStart=true，仅查 multi-urls 复用已有流
+  const result = await fetchStreamUrls(props.channelId, inDebounce)
   loading.value = false
 
   if (!result || !result.urls) {
@@ -346,6 +386,10 @@ function toggleMute() {
 }
 
 // ── 监听 channelId 变化 ──
+// [一次性设计修正 2026-06-23] 移除 watcher 中的重复防抖逻辑
+//   原因：watcher 和 startPlay() 都检查 lastStartAt，watcher 先设置时间戳后
+//   调 startPlay()，导致 startPlay() 误判为“防抖窗口内”跳过 /start
+//   修复：watcher 只负责销毁旧播放器 + 调用 startPlay()，防抖由 startPlay 内部统一处理
 watch(() => props.channelId, (newId, oldId) => {
   if (props.src) return  // src 已提供时跳过直播流获取
   // 只在 channelId 真正变化时销毁并重建，避免同通道不必要重连
@@ -368,6 +412,7 @@ watch(() => props.visible, (vis) => {
 
 onBeforeUnmount(() => {
   destroyPlayer()
+  // [Fix 2026-06-23] 防抖记录已移至 Pinia store，无需在此清理
 })
 </script>
 

@@ -118,6 +118,21 @@ export default defineConfig(async () => {
     // ─── 开发服务器 ──────────────────────────────
     server: {
       port: 3100,
+      // [一次性设计修正 2026-06-21] host 显式指定 0.0.0.0 + IPv6 双栈监听
+      // 原因：Vite 默认只绑定 127.0.0.1 (IPv4 loopback)，但 macOS Safari/Chrome
+      //       在某些场景下使用 IPv6 ::1 访问导致 ERR_CONNECTION_REFUSED，
+      //       视频 FLV/WebSocket 资源 404 → 播放器反复重建循环。
+      //       显式声明 '0.0.0.0' 强制 IPv4 通配监听，'localhost' 同时声明双栈。
+      // 参考 memory: "Vite 开发服务器需指定 --host 0.0.0.0 解决 IPv6 监听问题"
+      host: '0.0.0.0',
+      strictPort: true,
+      // 允许局域网/外网访问（默认 Vite 7 仅允许 localhost）
+      // 防止 "Blocked request. This host (...) is not allowed" 警告触发 HMR 失败
+      allowedHosts: true,
+      cors: {
+        origin: true,           // 允许所有 origin（开发环境）
+        credentials: true,
+      },
       warmup: {
         clientFiles: [
           './src/main.ts',
@@ -155,11 +170,15 @@ export default defineConfig(async () => {
           target: 'http://127.0.0.1:18080',
           changeOrigin: true,
         },
-        // ZLM HTTP-FLV 播放代理
+        // ZLM HTTP-FLV / WS-FLV / HLS 播放代理（/rtp 路径）
+        // [一次性设计修正 2026-06-23] 新增 ws:true 支持 WS-FLV WebSocket 代理
+        //   WS-FLV 的 URL 形如 ws://localhost:3100/rtp/gb_xxx.live.flv
+        //   没有 ws:true 则 WebSocket 升级握手失败 → WS-FLV 黑屏
         '/rtp': {
           target: 'http://127.0.0.1:9080',
           changeOrigin: true,
-          // HTTP-FLV 是无限流式响应，必须禁用代理超时
+          ws: true,
+          // HTTP-FLV / WS-FLV 是无限流式响应，必须禁用代理超时
           configure: (proxy) => {
             proxy.on('proxyReq', (_proxyReq, _req, _res) => {
               // no-op: disable default timeout handling for streaming
@@ -168,10 +187,31 @@ export default defineConfig(async () => {
             proxy.options.proxyTimeout = 0
           },
         },
+        // ZLM HLS 播放代理（/live 路径）
+        // [一次性设计修正 2026-06-23] 新增 /live 代理
+        //   ZLM 默认 HLS vhost 路径为 /live/，部分设备 HLS URL 使用此路径而非 /rtp/
+        //   没有 /live 代理 → HLS m3u8/ts 请求 404 → hls.js 无法加载 → 黑屏
+        '/live': {
+          target: 'http://127.0.0.1:9080',
+          changeOrigin: true,
+          configure: (proxy) => {
+            proxy.options.timeout = 0
+            proxy.options.proxyTimeout = 0
+          },
+        },
         // ZLM WebRTC 信令代理
         '/index/api/webrtc': {
           target: 'http://127.0.0.1:9080',
           changeOrigin: true,
+        },
+        // ZLM HLS .m3u8 / .ts 代理（ZLM 部分配置使用 /hls/ 路径）
+        '/hls': {
+          target: 'http://127.0.0.1:9080',
+          changeOrigin: true,
+          configure: (proxy) => {
+            proxy.options.timeout = 0
+            proxy.options.proxyTimeout = 0
+          },
         },
       },
     },

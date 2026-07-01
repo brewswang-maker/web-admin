@@ -8,6 +8,7 @@
       <el-button size="small" type="primary" @click="addAndNode">+ AND</el-button>
       <el-button size="small" type="success" @click="addOrNode">+ OR</el-button>
       <el-button size="small" type="warning" @click="addNotNode">+ NOT</el-button>
+      <el-button size="small" type="info" @click="addCaseNode">+ CASE</el-button>
       <el-button size="small" @click="addLeafNode('time')">+ 时间条件</el-button>
       <el-button size="small" @click="addLeafNode('spatial')">+ 空间条件</el-button>
       <el-button size="small" @click="addLeafNode('source')">+ 事件源</el-button>
@@ -35,7 +36,8 @@ const emit = defineEmits<{
 function createNode(type: string): ConditionNode {
   if (type === 'AND') return { type: 'AND', children: [] }
   if (type === 'OR') return { type: 'OR', children: [] }
-  if (type === 'NOT') return { type: 'NOT', children: [] }
+  if (type === 'NOT') return { type: 'NOT', children: [{ type: 'LEAF', leaf_type: 'time' as any, condition: {} as any }] }
+  if (type === 'CASE') return { type: 'CASE', case_field: 'alarm_type', case_branches: [], default_actions: [] } as any
   return { type: 'LEAF', leaf_type: 'time' as any, condition: {} as any }
 }
 
@@ -64,6 +66,26 @@ function addOrNode() {
 function addNotNode() {
   if (!props.modelValue) {
     emit('update:modelValue', { type: 'NOT', children: [{ type: 'LEAF', leaf_type: 'source' as any, condition: {} as any }] })
+  }
+}
+
+function addCaseNode() {
+  // P0-4: CASE 节点 (v8.0 后端支持)
+  const caseNode: any = {
+    type: 'CASE',
+    case_field: 'alarm_type',
+    case_branches: [
+      { op: 'eq', value: 'face_blacklist', actions: [] },
+    ],
+    default_actions: [],
+  }
+  if (!props.modelValue) {
+    emit('update:modelValue', caseNode)
+  } else if (props.modelValue.type === 'AND' || props.modelValue.type === 'OR') {
+    const updated = { ...props.modelValue, children: [...props.modelValue.children, caseNode] }
+    emit('update:modelValue', updated as ConditionNode)
+  } else {
+    emit('update:modelValue', { type: 'AND' as const, children: [props.modelValue, caseNode] })
   }
 }
 
@@ -99,6 +121,7 @@ const nodeColors: Record<string, string> = {
   AND: '#409eff',
   OR: '#67c23a',
   NOT: '#e6a23c',
+  CASE: '#8B5CF6',
   LEAF: '#909399',
 }
 
@@ -111,6 +134,31 @@ const TreeNode: FunctionalComponent<{ node: ConditionNode; depth: number; onUpda
     return h('div', { class: 'tree-node leaf', style: { marginLeft: indent } }, [
       h('span', { class: 'node-badge', style: { background: nodeColors.LEAF } }, leafLabels[(node as any).leaf_type] || '条件'),
       h('el-button', { size: 'small', type: 'danger', link: true, onClick: () => emit('remove') }, () => '删除'),
+    ])
+  }
+
+  // P0-4: CASE 节点渲染 (v8.0)
+  if (node.type === 'CASE') {
+    const caseNode = node as any
+    const branches = caseNode.case_branches || []
+    return h('div', { class: 'tree-node branch case-node', style: { marginLeft: indent } }, [
+      h('div', { class: 'branch-header' }, [
+        h('span', { class: 'node-badge', style: { background: nodeColors.CASE } }, `CASE: ${caseNode.case_field || 'field'}`),
+        h('span', { class: 'child-count' }, `(${branches.length} branches)`),
+        depth === 0
+          ? h('el-button', { size: 'small', type: 'danger', link: true, onClick: () => emit('remove') }, () => '清空')
+          : h('el-button', { size: 'small', type: 'danger', link: true, onClick: () => emit('remove') }, () => '删除'),
+      ]),
+      ...branches.map((branch: any, i: number) =>
+        h('div', { class: 'case-branch', style: { marginLeft: '20px' } }, [
+          h('span', { class: 'node-badge', style: { background: '#8B5CF6', opacity: 0.7 } }, `${branch.op || 'eq'}: ${branch.value || ''}`),
+        ])
+      ),
+      caseNode.default_actions && caseNode.default_actions.length > 0
+        ? h('div', { class: 'case-default', style: { marginLeft: '20px' } }, [
+            h('span', { class: 'node-badge', style: { background: '#6B7280' } }, 'default'),
+          ])
+        : null,
     ])
   }
 

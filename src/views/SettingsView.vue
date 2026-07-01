@@ -177,7 +177,7 @@
               <el-input v-model="hybridConfig.text.apiKey" type="password" show-password placeholder="sk-..." style="width:400px" />
             </el-form-item>
             <el-form-item label="模型">
-              <el-input v-model="hybridConfig.text.model" placeholder="deepseek-chat" style="width:250px" />
+              <el-input v-model="hybridConfig.text.model" placeholder="MiniMax-M3" style="width:250px" />
             </el-form-item>
 
             <!-- 视觉路由 → Qwen-VL-Plus -->
@@ -481,7 +481,7 @@ const llmConfig = reactive({
 // 字段保留为占位符 (空字符串) — 用户需在后端 .env 中配置 key, 然后从前端读取服务状态.
 // 预填 baseUrl (不含敏感信息), 让用户看到默认 endpoint. apiKey 字段从后端 /api/v1/llm/status 获取状态.
 const hybridConfig = reactive({
-  text:   { baseUrl: 'https://api.deepseek.com/v1', apiKey: '', model: 'deepseek-chat' },
+  text:   { baseUrl: 'https://api.deepseek.com/v1', apiKey: '', model: 'MiniMax-M3' },
   vision: { baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', apiKey: '', model: 'qwen-vl-plus' },
   video:  { baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', apiKey: '', model: 'qwen-vl-max' },
 })

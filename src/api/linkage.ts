@@ -122,7 +122,7 @@ export interface MergeCondition {
   merge_by: string
 }
 
-/** 条件表达式树节点 (AND/OR/NOT/LEAF) */
+/** 条件表达式树节点 (AND/OR/NOT/LEAF/CASE) */
 export type ConditionNode =
   | { type: 'AND' | 'OR'; children: ConditionNode[] }
   | { type: 'NOT'; children: [ConditionNode] }
@@ -130,6 +130,8 @@ export type ConditionNode =
   | { type: 'LEAF'; leaf_type: 'spatial'; condition: SpatialCondition }
   | { type: 'LEAF'; leaf_type: 'source'; condition: SourceCondition }
   | { type: 'LEAF'; leaf_type: 'merge'; condition: MergeCondition }
+  // P0-4: v8.0 CASE 表达式节点
+  | { type: 'CASE'; case_field: string; case_branches: Array<{ op: string; value: string; actions: any[] }>; default_actions: any[] }
 
 /** 联动动作 (后端格式) */
 export interface LinkageAction {
@@ -455,6 +457,17 @@ export const linkageApi = {
     }>>('/linkage/stats')
   },
 
+  // P2-4: 规则效能分析 — 延迟直方图和 TOP 触发
+  getAnalytics() {
+    return http.get<ApiResponse<{
+      latency: { p50: number; p90: number; p99: number; samples: number }
+      topTriggered: Array<{ rule_id: string; rule_name: string; trigger_count: number; avg_latency_ms: number }>
+      actionStats: { total_executed: number; total_failed: number; cooldown_skips: number; merge_count: number; vlm_suppressed: number }
+      ruleCount: number
+      activeRuleCount: number
+    }>>('/linkage/analytics')
+  },
+
   /** 获取动作类型列表 */
   getActionTypes(params?: { category?: string }) {
     return http.get<ApiResponse<ActionDescriptor[]>>('/linkage/action-types', { params })
@@ -518,6 +531,20 @@ export const linkageApi = {
   /** 删除自定义规则模板 */
   deleteRuleTemplate(id: string) {
     return http.delete<ApiResponse<{ message: string }>>(`/linkage/rule-templates/${id}`)
+  },
+
+  // P1-7: 规则模板一键导入导出
+
+  /** 导出所有规则模板为 JSON */
+  async exportRuleTemplates(): Promise<Blob> {
+    const resp = await http.get<ApiResponse<RuleTemplate[]>>('/linkage/rule-templates')
+    const templates = resp.data?.data ?? []
+    return new Blob([JSON.stringify({ version: '1.0', exported_at: new Date().toISOString(), templates }, null, 2)], { type: 'application/json' })
+  },
+
+  /** 批量导入规则模板 */
+  importRuleTemplates(templates: RuleTemplate[]) {
+    return http.post<ApiResponse<{ message: string; imported: number }>>('/linkage/rule-templates/batch-import', { templates })
   },
 
   // ── 预案管理 (v7.1) ──

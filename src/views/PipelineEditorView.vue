@@ -213,8 +213,24 @@ interface PipelineNode {
 interface PropItem { key: string; label: string; type: string; value: any; min?: number; max?: number; step?: number; options?: string[]; multiline?: boolean }
 interface Connection { fromNode: string; fromPort: string; toNode: string; toPort: string }
 
+const pipelineId = ref('')
 const pipelineName = ref('新建Pipeline')
 const dirty = ref(false)
+
+// [BUG 6 修复 + P2-2 修复] pipeline_id 规范化：分离 ASCII ID 和中文显示名
+//   原因：后端在 SLM/IRM 注册等多处使用 pipeline_id 作为标识符，
+//         中文字符可能导致 SQLite key 异常或 URL 编码问题
+//   [P2-2 修复] 原 4 位随机字符碰撞概率高 (36^4 ≈ 170 万)，改用 crypto.randomUUID
+function generatePipelineId(): string {
+  // crypto.randomUUID() 生成 RFC 4122 v4 UUID，碰撞概率几乎为零
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return 'pipeline-' + crypto.randomUUID()
+  }
+  // Fallback: 浏览器不支持 crypto.randomUUID 时，使用更高熵的随机生成
+  return 'pipeline-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 12)
+}
+// 组件初始化时生成 ID
+pipelineId.value = generatePipelineId()
 const nodes = reactive<PipelineNode[]>([])
 const connections = reactive<Connection[]>([])
 const selectedNode = ref('')
@@ -320,21 +336,52 @@ function onCanvasMouseMove(e: MouseEvent) {
     lineTo = { x: e.clientX - rect.left, y: e.clientY - rect.top }
   }
 }
-function onCanvasMouseUp() {
+// [BUG 1 修复] onCanvasMouseUp: 检测端口落点并创建连线
+function onCanvasMouseUp(e: MouseEvent) {
   dragNode = null
-  if (drawingLine.value) { drawingLine.value = false }
+  if (drawingLine.value) {
+    drawingLine.value = false
+    // 使用 elementFromPoint 检测鼠标释放位置是否在端口上
+    const target = document.elementFromPoint(e.clientX, e.clientY)
+    if (target) {
+      // 向上查找最近的有 data-dir 属性的端口元素
+      const portEl = (target as HTMLElement).closest('[data-dir]') as HTMLElement | null
+      if (portEl) {
+        const targetNode = portEl.dataset.node || ''
+        const targetPort = portEl.dataset.port || ''
+        const targetDir = portEl.dataset.dir || ''
+
+        // 正向连线: out → in
+        if (lineFrom.dir === 'out' && targetDir === 'in' && lineFrom.node !== targetNode) {
+          addConnection(lineFrom.node, lineFrom.port, targetNode, targetPort)
+        }
+        // 反向连线: in → out
+        if (lineFrom.dir === 'in' && targetDir === 'out' && lineFrom.node !== targetNode) {
+          addConnection(targetNode, targetPort, lineFrom.node, lineFrom.port)
+        }
+      }
+    }
+    // 清理连线起点状态
+    lineFrom = { node: '', port: '', dir: '' }
+  }
 }
 
-// 端口连线
-function onPortMouseDown(e: MouseEvent, nodeId: string, port: string, dir: string) {
-  if (dir === 'out') {
-    drawingLine.value = true
-    lineFrom = { node: nodeId, port, dir }
-  } else {
-    // 连入：找到最近的out连线
-    const pp = portPos(nodeId, port)
-    lineTo = { x: pp.x, y: pp.y }
+// 辅助函数：添加连线（防重复）
+function addConnection(fromNode: string, fromPort: string, toNode: string, toPort: string) {
+  const exists = connections.some(c =>
+    c.fromNode === fromNode && c.fromPort === fromPort &&
+    c.toNode === toNode && c.toPort === toPort
+  )
+  if (!exists) {
+    connections.push({ fromNode, fromPort, toNode, toPort })
+    dirty.value = true
   }
+}
+
+// 端口连线（支持双向：out→in 和 in→out）
+function onPortMouseDown(e: MouseEvent, nodeId: string, port: string, dir: string) {
+  drawingLine.value = true
+  lineFrom = { node: nodeId, port, dir }
 }
 
 function portPos(nodeId: string, port: string): { x: number; y: number } {
@@ -369,11 +416,19 @@ function removeNode(id: string) {
 }
 function clearCanvas() { nodes.splice(0); connections.splice(0); selectedNode.value = ''; dirty.value = true }
 
-// 保存/加载
+// 保存/加载 [BUG 6 修复: 使用 pipelineId 而非 pipelineName 作为标识符]
 async function handleSavePipeline() {
-  const payload = { name: pipelineName.value, nodes: nodes.map(n => ({ ...n })), connections: [...connections] }
+  const payload = {
+    id: pipelineId.value,
+    name: pipelineName.value,
+    nodes: nodes.map(n => ({ ...n })),
+    connections: [...connections],
+  }
   try {
-    await apiSavePipeline(payload)
+    const { data: resp } = await apiSavePipeline(payload as any)
+    // 从响应中获取后端分配的 ID（如果是新建）
+    const returnedId = (resp as any)?.data?.pipeline_id || (resp as any)?.data?.id
+    if (returnedId) pipelineId.value = returnedId
     ElMessage.success('Pipeline已保存')
     dirty.value = false
   } catch (e: any) {
@@ -384,11 +439,50 @@ async function loadPipeline() {
   try {
     const { data: resp } = await getPipelines()
     const list = resp?.data || resp
-    const pl = Array.isArray(list) ? list.find((p: any) => p.name === pipelineName.value) : null
+    const pl = Array.isArray(list)
+      ? list.find((p: any) => p.id === pipelineId.value || p.name === pipelineName.value)
+      : null
     if (!pl) return ElMessage.info('未找到Pipeline')
+    // 从加载结果中恢复 ID 和名称
+    if ((pl as any).id) pipelineId.value = (pl as any).id
+    if ((pl as any).name) pipelineName.value = (pl as any).name
     nodes.splice(0); connections.splice(0)
-    nodes.push(...((pl as any)?.nodes || []) as PipelineNode[])
-    connections.push(...((pl as any)?.connections || []) as Connection[])
+    // [P2-3 修复] 加固类型断言：对每个 node 和 connection 做字段规范化
+    //   后端可能返回 snake_case key (from_node, to_node 等)，
+    //   虽然响应拦截器已增加 snakeToCamel，但做防御性检查确保一致性
+    const rawNodes = ((pl as any)?.nodes || []) as any[]
+    for (const rn of rawNodes) {
+      const node: PipelineNode = {
+        id: rn.id || '',
+        type: rn.type || '',
+        label: rn.label || rn.id || '',
+        icon: rn.icon || '🔧',
+        x: typeof rn.x === 'number' ? rn.x : 100,
+        y: typeof rn.y === 'number' ? rn.y : 100,
+        inputs: Array.isArray(rn.inputs) ? rn.inputs : [],
+        outputs: Array.isArray(rn.outputs) ? rn.outputs : [],
+        hasROI: typeof rn.hasROI === 'boolean' ? rn.hasROI : (typeof rn.has_roi === 'boolean' ? rn.has_roi : false),
+        hasSchedule: typeof rn.hasSchedule === 'boolean' ? rn.hasSchedule : (typeof rn.has_schedule === 'boolean' ? rn.has_schedule : false),
+        hasActions: typeof rn.hasActions === 'boolean' ? rn.hasActions : (typeof rn.has_actions === 'boolean' ? rn.has_actions : false),
+        roiPolygon: Array.isArray(rn.roiPolygon) ? rn.roiPolygon : (Array.isArray(rn.roi_polygon) ? rn.roi_polygon : []),
+        props: Array.isArray(rn.props) ? rn.props.map((p: any) => ({ ...p })) : [],
+        scheduleType: rn.scheduleType || rn.schedule_type || 'all',
+        actionAlarm: typeof rn.actionAlarm === 'boolean' ? rn.actionAlarm : (typeof rn.action_alarm === 'boolean' ? rn.action_alarm : false),
+        actionLight: typeof rn.actionLight === 'boolean' ? rn.actionLight : (typeof rn.action_light === 'boolean' ? rn.action_light : false),
+        actionGate: typeof rn.actionGate === 'boolean' ? rn.actionGate : (typeof rn.action_gate === 'boolean' ? rn.action_gate : false),
+      }
+      nodes.push(node)
+    }
+    // 连线规范化: camelCase 和 snake_case 双向兼容
+    const rawConns = ((pl as any)?.connections || []) as any[]
+    for (const rc of rawConns) {
+      connections.push({
+        fromNode: rc.fromNode || rc.from_node || '',
+        fromPort: rc.fromPort || rc.from_port || 'output',
+        toNode: rc.toNode || rc.to_node || '',
+        toPort: rc.toPort || rc.to_port || 'input',
+      })
+    }
     dirty.value = false
   } catch { /* ignore */ }
 }
@@ -398,7 +492,7 @@ async function handleValidate() {
   validating.value = true
   try {
     const payload = { name: pipelineName.value, nodes: nodes.map(n => ({ ...n })), connections: [...connections] }
-    const { data: resp } = await validatePipeline(pipelineName.value, payload)
+    const { data: resp } = await validatePipeline(pipelineId.value, payload)
     const result = (resp as any)?.data || resp
     if (result.valid) {
       ElMessage.success(`验证通过: ${result.node_count}个节点, ${result.edge_count}条边`)
@@ -420,7 +514,7 @@ async function handleDeploy() {
   deploying.value = true
   try {
     const payload = { name: pipelineName.value, nodes: nodes.map(n => ({ ...n })), connections: [...connections] }
-    const { data: resp } = await deployPipeline(pipelineName.value, payload)
+    const { data: resp } = await deployPipeline(pipelineId.value, payload)
     ElMessage.success('Pipeline已部署')
     dirty.value = false
     if (showMonitor.value) startMonitor()
@@ -435,7 +529,7 @@ async function handleDeploy() {
 async function handleUndeploy() {
   undeploying.value = true
   try {
-    await undeployPipeline(pipelineName.value)
+    await undeployPipeline(pipelineId.value)
     ElMessage.success('Pipeline已停止')
     stopMonitor()
   } catch (e: any) {
@@ -468,7 +562,7 @@ function stopMonitor() {
 
 async function fetchRuntime() {
   try {
-    const { data: resp } = await getPipelineRuntime(pipelineName.value)
+    const { data: resp } = await getPipelineRuntime(pipelineId.value)
     runtimeStatus.value = ((resp as any)?.data || resp) as PipelineRuntimeStatus
   } catch { /* ignore */ }
 }

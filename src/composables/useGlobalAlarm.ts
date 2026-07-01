@@ -41,20 +41,51 @@ async function loadAlarmConfig() {
   } catch { /* 使用默认值 */ }
 }
 
-// ── 告警类型中文映射 ──
+// ── 告警类型中文映射 (镜像 alarm.ts ALARM_TYPE_CN, 用于 TTS 播报) ──
 const alarmTypeCn: Record<string, string> = {
-  person_detected: '人员检测',
-  intrusion: '入侵检测',
-  fire: '烟火检测',
-  smoke: '烟雾检测',
-  fall: '倒地检测',
-  violence: '打架检测',
-  loitering: '徘徊检测',
-  gathering: '聚集检测',
-  vehicle_detected: '车辆检测',
-  object_detected: '物体检测',
+  // 通用检测
+  person_detected: '人员检测', person: '人员检测',
+  vehicle_detected: '车辆检测', vehicle: '车辆检测',
+  object_detected: '物体检测', object: '物体检测',
+  // 人脸报警
   face_blacklist: '黑名单告警',
-  gb28181_alarm: '设备告警',
+  face_stranger: '陌生人告警',
+  face_force_open: '强行闯入',
+  face_door_bypassed: '门禁绕行',
+  face_tailgate: '尾随通行',
+  face_anti_sneak: '反潜回失败',
+  face_liveness_fail: '活体检测失败',
+  face_verify_fail: '人脸认证失败',
+  face_recog_failed: '人脸识别失败',
+  face_quality_low: '底库质量低',
+  face_visitor_expired: '访客已过期',
+  // 人脸通行
+  face_pass_whitelist: '白名单通行',
+  face_pass_visitor: '访客通行',
+  face_pass_vip: 'VIP通行',
+  face_pass_staff: '内部员工通行',
+  // 人脸业务
+  face_detected: '人脸检测',
+  face_verified: '活体认证通过',
+  face_recognized: '识别成功',
+  face_unknown: '未知人员',
+  // 周界行为
+  intrusion: '区域入侵', tripwire: '绊线入侵', climbing: '攀高检测',
+  crowd: '人群聚集', loitering: '徘徊检测',
+  fall: '倒地检测', fall_detected: '倒地检测',
+  running: '奔跑检测', fighting: '打架斗殴', violence: '打架斗殴',
+  wrong_direction: '逆行检测', abandoned: '物品遗留',
+  // 烟火环境
+  fire: '烟火检测', smoke: '烟雾检测',
+  // 安全合规
+  ppe_violation: '安全防护违规', phone_call: '打电话检测', smoking: '吸烟检测',
+  helmet_violation: '未戴安全帽', mask_violation: '未戴口罩',
+  // 设备状态
+  gb28181_alarm: '设备告警', camera_tamper: '视频遮挡',
+  // 危险物
+  weapon_detected: '危险物检测',
+  // 其他
+  other: '其他事件',
 }
 
 // ── 内部方法 ──
@@ -95,6 +126,8 @@ function doConnect() {
           msg.type === 'linkage_alarm' || msg.type === 'dashboard_alert' ||
           msg.type === 'system.dashboard_alert' || msg.type === 'system.alarm') {
         handleAlarm(payload)
+        // P2-5: 派发 linkage-ws-event 供 LinkageFlowDiagram 实时展示
+        window.dispatchEvent(new CustomEvent('linkage-ws-event', { detail: payload }))
       }
 
       // 处理联动动作状态消息（实时更新弹窗联动状态）

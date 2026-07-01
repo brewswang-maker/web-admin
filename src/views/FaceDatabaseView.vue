@@ -115,8 +115,8 @@
         <el-table-column prop="quality_score" label="质量分" width="80">
           <template #default="{ row }">
             <el-progress
-              :percentage="Math.round(row.quality_score * 100)"
-              :color="getQualityColor(row.quality_score)"
+              :percentage="row.quality_score != null ? Math.round(row.quality_score * 100) : 0"
+              :color="getQualityColor(row.quality_score || 0)"
               :stroke-width="10"
             />
           </template>
@@ -282,7 +282,7 @@
           </el-descriptions-item>
           <el-descriptions-item label="识别次数">{{ detailRecord.recognition_count }}</el-descriptions-item>
           <el-descriptions-item label="添加时间">{{ formatDate(detailRecord.created_at) }}</el-descriptions-item>
-          <el-descriptions-item label="更新时间">{{ formatDate(detailRecord.updated_at) }}</el-descriptions-item>
+          <el-descriptions-item label="更新时间">{{ detailRecord.updated_at ? formatDate(detailRecord.updated_at) : '-' }}</el-descriptions-item>
           <el-descriptions-item label="有效期">
             {{ detailRecord.expires_at ? formatDate(detailRecord.expires_at) : '永久' }}
           </el-descriptions-item>
@@ -495,8 +495,14 @@ async function handleSubmit() {
 
 async function handleDelete(row: FaceRecord) {
   try {
+    // 兼容 snake_case / camelCase（防止 HTTP 拦截器转换差异）
+    const personId = row.person_id || (row as any).personId
+    if (!personId) {
+      ElMessage.error('无法获取记录ID，请刷新页面后重试')
+      return
+    }
     await ElMessageBox.confirm(`确定要删除 ${row.name} 吗？`, '删除确认', { type: 'warning' })
-    const res = await faceApi.deleteRecord(row.person_id)
+    const res = await faceApi.deleteRecord(personId)
     if (res.data.code === 0) { ElMessage.success('删除成功'); loadRecords(); loadStats() }
     else { ElMessage.error(res.data.message) }
   } catch (e: any) {
