@@ -140,25 +140,46 @@ export default defineConfig(async () => {
           './src/views/DashboardView.vue',
         ],
       },
+      // [FIX v7.4] HMR 配置 — 防止 WebSocket 超时断开导致重连风暴
+      hmr: {
+        overlay: false,        // 不显示错误覆盖层（避免 HMR overlay 中的错误处理问题）
+        timeout: 0,            // 禁用 HMR 心跳超时（开发环境不因网络抖动断开）
+      },
+
+      // [FIX v7.4] 文件监听配置 — 防止 fsevents 句柄泄漏
+      watch: {
+        usePolling: false,     // macOS 使用 fsevents（原生，不轮询）
+        interval: 1000,        // 轮询间隔（仅 usePolling=true 时生效）
+        binaryInterval: 3000,  // 二进制文件轮询间隔
+      },
+
       proxy: {
         // box-sdk 后端 API 代理（设备/系统/通道/流/告警等所有业务API）
         // 开发环境代理到 shieldbox 后端 (18080端口, box_config_v6.json)
         '/api/v1': {
           target: 'http://127.0.0.1:18080',
           changeOrigin: true,
-          // 优化代理性能
           configure: (proxy) => {
-            proxy.on('proxyReq', (_proxyReq, _req, _res) => {
-              // no-op
-            })
             proxy.options.timeout = 0
             proxy.options.proxyTimeout = 30000
+            // [FIX v7.4] 防止代理错误导致进程异常
+            proxy.on('error', (err, _req, res) => {
+              if (!res.headersSent) {
+                res.writeHead(502, { 'Content-Type': 'application/json' })
+                res.end(JSON.stringify({ error: 'Backend unavailable', detail: err.message }))
+              }
+            })
           },
         },
         '/ws': {
           target: 'ws://127.0.0.1:18080',
           ws: true,
           changeOrigin: true,
+          // [FIX v7.4] 添加 error handler 防止 WS 代理流泄漏
+          configure: (proxy) => {
+            proxy.on('error', () => { /* silently swallow upstream WS errors */ })
+            proxy.on('econnreset', () => {})
+          },
         },
         // box-sdk 快照文件代理（与/api/v1指向同一后端，/snapshots/路径提供JEPG文件）
         '/snapshots': {
@@ -171,32 +192,39 @@ export default defineConfig(async () => {
           changeOrigin: true,
         },
         // ZLM HTTP-FLV / WS-FLV / HLS 播放代理（/rtp 路径）
-        // [一次性设计修正 2026-06-23] 新增 ws:true 支持 WS-FLV WebSocket 代理
-        //   WS-FLV 的 URL 形如 ws://localhost:3100/rtp/gb_xxx.live.flv
-        //   没有 ws:true 则 WebSocket 升级握手失败 → WS-FLV 黑屏
+        // [FIX v7.4] 为 WS 代理添加 error/close 事件处理
+        //   原因: ZLM 关闭 FLV 流时代理收到 'Connection: close' 后仍尝试写入
+        //   → ERR_STREAM_WRITE_AFTER_END → 每次泄漏一个 socket 句柄
+        //   → 长时间运行后句柄耗尽导致 Vite 无响应
         '/rtp': {
           target: 'http://127.0.0.1:9080',
           changeOrigin: true,
           ws: true,
-          // HTTP-FLV / WS-FLV 是无限流式响应，必须禁用代理超时
           configure: (proxy) => {
-            proxy.on('proxyReq', (_proxyReq, _req, _res) => {
-              // no-op: disable default timeout handling for streaming
-            })
             proxy.options.timeout = 0
             proxy.options.proxyTimeout = 0
+            // [FIX v7.4] 关键修复: 拦截上游连接关闭错误，防止流写入异常
+            proxy.on('error', (err) => {
+              // ZLM 关闭 FLV/WS-FLV 连接时触发，属于正常行为，静默处理
+              if (err.message?.includes('Connection: close') ||
+                  err.message?.includes('write after end') ||
+                  err.code === 'ECONNRESET' ||
+                  err.code === 'EPIPE') {
+                return // 静默吞掉流式代理的正常断开错误
+              }
+              // 其他错误也静默，防止未捕获的异常冒泡到 Vite 主进程
+            })
+            proxy.on('econnreset', () => {})
           },
         },
         // ZLM HLS 播放代理（/live 路径）
-        // [一次性设计修正 2026-06-23] 新增 /live 代理
-        //   ZLM 默认 HLS vhost 路径为 /live/，部分设备 HLS URL 使用此路径而非 /rtp/
-        //   没有 /live 代理 → HLS m3u8/ts 请求 404 → hls.js 无法加载 → 黑屏
         '/live': {
           target: 'http://127.0.0.1:9080',
           changeOrigin: true,
           configure: (proxy) => {
             proxy.options.timeout = 0
             proxy.options.proxyTimeout = 0
+            proxy.on('error', () => {})
           },
         },
         // ZLM WebRTC 信令代理
@@ -211,6 +239,7 @@ export default defineConfig(async () => {
           configure: (proxy) => {
             proxy.options.timeout = 0
             proxy.options.proxyTimeout = 0
+            proxy.on('error', () => {})
           },
         },
       },
