@@ -637,15 +637,108 @@ async function saveLocation() {
   }
 }
 
+// ── [Audit-Add] 实时告警地图标记 (CLIENT_SHOW_MAP 联动) ──
+// 对标海康 iVMS-8700 电子地图: 告警触发时在地图上闪烁标记 + 弹出详情
+const alarmMarkers = ref<L.Marker[]>([])
+const alarmPopupLayer = ref<L.LayerGroup | null>(null)
+
+function onAlarmMapMarker(e: Event) {
+  const detail = (e as CustomEvent).detail
+  if (!detail || !map) return
+  if (!detail.has_gps || (!detail.latitude && !detail.longitude)) return
+
+  const lat = detail.latitude as number
+  const lng = detail.longitude as number
+
+  // 告警级别 → 颜色
+  const sevColors: Record<number, string> = {
+    5: '#FF3D71', // CRITICAL
+    4: '#FF6B35', // HIGH
+    3: '#FFB800', // MEDIUM
+    2: '#3B82F6', // LOW
+    1: '#8B8FA3', // INFO
+  }
+  const color = sevColors[detail.severity] || '#FF3D71'
+
+  // 创建闪烁告警标记 (海康标准: 圆形脉冲动画)
+  const icon = L.divIcon({
+    className: 'alarm-map-marker',
+    html: `<div style="
+      width: 24px; height: 24px;
+      border-radius: 50%;
+      background: ${color};
+      border: 3px solid #fff;
+      box-shadow: 0 0 12px ${color};
+      animation: alarm-pulse 1s infinite;
+    "></div>`,
+    iconSize: [24, 24],
+    iconAnchor: [12, 12],
+  })
+
+  const marker = L.marker([lat, lng], { icon }).addTo(map)
+
+  // 弹出详情 (对标海康: 点击标记显示告警详情)
+  const alarmTypeCnMap: Record<string, string> = {
+    face_blacklist: '黑名单告警', face_stranger: '陌生人告警',
+    intrusion: '区域入侵', fire: '烟火检测', smoke: '烟雾检测',
+    fall: '倒地检测', fighting: '打架斗殴', ppe_violation: '安全防护违规',
+  }
+  const alarmText = alarmTypeCnMap[detail.alarm_type] || detail.alarm_type || '告警'
+  marker.bindPopup(`
+    <div style="min-width: 200px;">
+      <div style="font-weight: bold; color: ${color}; font-size: 14px; margin-bottom: 4px;">
+        ${alarmText}
+      </div>
+      <div style="color: #666; font-size: 12px;">
+        设备: ${detail.device_id || '--'}<br/>
+        通道: ${detail.channel_id || '--'}<br/>
+        坐标: ${lat.toFixed(6)}, ${lng.toFixed(6)}<br/>
+        时间: ${new Date(detail.timestamp_ms).toLocaleString()}<br/>
+        ${detail.snapshot_url ? `<img src="${detail.snapshot_url}" style="width:100%;margin-top:4px;border-radius:4px;"/>` : ''}
+      </div>
+    </div>
+  `)
+
+  // 自动打开弹窗
+  marker.openPopup()
+
+  // 地图飞到告警位置
+  map.flyTo([lat, lng], Math.max(map.getZoom(), 15), { duration: 1.0 })
+
+  // 加入告警标记列表
+  alarmMarkers.value.push(marker)
+
+  // 限制最多 50 个告警标记 (防止内存泄漏)
+  if (alarmMarkers.value.length > 50) {
+    const old = alarmMarkers.value.shift()
+    if (old) map.removeLayer(old)
+  }
+
+  // 30 秒后自动移除标记 (除非鼠标 hover)
+  setTimeout(() => {
+    const idx = alarmMarkers.value.indexOf(marker)
+    if (idx >= 0) {
+      map.removeLayer(marker)
+      alarmMarkers.value.splice(idx, 1)
+    }
+  }, 30000)
+}
+
 // ── 生命周期 ──
 onMounted(async () => {
   await nextTick()
   initMap()
   await refreshLocations()
+  // [Audit-Add] 监听 alarm_map_marker 事件
+  window.addEventListener('alarm-map-marker', onAlarmMapMarker as EventListener)
 })
 
 onUnmounted(() => {
   clearTrack()
+  // [Audit-Add] 清理告警标记
+  window.removeEventListener('alarm-map-marker', onAlarmMapMarker as EventListener)
+  alarmMarkers.value.forEach(m => { if (map) map.removeLayer(m) })
+  alarmMarkers.value = []
   if (map) { map.remove(); map = null }
 })
 </script>
@@ -993,6 +1086,13 @@ onUnmounted(() => {
 @keyframes pulse {
   0%, 100% { box-shadow: 0 0 8px rgba(59,130,246,0.4); }
   50% { box-shadow: 0 0 20px rgba(59,130,246,0.8); }
+}
+
+/* [Audit-Add] 告警标记闪烁动画 — 对标海康 iVMS 电子地图红色脉冲 */
+@keyframes alarm-pulse {
+  0%   { transform: scale(1);   opacity: 1; }
+  50%  { transform: scale(1.4); opacity: 0.7; }
+  100% { transform: scale(1);   opacity: 1; }
 }
 
 /* 覆盖 Leaflet 控件样式适配暗色主题 */

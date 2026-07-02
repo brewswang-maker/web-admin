@@ -18,6 +18,7 @@ export const WS_TOPICS = {
   ALARM: 'alarm',
   ALARM_NEW: 'alarm.new',
   ALARM_RESOLVED: 'alarm.resolved',
+  ALARM_MAP_MARKER: 'alarm_map_marker',  // [Audit-Add] 地图联动告警标记
 
   // 设备
   DEVICE_STATUS: 'device.status',
@@ -39,6 +40,7 @@ export const WS_TOPICS = {
   HEARTBEAT: 'heartbeat',
   SYSTEM_VERSION: 'system.version',
   SYSTEM_NOTIFICATION: 'system.notification',
+  SYSTEM_ALARM_MAP_MARKER: 'system.alarm_map_marker',  // [Audit-Add] pushSystemEvent 路径
 
   // 通配
   WILDCARD: '*',

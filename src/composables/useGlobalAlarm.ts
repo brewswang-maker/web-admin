@@ -131,6 +131,14 @@ function doConnect() {
       }
 
       // 处理联动动作状态消息（实时更新弹窗联动状态）
+      // [Audit-Add] 地图联动标记: CLIENT_SHOW_MAP 动作推送的 GPS 坐标
+      //   派发 CustomEvent 供 LocationTrackView / SituationScreen 地图组件监听
+      if (msg.type === 'system.alarm_map_marker' && payload) {
+        window.dispatchEvent(new CustomEvent('alarm-map-marker', { detail: payload }))
+        console.log('[useGlobalAlarm] alarm_map_marker: dev=', payload.device_id,
+                     'gps=(', payload.latitude, ',', payload.longitude, ')')
+      }
+
       if (msg.type === 'system.linkage_action' && payload) {
         pushLinkageLog({
           action: payload.action || '',
