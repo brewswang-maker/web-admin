@@ -13,6 +13,7 @@
  */
 
 import { useI18n } from 'vue-i18n';
+import { ALARM_TYPE_CN } from '@/types/alarm';
 
 export interface ObjectLabelMeta {
   /** 类别: person / item / animal / vehicle / unknown */
@@ -65,8 +66,17 @@ export function useObjectLabel() {
   /** 告警类型 → 当前 locale 显示名 */
   function getAlarmTypeName(alarmType: string): string {
     if (!alarmType) return '';
-    const i18nKey = ALARM_TYPE_MAP[alarmType] || 'objectDetected';
-    return t(`alarm.type.${i18nKey}`);
+    // 1. 物体检测类优先走 i18n ALARM_TYPE_MAP
+    const i18nKey = ALARM_TYPE_MAP[alarmType];
+    if (i18nKey) {
+      const translated = t(`alarm.type.${i18nKey}`);
+      if (translated && translated !== `alarm.type.${i18nKey}`) return translated;
+    }
+    // 2. [FIX 2026-06-28] 回退到 ALARM_TYPE_CN (包含 face_*/intrusion/fire 等全量类型)
+    //    原回退 'objectDetected' 会导致 face_blacklist 显示为“物体检测”
+    if (ALARM_TYPE_CN[alarmType]) return ALARM_TYPE_CN[alarmType];
+    // 3. 最终回退: 返回原始类型字符串
+    return alarmType;
   }
 
   return {

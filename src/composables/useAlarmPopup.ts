@@ -14,7 +14,7 @@ import { useAlarmStore } from '@/stores/alarm'
 import { linkageApi, ACTION_TYPE_MAP } from '@/api/linkage'
 import type { LinkageRule, LinkageAction } from '@/api/linkage'
 import type { AlarmEvent } from '@/types/alarm'
-import { normalizeAlarmCore } from '@/types/alarm'
+import { normalizeAlarmCore, ALARM_CATEGORY } from '@/types/alarm'
 
 // ── 联动动作 → Tab/按钮 映射 ──
 const WEB_SHOW_LIVE = ACTION_TYPE_MAP.WEB_SHOW_LIVE         // 210
@@ -262,7 +262,21 @@ function ensureAudioUnlock() {
   document.addEventListener('keydown', unlock)
 }
 
-export function playAlarmSound() {
+/**
+ * [FIX 2026-06-28] 播放报警音效 —— 按告警类型区分是否播放
+ * - ALARM 类 (face_blacklist / face_stranger / intrusion / fire 等): 播放报警音
+ * - BUSINESS / NOTIFICATION 类 (face_detected / object_detected / face_pass_*): 不播放报警音
+ *   (TTS 语音播报已由 speakAlarm 处理, 无需额外报警音)
+ */
+export function playAlarmSound(alarmType?: string) {
+  // 告警类型分类: 只有 ALARM 类才播放报警音
+  if (alarmType) {
+    const category = ALARM_CATEGORY[alarmType]
+    if (category && category !== 'alarm') {
+      console.log('[useAlarmPopup] skip alarm sound for non-alarm category:', alarmType, '→', category)
+      return
+    }
+  }
   try {
     ensureAudioUnlock()
     if (!alarmAudio) {
@@ -311,7 +325,19 @@ export async function showAlarmPopup(rawAlarm: any) {
     rawSnapshotUrl: rawAlarm.snapshot_url || rawAlarm.snapshotUrl || rawAlarm.snapshot_path,
   })
 
-  // 2. 先更新状态 + 打开弹窗（用户立即看到，不被下游 await 阻塞）
+  // 2. 先更新状态 + 打开弹窗
+  //    [FIX 2026-06-28] 优先级防覆盖: 如果当前弹窗是 critical/high，
+  //    新告警优先级更低则不覆盖 (避免黑名单弹窗被 object_detected 覆盖)
+  const HIGH_PRIORITY: string[] = ['critical', 'high']
+  if (popupVisible.value && currentAlarm.value) {
+    const curIsHigh = HIGH_PRIORITY.includes(currentAlarm.value.level)
+    const newIsHigh = HIGH_PRIORITY.includes(alarm.level)
+    if (curIsHigh && !newIsHigh) {
+      console.log('[useAlarmPopup] skip overwrite: current is high-priority, new is', alarm.level, alarm.type)
+      return
+    }
+  }
+
   currentAlarm.value = alarm
   linkageLogs.value = []
   queueIndex.value = 0
@@ -322,8 +348,8 @@ export async function showAlarmPopup(rawAlarm: any) {
     console.log('[useAlarmPopup] popup already visible, updated alarm to:', alarm.id)
   }
 
-  // 3. 音效
-  playAlarmSound()
+  // 3. 音效 —— 传入告警类型, 仅 ALARM 类播放报警音
+  playAlarmSound(alarm.type)
 
   // 4. 异步查询联动规则（弹窗已开，匹配结果后续填入；失败不阻塞弹窗）
   try {
