@@ -702,16 +702,17 @@ function setLayout(n: number) {
 async function loadData() {
   if (!deviceStore.devices.length) await deviceStore.fetchDevices({ page: 1, pageSize: 100 })
   devices.value = deviceStore.devices
-  // 加载所有设备的通道（仅在线设备）
+  // [FIX] 加载所有设备的通道（包括离线设备）
   const allChs: Channel[] = []
   for (const dev of devices.value) {
-    if (dev.status === 'offline') continue
     try {
       const res = await getDeviceChannels(dev.id) as any
       const chs: Channel[] = res?.data?.data ?? res?.data ?? res
       for (const ch of chs) {
         (ch as any).deviceId = dev.id
-        if ((ch as any).status === 'offline') continue
+        if (dev.status === 'offline' && !(ch as any).status) {
+          (ch as any).status = 'offline'
+        }
       }
       allChs.push(...chs)
     } catch { /* skip */ }
@@ -738,6 +739,20 @@ async function loadData() {
 // 分配通道到视频格
 function assignChannel(slotIdx: number, ch: Channel) {
   const slot = gridSlots[slotIdx]
+
+  // [FIX] 设备离线拦截：提前提示，避免无效 SIP INVITE
+  const chStatus = (ch as any).status || ''
+  if (chStatus === 'offline') {
+    ElMessage.warning(`设备"${ch.name}"当前离线，请检查网络连接或设备电源`)
+    slot.channelId = ch.id
+    slot.name = ch.name
+    slot.deviceId = ch.deviceId || ''
+    slot.status = 'offline'
+    slot.playing = false
+    slot.loading = false
+    return
+  }
+
   // 先关闭旧的播放器（不重置 slot 状态，避免闪烁）
   if (slot.playerInstance) {
     if ('destroy' in slot.playerInstance) slot.playerInstance.destroy()
@@ -2390,6 +2405,43 @@ onUnmounted(() => {
 
 /* 暗色主题覆盖 */
 :deep(.el-card) { background: #252830; border-color: #3C4043; color: #E8EAED; }
+:deep(.el-card__header) { border-color: #3C4043; color: #E8EAED; }
+.image-adjust .adj-row { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
+.image-adjust .adj-row span:first-child { width: 48px; flex-shrink: 0; color: #9AA0A6; font-size: 13px; }
+.image-adjust .adj-row .el-slider { flex: 1; }
+
+.ptz-sliders { width: 100%; }
+.ptz-slider-row { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; font-size: 12px; color: #9AA0A6; }
+.ptz-slider-row span:first-child { width: 32px; flex-shrink: 0; }
+.ptz-slider-row .el-slider { flex: 1; }
+.speed-val { width: 28px; text-align: right; font-size: 12px; color: #E8EAED; }
+.ptz-presets { display: flex; align-items: center; gap: 8px; width: 100%; flex-wrap: wrap; }
+.ptz-presets > span { font-size: 12px; color: #9AA0A6; }
+.ptz-advanced { display: flex; align-items: center; gap: 8px; width: 100%; font-size: 12px; color: #9AA0A6; }
+.ptz-advanced > span { width: 32px; flex-shrink: 0; }
+.ptz-3d-hint { display: flex; align-items: center; gap: 4px; width: 100%; font-size: 11px; color: #4A4D58; margin-top: 4px; }
+/* 25/36 宫格大屏模式 */
+.video-grid.grid-25 { display: grid; grid-template-columns: repeat(5, 1fr); grid-template-rows: repeat(5, 1fr); }
+.video-grid.grid-36 { display: grid; grid-template-columns: repeat(6, 1fr); grid-template-rows: repeat(6, 1fr); }
+</style>
+.image-adjust .adj-row { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
+.image-adjust .adj-row span:first-child { width: 48px; flex-shrink: 0; color: #9AA0A6; font-size: 13px; }
+.image-adjust .adj-row .el-slider { flex: 1; }
+
+.ptz-sliders { width: 100%; }
+.ptz-slider-row { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; font-size: 12px; color: #9AA0A6; }
+.ptz-slider-row span:first-child { width: 32px; flex-shrink: 0; }
+.ptz-slider-row .el-slider { flex: 1; }
+.speed-val { width: 28px; text-align: right; font-size: 12px; color: #E8EAED; }
+.ptz-presets { display: flex; align-items: center; gap: 8px; width: 100%; flex-wrap: wrap; }
+.ptz-presets > span { font-size: 12px; color: #9AA0A6; }
+.ptz-advanced { display: flex; align-items: center; gap: 8px; width: 100%; font-size: 12px; color: #9AA0A6; }
+.ptz-advanced > span { width: 32px; flex-shrink: 0; }
+.ptz-3d-hint { display: flex; align-items: center; gap: 4px; width: 100%; font-size: 11px; color: #4A4D58; margin-top: 4px; }
+/* 25/36 宫格大屏模式 */
+.video-grid.grid-25 { display: grid; grid-template-columns: repeat(5, 1fr); grid-template-rows: repeat(5, 1fr); }
+.video-grid.grid-36 { display: grid; grid-template-columns: repeat(6, 1fr); grid-template-rows: repeat(6, 1fr); }
+</style>
 :deep(.el-card__header) { border-color: #3C4043; color: #E8EAED; }
 .image-adjust .adj-row { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
 .image-adjust .adj-row span:first-child { width: 48px; flex-shrink: 0; color: #9AA0A6; font-size: 13px; }
