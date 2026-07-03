@@ -326,7 +326,7 @@ import { streamHttp, deviceHttp, http } from '@/api/http'
 import { ptzControl as ptzApi, startCruise as ptzStartCruise, stopCruise as ptzStopCruise, startTrack as ptzStartTrack, stopTrack as ptzStopTrack, ptz3DPosition } from '@/api/ptz'
 import { detectFromBase64, getInferenceStatus } from '@/api/inference'
 import type { DetectionResult } from '@/api/inference'
-import { ElMessage, ElNotification } from 'element-plus'
+import { ElMessage } from 'element-plus'
 import { Lock, Unlock } from '@element-plus/icons-vue'
 import type { Channel, DeviceItem } from '@/types/device'
 import Hls from 'hls.js'
@@ -664,9 +664,8 @@ const eZoomStyle = computed(() => {
 interface LogEntry { time: string; level: string; tagType: string; msg: string }
 const detectionLogs = ref<LogEntry[]>([])
 
-// 告警弹窗节流:同一通道+目标类型 30 秒内只弹一次
-const ALERT_THROTTLE_MS = 30_000
-const lastAlertTime: Record<string, number> = {}
+// [FIX 2026-07-03] ALERT_THROTTLE_MS / lastAlertTime 已移除:
+//   前端弹窗改由 useGlobalAlarm.ts (WebSocket) 统一驱动, 不再在 LiveView 中独立弹窗。
 
 // 只有 layout 对应数量的格子可见
 const visibleSlots = computed(() => gridSlots.slice(0, layout.value))
@@ -2143,36 +2142,16 @@ async function runInferenceOnFrame() {
         const conf = Math.round(info.maxConf * 100)
         // 后端 /detect API 已按事件规则订阅过滤, 此处收到的 detections 均为已订阅类型
         // 未订阅的告警类型(如无规则时的 person)已在后端 isAlarmTypeSubscribed 检查中剔除
-        const level = 'INFO'
-        const tagType = 'info'
+        // [FIX 2026-07-03] 移除前端独立 ElNotification 弹窗逻辑:
+        //   前端弹窗应当且仅应当由后端联动规则驱动 (WebSocket pushAlarm → useGlobalAlarm.ts → showAlarmPopup)。
+        //   旧代码使用 alertClasses 硬编码列表在前端独立弹窗, 绕过了 isAlarmTypeSubscribed 订阅检查,
+        //   导致未配置联动规则的检测类型(如 car/bicycle)仍然弹窗。
         detectionLogs.value.unshift({
           time,
-          level,
-          tagType,
+          level: 'INFO',
+          tagType: 'info',
           msg: `[${slot.name}] ${info.count}x ${className} | 置信度${conf}% | ${result.inference_time_ms.toFixed(0)}ms`
         })
-
-        // 检测告警弹窗通知(节流：同一通道+目标类型 30秒内只弹一次)
-        // 对异常场景和人员检测弹窗,普通目标检测(car/bicycle等)不弹窗
-        const alertClasses = ['fire', 'smoke', 'fall', 'violence', 'intrusion', 'loitering', 'gathering', 'person']
-        if (alertClasses.includes(className) && conf >= 60) {
-          const alertKey = `${slot.name}_${className}`
-          const now = Date.now()
-          if (!lastAlertTime[alertKey] || now - lastAlertTime[alertKey] > ALERT_THROTTLE_MS) {
-            lastAlertTime[alertKey] = now
-            const classNameCn: Record<string, string> = {
-              person: '人员', bicycle: '自行车', car: '车辆', motorcycle: '摩托车', bus: '公交车', truck: '卡车'
-            }
-            const label = classNameCn[className] || className
-            ElNotification({
-              title: 'AI 检测告警',
-              message: `通道 [${slot.name}] 检测到 ${info.count}x ${label}，置信度 ${conf}%`,
-              type: 'warning',
-              duration: 4000,
-              position: 'top-right',
-            })
-          }
-        }
       }
     }
     if (detectionLogs.value.length > 200) detectionLogs.value.length = 200
