@@ -1209,11 +1209,14 @@ function attachPlayerByFormat(slotIdx: number, fmt: PlayerFormat) {
         player.load()
 
         // 首帧显示事件（保存回调引用以便销毁时移除）
+        // [FIX-P3.3 2026-07-07] firstFrameTimer 存到 slot._timers 统一清理
+        //   原问题: firstFrameTimeout 是函数局部 let，外部无法 clearTimeout
+        //           video 卸载后 'playing' 事件永不触发 → setTimeout 必然在 2s 后触发
+        //           attachPlayerByFormat 递归降级时，旧实例的 timer 累积
+        //   修复: 存到 slot._timers[] (统一管理)，destroyPlayer 时迭代清理
         let firstFramePlayed = false
-        let firstFrameTimeout: ReturnType<typeof setTimeout> | null = null
-
-        // 如果 2 秒内没有收到 playing 事件，发送 I 帧请求
-        firstFrameTimeout = setTimeout(() => {
+        slot._timers = slot._timers || []
+        const firstFrameTimerId = setTimeout(() => {
           if (!firstFramePlayed && slot.channelId) {
             console.warn(`[LiveView] slot${slotIdx} 2秒内未收到首帧，发送I帧请求`)
             streamHttp.post(`/${slot.channelId}/quality`, {
@@ -1221,14 +1224,20 @@ function attachPlayerByFormat(slotIdx: number, fmt: PlayerFormat) {
               quality: 'high'
             }).catch(() => {})
           }
+          // 从 _timers 移除自身（避免 destroyPlayer 重复清理）
+          const idx = slot._timers.indexOf(firstFrameTimerId)
+          if (idx >= 0) slot._timers.splice(idx, 1)
         }, 2000)
+        slot._timers.push(firstFrameTimerId)
 
         const onFlvFirstFrame = () => {
           if (!firstFramePlayed) {
             firstFramePlayed = true
-            if (firstFrameTimeout) {
-              clearTimeout(firstFrameTimeout)
-              firstFrameTimeout = null
+            // [FIX-P3.3] 清理 timer
+            const idx = slot._timers.indexOf(firstFrameTimerId)
+            if (idx >= 0) {
+              clearTimeout(firstFrameTimerId)
+              slot._timers.splice(idx, 1)
             }
             console.debug(`[LiveView] slot${slotIdx} 首帧已显示`)
           }
@@ -1378,10 +1387,35 @@ function destroyPlayer(slot: any, slotIdx?: number) {
   if (p) {
     // 停止健康监测
     streamHealth.stopMonitoring(slotOrIdx)
-    if ('destroy' in p) {
+    // [FIX-P3.2 2026-07-07] RTCPeerConnection 直接存时的销毁路径
+    //   原 destroy() 包装对象方案破坏 instanceof，监测空白
+    //   现直接存 pc，需检测类型并调用对应销毁方法
+    if (p instanceof RTCPeerConnection) {
+      try { p.close() } catch (e) { console.warn('[LiveView] RTCPeerConnection close error:', e) }
+      // 清理 video srcObject（避免本地摄像头灯还亮）
+      const video = videoRefs.value[slotOrIdx]
+      if (video) video.srcObject = null
+    } else if ('destroy' in p && typeof p.destroy === 'function') {
+      // FLV/HLS 玩家（Hls / flvjs.Player）
       try { p.destroy() } catch (e) { console.warn('[LiveView] destroy player error:', e) }
     }
     rawSlot.playerInstance = null
+  }
+  // [FIX-P3.2] WebRTC timers 统一清理（之前在 catch 块可能漏清）
+  if (rawSlot?._webrtcTimers?.length) {
+    for (const t of rawSlot._webrtcTimers) {
+      try { clearTimeout(t as any) } catch { /* ignore */ }
+    }
+    rawSlot._webrtcTimers.length = 0
+  }
+  // [FIX-P3.3 2026-07-07] 通用 _timers 统一清理（firstFrameTimer 等）
+  //   原问题: firstFrameTimer 等局部 setTimeout 难以追踪，video 卸载后无法清理
+  //   修复: 存到 slot._timers[], destroyPlayer 时统一清理
+  if (rawSlot?._timers?.length) {
+    for (const t of rawSlot._timers) {
+      try { clearTimeout(t as any) } catch { /* ignore */ }
+    }
+    rawSlot._timers.length = 0
   }
   // 清理 video 元素事件监听器
   if (rawSlot?._videoEventCleanups?.length) {
@@ -1635,18 +1669,16 @@ async function attachWebRtc(slotIdx: number, webrtcUrl: string) {
       }
     }
 
-    // 包装 pc 为可销毁对象
-    slot.playerInstance = {
-      destroy() {
-        if (iceTimeoutTimer) { clearTimeout(iceTimeoutTimer); iceTimeoutTimer = null }
-        if (candidateCheckTimer) { clearTimeout(candidateCheckTimer); candidateCheckTimer = null }
-        if (iceDisconnectTimer) { clearTimeout(iceDisconnectTimer); iceDisconnectTimer = null }
-        streamHealth.stopMonitoring(slotIdx)
-        pc.close()
-        video.srcObject = null
-      },
-    } as any
-    // WebRTC 健康监测
+    // [FIX-P3.2 2026-07-07] 直接存 RTCPeerConnection（不包装普通对象）
+    //   原问题: 包装为 {destroy()} 普通对象后，instanceof RTCPeerConnection 检测失败
+    //           useStreamHealth 三种类型检测全部不匹配 → type=null → 不挂任何监控
+    //           WebRTC 通道健康监测空白（bytesPerSec/丢包率/RTT 全丢）
+    //   修复: 直接存 pc，destroyPlayer 检测 RTCPeerConnection 调用 pc.close()
+    //   Timers 管理: 收集到 slot._webrtcTimers = []，destroyPlayer 统一清理
+    slot.playerInstance = pc as any
+    // WebRTC timers 统一管理（destroyPlayer 会迭代清理）
+    slot._webrtcTimers = [iceTimeoutTimer, candidateCheckTimer, iceDisconnectTimer].filter(Boolean) as any
+    // WebRTC 健康监测（直接传 RTCPeerConnection → instanceof 检测成功）
     streamHealth.startMonitoring(slotIdx, pc)
   } catch (e: any) {
     slot.webrtcRetryCount++
