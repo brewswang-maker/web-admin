@@ -73,6 +73,11 @@
         </div>
 
         <div class="toolbar-right">
+          <!-- [P3-VP2] 视图切换 -->
+          <el-radio-group v-model="viewMode" size="small" style="margin-right:8px">
+            <el-radio-button label="table">列表</el-radio-button>
+            <el-radio-button label="gallery">证据库</el-radio-button>
+          </el-radio-group>
           <el-button @click="refreshAlarms" :loading="loading">
             <el-icon><Refresh /></el-icon>刷新
           </el-button>
@@ -95,8 +100,50 @@
       <el-button size="small" @click="selected = []">取消选择</el-button>
     </div>
 
+    <!-- ===== [P3-VP2] 证据库视图（截图/录像统一管理） ===== -->
+    <el-card v-if="viewMode === 'gallery'" shadow="never" class="evidence-gallery">
+      <template #header>
+        <div style="display:flex;align-items:center;justify-content:space-between">
+          <span style="font-weight:600">证据库 — 告警截图/录像集中查看</span>
+          <span style="font-size:12px;color:#909399">
+            共 {{ galleryItems.length }} 个告警，含 {{ galleryItems.filter(i => i.snapshot).length }} 个截图、{{ galleryItems.filter(i => i.videoClip).length }} 个录像
+          </span>
+        </div>
+      </template>
+      <div v-if="galleryItems.length === 0" style="text-align:center;color:#888;padding:40px">
+        暂无告警证据
+      </div>
+      <el-row v-else :gutter="12">
+        <el-col v-for="item in galleryItems" :key="item.id" :xs="24" :sm="12" :md="8" :lg="6" style="margin-bottom:12px">
+          <el-card shadow="hover" class="evidence-item" :body-style="{ padding: '8px' }">
+            <!-- 截图预览 -->
+            <div class="evidence-thumb">
+              <img v-if="item.snapshot" :src="item.snapshot" loading="lazy" style="width:100%;height:120px;object-fit:cover;border-radius:4px" />
+              <div v-else style="width:100%;height:120px;background:#1a1a2e;display:flex;align-items:center;justify-content:center;color:#555;border-radius:4px">
+                无截图
+              </div>
+              <div v-if="item.videoClip" class="evidence-clip-badge">📼 录像</div>
+            </div>
+            <div style="margin-top:8px;font-size:12px">
+              <div style="font-weight:600;display:flex;justify-content:space-between">
+                <span>{{ item.type }}</span>
+                <el-tag size="small" :type="levelTagType(item.severity)" effect="light">{{ severityLabel(item.severity) }}</el-tag>
+              </div>
+              <div style="color:#909399;margin-top:4px">{{ item.deviceName || item.deviceId }} · {{ item.channelName || item.channelId }}</div>
+              <div style="color:#666;margin-top:2px">{{ formatTime(item.createdAt) }}</div>
+            </div>
+            <div style="margin-top:8px;display:flex;gap:6px">
+              <el-button v-if="item.snapshot" size="small" @click="previewImageUrl = item.snapshot; previewVisible = true">查看截图</el-button>
+              <el-button v-if="item.videoClip" size="small" type="primary" @click="playVideoClip(item.videoClip)">播放录像</el-button>
+              <el-button size="small" text @click="jumpToAlarmPlayback(item)">📼 回放</el-button>
+            </div>
+          </el-card>
+        </el-col>
+      </el-row>
+    </el-card>
+
     <!-- ===== 告警表格 ===== -->
-    <el-card shadow="never" class="table-card">
+    <el-card v-if="viewMode === 'table'" shadow="never" class="table-card">
       <el-table
         :data="paginatedAlarms"
         stripe
@@ -126,12 +173,12 @@
         <el-table-column label="快照" width="80" align="center">
           <template #default="{ row }">
             <img
-              v-if="row.snapshotUrl"
-              :src="row.snapshotUrl"
+              v-if="getSnapshotUrl(row)"
+              :src="getSnapshotUrl(row)"
               loading="lazy"
               style="width:56px;height:32px;object-fit:cover;border-radius:4px;cursor:pointer"
-              @click="previewImageUrl = row.snapshotUrl; previewVisible = true"
-              @error="() => console.warn('[AlarmsView] snapshot load failed:', row.snapshotUrl)"
+              @click="previewImageUrl = getSnapshotUrl(row); previewVisible = true"
+              @error="() => console.warn('[AlarmsView] snapshot load failed:', getSnapshotUrl(row))"
             />
             <span v-else class="text-secondary" style="font-size:11px">无</span>
           </template>
@@ -444,7 +491,7 @@ import {
 } from '@element-plus/icons-vue'
 import { alarmApi } from '@/api/alarm'
 import { exportApi } from '@/api/export'
-import { queryRecordings, type DeviceRecording } from '@/api/recording'
+import { queryRecordings, toLocalISOString, type DeviceRecording } from '@/api/recording'
 import { recordingHttp } from '@/api/http'
 import type { AlarmHandleForm, AlarmEvidence, AlarmEvent } from '@/types/alarm'
 import { normalizeAlarmCore } from '@/types/alarm'
@@ -489,6 +536,42 @@ const evidenceAlarmId = ref('')
 const analyzeLoading = ref(false)
 const previewVisible = ref(false)
 const previewImageUrl = ref('')
+// [P3-VP2] 视图切换 + 证据库
+const viewMode = ref<'table' | 'gallery'>('table')
+const galleryItems = computed(() => {
+  return paginatedAlarms.value.map(a => ({
+    id: a.id,
+    type: a.type,
+    severity: a.severity,
+    deviceName: a.deviceName,
+    deviceId: a.deviceId,
+    channelName: a.channelName,
+    channelId: a.channelId,
+    createdAt: a.createdAt,
+    snapshot: getSnapshotUrl(a),
+    videoClip: getVideoClipUrl(a),
+  }))
+})
+function getVideoClipUrl(alarm: any): string {
+  return alarm?.videoClipUrl || alarm?.video_clip_url || ''
+}
+function playVideoClip(url: string) {
+  window.open(url, '_blank')
+}
+function jumpToAlarmPlayback(alarm: any) {
+  // 跳转到录像回放页面，定位到告警时刻
+  const t = alarm.createdAt ? new Date(alarm.createdAt).getTime() : Date.now()
+  const routeData = router.resolve({
+    name: 'Recording',
+    query: {
+      channelId: String(alarm.channelId || ''),
+      deviceId: String(alarm.deviceId || ''),
+      time: String(t),
+      alarmId: String(alarm.id || ''),
+    },
+  })
+  window.open(routeData.href, '_blank')
+}
 
 // ── 设备录像列表 ──
 const deviceRecordings = ref<DeviceRecording[]>([])
@@ -644,6 +727,20 @@ function onAlarmClipUpdated(e: Event) {
       ...alarms.value.slice(idx + 1),
     ]
   }
+}
+
+// [FIX 2026-06-28] 人脸告警快照以 snapshot_base64 存在 metadata 中。
+//   此函数在 snapshotUrl 为空时回退到 metadata.snapshot_base64 构造 data URL。
+function getSnapshotUrl(row: any): string {
+  if (row.snapshotUrl) return row.snapshotUrl
+  const b64 = row.metadata?.snapshot_base64
+  if (!b64) return ''
+  if (typeof b64 === 'string' && b64.startsWith('data:')) return b64
+  const fmt = row.metadata?.snapshot_format || 'bmp'
+  const mime = fmt === 'raw_bgr' ? 'image/bmp' : `image/${fmt}`
+  const padded = String(b64).replace(/[^A-Za-z0-9+/=]/g, '')
+  const fixed = padded + '='.repeat((4 - (padded.length % 4)) % 4)
+  return `data:${mime};base64,${fixed}`
 }
 
 // ── 统计 + 筛选（单次遍历） ──
@@ -843,10 +940,10 @@ async function showEvidence(row: any) {
     if (ev) {
       evidenceData.value = ev
     } else {
-      evidenceData.value = { snapshotUrl: row.snapshotUrl || '', videoClipUrl: row.videoClipUrl }
+      evidenceData.value = { snapshotUrl: getSnapshotUrl(row), videoClipUrl: row.videoClipUrl }
     }
   } catch {
-    evidenceData.value = { snapshotUrl: row.snapshotUrl || '', videoClipUrl: row.videoClipUrl }
+    evidenceData.value = { snapshotUrl: getSnapshotUrl(row), videoClipUrl: row.videoClipUrl }
   } finally {
     evidenceLoading.value = false
   }
@@ -860,8 +957,8 @@ async function showEvidence(row: any) {
       deviceRecordings.value = await queryRecordings({
         device_id: row.deviceId,
         channel_id: row.channelId || undefined,
-        start_time: start.toISOString().replace('Z', ''),
-        end_time: end.toISOString().replace('Z', ''),
+        start_time: toLocalISOString(start),
+        end_time: toLocalISOString(end),
       })
     } catch (e) {
       console.warn('[AlarmsView] 查询设备录像失败:', e)
@@ -1032,6 +1129,17 @@ onUnmounted(() => {
   max-width: var(--content-max-width, 1440px);
   margin: 0 auto;
   animation: fadeIn 0.3s ease;
+}
+
+/* [P3-VP2] 证据库网格 */
+.evidence-gallery { margin-bottom: 16px; }
+.evidence-item { transition: transform 0.2s; }
+.evidence-item:hover { transform: translateY(-2px); }
+.evidence-thumb { position: relative; }
+.evidence-clip-badge {
+  position: absolute; top: 6px; right: 6px;
+  background: rgba(0,0,0,0.7); color: #FFB800;
+  padding: 2px 6px; border-radius: 4px; font-size: 11px;
 }
 
 /* ── 统计卡片 ── */

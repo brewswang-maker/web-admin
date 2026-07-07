@@ -77,6 +77,16 @@ export function controlPlayback(id: string, action: 'pause' | 'resume' | 'seek' 
 
 // ── GB28181 设备录像查询 ──
 
+/**
+ * 将 Date 格式化为本地时间 ISO 字符串 (YYYY-MM-DDTHH:mm:ss)
+ * 后端 mktime() 按本地时间解析，不能使用 toISOString() (会转 UTC 导致 8 小时偏差)
+ */
+export function toLocalISOString(date: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
+    + `T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
+}
+
 /** POST /recordings/query 返回的录像条目 */
 export interface DeviceRecording {
   id: string

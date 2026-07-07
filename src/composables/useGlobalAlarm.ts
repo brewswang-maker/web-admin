@@ -7,7 +7,7 @@
  *   2. 将告警推送至 alarmStore（realtimeAlarms + unhandledCount）
  *   3. 弹出海康风格报警弹窗（通过 useAlarmPopup，防抖 10 秒/同类型同通道）
  */
-import { ref } from 'vue'
+import { ref, reactive } from 'vue'
 import { useAlarmStore } from '@/stores/alarm'
 import { settingsApi } from '@/api/settings'
 import { showAlarmPopup, pushLinkageLog, normalizeAlarmPayload, playAlarmSound } from './useAlarmPopup'
@@ -21,6 +21,18 @@ const maxReconnectAttempts = 10
 const reconnectDelay = 3000
 
 export const connected = ref(false)
+
+// [P3-CO3] 端到端延迟监控统计
+export const e2eLatencyStats = reactive({
+  samples: [] as number[],  // 最近 100 个延迟采样 (ms)
+  lastMs: 0,               // 最近一次延迟
+  get avg() { return this.samples.length > 0 ? Math.round(this.samples.reduce((a, b) => a + b, 0) / this.samples.length) : 0 },
+  get p95() {
+    if (this.samples.length < 5) return 0
+    const sorted = [...this.samples].sort((a, b) => a - b)
+    return sorted[Math.floor(sorted.length * 0.95)]
+  },
+})
 
 let started = false
 
@@ -128,6 +140,20 @@ function doConnect() {
         handleAlarm(payload)
         // P2-5: 派发 linkage-ws-event 供 LinkageFlowDiagram 实时展示
         window.dispatchEvent(new CustomEvent('linkage-ws-event', { detail: payload }))
+      }
+
+      // [P1-CO2] 推理检测结果实时分发: 供 LiveView Canvas 叠加检测框
+      // [P3-CO3] 端到端延迟监控: 计算后端推理 → 前端接收的传输延迟
+      if (msg.type === 'detection_result' && payload) {
+        // 计算推理结果传输延迟
+        const detectTs = payload.timestamp_ms || 0
+        if (detectTs > 0) {
+          const e2eLatency = Date.now() - detectTs
+          e2eLatencyStats.samples.push(e2eLatency)
+          if (e2eLatencyStats.samples.length > 100) e2eLatencyStats.samples.shift()
+          e2eLatencyStats.lastMs = e2eLatency
+        }
+        window.dispatchEvent(new CustomEvent('inference-detection', { detail: payload }))
       }
 
       // 处理联动动作状态消息（实时更新弹窗联动状态）

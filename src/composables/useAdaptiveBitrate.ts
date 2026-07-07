@@ -57,6 +57,9 @@ interface SlotAbrContext {
   rttWindow: number[]      // 最近 WINDOW_SIZE 个 RTT 采样（ms）
   lossWindow: number[]     // 最近 WINDOW_SIZE 个 lossRate 采样
   intervalId: ReturnType<typeof setInterval> | null
+  // [P3-VP1] 主/子码流自动切换回调
+  onStreamQualitySwitch?: (quality: 'main' | 'sub') => void
+  currentStreamQuality: 'main' | 'sub'
 }
 
 export function useAdaptiveBitrate() {
@@ -70,12 +73,14 @@ export function useAdaptiveBitrate() {
    * @param channelId 通道 ID（用于调用后端 API）
    * @param getHealth 返回该 slot 最新健康状态的函数（来自 useStreamHealth）
    * @param initialLevel 初始质量等级，默认 high
+   * @param onStreamQualitySwitch [P3-VP1] 主/子码流切换回调，网络质量下降时自动切子码流
    */
   function activate(
     slotIdx: number,
     channelId: string,
     getHealth: () => StreamHealthState,
     initialLevel: QualityLevel = 'high',
+    onStreamQualitySwitch?: (quality: 'main' | 'sub') => void,
   ) {
     deactivate(slotIdx)
 
@@ -89,6 +94,8 @@ export function useAdaptiveBitrate() {
       rttWindow: [],
       lossWindow: [],
       intervalId: null,
+      onStreamQualitySwitch,
+      currentStreamQuality: 'main',
     }
 
     ctx.intervalId = setInterval(() => {
@@ -173,8 +180,22 @@ export function useAdaptiveBitrate() {
     ctx.lastSwitchTime = now
     qualityLevels[slotIdx] = targetLevel
 
+    // [P3-VP1] 主/子码流自动切换: quality=high→主码流, standard/smooth→子码流
+    handleStreamQualitySwitch(ctx, targetLevel)
+
     requestQualityChange(ctx.channelId, targetLevel)
       .catch(err => console.warn(`[ABR] slot${slotIdx} quality change failed:`, err))
+  }
+
+  // [P3-VP1] 根据质量等级自动切换主/子码流（对标海康/大华双码流自适应）
+  function handleStreamQualitySwitch(ctx: SlotAbrContext, level: QualityLevel) {
+    if (!ctx.onStreamQualitySwitch) return
+    const targetStream: 'main' | 'sub' = level === 'high' ? 'main' : 'sub'
+    if (targetStream !== ctx.currentStreamQuality) {
+      ctx.currentStreamQuality = targetStream
+      ctx.onStreamQualitySwitch(targetStream)
+      console.debug(`[ABR] [P3-VP1] auto-switching to ${targetStream} stream (quality=${level})`)
+    }
   }
 
   /** 调用后端 API 请求质量切换 */

@@ -285,6 +285,27 @@ export interface DryRunResult {
   simulated_actions: string[]
 }
 
+/** [P2-LR2] 规则冲突报告 */
+export interface RuleConflict {
+  type: 'overlapping_trigger' | 'action_redundancy' | 'wildcard_shadowing' | 'cooldown_violation' | 'time_window_conflict'
+  severity: 'warning' | 'info'
+  rule_id_a: string
+  rule_id_b: string
+  message: string
+  suggestion: string
+}
+
+/** [P3-LR3] 按规则触发统计 */
+export interface RuleTriggerStat {
+  rule_id: string
+  rule_name: string
+  trigger_count: number
+  cooldown_hits: number
+  action_success: number
+  action_failed: number
+  last_trigger_ms: number
+}
+
 /** 规则模板 */
 export interface RuleTemplate {
   template_id: string
@@ -514,6 +535,18 @@ export const linkageApi = {
     location_id?: string
   }) {
     return http.post<ApiResponse<DryRunResult>>('/linkage/rules/dry-run', data)
+  },
+
+  // [P2-LR2] 规则冲突检测
+  /** 检测所有已启用规则之间的冲突 */
+  detectConflicts() {
+    return http.get<ApiResponse<{ conflicts: RuleConflict[]; total: number }>>('/linkage/rules/conflicts')
+  },
+
+  // [P3-LR3] 按规则触发统计
+  /** 获取所有规则的触发/冷却/动作执行统计 */
+  getRuleStats() {
+    return http.get<ApiResponse<{ rules: RuleTriggerStat[]; total: number }>>('/linkage/rule-stats')
   },
 
   // ── 规则模板库 ──

@@ -47,8 +47,8 @@
             <el-button type="warning" size="small" @click="handleBatchToggle(false)">批量停用</el-button>
             <el-button type="danger" size="small" @click="handleBatchDelete">批量删除</el-button>
           </template>
-          <el-button @click="showLogDialog = true">
-            <el-icon><Document /></el-icon>执行日志
+          <el-button @click="openDebugConsole">
+            <el-icon><Document /></el-icon>调试控制台
           </el-button>
           <el-button @click="openTemplateLibrary">
             <el-icon><CopyDocument /></el-icon>模板库
@@ -61,12 +61,79 @@
             <el-icon><Upload /></el-icon>导入
           </el-button>
           <input ref="importFileInput" type="file" accept=".json" style="display:none" @change="handleImportTemplates" />
+          <!-- [P2-LR2] 规则冲突检测 -->
+          <el-button type="warning" @click="checkConflicts" :loading="conflictLoading" title="检测规则冲突">
+            <el-icon><WarningFilled /></el-icon>冲突检测
+          </el-button>
+          <!-- [P3-LR3] 规则执行统计 -->
+          <el-button type="info" @click="toggleRuleStats" :loading="ruleStatsLoading" title="查看规则触发统计">
+            <el-icon><DataLine /></el-icon>规则统计
+          </el-button>
           <el-button type="primary" @click="openEditor(null)">
             <el-icon><Plus /></el-icon>新建规则
           </el-button>
         </div>
       </div>
     </el-card>
+
+    <!-- [P2-LR2] 冲突检测结果展示 -->
+    <el-alert v-if="conflictResults.length > 0" type="warning" :closable="true" @close="conflictResults = []" style="margin-bottom: 12px">
+      <template #title>
+        检测到 {{ conflictResults.length }} 条规则冲突 — 请查看下方详情
+      </template>
+    </el-alert>
+
+    <!-- ===== [P2-LR2] 冲突详情折叠面板 ===== -->
+    <el-collapse v-if="conflictResults.length > 0" style="margin-bottom: 12px">
+      <el-collapse-item title="冲突详情 (点击展开/收起)" name="conflicts">
+        <div v-for="(c, idx) in conflictResults" :key="idx" class="conflict-item">
+          <el-tag :type="c.severity === 'warning' ? 'warning' : 'info'" size="small">{{ conflictTypeLabel(c.type) }}</el-tag>
+          <span class="conflict-msg">{{ c.message }}</span>
+          <div class="conflict-suggestion">💡 {{ c.suggestion }}</div>
+        </div>
+      </el-collapse-item>
+    </el-collapse>
+
+    <!-- ===== [P3-LR3] 规则执行统计面板 ===== -->
+    <el-collapse v-if="ruleStatsVisible" v-model="ruleStatsCollapse" style="margin-bottom: 12px">
+      <el-collapse-item name="stats">
+        <template #title>
+          <span style="font-weight: 600">规则触发统计</span>
+          <el-tag v-if="ruleStatsData.length > 0" size="small" type="info" style="margin-left: 8px">{{ ruleStatsData.length }} 条</el-tag>
+          <el-button size="small" text @click.stop="loadRuleStats" style="margin-left: auto; margin-right: 16px">
+            <el-icon><Refresh /></el-icon>刷新
+          </el-button>
+        </template>
+        <el-table :data="ruleStatsData" stripe size="small" style="width: 100%">
+          <el-table-column prop="rule_name" label="规则名称" min-width="160" />
+          <el-table-column prop="trigger_count" label="触发次数" width="100" align="center">
+            <template #default="{ row }">
+              <el-tag :type="row.trigger_count > 0 ? 'success' : 'info'" size="small">{{ row.trigger_count }}</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column prop="cooldown_hits" label="冷却跳过" width="100" align="center">
+            <template #default="{ row }">
+              <span :class="{ 'stat-warn': row.cooldown_hits > 0 }">{{ row.cooldown_hits }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="成功率" width="120" align="center">
+            <template #default="{ row }">
+              <span v-if="row.action_success + row.action_failed > 0" :class="{ 'stat-good': row.action_failed === 0, 'stat-bad': row.action_failed > 0 }">
+                {{ row.action_success }}/{{ row.action_success + row.action_failed }}
+                ({{ ((row.action_success / (row.action_success + row.action_failed)) * 100).toFixed(0) }}%)
+              </span>
+              <span v-else class="text-secondary">—</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="最后触发" width="160" align="center">
+            <template #default="{ row }">
+              <span v-if="row.last_trigger_ms > 0" class="text-secondary">{{ formatStatsTime(row.last_trigger_ms) }}</span>
+              <span v-else class="text-secondary">从未</span>
+            </template>
+          </el-table-column>
+        </el-table>
+      </el-collapse-item>
+    </el-collapse>
 
     <!-- ===== 规则列表 ===== -->
     <el-card shadow="never" class="list-card">
@@ -519,59 +586,210 @@
       </template>
     </el-dialog>
 
-    <!-- ===== 执行日志弹窗 ===== -->
-    <el-dialog v-model="showLogDialog" title="联动执行日志" width="960px" destroy-on-close @open="fetchLogs">
-      <el-tabs v-model="logViewMode" style="margin-bottom: 12px">
-        <el-tab-pane label="表格视图" name="table" />
-        <el-tab-pane label="时间线" name="timeline" />
-      </el-tabs>
-      <!-- 表格视图 -->
-      <div v-if="logViewMode === 'table'">
-        <el-table :data="logs" stripe v-loading="logLoading" size="small">
-          <el-table-column prop="trigger_at" label="触发时间" width="170">
-            <template #default="{ row }"><span class="time-text">{{ formatTime(row.trigger_at) }}</span></template>
-          </el-table-column>
-          <el-table-column prop="rule_name" label="规则" width="140" />
-          <el-table-column prop="event_type" label="事件类型" width="100" />
-          <el-table-column prop="channel_id" label="通道" width="80" />
-          <el-table-column label="执行动作" min-width="180">
-            <template #default="{ row }">
-              <el-tag v-for="a in (row.actions_executed || []).slice(0, 3)" :key="a" size="small" effect="plain" style="margin: 2px">{{ a }}</el-tag>
-              <span v-if="(row.actions_executed || []).length > 3" class="text-secondary">+{{ row.actions_executed.length - 3 }}</span>
-            </template>
-          </el-table-column>
-          <el-table-column prop="duration_ms" label="耗时(ms)" width="90" align="center" />
-        </el-table>
-        <div class="pagination-wrap" v-if="logTotal > logPageSize">
-          <el-pagination v-model:current-page="logPage" v-model:page-size="logPageSize" :total="logTotal" :page-sizes="[10, 20, 50]" layout="total, sizes, prev, pager, next" background small @change="fetchLogs" />
+    <!-- ===== 调试控制台弹窗 ===== -->
+    <el-dialog v-model="showLogDialog" title="规则引擎调试控制台" width="1080px" destroy-on-close @open="onDebugDialogOpen" @closed="onDebugDialogClose">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px">
+        <el-tabs v-model="logActiveTab" style="margin-bottom: 0">
+          <el-tab-pane label="触发日志" name="trigger" />
+          <el-tab-pane label="动作执行日志" name="action" />
+          <el-tab-pane label="引擎统计" name="stats" />
+        </el-tabs>
+        <div style="display: flex; align-items: center; gap: 8px">
+          <el-switch v-model="debugAutoRefresh" size="small" active-text="实时刷新" inactive-text="" @change="onAutoRefreshToggle as any" />
+          <span style="font-size: 12px; color: #909399">{{ debugAutoRefresh ? '每5s自动刷新' : '手动刷新' }}</span>
+          <el-button size="small" text @click="refreshAllLogs" :loading="logLoading"><el-icon><Refresh /></el-icon></el-button>
         </div>
       </div>
-      <!-- 时间线视图 -->
-      <div v-if="logViewMode === 'timeline'" v-loading="logLoading" style="max-height: 500px; overflow-y: auto; padding: 8px">
-        <el-timeline v-if="logs.length > 0">
-          <el-timeline-item v-for="log in logs" :key="log.id"
-            :timestamp="formatTime(log.trigger_at)" placement="top"
-            :type="log.severity >= 4 ? 'danger' : log.severity >= 3 ? 'warning' : 'primary'"
-            :hollow="log.severity < 3">
-            <el-card shadow="never" :body-style="{ padding: '10px 14px' }">
-              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px">
-                <div>
-                  <span style="font-weight: 600">{{ log.rule_name }}</span>
-                  <el-tag size="small" :type="log.severity >= 4 ? 'danger' : 'warning'" effect="plain" style="margin-left: 6px">
-                    {{ log.event_type || '未知事件' }}
-                  </el-tag>
-                  <el-tag size="small" type="info" effect="plain" style="margin-left: 4px">通道 {{ log.channel_id }}</el-tag>
+
+      <!-- ===== Tab 1: 触发日志 ===== -->
+      <div v-show="logActiveTab === 'trigger'">
+        <el-tabs v-model="logViewMode" style="margin-bottom: 8px">
+          <el-tab-pane label="表格" name="table" />
+          <el-tab-pane label="时间线" name="timeline" />
+        </el-tabs>
+        <div v-if="logViewMode === 'table'">
+          <el-table :data="logs" stripe v-loading="logLoading" size="small">
+            <el-table-column prop="trigger_at" label="触发时间" width="170">
+              <template #default="{ row }"><span class="time-text">{{ formatTime(row.trigger_at) }}</span></template>
+            </el-table-column>
+            <el-table-column prop="rule_name" label="规则" width="140" />
+            <el-table-column prop="event_type" label="事件类型" width="100" />
+            <el-table-column prop="channel_id" label="通道" width="80" />
+            <el-table-column label="执行动作" min-width="180">
+              <template #default="{ row }">
+                <el-tag v-for="a in (row.actions_executed || []).slice(0, 3)" :key="a" size="small" effect="plain" style="margin: 2px">{{ a }}</el-tag>
+                <span v-if="(row.actions_executed || []).length > 3" class="text-secondary">+{{ row.actions_executed.length - 3 }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column prop="duration_ms" label="耗时(ms)" width="90" align="center" />
+          </el-table>
+          <div class="pagination-wrap" v-if="logTotal > logPageSize">
+            <el-pagination v-model:current-page="logPage" v-model:page-size="logPageSize" :total="logTotal" :page-sizes="[10, 20, 50]" layout="total, sizes, prev, pager, next" background small @change="fetchLogs" />
+          </div>
+        </div>
+        <div v-if="logViewMode === 'timeline'" v-loading="logLoading" style="max-height: 500px; overflow-y: auto; padding: 8px">
+          <el-timeline v-if="logs.length > 0">
+            <el-timeline-item v-for="log in logs" :key="log.id"
+              :timestamp="formatTime(log.trigger_at)" placement="top"
+              :type="log.severity >= 4 ? 'danger' : log.severity >= 3 ? 'warning' : 'primary'"
+              :hollow="log.severity < 3">
+              <el-card shadow="never" :body-style="{ padding: '10px 14px' }">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px">
+                  <div>
+                    <span style="font-weight: 600">{{ log.rule_name }}</span>
+                    <el-tag size="small" :type="log.severity >= 4 ? 'danger' : 'warning'" effect="plain" style="margin-left: 6px">
+                      {{ log.event_type || '未知事件' }}
+                    </el-tag>
+                    <el-tag size="small" type="info" effect="plain" style="margin-left: 4px">通道 {{ log.channel_id }}</el-tag>
+                  </div>
+                  <span style="font-size: 12px; color: #909399">{{ log.duration_ms }}ms</span>
                 </div>
-                <span style="font-size: 12px; color: #909399">{{ log.duration_ms }}ms</span>
-              </div>
-              <div>
-                <el-tag v-for="a in (log.actions_executed || []).slice(0, 5)" :key="a" size="small" effect="plain" style="margin: 1px">{{ a }}</el-tag>
-                <span v-if="(log.actions_executed || []).length > 5" style="font-size: 12px; color: #909399; margin-left: 4px">+{{ log.actions_executed.length - 5 }}项</span>
+                <div>
+                  <el-tag v-for="a in (log.actions_executed || []).slice(0, 5)" :key="a" size="small" effect="plain" style="margin: 1px">{{ a }}</el-tag>
+                  <span v-if="(log.actions_executed || []).length > 5" style="font-size: 12px; color: #909399; margin-left: 4px">+{{ log.actions_executed.length - 5 }}项</span>
+                </div>
+              </el-card>
+            </el-timeline-item>
+          </el-timeline>
+          <el-empty v-else description="暂无执行记录" />
+        </div>
+      </div>
+
+      <!-- ===== Tab 2: 动作执行日志 ===== -->
+      <div v-show="logActiveTab === 'action'">
+        <div style="margin-bottom: 8px; display: flex; gap: 8px; align-items: center">
+          <el-select v-model="actionLogStatusFilter" placeholder="状态筛选" style="width: 140px" clearable @change="fetchActionLogs">
+            <el-option label="全部" value="" />
+            <el-option label="成功" value="success" />
+            <el-option label="失败" value="failed" />
+            <el-option label="超时" value="timeout" />
+            <el-option label="执行中" value="executing" />
+          </el-select>
+          <span style="font-size: 12px; color: #909399">排查 "动作为什么没执行" 问题</span>
+        </div>
+        <el-table :data="actionLogs" stripe v-loading="actionLogLoading" size="small">
+          <el-table-column prop="created_at" label="时间" width="170">
+            <template #default="{ row }"><span class="time-text">{{ formatTime(row.created_at) }}</span></template>
+          </el-table-column>
+          <el-table-column prop="action_name" label="动作名称" width="140" />
+          <el-table-column prop="rule_id" label="规则ID" width="120" show-overflow-tooltip>
+            <template #default="{ row }">
+              <span v-if="row.rule_id" style="font-family: monospace; font-size: 12px">{{ row.rule_id }}</span>
+              <span v-else style="color: #C0C4CC">—</span>
+            </template>
+          </el-table-column>
+          <el-table-column prop="channel_id" label="通道" width="70" />
+          <el-table-column label="状态" width="90" align="center">
+            <template #default="{ row }">
+              <el-tag :type="actionStatusTagType(row.status)" size="small" effect="dark">{{ row.status }}</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="耗时" width="80" align="center">
+            <template #default="{ row }">{{ row.execution_ms ? row.execution_ms + 'ms' : '-' }}</template>
+          </el-table-column>
+          <el-table-column label="重试" width="60" align="center">
+            <template #default="{ row }">{{ row.retry_count > 0 ? `${row.retry_count}/${row.max_retries}` : '-' }}</template>
+          </el-table-column>
+          <el-table-column label="错误信息" min-width="200" show-overflow-tooltip>
+            <template #default="{ row }">
+              <span v-if="row.error_code" style="color: #F56C6C">[{{ row.error_code }}] {{ row.error_message }}</span>
+              <span v-else style="color: #67C23A">OK</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="操作" width="80" align="center" fixed="right">
+            <template #default="{ row }">
+              <el-button v-if="row.status === 'failed' || row.status === 'timeout'" size="small" text type="primary" @click="retryAction(row.id)">重试</el-button>
+            </template>
+          </el-table-column>
+        </el-table>
+        <div class="pagination-wrap" v-if="actionLogTotal > actionLogPageSize">
+          <el-pagination v-model:current-page="actionLogPage" v-model:page-size="actionLogPageSize" :total="actionLogTotal" :page-sizes="[10, 20, 50]" layout="total, sizes, prev, pager, next" background small @change="fetchActionLogs" />
+        </div>
+      </div>
+
+      <!-- ===== Tab 3: 引擎统计 ===== -->
+      <div v-show="logActiveTab === 'stats'" v-loading="statsLoading">
+        <el-row :gutter="16" style="margin-bottom: 16px">
+          <el-col :span="6">
+            <el-card shadow="hover" :body-style="{ padding: '16px 20px' }">
+              <div class="debug-stat">
+                <div class="debug-stat-val" style="color: #6366F1">{{ engineStats.totalTriggers ?? '-' }}</div>
+                <div class="debug-stat-label">总触发次数</div>
               </div>
             </el-card>
-          </el-timeline-item>
-        </el-timeline>
-        <el-empty v-else description="暂无执行记录" />
+          </el-col>
+          <el-col :span="6">
+            <el-card shadow="hover" :body-style="{ padding: '16px 20px' }">
+              <div class="debug-stat">
+                <div class="debug-stat-val" style="color: #10B981">{{ engineStats.totalActionsExecuted ?? '-' }}</div>
+                <div class="debug-stat-label">动作执行成功</div>
+              </div>
+            </el-card>
+          </el-col>
+          <el-col :span="6">
+            <el-card shadow="hover" :body-style="{ padding: '16px 20px' }">
+              <div class="debug-stat">
+                <div class="debug-stat-val" style="color: #EF4444">{{ engineStats.totalActionsFailed ?? '-' }}</div>
+                <div class="debug-stat-label">动作执行失败</div>
+                <div v-if="engineStats.totalActionsFailed > 0" style="font-size: 11px; color: #F56C6C; margin-top: 2px">需排查失败动作</div>
+              </div>
+            </el-card>
+          </el-col>
+          <el-col :span="6">
+            <el-card shadow="hover" :body-style="{ padding: '16px 20px' }">
+              <div class="debug-stat">
+                <div class="debug-stat-val" style="color: #F59E0B">{{ engineStats.totalCooldownSkips ?? '-' }}</div>
+                <div class="debug-stat-label">冷却跳过次数</div>
+                <div v-if="engineStats.totalCooldownSkips > 0" style="font-size: 11px; color: #909399; margin-top: 2px">高频事件被冷却抑制</div>
+              </div>
+            </el-card>
+          </el-col>
+        </el-row>
+        <el-row :gutter="16" style="margin-bottom: 16px">
+          <el-col :span="6">
+            <el-card shadow="hover" :body-style="{ padding: '16px 20px' }">
+              <div class="debug-stat">
+                <div class="debug-stat-val" style="color: #8B5CF6">{{ engineStats.totalMergeCount ?? '-' }}</div>
+                <div class="debug-stat-label">合并窗口合并数</div>
+              </div>
+            </el-card>
+          </el-col>
+          <el-col :span="6">
+            <el-card shadow="hover" :body-style="{ padding: '16px 20px' }">
+              <div class="debug-stat">
+                <div class="debug-stat-val" style="color: #3B82F6">{{ engineStats.triggeredToday ?? '-' }}</div>
+                <div class="debug-stat-label">今日触发</div>
+              </div>
+            </el-card>
+          </el-col>
+          <el-col :span="6">
+            <el-card shadow="hover" :body-style="{ padding: '16px 20px' }">
+              <div class="debug-stat">
+                <div class="debug-stat-val" :style="{ color: engineStats.successRate >= 0.95 ? '#10B981' : '#EF4444' }">{{ engineStats.successRate != null ? (engineStats.successRate * 100).toFixed(1) + '%' : '-' }}</div>
+                <div class="debug-stat-label">动作成功率</div>
+              </div>
+            </el-card>
+          </el-col>
+          <el-col :span="6">
+            <el-card shadow="hover" :body-style="{ padding: '16px 20px' }">
+              <div class="debug-stat">
+                <div class="debug-stat-val" style="color: #6B7280">{{ engineStats.activeRules ?? '-' }} / {{ engineStats.totalRules ?? '-' }}</div>
+                <div class="debug-stat-label">启用 / 总规则</div>
+              </div>
+            </el-card>
+          </el-col>
+        </el-row>
+        <!-- 调试提示 -->
+        <el-alert type="info" :closable="false">
+          <template #title>
+            <span style="font-size: 13px">
+              <strong>调试指南：</strong>
+              冷却跳过次数过高 → 考虑增大 cooldown_ms 或添加合并窗口；
+              动作执行失败 > 0 → 查看 "动作执行日志" Tab 排查失败原因；
+              今日触发为 0 但告警正常 → 检查规则条件是否过于严格或 Dry-Run 测试。
+            </span>
+          </template>
+        </el-alert>
       </div>
     </el-dialog>
 
@@ -611,28 +829,47 @@
     </el-dialog>
 
     <!-- ===== 模板库对话框 ===== -->
-    <el-dialog v-model="showTemplateDialog" title="规则模板库" width="820px" destroy-on-close>
+    <el-dialog v-model="showTemplateDialog" title="规则模板库" width="900px" destroy-on-close>
       <div v-loading="templateLoading">
-        <div v-for="(group, cat) in templatesByCategory" :key="cat" style="margin-bottom: 20px">
-          <div style="font-size: 15px; font-weight: 600; margin-bottom: 10px; color: #303133; border-left: 3px solid #6366F1; padding-left: 8px">{{ cat }}</div>
-          <el-row :gutter="12">
-            <el-col :span="8" v-for="tmpl in group" :key="tmpl.template_id">
-              <el-card shadow="hover" class="template-card" :body-style="{ padding: '14px' }">
-                <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px">
-                  <div style="font-weight: 600; font-size: 14px">{{ tmpl.name }}</div>
-                  <el-tag v-if="tmpl.is_builtin" size="small" type="info" effect="plain">内置</el-tag>
-                </div>
-                <div style="font-size: 12px; color: #909399; margin-bottom: 10px; line-height: 1.5">{{ tmpl.description }}</div>
-                <div style="margin-bottom: 8px">
-                  <el-tag v-for="t in (tmpl.tags || []).slice(0, 3)" :key="t" size="small" effect="plain" style="margin: 1px">{{ t }}</el-tag>
-                </div>
-                <div style="font-size: 12px; color: #909399; margin-bottom: 10px">优先级: {{ tmpl.priority }} | 动作: {{ (tmpl.actions || []).length }}项</div>
-                <el-button type="primary" size="small" @click="applyTemplate(tmpl)" style="width: 100%">一键应用</el-button>
-              </el-card>
-            </el-col>
-          </el-row>
+        <!-- [P1-LR1] 搜索 + 分类标签导航 -->
+        <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 16px">
+          <el-input v-model="tmplSearchKeyword" placeholder="搜索模板名称/描述..." clearable size="small" style="width: 260px">
+            <template #prefix><el-icon><Search /></el-icon></template>
+          </el-input>
+          <span style="font-size: 12px; color: #909399">共 {{ filteredTemplateList.length }} 个模板</span>
         </div>
-        <el-empty v-if="!templateLoading && Object.keys(templatesByCategory).length === 0" description="暂无规则模板" />
+        <!-- [P1-LR1] 分类导航标签 -->
+        <div style="margin-bottom: 16px">
+          <el-radio-group v-model="tmplActiveCategory" size="small">
+            <el-radio-button label="全部">全部 ({{ templateList.length }})</el-radio-button>
+            <el-radio-button v-for="cat in tmplCategories" :key="cat" :label="cat">
+              {{ cat }} ({{ templatesByCategory[cat]?.length || 0 }})
+            </el-radio-button>
+          </el-radio-group>
+        </div>
+        <!-- 模板列表 (按分类) -->
+        <div style="max-height: 480px; overflow-y: auto">
+          <div v-for="(group, cat) in filteredTemplatesByCategory" :key="cat" style="margin-bottom: 20px">
+            <div style="font-size: 15px; font-weight: 600; margin-bottom: 10px; color: #303133; border-left: 3px solid #6366F1; padding-left: 8px">{{ cat }}</div>
+            <el-row :gutter="12">
+              <el-col :span="8" v-for="tmpl in group" :key="tmpl.template_id">
+                <el-card shadow="hover" class="template-card" :body-style="{ padding: '14px' }">
+                  <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px">
+                    <div style="font-weight: 600; font-size: 14px">{{ tmpl.name }}</div>
+                    <el-tag v-if="tmpl.is_builtin" size="small" type="info" effect="plain">内置</el-tag>
+                  </div>
+                  <div style="font-size: 12px; color: #909399; margin-bottom: 10px; line-height: 1.5">{{ tmpl.description }}</div>
+                  <div style="margin-bottom: 8px">
+                    <el-tag v-for="t in (tmpl.tags || []).slice(0, 3)" :key="t" size="small" effect="plain" style="margin: 1px">{{ t }}</el-tag>
+                  </div>
+                  <div style="font-size: 12px; color: #909399; margin-bottom: 10px">优先级: {{ tmpl.priority }} | 动作: {{ (tmpl.actions || []).length }}项</div>
+                  <el-button type="primary" size="small" @click="applyTemplate(tmpl)" style="width: 100%">一键应用</el-button>
+                </el-card>
+              </el-col>
+            </el-row>
+          </div>
+          <el-empty v-if="!templateLoading && Object.keys(filteredTemplatesByCategory).length === 0" description="未找到匹配的模板" />
+        </div>
       </div>
     </el-dialog>
 
@@ -733,12 +970,12 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, reactive, onMounted, watch } from 'vue'
+import { ref, computed, reactive, onMounted, onUnmounted, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { FormInstance, FormRules } from 'element-plus'
-import { Search, Plus, Document, Link, Bell, Setting, ArrowDown, Download, Upload } from '@element-plus/icons-vue'
+import { Search, Plus, Document, Link, Bell, Setting, ArrowDown, Download, Upload, Refresh, WarningFilled, DataLine } from '@element-plus/icons-vue'
 import { linkageApi, ACTION_TYPE_MAP, ACTION_TYPE_REVERSE_MAP, getTargetForActionType } from '@/api/linkage'
-import type { LinkageRule, LinkageAction, LinkageLog, TimeTemplate, LinkagePlan, CEPPattern, ConditionNode } from '@/api/linkage'
+import type { LinkageRule, LinkageAction, LinkageLog, ActionLogEntry, TimeTemplate, LinkagePlan, CEPPattern, ConditionNode, RuleConflict, RuleTriggerStat } from '@/api/linkage'
 import { useLinkageOptions } from '@/composables/useLinkageOptions'
 import RoiPolygonEditor from '@/components/RoiPolygonEditor.vue'
 import TimeTemplateEditor from '@/components/TimeTemplateEditor.vue'
@@ -887,6 +1124,74 @@ const sortOrder = ref<'ascending' | 'descending'>('descending')
 const selectedRows = ref<LinkageRule[]>([])
 const tagFilter = ref<string[]>([])
 
+// [P2-LR2] 规则冲突检测状态
+const conflictLoading = ref(false)
+const conflictResults = ref<RuleConflict[]>([])
+
+// 冲突检测
+async function checkConflicts() {
+  conflictLoading.value = true
+  try {
+    const { data: res } = await linkageApi.detectConflicts()
+    conflictResults.value = res?.data?.conflicts || []
+    if (conflictResults.value.length === 0) {
+      ElMessage.success('未检测到规则冲突')
+    } else {
+      ElMessage.warning(`检测到 ${conflictResults.value.length} 条规则冲突`)
+    }
+  } catch (e: any) {
+    ElMessage.error('冲突检测失败: ' + (e?.message || '未知错误'))
+  } finally {
+    conflictLoading.value = false
+  }
+}
+
+// [P3-LR3] 规则执行统计状态
+const ruleStatsLoading = ref(false)
+const ruleStatsVisible = ref(false)
+const ruleStatsCollapse = ref<string[]>(['stats'])
+const ruleStatsData = ref<RuleTriggerStat[]>([])
+
+// [P1-LR2] 冲突类型中文标签映射
+const CONFLICT_TYPE_LABELS: Record<string, string> = {
+  overlapping_trigger: '触发重叠',
+  action_redundancy: '动作冗余',
+  wildcard_shadowing: '通配遮蔽',
+  cooldown_violation: '冷却过短',
+  time_window_conflict: '时间窗口冲突',
+}
+function conflictTypeLabel(type: string): string {
+  return CONFLICT_TYPE_LABELS[type] || type
+}
+
+function toggleRuleStats() {
+  ruleStatsVisible.value = !ruleStatsVisible.value
+  if (ruleStatsVisible.value && ruleStatsData.value.length === 0) {
+    loadRuleStats()
+  }
+}
+
+async function loadRuleStats() {
+  ruleStatsLoading.value = true
+  try {
+    const { data: res } = await linkageApi.getRuleStats()
+    ruleStatsData.value = res?.data?.rules || []
+  } catch (e: any) {
+    ElMessage.error('加载规则统计失败: ' + (e?.message || '未知错误'))
+  } finally {
+    ruleStatsLoading.value = false
+  }
+}
+
+function formatStatsTime(ms: number): string {
+  if (!ms) return '从未'
+  const diff = Date.now() - ms
+  if (diff < 60_000) return `${Math.round(diff / 1000)}秒前`
+  if (diff < 3600_000) return `${Math.round(diff / 60_000)}分钟前`
+  if (diff < 86400_000) return `${Math.round(diff / 3600_000)}小时前`
+  return new Date(ms).toLocaleDateString()
+}
+
 const allTags = computed(() => {
   const tagSet = new Set<string>()
   for (const r of rules.value) {
@@ -992,7 +1297,38 @@ const templatesByCategory = computed(() => {
   return map
 })
 
-// ── 日志状态 ──
+// [P1-LR1] 模板分类导航
+const tmplSearchKeyword = ref('')
+const tmplActiveCategory = ref('全部')
+const tmplCategories = computed(() => Object.keys(templatesByCategory.value).sort())
+const filteredTemplateList = computed(() => {
+  let list = templateList.value
+  // 分类过滤
+  if (tmplActiveCategory.value !== '全部') {
+    list = list.filter(t => (t.category || '其他') === tmplActiveCategory.value)
+  }
+  // 关键词搜索
+  const kw = tmplSearchKeyword.value.trim().toLowerCase()
+  if (kw) {
+    list = list.filter(t =>
+      (t.name || '').toLowerCase().includes(kw) ||
+      (t.description || '').toLowerCase().includes(kw) ||
+      (t.tags || []).some((tag: string) => tag.toLowerCase().includes(kw))
+    )
+  }
+  return list
+})
+const filteredTemplatesByCategory = computed(() => {
+  const map: Record<string, any[]> = {}
+  for (const t of filteredTemplateList.value) {
+    const cat = t.category || '其他'
+    if (!map[cat]) map[cat] = []
+    map[cat].push(t)
+  }
+  return map
+})
+
+// ── 日志/调试控制台状态 ──
 
 const showLogDialog = ref(false)
 const logs = ref<LinkageLog[]>([])
@@ -1001,6 +1337,23 @@ const logPage = ref(1)
 const logPageSize = ref(20)
 const logTotal = ref(0)
 const logViewMode = ref('table')
+const logActiveTab = ref('trigger')
+
+// 动作执行日志
+const actionLogs = ref<ActionLogEntry[]>([])
+const actionLogLoading = ref(false)
+const actionLogPage = ref(1)
+const actionLogPageSize = ref(20)
+const actionLogTotal = ref(0)
+const actionLogStatusFilter = ref('')
+
+// 引擎统计
+const engineStats = ref<Record<string, any>>({})
+const statsLoading = ref(false)
+
+// 实时刷新
+const debugAutoRefresh = ref(false)
+let debugRefreshTimer: ReturnType<typeof setInterval> | null = null
 
 // ── 参数弹窗 ──
 
@@ -1612,6 +1965,104 @@ async function fetchLogs() {
   } finally { logLoading.value = false }
 }
 
+// ── 动作执行日志 ──
+
+async function fetchActionLogs() {
+  actionLogLoading.value = true
+  try {
+    const params: Record<string, any> = { page: actionLogPage.value, page_size: actionLogPageSize.value }
+    if (actionLogStatusFilter.value) params.status = actionLogStatusFilter.value
+    const res = await linkageApi.getActionLog(params)
+    const d = (res.data as any)?.data ?? res.data
+    actionLogs.value = d?.items ?? (Array.isArray(d) ? d : [])
+    actionLogTotal.value = d?.total ?? actionLogs.value.length
+  } catch (e: any) {
+    console.error('Fetch action logs failed:', e)
+  } finally { actionLogLoading.value = false }
+}
+
+function actionStatusTagType(status: string) {
+  switch (status) {
+    case 'success': return 'success' as const
+    case 'failed': return 'danger' as const
+    case 'timeout': return 'warning' as const
+    case 'executing': return 'primary' as const
+    case 'pending': return 'info' as const
+    default: return 'info' as const
+  }
+}
+
+async function retryAction(id: number) {
+  try {
+    await linkageApi.retryAction(id)
+    ElMessage.success('重试已提交')
+    fetchActionLogs()
+  } catch (e: any) {
+    ElMessage.error('重试失败: ' + (e?.message || e))
+  }
+}
+
+// ── 引擎统计 ──
+
+async function fetchEngineStats() {
+  statsLoading.value = true
+  try {
+    const res = await linkageApi.getStats()
+    // [FIX] /linkage/stats 返回 data 为数组 [{...}]，需取首元素
+    const d = (res.data as any)?.data
+    engineStats.value = Array.isArray(d) ? (d[0] ?? {}) : (d ?? {})
+  } catch (e: any) {
+    console.error('Fetch engine stats failed:', e)
+  } finally { statsLoading.value = false }
+}
+
+// ── 调试控制台管理 ──
+
+function openDebugConsole() {
+  showLogDialog.value = true
+}
+
+function onDebugDialogOpen() {
+  fetchLogs()
+  fetchActionLogs()
+  fetchEngineStats()
+}
+
+function onDebugDialogClose() {
+  debugAutoRefresh.value = false
+  stopDebugRefresh()
+}
+
+function onAutoRefreshToggle(enabled: boolean) {
+  if (enabled) {
+    startDebugRefresh()
+  } else {
+    stopDebugRefresh()
+  }
+}
+
+function startDebugRefresh() {
+  stopDebugRefresh()
+  debugRefreshTimer = setInterval(() => {
+    if (logActiveTab.value === 'trigger') fetchLogs()
+    else if (logActiveTab.value === 'action') fetchActionLogs()
+    else if (logActiveTab.value === 'stats') fetchEngineStats()
+  }, 5000)
+}
+
+function stopDebugRefresh() {
+  if (debugRefreshTimer) {
+    clearInterval(debugRefreshTimer)
+    debugRefreshTimer = null
+  }
+}
+
+function refreshAllLogs() {
+  fetchLogs()
+  fetchActionLogs()
+  fetchEngineStats()
+}
+
 // ── 时段模板 ──
 
 function applyTimeTemplate(tmpl: TimeTemplate) {
@@ -1627,6 +2078,10 @@ onMounted(() => {
   fetchRules(); fetchOptions()
   if (mainTab.value === 'plans') fetchPlans()
   if (mainTab.value === 'cep') fetchCEPPatterns()
+})
+
+onUnmounted(() => {
+  stopDebugRefresh()
 })
 
 // ── 主页面 Tab ──
@@ -1775,6 +2230,16 @@ watch(mainTab, (tab) => {
 .cond-tag { font-size: 11px; }
 .action-count { font-size: 13px; color: var(--app-text-secondary); }
 
+/* [P2-LR2] 冲突详情样式 */
+.conflict-item { padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,0.05); }
+.conflict-msg { margin-left: 8px; font-size: 13px; }
+.conflict-suggestion { margin-top: 4px; margin-left: 8px; font-size: 12px; color: var(--app-text-secondary, #aaa); }
+
+/* [P3-LR3] 规则统计样式 */
+.stat-good { color: #67c23a; font-weight: 600; }
+.stat-bad { color: #f56c6c; font-weight: 600; }
+.stat-warn { color: #e6a23c; font-weight: 600; }
+
 /* ── 时间文本 ── */
 .time-text { font-family: var(--font-mono); font-size: 13px; color: var(--app-text-secondary); }
 
@@ -1852,4 +2317,9 @@ watch(mainTab, (tab) => {
 /* ── 辅助 ── */
 .text-center { text-align: center; }
 .text-secondary { color: var(--app-text-secondary); font-size: 13px; }
+
+/* ── 调试控制台统计卡片 ── */
+.debug-stat { text-align: center; }
+.debug-stat-val { font-size: 28px; font-weight: 700; line-height: 1.2; }
+.debug-stat-label { font-size: 12px; color: #909399; margin-top: 4px; }
 </style>

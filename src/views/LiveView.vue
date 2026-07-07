@@ -23,6 +23,16 @@
                 <el-button :type="layout === 25 ? 'primary' : 'default'" @click="setLayout(25)" title="二十五分屏 (大屏模式)">25</el-button>
                 <el-button :type="layout === 36 ? 'primary' : 'default'" @click="setLayout(36)" title="三十六分屏 (大屏模式)">36</el-button>
               </el-button-group>
+              <!-- [P1-CO2] AI 检测框叠加开关 -->
+              <el-button size="small" :type="detectionOverlay.enabled ? 'success' : 'default'" @click="detectionOverlay.enabled = !detectionOverlay.enabled" title="AI 检测框叠加">
+                <el-icon><Aim /></el-icon>
+              </el-button>
+              <!-- [P3-CO3] E2E 延迟徽标 -->
+              <el-tooltip v-if="e2eLatencyStats.lastMs > 0" :content="`推理传输延迟: 最新 ${e2eLatencyStats.lastMs}ms / 均值 ${e2eLatencyStats.avg}ms / P95 ${e2eLatencyStats.p95}ms`" placement="bottom">
+                <span class="latency-badge" :class="{ 'latency-good': e2eLatencyStats.avg < 200, 'latency-warn': e2eLatencyStats.avg >= 200 && e2eLatencyStats.avg < 500, 'latency-bad': e2eLatencyStats.avg >= 500 }">
+                  {{ e2eLatencyStats.avg }}ms
+                </span>
+              </el-tooltip>
               <el-button size="small" @click="snapshotActive" :disabled="!hasActive">
                 <el-icon><Camera /></el-icon>截图
               </el-button>
@@ -40,8 +50,8 @@
                 <el-icon><Aim /></el-icon>
               </el-button>
               <!-- P1-4: 自动轮巡 -->
-              <el-button size="small" :type="autoPatrolEnabled ? 'success' : 'default'" @click="toggleAutoPatrol" title="自动轮巡">
-                <el-icon><RefreshRight /></el-icon>{{ autoPatrolEnabled ? autoPatrolInterval + 's' : '' }}
+              <el-button size="small" :type="autoPatrolEnabled ? 'success' : 'default'" @click="openPatrolConfig" title="自动轮巡配置">
+                <el-icon><RefreshRight /></el-icon>{{ autoPatrolEnabled ? patrolStatusText : '' }}
               </el-button>
               <el-button size="small" @click="toggleFullscreen">
                 <el-icon><FullScreen /></el-icon>
@@ -64,11 +74,12 @@
                      class="video-player"
                      :style="{ filter: videoFilterStyle.filter, transform: (idx === activeSlotIdx && eZoomActive ? eZoomStyle.transform : '') + (videoFilterStyle.transform !== 'none' ? ' ' + videoFilterStyle.transform : '') }"
                      muted autoplay playsinline />
-              <!-- 检测框 Canvas 叠加层 -->
-              <canvas v-if="slot.playing"
-                      :ref="el => setOverlayRef(idx, el)"
-                      class="detection-overlay" />
-              <div v-else-if="slot.loading" class="video-loading">
+              <!-- [P1-CO2] AI 推理检测框 Canvas 叠加层 -->
+              <canvas v-if="slot.playing && detectionOverlay.enabled"
+                      :ref="(el: any) => setDetectionCanvasRef(el, idx)"
+                      class="detection-canvas"
+                      :style="{ transform: (idx === activeSlotIdx && eZoomActive ? eZoomStyle.transform : '') }" />
+              <div v-if="slot.loading" class="video-loading">
                 <el-icon class="spin"><Loading /></el-icon>
                 <span>连接中...</span>
               </div>
@@ -82,10 +93,6 @@
                   <Lock v-if="slot.encrypted" />
                   <Unlock v-else />
                 </el-icon>
-              </div>
-              <!-- 检测计数徽章 -->
-              <div v-if="slot.playing && slot.detections && slot.detections.length > 0" class="detection-badge">
-                {{ slot.detections.length }} 检测
               </div>
               <!-- 健康状态指示灯 -->
               <div v-if="slot.playing" class="health-indicator" :class="streamHealth.getHealth(idx).status"></div>
@@ -148,23 +155,6 @@
           </div>
         </el-card>
 
-        <!-- AI检测日志 -->
-        <el-card class="log-card" :body-style="{ padding: '8px 12px' }">
-          <template #header>
-            <div style="display:flex;justify-content:space-between;align-items:center">
-              <span>🧠 AI检测日志</span>
-              <el-button size="small" text @click="detectionLogs = []">清空</el-button>
-            </div>
-          </template>
-          <div class="log-scroll" ref="logRef">
-            <div v-for="(log, i) in detectionLogs" :key="i" class="log-row">
-              <span class="log-t">{{ log.time }}</span>
-              <el-tag :type="log.tagType as any" size="small" effect="dark">{{ log.level }}</el-tag>
-              <span class="log-m">{{ log.msg }}</span>
-            </div>
-            <div v-if="!detectionLogs.length" class="log-empty">等待检测结果...</div>
-          </div>
-        </el-card>
       </el-col>
 
       <!-- 右侧: 通道 + PTZ -->
@@ -307,7 +297,76 @@
       </div>
     </el-dialog>
 
-    <!-- P1-3: WebCodecs 硬件解码状态提示 -->
+    <!-- P2-VP3: 自动轮巡配置对话框 -->
+    <el-dialog v-model="showPatrolConfig" title="自动轮巡配置 (对标海康轮巡组)" width="780px" :append-to-body="true">
+      <div style="display:flex;gap:16px;height:420px">
+        <!-- 左侧: 轮巡组列表 -->
+        <div style="width:200px;border-right:1px solid var(--app-border,#252830);padding-right:12px">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+            <span style="font-weight:600">轮巡组</span>
+            <el-button size="small" type="primary" text @click="addPatrolGroup">+ 新建</el-button>
+          </div>
+          <div
+            v-for="g in patrolGroups"
+            :key="g.id"
+            @click="activePatrolGroupId = g.id"
+            :class="['patrol-group-item', { active: activePatrolGroupId === g.id }]"
+          >
+            <span>{{ g.name }} <el-tag size="small" type="info">{{ g.channels.length }}</el-tag></span>
+            <el-button size="small" text type="danger" @click.stop="removePatrolGroup(g.id)">×</el-button>
+          </div>
+        </div>
+
+        <!-- 右侧: 选中组的详细配置 -->
+        <div v-if="activePatrolGroup" style="flex:1;overflow-y:auto">
+          <el-form :inline="true" size="small">
+            <el-form-item label="名称">
+              <el-input v-model="activePatrolGroup.name" @change="savePatrolGroups" style="width:180px" />
+            </el-form-item>
+            <el-form-item label="间隔(秒)">
+              <el-input-number v-model="activePatrolGroup.intervalSec" :min="3" :max="300" @change="savePatrolGroups" />
+            </el-form-item>
+          </el-form>
+
+          <div style="margin:12px 0;font-weight:600">该组通道列表 ({{ activePatrolGroup.channels.length }})</div>
+          <el-table :data="activePatrolGroup.channels" size="small" max-height="200">
+            <el-table-column label="序号" type="index" width="50" />
+            <el-table-column prop="name" label="通道名称" />
+            <el-table-column prop="channelId" label="通道ID" width="160" />
+            <el-table-column label="操作" width="60">
+              <template #default="{ row }">
+                <el-button size="small" text type="danger" @click="removeChannelFromGroup(activePatrolGroup.id, row.channelId)">移除</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+
+          <div style="margin-top:12px">
+            <el-select v-model="channelToAdd" placeholder="选择通道添加到该组" filterable style="width:300px" size="small">
+              <el-option v-for="ch in channels" :key="ch.id" :label="ch.name" :value="ch.id" />
+            </el-select>
+            <el-button size="small" type="primary" @click="channelToAdd && addChannelToGroup(activePatrolGroup.id, channelToAdd); channelToAdd = ''" style="margin-left:8px">+ 添加</el-button>
+          </div>
+        </div>
+        <div v-else style="flex:1;display:flex;align-items:center;justify-content:center;color:#888">
+          请选择或新建一个轮巡组
+        </div>
+      </div>
+
+      <template #footer>
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <div style="font-size:12px;color:#909399">
+            {{ autoPatrolEnabled ? `✓ 轮巡运行中: ${patrolStatusText}` : '○ 轮巡未启动' }}
+          </div>
+          <div>
+            <el-button @click="stopPatrol(); showPatrolConfig = false" :disabled="!autoPatrolEnabled">停止</el-button>
+            <el-button type="primary" @click="startPatrol" :disabled="!activePatrolGroup || activePatrolGroup.channels.length === 0">
+              {{ autoPatrolEnabled ? '重启' : '启动轮巡' }}
+            </el-button>
+            <el-button @click="showPatrolConfig = false">关闭</el-button>
+          </div>
+        </div>
+      </template>
+    </el-dialog>
     <div v-if="!webCodecsSupported" style="position:fixed;bottom:12px;right:12px;background:#2A2A0A;color:#FFB800;padding:4px 10px;border-radius:4px;font-size:11px;z-index:999">
       ⚡ 软解码模式 (WebCodecs 不可用)
     </div>
@@ -324,8 +383,6 @@ import { useDeviceStore } from '@/stores/device'
 import { getDeviceChannels } from '@/api/devices'
 import { streamHttp, deviceHttp, http } from '@/api/http'
 import { ptzControl as ptzApi, startCruise as ptzStartCruise, stopCruise as ptzStopCruise, startTrack as ptzStartTrack, stopTrack as ptzStopTrack, ptz3DPosition } from '@/api/ptz'
-import { detectFromBase64, getInferenceStatus } from '@/api/inference'
-import type { DetectionResult } from '@/api/inference'
 import { ElMessage } from 'element-plus'
 import { Lock, Unlock } from '@element-plus/icons-vue'
 import type { Channel, DeviceItem } from '@/types/device'
@@ -337,6 +394,8 @@ import StreamStatsPanel from '@/components/StreamStatsPanel.vue'
 import { normalizeStreamUrl, normalizeWsFlvUrl } from '@/utils/streamUrl'
 import { useChannelStore } from '@/stores/channel'
 import type { PlayerFormat as StorePlayerFormat, ActiveSlotData } from '@/stores/channel'
+// [P3-CO3] E2E 延迟监控
+import { e2eLatencyStats } from '@/composables/useGlobalAlarm'
 
 type PlayerFormat = 'flv' | 'ws-flv' | 'hls' | 'webrtc'
 
@@ -371,8 +430,6 @@ interface GridSlot {
   webrtcRetryCount: number
   reconnectCount: number
   encrypted: boolean
-  detections: DetectionResult[]
-  detectionTime: number
   _lastReconnectTime: number
   _videoEventCleanups: Array<() => void>  // video 事件监听器清理函数
 }
@@ -386,23 +443,133 @@ const layout = ref(4)
 const activeSlotIdx = ref(0)
 const gridSlots = reactive<GridSlot[]>(
   Array.from({ length: 36 }, () => ({
-    channelId: '', name: '', status: '', urls: {}, codec: '', playing: false, loading: false, muted: true, deviceId: '', playerInstance: null, recording: false, talking: false, currentFormat: '', webrtcRetryCount: 0, reconnectCount: 0, encrypted: false, detections: [] as DetectionResult[], detectionTime: 0, _lastReconnectTime: 0, _videoEventCleanups: []
+    channelId: '', name: '', status: '', urls: {}, codec: '', playing: false, loading: false, muted: true, deviceId: '', playerInstance: null, recording: false, talking: false, currentFormat: '', webrtcRetryCount: 0, reconnectCount: 0, encrypted: false, _lastReconnectTime: 0, _videoEventCleanups: []
   }))
 )
-const preferredFormat = ref<PlayerFormat>('flv')
+const preferredFormat = ref<PlayerFormat>('webrtc')  // [P2-VP2] 默认 WebRTC 超低延迟
 const videoRefs = ref<Record<number, HTMLVideoElement>>({})
-const overlayRefs = ref<Record<number, HTMLCanvasElement | null>>({})
 const gridRef = ref<HTMLElement>()
-const logRef = ref<HTMLElement>()
 
-function setOverlayRef(idx: number, el: any) {
-  if (el) overlayRefs.value[idx] = el as HTMLCanvasElement
+// [P1-CO2] AI 推理检测框 Canvas 叠加层
+const detectionOverlay = reactive({
+  enabled: true,  // 默认开启
+})
+const detectionCanvasRefs = ref<Record<number, HTMLCanvasElement>>({})
+// channelId → 最新检测结果（后端 pushDetectionResult 推送）
+interface DetectionBox {
+  class_name: string
+  confidence: number
+  x1: number; y1: number; x2: number; y2: number
+}
+const latestDetections = ref<Record<string, { boxes: DetectionBox[]; ts: number; imgW?: number; imgH?: number }>>({})
+let detectionRafId = 0
+
+function setDetectionCanvasRef(el: any, idx: number) {
+  if (el) detectionCanvasRefs.value[idx] = el as HTMLCanvasElement
+  else delete detectionCanvasRefs.value[idx]
 }
 
-// 检测框颜色映射
-const CLASS_COLORS: Record<string, string> = {
-  person: '#EF4444', bicycle: '#F59E0B', car: '#3B82F6', motorcycle: '#3B82F6',
-  bus: '#3B82F6', truck: '#3B82F6', dog: '#22C55E', cat: '#22C55E',
+// [P1-CO2] 推理检测结果事件处理
+function onInferenceDetection(e: Event) {
+  const detail = (e as CustomEvent).detail
+  if (!detail?.channel_id || !detail?.detections) return
+  // 从 gridSlots 查找对应的 channel 以获取原始推理分辨率
+  const slot = gridSlots.find(s => s.channelId === detail.channel_id)
+  latestDetections.value[detail.channel_id] = {
+    boxes: detail.detections.map((d: any) => ({
+      class_name: d.class_name || d.class || '',
+      confidence: d.confidence || d.score || 0,
+      x1: d.x1, y1: d.y1, x2: d.x2, y2: d.y2,
+    })),
+    ts: detail.timestamp_ms || Date.now(),
+  }
+  // 后端 detections 的 bbox 是相对于模型输入分辨率 (640x640)，
+  // 由 drawDetections 根据 video 实际分辨率缩放
+}
+
+// [P1-CO2] Canvas 绘制检测框
+const DETECTION_COLORS: Record<string, string> = {
+  person: '#00E676',
+  face: '#FFEB3B',
+  fire: '#FF1744',
+  smoke: '#FF9100',
+  weapon: '#D500F9',
+  knife: '#D500F9',
+  gun: '#D500F9',
+}
+const DEFAULT_DET_COLOR = '#00B0FF'
+
+function drawDetections() {
+  detectionRafId = requestAnimationFrame(drawDetections)
+  if (!detectionOverlay.enabled) return
+
+  for (let idx = 0; idx < layout.value; idx++) {
+    const canvas = detectionCanvasRefs.value[idx]
+    const video = videoRefs.value[idx]
+    if (!canvas || !video) continue
+
+    const slot = gridSlots[idx]
+    if (!slot?.channelId) continue
+
+    const detData = latestDetections.value[slot.channelId]
+    // 3秒内无新检测 → 清空 canvas
+    if (!detData || Date.now() - detData.ts > 5000) {
+      const ctx = canvas.getContext('2d')
+      if (ctx && (canvas.width > 0 || canvas.height > 0)) ctx.clearRect(0, 0, canvas.width, canvas.height)
+      continue
+    }
+
+    // 同步 canvas 尺寸到 video 显示区域
+    const vw = video.videoWidth || 0
+    const vh = video.videoHeight || 0
+    if (vw === 0 || vh === 0) continue
+    if (canvas.width !== vw || canvas.height !== vh) {
+      canvas.width = vw
+      canvas.height = vh
+    }
+
+    const ctx = canvas.getContext('2d')
+    if (!ctx) continue
+    ctx.clearRect(0, 0, canvas.width, canvas.height)
+
+    // 后端 bbox 坐标系 = 模型输入 (通常 640x640)
+    // 需缩放到 video 原始分辨率
+    // 但 pushDetectionResult 里的坐标已经是模型输入坐标 (0~model_input_size)
+    // 假设模型输入为 640x640（YOLOv8 默认），按比例缩放
+    const MODEL_INPUT = 640
+    const scaleX = canvas.width / MODEL_INPUT
+    const scaleY = canvas.height / MODEL_INPUT
+
+    ctx.lineWidth = Math.max(2, canvas.width / 320)
+    ctx.font = `${Math.max(12, canvas.width / 50)}px sans-serif`
+
+    for (const box of detData.boxes) {
+      const x = box.x1 * scaleX
+      const y = box.y1 * scaleY
+      const w = (box.x2 - box.x1) * scaleX
+      const h = (box.y2 - box.y1) * scaleY
+      const color = DETECTION_COLORS[box.class_name] || DEFAULT_DET_COLOR
+
+      // 半透明填充
+      ctx.fillStyle = color + '22'
+      ctx.fillRect(x, y, w, h)
+
+      // 边框
+      ctx.strokeStyle = color
+      ctx.strokeRect(x, y, w, h)
+
+      // 标签背景
+      const label = `${box.class_name} ${(box.confidence * 100).toFixed(0)}%`
+      const textW = ctx.measureText(label).width
+      const labelH = Math.max(16, canvas.width / 40)
+      ctx.fillStyle = color
+      ctx.fillRect(x, y - labelH, textW + 8, labelH)
+
+      // 标签文字
+      ctx.fillStyle = '#000'
+      ctx.fillText(label, x + 4, y - 4)
+    }
+  }
 }
 
 // 流健康监测（参考海康 iVMS-8700 / 大华 DSS / 华为 HoloSens IVS 策略）
@@ -505,11 +672,12 @@ const formatCooldown = new Map<number, number>() // slotIdx -> lastSwitchTime
 const FORMAT_COOLDOWN_MS = 15000  // 15 秒内不允许再次降级
 
 // 统一降级链常量：所有降级逻辑引用此定义，消除三处分散的矛盾
-// H.264: FLV → WS-FLV → WebRTC → HLS
-// H.265: HLS → WebRTC（FLV/WS-FLV 的 MSE 不支持 H.265）
+// [P2-VP2] WebRTC 提升为首选 (超低延迟 <500ms, 对标海康/大华实时预览)
+// H.264: WebRTC → FLV → WS-FLV → HLS
+// H.265: WebRTC → HLS（FLV/WS-FLV 的 MSE 不支持 H.265）
 const DEGRADATION_CHAINS: Record<'h264' | 'h265', PlayerFormat[]> = {
-  h264: ['flv', 'ws-flv', 'webrtc', 'hls'],
-  h265: ['hls', 'webrtc'],
+  h264: ['webrtc', 'flv', 'ws-flv', 'hls'],
+  h265: ['webrtc', 'hls'],
 }
 
 /** 获取指定编码的降级链中，当前格式之后第一个可用的格式 */
@@ -545,7 +713,13 @@ const slotLastRebuildAt = new Map<number, number>()
 const prevStatusMap = new Map<number, string>()
 
 const setVideoRef = (el: any, idx: number) => {
-  if (el) videoRefs.value[idx] = el as HTMLVideoElement
+  // [FIX-RC3 2026-06-28] 清理 null 引用: 当 v-if="slot.playing" 变为 false 时,
+  //   Vue 用 null 调用 ref 回调。必须清理 stale 引用, 否则 videoRefs 指向已分离的 DOM 元素。
+  if (el) {
+    videoRefs.value[idx] = el as HTMLVideoElement
+  } else {
+    delete videoRefs.value[idx]
+  }
 }
 
 // 通道数据
@@ -600,47 +774,157 @@ async function checkWebCodecsSupport() {
   } catch { webCodecsSupported.value = false }
 }
 
-// P1-4: 多画面自动轮巡
+// P2-VP3: 自动轮巡 — 轮巡组系统 (对标海康 iVMS 轮巡功能)
+interface PatrolGroup {
+  id: string
+  name: string
+  channels: Array<{ channelId: string; name: string; deviceId: string }>
+  intervalSec: number  // 该轮巡组的切换间隔 (秒)
+  enabled: boolean
+}
+
+const PATROL_STORAGE_KEY = 'smartgateway.patrolGroups.v1'
+const patrolGroups = ref<PatrolGroup[]>([])
+const activePatrolGroupId = ref<string>('')
 const autoPatrolEnabled = ref(false)
-const autoPatrolInterval = ref(10)  // 秒
 let autoPatrolTimer: ReturnType<typeof setInterval> | null = null
+let patrolChannelIndex = 0
+
+// 加载轮巡组配置 (从 localStorage)
+function loadPatrolGroups() {
+  try {
+    const raw = localStorage.getItem(PATROL_STORAGE_KEY)
+    if (raw) {
+      const parsed = JSON.parse(raw)
+      if (Array.isArray(parsed)) patrolGroups.value = parsed
+    }
+  } catch { /* ignore */ }
+  if (patrolGroups.value.length === 0) {
+    // 默认空轮巡组
+    patrolGroups.value = [
+      { id: 'group_default', name: '默认轮巡组', channels: [], intervalSec: 10, enabled: true },
+    ]
+  }
+}
+function savePatrolGroups() {
+  try {
+    localStorage.setItem(PATROL_STORAGE_KEY, JSON.stringify(patrolGroups.value))
+  } catch { /* ignore */ }
+}
+
+const activePatrolGroup = computed(() =>
+  patrolGroups.value.find(g => g.id === activePatrolGroupId.value)
+)
+const patrolStatusText = computed(() => {
+  if (!autoPatrolEnabled.value || !activePatrolGroup.value) return ''
+  return `${activePatrolGroup.value.name} (${activePatrolGroup.value.intervalSec}s)`
+})
+
+// 打开轮巡配置对话框
+const showPatrolConfig = ref(false)
+const channelToAdd = ref('')
+function openPatrolConfig() {
+  loadPatrolGroups()
+  showPatrolConfig.value = true
+}
+
+// 启动轮巡
+function startPatrol() {
+  if (!activePatrolGroup.value || activePatrolGroup.value.channels.length === 0) {
+    ElMessage.warning('请先选择轮巡组并添加通道')
+    return
+  }
+  stopPatrol()  // 先停旧定时器
+  autoPatrolEnabled.value = true
+  patrolChannelIndex = 0
+  // 立即跳转到第一个通道
+  switchToPatrolChannel(0)
+  autoPatrolTimer = setInterval(() => {
+    patrolChannelIndex = (patrolChannelIndex + 1) % activePatrolGroup.value!.channels.length
+    switchToPatrolChannel(patrolChannelIndex)
+  }, activePatrolGroup.value.intervalSec * 1000)
+  ElMessage.success(`轮巡已启动: ${activePatrolGroup.value.name}`)
+}
+
+// 停止轮巡
+function stopPatrol() {
+  autoPatrolEnabled.value = false
+  if (autoPatrolTimer) { clearInterval(autoPatrolTimer); autoPatrolTimer = null }
+}
+
+// 切换轮巡通道
+function switchToPatrolChannel(idx: number) {
+  const group = activePatrolGroup.value
+  if (!group || idx < 0 || idx >= group.channels.length) return
+  const ch = group.channels[idx]
+  const channelObj = channels.value.find(c => c.id === ch.channelId)
+  if (channelObj && activeSlotIdx.value >= 0) {
+    closeSlot(activeSlotIdx.value)
+    nextTick(() => assignChannel(activeSlotIdx.value, channelObj))
+    console.log(`[P2-VP3 轮巡] ${group.name} → ${ch.name}`)
+  }
+}
+
+// 轮巡组管理
+function addPatrolGroup() {
+  const id = `group_${Date.now()}`
+  patrolGroups.value.push({
+    id, name: `轮巡组 ${patrolGroups.value.length + 1}`,
+    channels: [], intervalSec: 10, enabled: true,
+  })
+  savePatrolGroups()
+}
+function removePatrolGroup(id: string) {
+  patrolGroups.value = patrolGroups.value.filter(g => g.id !== id)
+  if (activePatrolGroupId.value === id) activePatrolGroupId.value = ''
+  savePatrolGroups()
+}
+function addChannelToGroup(groupId: string, channelId: string) {
+  const group = patrolGroups.value.find(g => g.id === groupId)
+  const ch = channels.value.find(c => c.id === channelId)
+  if (!group || !ch) return
+  if (group.channels.some(c => c.channelId === ch.id)) return
+  group.channels.push({ channelId: ch.id, name: ch.name, deviceId: ch.deviceId })
+  savePatrolGroups()
+}
+function removeChannelFromGroup(groupId: string, channelId: string) {
+  const group = patrolGroups.value.find(g => g.id === groupId)
+  if (!group) return
+  group.channels = group.channels.filter(c => c.channelId !== channelId)
+  savePatrolGroups()
+}
+
+// P1-4: 保留原版 slot-rotation 作为轮巡启动的备份逻辑
 function toggleAutoPatrol() {
   if (autoPatrolEnabled.value) {
-    autoPatrolEnabled.value = false
-    if (autoPatrolTimer) { clearInterval(autoPatrolTimer); autoPatrolTimer = null }
+    stopPatrol()
     ElMessage.info('自动轮巡已停止')
   } else {
     const activeCount = gridSlots.slice(0, layout.value).filter(s => s.channelId).length
     if (activeCount === 0) { ElMessage.warning('没有可轮巡的通道'); return }
     autoPatrolEnabled.value = true
     autoPatrolTimer = setInterval(() => {
-      // 轮换通道: 将槽位中的通道向前移动一位
       const slots = gridSlots.slice(0, layout.value)
       const activeChannels = slots.filter(s => s.channelId).map(s => ({ channelId: s.channelId, name: s.name, deviceId: s.deviceId }))
       if (activeChannels.length <= 1) return
-      // 向前轮换
       const first = activeChannels[0]
       for (let i = 0; i < activeChannels.length - 1; i++) {
         activeChannels[i] = activeChannels[i + 1]
       }
       activeChannels[activeChannels.length - 1] = first
-      // 重新分配到槽位
       let acIdx = 0
       for (let i = 0; i < slots.length; i++) {
         if (slots[i].channelId && acIdx < activeChannels.length) {
           const ch = activeChannels[acIdx++]
           if (slots[i].channelId !== ch.channelId) {
             closeSlot(i)
-            // 从 channels ref 中查找对应的 Channel 对象
             const channelObj = channels.value.find(c => c.id === ch.channelId)
-            if (channelObj) {
-              nextTick(() => assignChannel(i, channelObj))
-            }
+            if (channelObj) nextTick(() => assignChannel(i, channelObj))
           }
         }
       }
-    }, autoPatrolInterval.value * 1000)
-    ElMessage.success(`自动轮巡已启动 (每${autoPatrolInterval.value}秒切换)`)
+    }, 10 * 1000)
+    ElMessage.success('自动轮巡已启动 (简单模式)')
   }
 }
 
@@ -660,12 +944,7 @@ const eZoomStyle = computed(() => {
   return { transform: `scale(${eZoomScale.value}) translate(${tx}%, ${ty}%)` }
 })
 
-// 检测日志
-interface LogEntry { time: string; level: string; tagType: string; msg: string }
-const detectionLogs = ref<LogEntry[]>([])
-
-// [FIX 2026-07-03] ALERT_THROTTLE_MS / lastAlertTime 已移除:
-//   前端弹窗改由 useGlobalAlarm.ts (WebSocket) 统一驱动, 不再在 LiveView 中独立弹窗。
+// [FIX 2026-07-03] 前端弹窗由 useGlobalAlarm.ts (WebSocket) 统一驱动。
 
 // 只有 layout 对应数量的格子可见
 const visibleSlots = computed(() => gridSlots.slice(0, layout.value))
@@ -792,11 +1071,22 @@ function assignChannel(slotIdx: number, ch: Channel) {
       // 不更新 preferredFormat.value，避免触发 watcher 连锁重建其他 slot
       nextTick(() => {
           attachPlayerByFormat(slotIdx, bestFmt)
-          // 激活码率自适应
+          // 激活码率自适应 + [P3-VP1] 主/子码流自动切换
           adaptiveBitrate.activate(
             slotIdx,
             ch.id,
             () => streamHealth.getHealth(slotIdx),
+            'high',
+            // [P3-VP1] 网络质量降级时自动切换子码流
+            (quality) => {
+              if (quality === 'sub' && streamQuality.value === 'main') {
+                console.info('[P3-VP1] 网络质量下降，自动切换到子码流')
+                switchStreamQuality('sub')
+              } else if (quality === 'main' && streamQuality.value === 'sub') {
+                console.info('[P3-VP1] 网络质量恢复，自动切换回主码流')
+                switchStreamQuality('main')
+              }
+            },
           )
         })
       // 注册到全局通道 Store（跨路由持久化）
@@ -1146,10 +1436,37 @@ async function reconnectStream(slotIdx: number, preferredFmt?: PlayerFormat) {
 // 智能选择最佳播放格式（使用统一降级链）
 function selectBestFormat(urls: Partial<Record<PlayerFormat, string>>, codec?: string): PlayerFormat {
   const isH265 = !!(codec && (codec.toUpperCase().includes('H265') || codec.toUpperCase().includes('HEVC')))
-  const chain = isH265 ? DEGRADATION_CHAINS.h265 : DEGRADATION_CHAINS.h264
+
+  // [P1-VP2] H.265 WebRTC 可用性预检：检测浏览器是否支持 H.265 硬解
+  // Safari 全支持 H.265 WebRTC；Chrome 仅在特定编解码器配置下支持；Firefox 不支持
+  const h265WebRtcSupported = (() => {
+    try {
+      const caps = RTCRtpReceiver.getCapabilities('video')
+      if (!caps?.codecs) return false
+      return caps.codecs.some(c =>
+        c.mimeType.toLowerCase() === 'video/h265' ||
+        c.mimeType.toLowerCase() === 'video/hvc1' ||
+        c.mimeType.toLowerCase() === 'video/hevc'
+      )
+    } catch { return false }
+  })()
+
+  // H.265 + 浏览器不支持 WebRTC H.265 → 使用纯 HLS 降级链
+  const chain = (isH265 && !h265WebRtcSupported)
+    ? ['hls']
+    : (isH265 ? DEGRADATION_CHAINS.h265 : DEGRADATION_CHAINS.h264)
 
   if (isH265) {
-    console.debug(`[LiveView] 检测到 H.265 编码，降级链: ${chain.join(' → ')}, codec=${codec}`)
+    console.debug(`[LiveView] H.265 编码, WebRTC H.265 支持=${h265WebRtcSupported}, 降级链: ${chain.join(' → ')}, codec=${codec}`)
+  }
+
+  // [P2-VP2] 用户显式选择了格式时，优先使用该格式（如果可用且兼容编码）
+  if (preferredFormat.value && urls[preferredFormat.value]) {
+    // H.265 时检查格式兼容性
+    if (!isH265 || (preferredFormat.value === 'webrtc' && h265WebRtcSupported) || preferredFormat.value === 'hls') {
+      console.debug(`[LiveView] 使用用户首选格式: ${preferredFormat.value}`)
+      return preferredFormat.value
+    }
   }
 
   // 返回降级链中第一个有 URL 的格式
@@ -1262,29 +1579,45 @@ async function attachWebRtc(slotIdx: number, webrtcUrl: string) {
       }
     }, 3000)
 
+    // [P1-VP1] ICE 连接状态监控：disconnected 宽限期 5s + failed 立即降级
+    let iceDisconnectTimer: ReturnType<typeof setTimeout> | null = null
+    const ICE_DISCONNECT_GRACE_MS = 5000  // disconnected 状态宽限期
+
     pc.oniceconnectionstatechange = () => {
-      if (pc.iceConnectionState === 'failed' || pc.iceConnectionState === 'disconnected') {
+      const iceState = pc.iceConnectionState
+      console.debug(`[WebRTC] slot${slotIdx} ICE state: ${iceState}`)
+
+      if (iceState === 'failed') {
+        // failed = 不可恢复，立即降级
         slot.webrtcRetryCount++
-        // 清理定时器
         if (iceTimeoutTimer) { clearTimeout(iceTimeoutTimer); iceTimeoutTimer = null }
         if (candidateCheckTimer) { clearTimeout(candidateCheckTimer); candidateCheckTimer = null }
+        if (iceDisconnectTimer) { clearTimeout(iceDisconnectTimer); iceDisconnectTimer = null }
         pc.close()
         slot.playerInstance = null
-        ElMessage.warning('WebRTC 连接断开，已切换为 HLS')
-        // WebRTC 失败后降级到 HLS（HLS 支持 H.265）
-        if (slot.urls['hls']) {
-          attachPlayerByFormat(slotIdx, 'hls')
-        } else if (slot.urls['ws-flv']) {
-          attachPlayerByFormat(slotIdx, 'ws-flv')
-        } else {
-          ElMessage.error('WebRTC、HLS 均不可用，视频播放失败')
+        ElMessage.warning('WebRTC 连接失败，已切换为 HLS')
+        degradeFromWebRtc(slotIdx, slot)
+      } else if (iceState === 'disconnected') {
+        // disconnected = 可能是瞬态网络抖动，等待 5s 恢复，超时再降级
+        if (!iceDisconnectTimer) {
+          console.warn(`[WebRTC] slot${slotIdx} ICE disconnected, 等待 ${ICE_DISCONNECT_GRACE_MS}ms 恢复`)
+          iceDisconnectTimer = setTimeout(() => {
+            if (pc.iceConnectionState === 'disconnected') {
+              console.warn(`[WebRTC] slot${slotIdx} ICE disconnected 超过 ${ICE_DISCONNECT_GRACE_MS}ms 未恢复，降级`)
+              slot.webrtcRetryCount++
+              pc.close()
+              slot.playerInstance = null
+              ElMessage.warning('WebRTC 连接中断，已切换为 HLS')
+              degradeFromWebRtc(slotIdx, slot)
+            }
+          }, ICE_DISCONNECT_GRACE_MS)
         }
-      } else if (pc.iceConnectionState === 'connected') {
-        // 连接成功：重置重试计数器
+      } else if (iceState === 'connected' || iceState === 'completed') {
+        // 连接成功/恢复：清除定时器，重置重试计数
         slot.webrtcRetryCount = 0
-        // 清理定时器
         if (iceTimeoutTimer) { clearTimeout(iceTimeoutTimer); iceTimeoutTimer = null }
         if (candidateCheckTimer) { clearTimeout(candidateCheckTimer); candidateCheckTimer = null }
+        if (iceDisconnectTimer) { clearTimeout(iceDisconnectTimer); iceDisconnectTimer = null }
         // 验证 DTLS-SRTP 加密状态
         pc.getStats().then(stats => {
           stats.forEach(report => {
@@ -1301,6 +1634,7 @@ async function attachWebRtc(slotIdx: number, webrtcUrl: string) {
       destroy() {
         if (iceTimeoutTimer) { clearTimeout(iceTimeoutTimer); iceTimeoutTimer = null }
         if (candidateCheckTimer) { clearTimeout(candidateCheckTimer); candidateCheckTimer = null }
+        if (iceDisconnectTimer) { clearTimeout(iceDisconnectTimer); iceDisconnectTimer = null }
         streamHealth.stopMonitoring(slotIdx)
         pc.close()
         video.srcObject = null
@@ -1314,14 +1648,20 @@ async function attachWebRtc(slotIdx: number, webrtcUrl: string) {
     if (candidateCheckTimer) { clearTimeout(candidateCheckTimer); candidateCheckTimer = null }
     console.error('WebRTC failed:', e)
     ElMessage.warning(`WebRTC 连接失败(${e.message || '未知'})，已切换为 HLS`)
-    // WebRTC 失败后降级到 HLS（HLS 支持 H.265）
-    if (slot.urls['hls']) {
-      attachPlayerByFormat(slotIdx, 'hls')
-    } else if (slot.urls['ws-flv']) {
-      attachPlayerByFormat(slotIdx, 'ws-flv')
-    } else {
-      ElMessage.error('WebRTC、HLS 均不可用，视频播放失败')
-    }
+    degradeFromWebRtc(slotIdx, slot)
+  }
+}
+
+// [P1-VP1] WebRTC 降级辅助函数：按优先级尝试 HLS → WS-FLV → FLV
+function degradeFromWebRtc(slotIdx: number, slot: GridSlot) {
+  if (slot.urls['hls']) {
+    attachPlayerByFormat(slotIdx, 'hls')
+  } else if (slot.urls['ws-flv']) {
+    attachPlayerByFormat(slotIdx, 'ws-flv')
+  } else if (slot.urls.flv) {
+    attachPlayerByFormat(slotIdx, 'flv')
+  } else {
+    ElMessage.error('WebRTC 降级失败：所有播放格式均不可用')
   }
 }
 
@@ -1512,11 +1852,13 @@ async function fetchStreamUrls(ch: Channel): Promise<{urls: Partial<Record<Playe
 
     // 2. zlmReady=false 或 start 失败时，轮询 multi-urls 等待流就绪（8×80ms=640ms）
     //    [Fix 2026-06-23] 必须检查 streamAlive=true，防止使用幻影 URL
+    let streamWasAlive = false  // [FIX-RC4] 追踪 multi-urls 是否检测到过活的流
     for (let attempt = 0; attempt < 8; attempt++) {
       try {
         const { data } = await streamHttp.get(`/${ch.id}/multi-urls`)
         const d = data?.data || data
         if (d?.streamAlive && (d?.flvUrl || d?.webrtcUrl || d?.hlsUrl)) {
+          streamWasAlive = true
           return {
             urls: {
               flv: norm(d.flvUrl || ''),
@@ -1545,6 +1887,32 @@ async function fetchStreamUrls(ch: Channel): Promise<{urls: Partial<Record<Playe
         } catch { /* 流可能还未就绪 */ }
       }
       await new Promise(r => setTimeout(r, 80))
+    }
+
+    // [FIX-RC4 2026-06-28] 防抖窗口内复用失败时，强制 /start 重试一次
+    //   原问题: 防抖窗口内 skipStart=true 跳过 /start，但 ZLM 流可能已被关闭
+    //   (streamNoneReaderDelayMS 到期)，multi-urls 返回 streamAlive=false
+    //   前端直接返回 null → 黑屏
+    //   修复: 强制发一次 /start 触发重新 SIP INVITE
+    if (skipStart && !streamWasAlive) {
+      console.warn(`[LiveView] ch=${ch.id} 防抖窗口内但流已失效，强制 /start 重试`)
+      try {
+        const { data: retryResp } = await streamHttp.post(`/${ch.id}/start`)
+        const retryData = retryResp?.data || retryResp
+        if (retryData && (retryData.flvUrl || retryData.webrtcUrl) && retryData.zlmReady) {
+          return {
+            urls: {
+              flv: norm(retryData.flvUrl || ''),
+              webrtc: norm(retryData.webrtcUrl || ''),
+              'ws-flv': norm(retryData.wsFlvUrl || '', true),
+              hls: norm(retryData.hlsUrl || ''),
+            },
+            codec: retryData.codec || '',
+          }
+        }
+      } catch (e: any) {
+        console.error('[LiveView] forced /start retry failed:', e?.message || e)
+      }
     }
     return null
   } catch (e) {
@@ -1968,222 +2336,14 @@ function resetImageAdjust() {
 
 // 时钟
 let clockTimer: ReturnType<typeof setInterval> | null = null
-let logTimer: ReturnType<typeof setInterval> | null = null
 
 function updateClock() {
   currentTime.value = new Date().toLocaleTimeString('zh-CN', { hour12: false })
 }
 
-// 推理引擎可用状态
-const inferenceAvailable = ref(false)
-
-// 检查推理引擎状态
-async function checkInferenceStatus() {
-  try {
-    const resp = await getInferenceStatus()
-    const data = resp.data?.data
-    // [Fix 2026-06-23] 必须同时满足引擎可用 + 有模型加载，否则推理请求报 "No ONNX models loaded" 刷屏
-    const hasModels = (data?.loaded_models?.length ?? 0) > 0
-    inferenceAvailable.value = (data?.engine_available ?? false) && hasModels
-    if (inferenceAvailable.value) {
-      const model = data.loaded_models[0]
-      console.debug(`[Inference] 引擎就绪, 模型: ${model.name}, 输入: ${model.input_shape}`)
-    }
-  } catch {
-    inferenceAvailable.value = false
-  }
-}
-
-// 在 Canvas 上绘制检测结果
-function drawDetections(idx: number) {
-  const slot = gridSlots[idx]
-  const canvas = overlayRefs.value[idx]
-  const video = videoRefs.value[idx]
-  if (!canvas || !video || !slot.detections.length) {
-    if (canvas) {
-      const ctx = canvas.getContext('2d')
-      if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height)
-    }
-    return
-  }
-
-  // 5秒无新检测则清除
-  if (Date.now() - (slot.detectionTime || 0) > 5000) {
-    const ctx = canvas.getContext('2d')
-    if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height)
-    slot.detections = []
-    return
-  }
-
-  const videoW = video.videoWidth || 640
-  const videoH = video.videoHeight || 480
-  const displayW = video.clientWidth || canvas.clientWidth
-  const displayH = video.clientHeight || canvas.clientHeight
-
-  canvas.width = displayW
-  canvas.height = displayH
-
-  const ctx = canvas.getContext('2d')!
-  ctx.clearRect(0, 0, displayW, displayH)
-
-  // object-fit: contain 宽高比映射
-  const videoRatio = videoW / videoH
-  const displayRatio = displayW / displayH
-  let renderW: number, renderH: number, offsetX: number, offsetY: number
-  if (videoRatio > displayRatio) {
-    renderW = displayW
-    renderH = displayW / videoRatio
-    offsetX = 0
-    offsetY = (displayH - renderH) / 2
-  } else {
-    renderH = displayH
-    renderW = displayH * videoRatio
-    offsetX = (displayW - renderW) / 2
-    offsetY = 0
-  }
-
-  const scaleX = renderW
-  const scaleY = renderH
-
-  for (const det of slot.detections) {
-    if (!det.bbox) continue
-    const { x1, y1, x2, y2 } = det.bbox
-    const px = offsetX + x1 * scaleX
-    const py = offsetY + y1 * scaleY
-    const pw = (x2 - x1) * scaleX
-    const ph = (y2 - y1) * scaleY
-
-    const color = CLASS_COLORS[det.class_name] || '#A78BFA'
-
-    // P2-3: 专业角标样式 (对标海康)
-    const cornerLen = Math.min(pw, ph, 10)
-    ctx.strokeStyle = color
-    ctx.lineWidth = 3
-    ctx.lineCap = 'round'
-    // 左上角
-    ctx.beginPath(); ctx.moveTo(px, py + cornerLen); ctx.lineTo(px, py); ctx.lineTo(px + cornerLen, py); ctx.stroke()
-    // 右上角
-    ctx.beginPath(); ctx.moveTo(px + pw - cornerLen, py); ctx.lineTo(px + pw, py); ctx.lineTo(px + pw, py + cornerLen); ctx.stroke()
-    // 左下角
-    ctx.beginPath(); ctx.moveTo(px, py + ph - cornerLen); ctx.lineTo(px, py + ph); ctx.lineTo(px + cornerLen, py + ph); ctx.stroke()
-    // 右下角
-    ctx.beginPath(); ctx.moveTo(px + pw - cornerLen, py + ph); ctx.lineTo(px + pw, py + ph); ctx.lineTo(px + pw, py + ph - cornerLen); ctx.stroke()
-
-    // 绘制标签背景 + 文字
-    const label = `${det.class_name} ${Math.round(det.confidence * 100)}%`
-    ctx.font = 'bold 11px sans-serif'
-    const textW = ctx.measureText(label).width + 8
-    ctx.fillStyle = color
-    ctx.fillRect(px, py - 18, textW, 18)
-    ctx.fillStyle = '#fff'
-    ctx.fillText(label, px + 4, py - 5)
-  }
-
-  // P2-3: 目标计数器 (左下角)
-  const counts: Record<string, number> = {}
-  for (const det of slot.detections) {
-    const cls = det.class_name || 'unknown'
-    counts[cls] = (counts[cls] || 0) + 1
-  }
-  const countEntries = Object.entries(counts)
-  if (countEntries.length > 0) {
-    const lineH = 16
-    const boxH = countEntries.length * lineH + 8
-    const boxW = 120
-    const boxX = offsetX + 4
-    const boxY = offsetY + displayH * 0.3 - boxH - 4
-    // 半透明背景
-    ctx.fillStyle = 'rgba(0,0,0,0.6)'
-    ctx.fillRect(boxX, boxY, boxW, boxH)
-    ctx.strokeStyle = 'rgba(0,212,170,0.3)'
-    ctx.lineWidth = 1
-    ctx.strokeRect(boxX, boxY, boxW, boxH)
-    // 每类计数
-    ctx.font = 'bold 11px sans-serif'
-    countEntries.forEach(([cls, cnt], i) => {
-      const y = boxY + (i + 1) * lineH
-      ctx.fillStyle = CLASS_COLORS[cls] || '#A78BFA'
-      ctx.fillRect(boxX + 4, y - 10, 4, 4)
-      ctx.fillStyle = '#E8E8E8'
-      ctx.fillText(`${cls}: ${cnt}`, boxX + 12, y - 2)
-    })
-  }
-}
-
-// 从视频帧捕获并执行推理
-async function runInferenceOnFrame() {
-  const playingSlots = gridSlots.filter(s => s.playing)
-  if (!playingSlots.length) return
-
-  // 随机选择一个正在播放的 slot
-  const slot = playingSlots[Math.floor(Math.random() * playingSlots.length)]
-  const idx = gridSlots.indexOf(slot)
-  const video = videoRefs.value[idx]
-  if (!video || video.videoWidth === 0) return
-
-  try {
-    // 捕获视频帧到 canvas 并转为 base64 JPEG
-    const canvas = document.createElement('canvas')
-    canvas.width = video.videoWidth || 640
-    canvas.height = video.videoHeight || 480
-    canvas.getContext('2d')!.drawImage(video, 0, 0)
-    const base64 = canvas.toDataURL('image/jpeg', 0.8).split(',')[1]
-
-    // 调用推理 API(传入通道信息,用于告警管道触发)
-    const resp = await detectFromBase64(base64, slot.channelId || undefined, slot.deviceId || undefined)
-    const result = resp.data?.data
-    if (!result) return
-
-    const time = new Date().toLocaleTimeString('zh-CN', { hour12: false })
-
-    if (result.detections.length === 0) {
-      detectionLogs.value.unshift({
-        time,
-        level: 'INFO',
-        tagType: 'info',
-        msg: `[${slot.name}] 帧分析完成, 无目标检测 | ${result.inference_time_ms.toFixed(0)}ms`
-      })
-    } else {
-      // 有检测结果 - 按类型分组
-      const classCounts: Record<string, { count: number; maxConf: number }> = {}
-      for (const det of result.detections) {
-        const name = det.class_name
-        if (!classCounts[name]) classCounts[name] = { count: 0, maxConf: 0 }
-        classCounts[name].count++
-        classCounts[name].maxConf = Math.max(classCounts[name].maxConf, det.confidence)
-      }
-
-      for (const [className, info] of Object.entries(classCounts)) {
-        const conf = Math.round(info.maxConf * 100)
-        // 后端 /detect API 已按事件规则订阅过滤, 此处收到的 detections 均为已订阅类型
-        // 未订阅的告警类型(如无规则时的 person)已在后端 isAlarmTypeSubscribed 检查中剔除
-        // [FIX 2026-07-03] 移除前端独立 ElNotification 弹窗逻辑:
-        //   前端弹窗应当且仅应当由后端联动规则驱动 (WebSocket pushAlarm → useGlobalAlarm.ts → showAlarmPopup)。
-        //   旧代码使用 alertClasses 硬编码列表在前端独立弹窗, 绕过了 isAlarmTypeSubscribed 订阅检查,
-        //   导致未配置联动规则的检测类型(如 car/bicycle)仍然弹窗。
-        detectionLogs.value.unshift({
-          time,
-          level: 'INFO',
-          tagType: 'info',
-          msg: `[${slot.name}] ${info.count}x ${className} | 置信度${conf}% | ${result.inference_time_ms.toFixed(0)}ms`
-        })
-      }
-    }
-    if (detectionLogs.value.length > 200) detectionLogs.value.length = 200
-
-    // 存储检测结果并绘制检测框
-    slot.detections = result.detections || []
-    slot.detectionTime = Date.now()
-    nextTick(() => drawDetections(idx))
-  } catch (e: any) {
-    if (inferenceAvailable.value) {
-      console.warn('[Inference] 推理请求失败:', e?.message || e)
-    }
-  }
-}
-
 onMounted(() => {
   loadData()
+  loadPatrolGroups()  // [P2-VP3] 加载轮巡组配置
   updateClock()
   clockTimer = setInterval(updateClock, 1000)
 
@@ -2193,21 +2353,9 @@ onMounted(() => {
   // P1-3: 检测 WebCodecs 硬件解码支持
   checkWebCodecsSupport()
 
-  // 检查推理引擎状态，然后启动推理定时器
-  checkInferenceStatus().then(() => {
-    if (inferenceAvailable.value) {
-      logTimer = setInterval(runInferenceOnFrame, 3000)
-    } else {
-      // 推理引擎不可用时，5秒后重试一次
-      setTimeout(() => {
-        checkInferenceStatus().then(() => {
-          if (inferenceAvailable.value) {
-            logTimer = setInterval(runInferenceOnFrame, 3000)
-          }
-        })
-      }, 5000)
-    }
-  })
+  // [P1-CO2] 推理检测框叠加: 监听全局 WS 事件 + 启动 Canvas 绘制循环
+  window.addEventListener('inference-detection', onInferenceDetection)
+  detectionRafId = requestAnimationFrame(drawDetections)
 })
 
 /** 从全局 Store 恢复之前的通道播放状态 */
@@ -2239,11 +2387,13 @@ function restoreFromStore() {
 
 onUnmounted(() => {
   if (clockTimer) clearInterval(clockTimer)
-  if (logTimer) clearInterval(logTimer)
   // P1-4: 清理自动轮巡
   if (autoPatrolTimer) clearInterval(autoPatrolTimer)
   // 清理健康监测
   streamHealth.cleanup()
+  // [P1-CO2] 清理检测框叠加
+  window.removeEventListener('inference-detection', onInferenceDetection)
+  if (detectionRafId) cancelAnimationFrame(detectionRafId)
   // 有活跃通道时软关闭（不通知后端停流），否则硬关闭
   if (channelStore.hasActive) {
     for (let i = 0; i < gridSlots.length; i++) closeSlot(i, false)  // soft close
@@ -2271,20 +2421,6 @@ onUnmounted(() => {
 .video-cell { position: relative; background: #111; cursor: pointer; overflow: hidden; border: 2px solid transparent; transition: border-color 0.2s; min-height: 120px; }
 .video-cell.active { border-color: #1A73E8; }
 .video-cell.has-stream:hover .video-bottom-bar { opacity: 1; transform: translateY(0); }
-
-/* 检测框叠加 canvas */
-.detection-overlay {
-  position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-  pointer-events: none; z-index: 5;
-}
-
-/* 检测计数徽章 */
-.detection-badge {
-  position: absolute; top: 6px; right: 6px; z-index: 6;
-  background: rgba(46, 213, 115, 0.9); color: #fff;
-  font-size: 11px; font-weight: 600; padding: 2px 8px;
-  border-radius: 10px; pointer-events: none;
-}
 
 /* 健康状态指示灯 */
 .health-indicator {
@@ -2335,6 +2471,31 @@ onUnmounted(() => {
 }
 
 .video-player { width: 100%; height: 100%; object-fit: contain; display: block; }
+/* [P1-CO2] AI 检测框 Canvas 叠加层 */
+.detection-canvas {
+  position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+  object-fit: contain; pointer-events: none; z-index: 5;
+}
+/* [P3-CO3] E2E 延迟徽标 */
+.latency-badge {
+  display: inline-flex; align-items: center; padding: 2px 8px;
+  border-radius: 10px; font-size: 11px; font-weight: 600;
+  font-family: var(--font-mono, monospace); cursor: default;
+}
+.latency-good { background: rgba(103,194,58,0.15); color: #67c23a; }
+.latency-warn { background: rgba(230,162,60,0.15); color: #e6a23c; }
+.latency-bad { background: rgba(245,108,108,0.15); color: #f56c6c; }
+/* [P2-VP3] 轮巡组列表项 */
+.patrol-group-item {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 6px 10px; margin-bottom: 4px; border-radius: 4px; cursor: pointer;
+  transition: background 0.15s;
+}
+.patrol-group-item:hover { background: rgba(0,212,170,0.1); }
+.patrol-group-item.active {
+  background: rgba(0,212,170,0.15);
+  border-left: 2px solid #00D4AA;
+}
 .video-empty { width: 100%; height: 100%; min-height: 160px; display: flex; flex-direction: column; align-items: center; justify-content: center; color: #555; gap: 8px; font-size: 13px; }
 .video-loading { width: 100%; height: 100%; min-height: 160px; display: flex; flex-direction: column; align-items: center; justify-content: center; color: #1A73E8; gap: 8px; }
 .spin { animation: spin 1s linear infinite; }
@@ -2373,14 +2534,6 @@ onUnmounted(() => {
 .rec-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: #ef4444; margin-left: 2px; }
 @keyframes pulse-rec { 0%,100% { opacity: 1; } 50% { opacity: 0.6; } }
 
-/* 日志 */
-.log-card { margin-top: 12px; background: #1A1D23; border: 1px solid #3C4043; color: #E8EAED; }
-.log-scroll { max-height: 160px; overflow-y: auto; font-family: 'Roboto Mono', monospace; font-size: 12px; }
-.log-row { display: flex; gap: 8px; padding: 3px 0; border-bottom: 1px solid #2D3039; align-items: center; }
-.log-t { color: #9AA0A6; white-space: nowrap; }
-.log-m { flex: 1; color: #E8EAED; }
-.log-empty { color: #666; text-align: center; padding: 20px; }
-
 /* 通道列表 */
 .channel-list { max-height: 400px; overflow-y: auto; }
 .ch-item { display: flex; gap: 10px; padding: 8px 10px; border-radius: 6px; cursor: pointer; margin-bottom: 4px; transition: all 0.15s; border: 1px solid transparent; }
@@ -2405,43 +2558,6 @@ onUnmounted(() => {
 
 /* 暗色主题覆盖 */
 :deep(.el-card) { background: #252830; border-color: #3C4043; color: #E8EAED; }
-:deep(.el-card__header) { border-color: #3C4043; color: #E8EAED; }
-.image-adjust .adj-row { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
-.image-adjust .adj-row span:first-child { width: 48px; flex-shrink: 0; color: #9AA0A6; font-size: 13px; }
-.image-adjust .adj-row .el-slider { flex: 1; }
-
-.ptz-sliders { width: 100%; }
-.ptz-slider-row { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; font-size: 12px; color: #9AA0A6; }
-.ptz-slider-row span:first-child { width: 32px; flex-shrink: 0; }
-.ptz-slider-row .el-slider { flex: 1; }
-.speed-val { width: 28px; text-align: right; font-size: 12px; color: #E8EAED; }
-.ptz-presets { display: flex; align-items: center; gap: 8px; width: 100%; flex-wrap: wrap; }
-.ptz-presets > span { font-size: 12px; color: #9AA0A6; }
-.ptz-advanced { display: flex; align-items: center; gap: 8px; width: 100%; font-size: 12px; color: #9AA0A6; }
-.ptz-advanced > span { width: 32px; flex-shrink: 0; }
-.ptz-3d-hint { display: flex; align-items: center; gap: 4px; width: 100%; font-size: 11px; color: #4A4D58; margin-top: 4px; }
-/* 25/36 宫格大屏模式 */
-.video-grid.grid-25 { display: grid; grid-template-columns: repeat(5, 1fr); grid-template-rows: repeat(5, 1fr); }
-.video-grid.grid-36 { display: grid; grid-template-columns: repeat(6, 1fr); grid-template-rows: repeat(6, 1fr); }
-</style>
-.image-adjust .adj-row { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
-.image-adjust .adj-row span:first-child { width: 48px; flex-shrink: 0; color: #9AA0A6; font-size: 13px; }
-.image-adjust .adj-row .el-slider { flex: 1; }
-
-.ptz-sliders { width: 100%; }
-.ptz-slider-row { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; font-size: 12px; color: #9AA0A6; }
-.ptz-slider-row span:first-child { width: 32px; flex-shrink: 0; }
-.ptz-slider-row .el-slider { flex: 1; }
-.speed-val { width: 28px; text-align: right; font-size: 12px; color: #E8EAED; }
-.ptz-presets { display: flex; align-items: center; gap: 8px; width: 100%; flex-wrap: wrap; }
-.ptz-presets > span { font-size: 12px; color: #9AA0A6; }
-.ptz-advanced { display: flex; align-items: center; gap: 8px; width: 100%; font-size: 12px; color: #9AA0A6; }
-.ptz-advanced > span { width: 32px; flex-shrink: 0; }
-.ptz-3d-hint { display: flex; align-items: center; gap: 4px; width: 100%; font-size: 11px; color: #4A4D58; margin-top: 4px; }
-/* 25/36 宫格大屏模式 */
-.video-grid.grid-25 { display: grid; grid-template-columns: repeat(5, 1fr); grid-template-rows: repeat(5, 1fr); }
-.video-grid.grid-36 { display: grid; grid-template-columns: repeat(6, 1fr); grid-template-rows: repeat(6, 1fr); }
-</style>
 :deep(.el-card__header) { border-color: #3C4043; color: #E8EAED; }
 .image-adjust .adj-row { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
 .image-adjust .adj-row span:first-child { width: 48px; flex-shrink: 0; color: #9AA0A6; font-size: 13px; }

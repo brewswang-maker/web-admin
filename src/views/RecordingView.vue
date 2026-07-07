@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { ref, onMounted, computed, watch, nextTick, onUnmounted } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRouter, useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { deviceHttp, recordingHttp } from '@/api/http'
+import { alarmApi } from '@/api/alarm'  // [P3-VP1] 时间轴告警标记
 import { getRecordings, playRecording, stopPlayback as stopRecordingPlayback, controlPlayback, type RecordingSegment as ApiRecordingSeg } from '@/api/recording'
 import Hls from 'hls.js'
 import flvjs from 'flv.js'
@@ -57,6 +58,12 @@ const localRecordings = ref<LocalRecording[]>([])
 const localLoading = ref(false)
 const isOffline = ref(false)
 let offlineCheckTimer: ReturnType<typeof setInterval> | null = null
+
+// [P3-VP1] 时间轴告警事件标记
+const timelineAlarms = ref<Array<{ timestamp: number; alarm_type: string; level: string; description?: string }>>([])
+watch([selectedChannelId, selectedDate], () => {
+  fetchTimelineAlarms()
+})
 
 type PlaybackFormat = 'flv' | 'ws-flv' | 'hls'
 const FORMAT_OPTIONS: { value: PlaybackFormat; label: string }[] = [
@@ -148,6 +155,30 @@ function drawTimeline() {
     const start = timeToPercent(rec.startTime)
     const end = timeToPercent(rec.endTime)
     ctx.fillRect(start * W, 10, (end - start) * W, H - 30)
+  }
+
+  // [P3-VP1] 告警事件标记 (红色三角形/方块) — 可点击跳转
+  if (timelineAlarms.value.length > 0) {
+    for (const a of timelineAlarms.value) {
+      const pct = alarmToPercent(a.timestamp)
+      if (pct < 0 || pct > 1) continue
+      const x = pct * W
+      const level = a.level || 'low'
+      const color = level === 'critical' ? '#FF3D71'
+        : level === 'high' ? '#FF6B35'
+        : level === 'medium' ? '#FFB800'
+        : '#00D4AA'
+      ctx.fillStyle = color
+      // 告警事件：底部三角形标记
+      ctx.beginPath()
+      ctx.moveTo(x, 0)
+      ctx.lineTo(x - 5, 10)
+      ctx.lineTo(x + 5, 10)
+      ctx.closePath()
+      ctx.fill()
+      // 竖线
+      ctx.fillRect(x - 1, 10, 2, H - 24)
+    }
   }
 
   // 当前时间线
@@ -322,10 +353,66 @@ function handleTimelineClick(e: MouseEvent) {
   const rect = canvas.getBoundingClientRect()
   const x = e.clientX - rect.left
   const pct = x / rect.width
+
+  // [P3-VP1] 检测是否点击了告警标记 (容差 12px ≈ 0.5h)
+  const tolerance = 12 / rect.width
+  for (const a of timelineAlarms.value) {
+    if (Math.abs(alarmToPercent(a.timestamp) - pct) < tolerance) {
+      const ts = a.timestamp
+      // 跳转到告警时刻
+      const d = new Date(ts)
+      const dayStart = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0).getTime()
+      const secondsFromStart = (ts - dayStart) / 1000
+      const video = videoRef.value
+      if (video && playingUrl.value) {
+        video.currentTime = Math.max(0, secondsFromStart)
+        video.play().catch(() => {})
+        ElMessage.success(`已跳转到告警: ${a.alarm_type} @ ${d.toLocaleTimeString('zh-CN')}`)
+      } else {
+        pendingJumpMs.value = ts
+        ElMessage.info(`已记录跳转目标: ${d.toLocaleString('zh-CN')}，请先加载录像`)
+      }
+      return
+    }
+  }
+
   const hours = pct * 24
   const h = Math.floor(hours)
   const m = Math.floor((hours - h) * 60)
   ElMessage.info(`点击时间: ${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`)
+}
+
+// [P3-VP1] 告警时间戳 → 时间轴百分比
+function alarmToPercent(ts: number): number {
+  const d = new Date(ts)
+  const dayStart = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0).getTime()
+  return (ts - dayStart) / (24 * 3600 * 1000)
+}
+
+// [P3-VP1] 加载通道当天的告警事件用于时间轴标记
+async function fetchTimelineAlarms() {
+  if (!selectedChannelId.value || !selectedDate.value) {
+    timelineAlarms.value = []
+    return
+  }
+  try {
+    const dayStart = new Date(selectedDate.value + 'T00:00:00').getTime()
+    const dayEnd = dayStart + 24 * 3600 * 1000
+    const { data: res } = await alarmApi.getList({
+      channelId: String(selectedChannelId.value),
+      start_time: dayStart,
+      end_time: dayEnd,
+      pageSize: 200,
+    } as any)
+    timelineAlarms.value = (res?.data?.items || []) as unknown as Array<{
+      timestamp: number; alarm_type: string; level: string; description?: string
+    }>
+    await nextTick()
+    drawTimeline()
+    ElMessage.success(`[P3-VP1] 已加载 ${timelineAlarms.value.length} 个告警标记`)
+  } catch (e: any) {
+    console.warn('[P3-VP1] fetchTimelineAlarms failed:', e?.message)
+  }
 }
 
 function formatDuration(sec: number): string {
@@ -534,6 +621,70 @@ function formatConfidence(v: number): string {
 }
 
 const router = useRouter()
+const route = useRoute()
+
+// [P2-CO3] 从告警弹窗自动跳转: 解析 route.query 中的 channelId/deviceId/time
+function applyAlarmJumpParams() {
+  const q = route.query
+  if (!q.channelId && !q.alarmId) return
+  const chId = String(q.channelId || '')
+  const devId = String(q.deviceId || '')
+  const t = String(q.time || '')
+  if (chId) {
+    // 尝试从 channelId 反查 deviceId (通过已知设备列表)
+    for (const dev of devices.value) {
+      const ch = (dev.channels || []).find((c: any) => c.id === chId || c.channel_id === chId)
+      if (ch) {
+        selectedDeviceId.value = dev.id
+        selectedChannelId.value = ch.id
+        break
+      }
+    }
+    // 如果没找到，暂存
+    if (!selectedChannelId.value) {
+      pendingChannelId.value = chId
+    }
+  }
+  if (devId) selectedDeviceId.value = devId
+  if (t) {
+    // t 是 ISO 时间或 ms 时间戳
+    const ms = isFinite(Number(t)) ? Number(t) : new Date(t).getTime()
+    if (!isNaN(ms)) {
+      pendingJumpMs.value = ms
+      const d = new Date(ms)
+      selectedDate.value = d.toISOString().split('T')[0]
+      ElMessage.info(`[P2-CO3] 已定位到告警时刻: ${d.toLocaleString('zh-CN')}`)
+    }
+  }
+}
+
+const pendingChannelId = ref('')
+const pendingJumpMs = ref(0)
+
+// 跳转到指定时刻: 修改播放 URL 后调用 video.currentTime
+async function jumpToTime(ms: number) {
+  if (!ms) return
+  // 等待录像加载完成
+  if (!playingUrl.value) {
+    ElMessage.warning('请先加载录像后再跳转')
+    return
+  }
+  const video = videoRef.value
+  if (!video) return
+  // 计算相对当天 0 点的秒数
+  const d = new Date(ms)
+  const dayStart = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0).getTime()
+  const secondsFromStart = (ms - dayStart) / 1000
+  // 加载当天对应时间段的录像
+  // 简化: 如果播放已开始，直接设置 currentTime
+  try {
+    video.currentTime = Math.max(0, secondsFromStart)
+    video.play().catch(() => {})
+    ElMessage.success(`已跳转到 ${d.toLocaleTimeString('zh-CN')}`)
+  } catch (e: any) {
+    ElMessage.error('跳转失败: ' + (e?.message || ''))
+  }
+}
 
 // ---- Task #23: 离线检测 ----
 async function checkBackendOnline() {
@@ -568,6 +719,15 @@ onMounted(() => {
   fetchDevices()
   fetchSmartFilterOptions()
   startOfflineCheck()
+  // [P2-CO3] 从告警自动跳转: 在设备加载后应用路由参数
+  watch(devices, () => {
+    if (pendingChannelId.value || pendingJumpMs.value) {
+      applyAlarmJumpParams()
+      if (pendingJumpMs.value && playingUrl.value) {
+        jumpToTime(pendingJumpMs.value)
+      }
+    }
+  }, { immediate: true })
 })
 onUnmounted(() => {
   stopPlay()

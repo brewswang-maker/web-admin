@@ -45,9 +45,13 @@
                     :show-controls="true"
                     stream-type="main"
                     :visible="activeTab === 'live'"
-                    :skip-start-api="false"
+                    :skip-start-api="popupSkipStartApi"
                     @snapshot="onPlayerSnapshot"
                   />
+                  <!-- [P1-CO2] 码流复用提示 -->
+                  <div v-if="isChannelInLiveView" class="alarm-popup__stream-reused">
+                    🔗 复用 LiveView 实时流
+                  </div>
                   <div v-if="activeTab === 'live' && !currentAlarm?.channelId" class="alarm-popup__tab-content">
                     <div class="alarm-popup__placeholder">
                       <p>⚠️ 无通道信息</p>
@@ -114,7 +118,7 @@
                 <el-tab-pane label="🖼️ 告警快照" name="snapshot">
                   <AlarmSnapshot
                     :key="`snap-${currentAlarm?.id || 'none'}`"
-                    :image-url="currentAlarm.snapshotUrl || ''"
+                    :image-url="snapshotImageUrl"
                     :bbox="(currentAlarm.metadata?.bbox as number[]) || []"
                     :target-label="(currentAlarm.metadata?.targetLabel as string) || ''"
                   />
@@ -206,6 +210,10 @@
               <el-button size="small" @click="closePopup">
                 🔇 静音
               </el-button>
+              <!-- [P2-CO3] 跳转录像回放 -->
+              <el-button size="small" type="warning" @click="jumpToPlayback" :disabled="!currentAlarm?.channelId" title="跳转到该告警时刻的录像回放">
+                📼 跳转回放
+              </el-button>
               <!-- 联动驱动按钮 -->
               <el-button
                 v-for="btn in dynamicButtons"
@@ -252,12 +260,44 @@ import {
 } from '@/composables/useAlarmPopup'
 import { ACTION_TYPE_REVERSE_MAP } from '@/api/linkage'
 import { alarmApi } from '@/api/alarm'
-import { queryRecordings, type DeviceRecording } from '@/api/recording'
+import { queryRecordings, toLocalISOString, type DeviceRecording } from '@/api/recording'
 import { recordingHttp } from '@/api/http'
 import { useObjectLabel, type ObjectLabelMeta } from '@/composables/useObjectLabel'
+import { useChannelStore } from '@/stores/channel'
+// [P2-CO3] 告警 → 录像回放自动跳转
+import { useRouter } from 'vue-router'
 
 // 🆕 v6.3: 多类别检测标签翻译 (集中走 i18n + 后端 metadata 兜底)
 const { getCategoryName, getTargetName, getAlarmTypeName } = useObjectLabel()
+
+// [P1-CO2] 弹窗码流协调: 检测告警通道是否已在 LiveView 播放
+const channelStore = useChannelStore()
+const isChannelInLiveView = computed(() => {
+  const chId = currentAlarm.value?.channelId
+  if (!chId) return false
+  return channelStore.activeChannelIds.includes(String(chId))
+})
+// 如果通道已在 LiveView 播放，弹窗复用现有流，跳过 /start 调用
+const popupSkipStartApi = computed(() => isChannelInLiveView.value)
+
+// [P2-CO3] 告警 → 录像回放跳转
+const router = useRouter()
+function jumpToPlayback() {
+  const alarm = currentAlarm.value
+  if (!alarm) return
+  const t = alarm.createdAt ? new Date(alarm.createdAt).getTime() : Date.now()
+  router.push({
+    name: 'Recording',
+    query: {
+      channelId: alarm.channelId || '',
+      deviceId: alarm.deviceId || '',
+      time: String(t),
+      alarmId: alarm.id || '',
+    },
+  })
+  ElMessage.success('正在跳转到录像回放…')
+  closePopup()
+}
 
 // ── 自动激活 Tab ──
 const activeTab = ref('fallback')
@@ -372,6 +412,26 @@ const targetMeta = computed<ObjectLabelMeta>(() => {
 const targetCategoryLabel = computed(() => getCategoryName(targetMeta.value))
 const targetNameLabel = computed(() => getTargetName(targetMeta.value) || '-')
 
+// [FIX 2026-06-28] 人脸告警的快照以 snapshot_base64 存在 metadata 中 (非 snapshot_url)。
+//   AlarmPopup 之前只读 currentAlarm.snapshotUrl (URL 路径), 导致人脸告警快照不显示。
+//   修复: 当 snapshotUrl 为空时, 回退到 metadata.snapshot_base64 构造 data URL。
+const snapshotImageUrl = computed(() => {
+  const alarm = currentAlarm.value
+  if (!alarm) return ''
+  // 1. 优先用 snapshotUrl (文件路径/绝对URL)
+  if (alarm.snapshotUrl) return alarm.snapshotUrl
+  // 2. 回退到 metadata.snapshot_base64 → data:image/bmp;base64,...
+  const meta = (alarm.metadata || {}) as Record<string, unknown>
+  const b64 = meta.snapshot_base64 as string | undefined
+  if (!b64) return ''
+  if (b64.startsWith('data:')) return b64
+  const fmt = (meta.snapshot_format as string) || 'bmp'
+  const mime = fmt === 'raw_bgr' ? 'image/bmp' : `image/${fmt}`
+  const padded = b64.replace(/[^A-Za-z0-9+/=]/g, '')
+  const fixed = padded + '='.repeat((4 - (padded.length % 4)) % 4)
+  return `data:${mime};base64,${fixed}`
+})
+
 const levelColor = computed(() => {
   switch (currentAlarm.value?.level) {
     case 'critical': return '#FF3D71'
@@ -456,8 +516,8 @@ async function loadPlayback() {
       deviceRecordings.value = await queryRecordings({
         device_id: currentAlarm.value.deviceId,
         channel_id: currentAlarm.value.channelId || undefined,
-        start_time: start.toISOString().replace('Z', ''),
-        end_time: end.toISOString().replace('Z', ''),
+        start_time: toLocalISOString(start),
+        end_time: toLocalISOString(end),
       })
     }
   } catch (e) {
@@ -554,6 +614,20 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
+/* [P1-CO2] 码流复用提示 */
+.alarm-popup__stream-reused {
+  position: absolute;
+  bottom: 36px;
+  left: 8px;
+  padding: 2px 8px;
+  background: rgba(0,212,170,0.2);
+  color: #00D4AA;
+  font-size: 10px;
+  border-radius: 4px;
+  z-index: 10;
+  pointer-events: none;
+}
+
 /* ── Recording list ── */
 .alarm-popup__recording-list {
   width: 100%;
