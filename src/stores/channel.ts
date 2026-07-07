@@ -53,10 +53,21 @@ export const useChannelStore = defineStore('channel', () => {
 
   // ===== Actions =====
 
-  /**
-   * 全局 /start 防抖检查：判断指定通道是否在防抖窗口内
-   * @returns true = 应跳过 /start（防抖窗口内），false = 可以调用 /start
-   */
+  // [FIX-P3.4 2026-07-07] shouldSkipStart 拆分为纯查询 + 显式 mark
+  //   原问题: shouldSkipStart 有副作用（自动写时间戳），调用者难控制
+  //           同一表达式多次调用结果不一致
+  //   修复: 拆分 checkSkipStart (纯查询) + markStartCalled (显式写入)
+  function checkSkipStart(channelId: string): boolean {
+    const last = lastStartApiAt.value.get(channelId) || 0
+    return Date.now() - last < GLOBAL_START_DEBOUNCE_MS
+  }
+
+  /** 手动标记 /start 已调用（用于非防抖路径记录） */
+  function markStartCalled(channelId: string) {
+    lastStartApiAt.value.set(channelId, Date.now())
+  }
+
+  /** @deprecated 已拆分为 checkSkipStart + markStartCalled（向后兼容保留） */
   function shouldSkipStart(channelId: string): boolean {
     const last = lastStartApiAt.value.get(channelId) || 0
     const inDebounce = Date.now() - last < GLOBAL_START_DEBOUNCE_MS
@@ -64,11 +75,6 @@ export const useChannelStore = defineStore('channel', () => {
       lastStartApiAt.value.set(channelId, Date.now())
     }
     return inDebounce
-  }
-
-  /** 手动标记 /start 已调用（用于非防抖路径记录） */
-  function markStartCalled(channelId: string) {
-    lastStartApiAt.value.set(channelId, Date.now())
   }
 
   /** 注册一个活跃通道（LiveView assignChannel 成功后调用） */
@@ -142,5 +148,6 @@ export const useChannelStore = defineStore('channel', () => {
     setFloatingChannel,
     shouldSkipStart,
     markStartCalled,
+    checkSkipStart,
   }
 })

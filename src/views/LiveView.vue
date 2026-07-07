@@ -1121,11 +1121,11 @@ function assignToActive(ch: Channel) {
 
 function closeSlot(idx: number, hard: boolean = true) {
   const slot = gridSlots[idx]
-  // 销毁播放器实例（所有场景都执行）
-  if (slot.playerInstance) {
-    if ('destroy' in slot.playerInstance) slot.playerInstance.destroy()
-    slot.playerInstance = null
-  }
+  // [FIX-P3.1 2026-07-07] 统一走 destroyPlayer 清理路径
+  //   原问题: closeSlot 直接调 slot.playerInstance.destroy()，跳过 _videoEventCleanups 清理
+  //           _videoEventCleanups 数组闭包未执行 → 内存泄漏 → video DOM 引用无法 GC
+  //   修复: 走 destroyPlayer() 统一清理，事件闭包 + player.destroy + stopMonitoring 一起执行
+  destroyPlayer(slot, idx)
   if (slot.playing) {
     const video = videoRefs.value[idx]
     if (video) { video.pause(); video.removeAttribute('src'); video.load() }
@@ -1135,7 +1135,13 @@ function closeSlot(idx: number, hard: boolean = true) {
       channelStore.unregisterSlot(idx)
     }
   }
+  // [FIX-P3.1] _videoEventCleanups 必须在 Object.assign 之前强制清空
+  //   防止下次该 slot 被复用时，旧的 cleanup 函数干扰新 video 元素
+  if (slot._videoEventCleanups?.length) {
+    slot._videoEventCleanups.length = 0
+  }
   Object.assign(slot, { channelId: '', name: '', status: '', urls: {}, playing: false, loading: false, muted: true, deviceId: '', playerInstance: null, currentFormat: '', webrtcRetryCount: 0, reconnectCount: 0, encrypted: false, _lastReconnectTime: 0 })
+  // destroyPlayer 内部已调 stopMonitoring(deactivate)；双重调用幂等
   streamHealth.stopMonitoring(idx)
   adaptiveBitrate.deactivate(idx)
 }
