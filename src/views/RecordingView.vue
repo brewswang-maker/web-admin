@@ -88,7 +88,13 @@ watch(selectedDate, () => { recordings.value = [] })
 async function fetchDevices() {
   try {
     const { data } = await deviceHttp.get('', { params: { protocol: 'GB28181,ONVIF' } })
-    const list = data?.data || data || []
+    // [D2-FIX] 后端返回 { data: { devices: [...], items: [...] } } 对象
+    //   之前直接 data?.data 得到的是对象而非数组, .map() 抛 TypeError 被 catch 静默
+    //   修复: 从 devices/items 数组中提取, 兼容直接返回数组的场景
+    const respData = data?.data ?? data
+    const list: any[] = Array.isArray(respData)
+      ? respData
+      : (respData?.devices || respData?.items || [])
     devices.value = list.map((d: any) => ({
       id: d.device_id || d.id,
       name: d.device_name || d.name || d.id,
