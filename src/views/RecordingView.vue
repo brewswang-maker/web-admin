@@ -49,8 +49,25 @@ const isPaused = ref(false)
 const playbackSpeed = ref(1)
 const currentSessionId = ref('')
 const videoRef = ref<HTMLVideoElement>()
+const videoContainerRef = ref<HTMLElement>()  // [V4-X4 2026-07-08] 全屏容器
 const canvasRef = ref<HTMLCanvasElement>()
 let playerInstance: Hls | flvjs.Player | null = null
+
+// [V4-X4 2026-07-08] 进度条与全屏状态
+const currentTime = ref(0)
+const duration = ref(0)
+const isSeeking = ref(false)
+const seekValue = ref(0)
+const isFullscreen = ref(false)
+function formatHMS(sec: number): string {
+  if (!isFinite(sec) || sec < 0) return '00:00'
+  const h = Math.floor(sec / 3600)
+  const m = Math.floor((sec % 3600) / 60)
+  const s = Math.floor(sec % 60)
+  return h > 0
+    ? `${h.toString().padStart(2,'0')}:${m.toString().padStart(2,'0')}:${s.toString().padStart(2,'0')}`
+    : `${m.toString().padStart(2,'0')}:${s.toString().padStart(2,'0')}`
+}
 
 // Task #23: 本地录像 / 离线回放
 const recordingSource = ref<'device' | 'local' | 'smart'>('device')
@@ -351,6 +368,93 @@ async function stopPlay() {
   isPaused.value = false
   playingUrl.value = ''
   currentSessionId.value = ''
+  // [V4-X4 2026-07-08] 重置进度条状态
+  currentTime.value = 0
+  duration.value = 0
+  seekValue.value = 0
+}
+
+// [V4-X4 2026-07-08] 进度条事件回调
+function onLoadedMetadata() {
+  const video = videoRef.value
+  if (!video) return
+  duration.value = isFinite(video.duration) ? video.duration : 0
+}
+function onTimeUpdate() {
+  const video = videoRef.value
+  if (!video) return
+  if (!isSeeking.value) currentTime.value = video.currentTime
+  if (duration.value === 0 && isFinite(video.duration)) duration.value = video.duration
+}
+function onSeekStart() { isSeeking.value = true }
+function onSeekChange(v: number | number[]) {
+  seekValue.value = Array.isArray(v) ? v[0] : v
+}
+function onSeekEnd(v: number | number[]) {
+  const target = Array.isArray(v) ? v[0] : v
+  const video = videoRef.value
+  if (video && isFinite(target)) {
+    video.currentTime = target
+    currentTime.value = target
+  }
+  isSeeking.value = false
+}
+
+// [V4-X4 2026-07-08] 快捷键处理 (空格:暂停/播放  ←/→:快退/快进 5s  Shift+←/→:30s  Esc:退出全屏)
+//   输入框聚焦时不响应避免误触
+function handleKeydown(e: KeyboardEvent) {
+  const target = e.target as HTMLElement | null
+  if (target) {
+    const tag = (target.tagName || '').toUpperCase()
+    if (['INPUT','TEXTAREA','SELECT'].includes(tag)) return
+    if ((target as any).isContentEditable) return
+  }
+  if (!isPlaying.value || !videoRef.value) return
+  switch (e.key) {
+    case ' ':
+    case 'Spacebar':
+      e.preventDefault()
+      if (recordingSource.value === 'device') togglePause()
+      else {
+        const v = videoRef.value!
+        if (v.paused) v.play().catch(() => {})
+        else v.pause()
+      }
+      break
+    case 'ArrowLeft':
+      e.preventDefault()
+      videoRef.value.currentTime = Math.max(0, videoRef.value.currentTime - (e.shiftKey ? 30 : 5))
+      break
+    case 'ArrowRight':
+      e.preventDefault()
+      if (isFinite(duration.value))
+        videoRef.value.currentTime = Math.min(duration.value, videoRef.value.currentTime + (e.shiftKey ? 30 : 5))
+      break
+    case 'Escape':
+      if (isFullscreen.value) toggleFullscreen()
+      break
+  }
+}
+
+// [V4-X4 2026-07-08] 全屏切换 (浏览器 Fullscreen API + 兼容 webkit)
+async function toggleFullscreen() {
+  const el = videoContainerRef.value
+  if (!el) return
+  try {
+    if (!document.fullscreenElement) {
+      if (el.requestFullscreen) await el.requestFullscreen()
+      else if ((el as any).webkitRequestFullscreen) (el as any).webkitRequestFullscreen()
+    } else {
+      if (document.exitFullscreen) await document.exitFullscreen()
+      else if ((document as any).webkitExitFullscreen) (document as any).webkitExitFullscreen()
+    }
+  } catch (e) {
+    // 用户拒绝或浏览器不支持,仅前端提示
+    console.warn('[V4-X4] fullscreen toggle failed:', (e as Error)?.message)
+  }
+}
+function onFullscreenChange() {
+  isFullscreen.value = !!(document.fullscreenElement || (document as any).webkitFullscreenElement)
 }
 
 function handleTimelineClick(e: MouseEvent) {
@@ -725,6 +829,10 @@ onMounted(() => {
   fetchDevices()
   fetchSmartFilterOptions()
   startOfflineCheck()
+  // [V4-X4 2026-07-08] 注册全局快捷键 + 全屏状态监听
+  window.addEventListener('keydown', handleKeydown)
+  document.addEventListener('fullscreenchange', onFullscreenChange)
+  document.addEventListener('webkitfullscreenchange', onFullscreenChange)
   // [P2-CO3] 从告警自动跳转: 在设备加载后应用路由参数
   watch(devices, () => {
     if (pendingChannelId.value || pendingJumpMs.value) {
@@ -738,6 +846,10 @@ onMounted(() => {
 onUnmounted(() => {
   stopPlay()
   stopOfflineCheck()
+  // [V4-X4 2026-07-08] 注销快捷键 + 全屏监听 (避免内存泄漏)
+  window.removeEventListener('keydown', handleKeydown)
+  document.removeEventListener('fullscreenchange', onFullscreenChange)
+  document.removeEventListener('webkitfullscreenchange', onFullscreenChange)
 })
 </script>
 
@@ -933,7 +1045,7 @@ onUnmounted(() => {
                   <el-option v-for="f in FORMAT_OPTIONS" :key="f.value" :label="f.label" :value="f.value" />
                 </el-select>
               </div>
-              <div style="display:flex;gap:8px">
+              <div style="display:flex;gap:8px;align-items:center">
                 <el-button v-if="recordingSource === 'device'" size="small" @click="togglePause">
                   {{ isPaused ? '恢复' : '暂停' }}
                 </el-button>
@@ -945,10 +1057,44 @@ onUnmounted(() => {
                   </el-button>
                 </el-button-group>
                 <el-button size="small" @click="stopPlay">停止</el-button>
+                <!-- [V4-X4 2026-07-08] 全屏按钮 -->
+                <el-button size="small" @click="toggleFullscreen">
+                  {{ isFullscreen ? '退出全屏' : '全屏' }}
+                </el-button>
               </div>
             </div>
           </template>
-          <video ref="videoRef" autoplay muted playsinline style="width:100%;max-height:360px;background:#000" />
+          <!-- [V4-X4 2026-07-08] 全屏容器 + 进度条 + 时间显示 -->
+          <div ref="videoContainerRef" class="video-container">
+            <video
+              ref="videoRef"
+              autoplay muted playsinline
+              style="width:100%;max-height:360px;background:#000;display:block"
+              @loadedmetadata="onLoadedMetadata"
+              @timeupdate="onTimeUpdate"
+              @ended="stopPlay"
+            />
+            <!-- 进度条 + 时间显示 -->
+            <div class="player-progress-row">
+              <span class="player-time">{{ formatHMS(currentTime) }}</span>
+              <el-slider
+                class="player-progress-slider"
+                :model-value="isSeeking ? seekValue : currentTime"
+                :max="duration || 0"
+                :step="1"
+                :show-tooltip="false"
+                @change="onSeekChange"
+                @input="onSeekChange"
+                @start="onSeekStart"
+                @end="onSeekEnd"
+              />
+              <span class="player-time">{{ formatHMS(duration) }}</span>
+            </div>
+          </div>
+          <!-- [V4-X4 2026-07-08] 快捷键提示 -->
+          <div class="player-hint">
+            💡 快捷键: <kbd>空格</kbd> 暂停/播放 · <kbd>←/→</kbd> 快退/快进 5s · <kbd>Shift+←/→</kbd> 30s
+          </div>
         </el-card>
       </div>
     </div>
@@ -963,4 +1109,66 @@ onUnmounted(() => {
 .smart-search-form { display: flex; flex-direction: column; gap: 12px; }
 .smart-form-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .smart-label { font-size: 13px; color: #606266; white-space: nowrap; flex-shrink: 0; }
+
+/* [V4-X4 2026-07-08] 播放器进度条与全屏 */
+.video-container {
+  background: #000;
+  border-radius: 4px;
+  overflow: hidden;
+}
+.video-container:fullscreen,
+.video-container:-webkit-full-screen {
+  background: #000;
+}
+.video-container:fullscreen video,
+.video-container:-webkit-full-screen video {
+  max-height: 100vh !important;
+  height: 100vh;
+  width: 100%;
+  object-fit: contain;
+}
+.player-progress-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  background: rgba(0, 0, 0, 0.85);
+}
+.player-time {
+  color: #fff;
+  font-family: monospace;
+  font-size: 12px;
+  min-width: 60px;
+  text-align: center;
+  user-select: none;
+}
+.player-progress-slider {
+  flex: 1;
+  margin: 0 !important;
+}
+.player-progress-slider :deep(.el-slider__bar) {
+  background-color: #00D4AA;
+}
+.player-progress-slider :deep(.el-slider__button) {
+  border: 2px solid #00D4AA;
+  background-color: #fff;
+}
+.player-hint {
+  font-size: 12px;
+  color: #909399;
+  margin-top: 8px;
+  padding: 4px 8px;
+}
+.player-hint kbd {
+  display: inline-block;
+  padding: 1px 6px;
+  font-size: 11px;
+  font-family: monospace;
+  color: #606266;
+  background: #f5f7fa;
+  border: 1px solid #dcdfe6;
+  border-radius: 3px;
+  box-shadow: 0 1px 0 rgba(0,0,0,0.05);
+  margin: 0 2px;
+}
 </style>
