@@ -241,7 +241,8 @@ async function fetchStreams() {
   try {
     const res = await http.get<ApiResponse<any>>('/zlm/streams')
     const data = res.data?.data ?? []
-    const items = Array.isArray(data) ? data : data.items ?? []
+    // 兼容两种返回格式: /streams 返回 { items: [...] }, /zlm/streams 返回 { streams: [...] }
+    const items = Array.isArray(data) ? data : data.items ?? data.streams ?? []
     streams.value = items
     stats.activeStreams = items.length
     stats.totalViewers = items.reduce((s: number, i: any) => s + (i.viewerCount ?? i.viewer_count ?? 0), 0)
