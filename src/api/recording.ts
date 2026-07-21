@@ -102,6 +102,7 @@ export interface DeviceRecording {
 export async function queryRecordings(params: {
   device_id: string
   channel_id?: string
+  stream_name?: string
   start_time: string
   end_time: string
 }): Promise<DeviceRecording[]> {

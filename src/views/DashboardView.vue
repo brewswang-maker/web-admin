@@ -223,15 +223,13 @@
           </template>
           <div v-if="projectHeatmap.length" class="project-heatmap">
             <div v-for="project in projectHeatmap" :key="project.name" class="heatmap-row">
-              <div class="heatmap-info">
-                <span class="heatmap-name">{{ project.name }}</span>
-                <span class="heatmap-pct" :style="{ color: project.rate >= 95 ? '#10B981' : project.rate >= 85 ? '#F59E0B' : '#EF4444' }">
-                  {{ project.rate }}%
-                </span>
-                <span class="heatmap-status" :class="project.rate >= 95 ? 'online' : project.rate >= 85 ? 'warning' : 'error'">
-                  {{ project.rate >= 95 ? '🟢' : project.rate >= 85 ? '🟡' : '🔴' }}
-                </span>
-              </div>
+              <span class="heatmap-name" :title="project.name">{{ project.name }}</span>
+              <span class="heatmap-pct" :style="{ color: project.rate >= 95 ? '#10B981' : project.rate >= 85 ? '#F59E0B' : '#EF4444' }">
+                {{ project.rate }}%
+              </span>
+              <span class="heatmap-status" :class="project.rate >= 95 ? 'online' : project.rate >= 85 ? 'warning' : 'error'">
+                {{ project.rate >= 95 ? '🟢' : project.rate >= 85 ? '🟡' : '🔴' }}
+              </span>
               <div class="heatmap-bar-wrap">
                 <div
                   class="heatmap-bar"
@@ -336,7 +334,7 @@ async function fetchDashboardData() {
 
   const [overviewRes, trendRes, deviceRes, fedRes, agentRes, dimsRes, heatmapRes] = await Promise.allSettled([
     statsHttp.get('/overview', { params: { project: selectedProject.value } }),
-    statsHttp.get('/alarm-trend', { params: { project: selectedProject.value, hours: 24 } }),
+    statsHttp.get('/alarm-trend', { params: { project: selectedProject.value, hours: 168 } }),
     statsHttp.get('/device-status', { params: { project: selectedProject.value } }),
     federationApi.getStatus(),
     statsHttp.get('/agent-activity', { params: { period: '24h' } }),
@@ -349,7 +347,9 @@ async function fetchDashboardData() {
     if (d.security_score !== undefined) {
       securityScore.value = {
         overall: d.security_score,
-        trend: d.alarm_trend ? Math.round(-d.alarm_trend) : 0,
+        // [v8.3 fix] 不再用 alarm_trend 百分比作为评分变化 (语义错误: alarm_trend=288% → -289点 不合理)
+        //   评分变化需要昨日评分数据, 后端暂不提供, 所以不显示趋势
+        trend: undefined,
       }
     } else {
       securityScoreFailed.value = true
@@ -358,6 +358,8 @@ async function fetchDashboardData() {
     topStatsValues.deviceTotal = d.total_devices ?? 0
     topStatsValues.alarmCount = d.today_alarms ?? 0
     topStatsValues.handleRate = d.handle_rate ?? 0
+    // [v8.3 fix] 存储真实告警趋势 (正=今日更多, 负=今日更少)
+    topStatsValues.alarmTrend = d.alarm_trend ?? 0
   } else {
     securityScoreFailed.value = true
   }
@@ -472,6 +474,7 @@ const topStatsValues = reactive({
   deviceTotal: 0,
   alarmCount: 0,
   handleRate: 0,
+  alarmTrend: 0,  // [v8.3 fix] 真实告警趋势 (今日 vs 昨日)
 })
 
 let autoRefreshTimer: ReturnType<typeof setInterval> | null = null
@@ -516,7 +519,8 @@ const topStats = computed(() => [
     unit: '',
     icon: Bell,
     gradient: 'linear-gradient(135deg, #F59E0B, #D97706)',
-    trend: -12,
+    // [v8.3 fix] 使用真实趋势数据, 不再硬编码 -12
+    trend: Math.round(topStatsValues.alarmTrend),
     trendUnit: '%',
     trendDesc: '较昨日',
   },
@@ -526,9 +530,10 @@ const topStats = computed(() => [
     unit: '%',
     icon: CircleCheck,
     gradient: 'linear-gradient(135deg, #7C3AED, #6D28D9)',
-    trend: 2.1,
+    // [v8.3 fix] 移除硬编码 2.1, 无历史对比数据时不显示趋势
+    trend: undefined,
     trendUnit: '%',
-    trendDesc: '较上周',
+    trendDesc: '',
   },
 ])
 
@@ -1097,29 +1102,30 @@ const projectHeatmap = ref<Array<{ name: string; rate: number }>>([])
 .heatmap-row {
   display: flex;
   align-items: center;
-  gap: 12px;
-}
-
-.heatmap-info {
-  display: flex;
-  align-items: center;
   gap: 8px;
-  width: 130px;
-  flex-shrink: 0;
 }
 
 .heatmap-name {
+  flex: 0 1 120px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 13px;
   color: var(--app-text-primary);
 }
 
 .heatmap-pct {
+  flex-shrink: 0;
+  width: 42px;
+  text-align: right;
   font-size: 13px;
   font-weight: var(--font-semibold, 600);
   font-family: var(--font-number);
 }
 
 .heatmap-status {
+  flex-shrink: 0;
   font-size: 10px;
 }
 

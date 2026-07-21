@@ -376,7 +376,8 @@ async function fetchSituationData() {
       todayStats.value = [
         { label: '在线设备', value: String(ds?.online ?? 0), color: '#0F9D58' },
         { label: '今日告警', value: String(aStats?.todayTotal ?? 0), color: '#F4B400' },
-        { label: '处置率', value: ds?.onlineRate != null ? `${(ds.onlineRate * 100).toFixed(1)}%` : '--', color: '#1A73E8' },
+        // [v8.3 fix] 使用 overview 返回的真实处置率, 不再用 deviceStats.onlineRate (语义错误)
+        { label: '处置率', value: d.handleRate != null ? `${d.handleRate.toFixed(1)}%` : '--', color: '#1A73E8' },
         { label: 'Agent调用', value: d.totalAgents > 0 ? String(d.activeAgents) : '--', color: '#7C3AED' },
       ]
     } else {

@@ -118,7 +118,13 @@
           <el-card shadow="hover" class="evidence-item" :body-style="{ padding: '8px' }">
             <!-- 截图预览 -->
             <div class="evidence-thumb">
-              <img v-if="item.snapshot" :src="item.snapshot" loading="lazy" style="width:100%;height:120px;object-fit:cover;border-radius:4px" />
+              <img
+                v-if="item.snapshot"
+                :src="item.snapshot"
+                loading="lazy"
+                style="width:100%;height:120px;object-fit:cover;border-radius:4px;cursor:pointer"
+                @click="openGalleryPreview(item)"
+              />
               <div v-else style="width:100%;height:120px;background:#1a1a2e;display:flex;align-items:center;justify-content:center;color:#555;border-radius:4px">
                 无截图
               </div>
@@ -132,10 +138,34 @@
               <div style="color:#909399;margin-top:4px">{{ item.deviceName || item.deviceId }} · {{ item.channelName || item.channelId }}</div>
               <div style="color:#666;margin-top:2px">{{ formatTime(item.createdAt) }}</div>
             </div>
-            <div style="margin-top:8px;display:flex;gap:6px">
-              <el-button v-if="item.snapshot" size="small" @click="previewImageUrl = item.snapshot; previewVisible = true">查看截图</el-button>
-              <el-button v-if="item.videoClip" size="small" type="primary" @click="playVideoClip(item.videoClip)">播放录像</el-button>
-              <el-button size="small" text @click="jumpToAlarmPlayback(item)">📼 回放</el-button>
+            <!-- 三个操作入口 -->
+            <div class="evidence-actions">
+              <el-tooltip content="查看图片" placement="top" :show-after="300">
+                <el-button
+                  v-if="item.snapshot"
+                  size="small"
+                  @click="openGalleryPreview(item)"
+                >
+                  <el-icon><Picture /></el-icon>
+                </el-button>
+              </el-tooltip>
+              <el-tooltip content="查看回放" placement="top" :show-after="300">
+                <el-button
+                  size="small"
+                  type="primary"
+                  @click="openInlineVideo(item)"
+                >
+                  <el-icon><VideoPlay /></el-icon>
+                </el-button>
+              </el-tooltip>
+              <el-tooltip content="去回放页面" placement="top" :show-after="300">
+                <el-button
+                  size="small"
+                  @click="jumpToAlarmPlayback(item)"
+                >
+                  <el-icon><Position /></el-icon>
+                </el-button>
+              </el-tooltip>
             </div>
           </el-card>
         </el-col>
@@ -479,15 +509,64 @@
       :url-list="[previewImageUrl]"
       @close="previewVisible = false"
     />
+
+    <!-- Gallery 灯箱预览 (支持左右切换) -->
+    <el-image-viewer
+      v-if="galleryPreviewVisible"
+      :url-list="galleryPreviewList"
+      :initial-index="galleryPreviewIndex"
+      @close="galleryPreviewVisible = false"
+    />
+
+    <!-- 内嵌视频播放弹窗 -->
+    <el-dialog
+      v-model="inlineVideoVisible"
+      :title="inlineVideoTitle"
+      width="760px"
+      destroy-on-close
+      @close="inlineVideoUrl = ''; inlineVideoMode = 'none'"
+    >
+      <div v-loading="inlineVideoLoading" style="min-height:300px">
+        <!-- 模式1: 录像片段直接播放 -->
+        <video
+          v-if="inlineVideoMode === 'clip' && inlineVideoUrl"
+          :src="inlineVideoUrl"
+          controls
+          autoplay
+          style="width:100%;max-height:420px;background:#000;border-radius:4px"
+        />
+        <!-- 模式2: 实时 FLV 流播放 (使用 flv.js) -->
+        <div v-else-if="inlineVideoMode === 'live' && inlineVideoUrl" style="width:100%">
+          <div style="font-size:12px;color:#909399;margin-bottom:6px">
+            ⚠️ 无告警录像片段，正在播放该通道实时画面
+          </div>
+          <video
+            ref="inlineFlvVideoRef"
+            muted
+            autoplay
+            style="width:100%;max-height:420px;background:#000;border-radius:4px"
+          />
+        </div>
+        <!-- 模式3: 无可用视频 -->
+        <div v-else-if="inlineVideoMode === 'none' && !inlineVideoLoading" style="text-align:center;padding:60px 20px">
+          <el-icon :size="48" color="#555"><VideoPlay /></el-icon>
+          <p style="margin-top:16px;color:#909399">该告警暂无录像片段</p>
+          <el-button type="primary" style="margin-top:12px" @click="inlineVideoVisible = false; jumpToAlarmPlayback(inlineVideoItem)">
+            去回放页面查看设备录像
+          </el-button>
+        </div>
+      </div>
+    </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, shallowRef, computed, onMounted, onUnmounted } from 'vue'
+import { ref, shallowRef, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   Bell, Warning, CircleCheck, Clock,
   Search, Refresh, Download, WarningFilled,
+  Picture, VideoPlay, Position,
 } from '@element-plus/icons-vue'
 import { alarmApi } from '@/api/alarm'
 import { exportApi } from '@/api/export'
@@ -498,6 +577,7 @@ import { normalizeAlarmCore } from '@/types/alarm'
 import { useAuthStore } from '@/stores/auth'
 import { useWebSocket } from '@/composables/useWebSocket'
 import { useRouter } from 'vue-router'
+import flvjs from 'flv.js'
 
 // ── 严重等级中文映射 ──
 const SEVERITY_LABELS: Record<string, string> = {
@@ -555,6 +635,174 @@ const galleryItems = computed(() => {
 function getVideoClipUrl(alarm: any): string {
   return alarm?.videoClipUrl || alarm?.video_clip_url || ''
 }
+// [FIX 2026-07-15] 内嵌视频播放弹窗 — 支持 video_clip / live FLV / 提示跳转
+const inlineVideoVisible = ref(false)
+const inlineVideoUrl = ref('')
+const inlineVideoTitle = ref('')
+const inlineVideoLoading = ref(false)
+const inlineVideoMode = ref<'clip' | 'live' | 'none'>('none')
+const inlineVideoItem = ref<any>(null)
+const inlineVideoIsPlayback = ref(false)  // true=设备录像回放, false=实时流
+
+async function openInlineVideo(item: any) {
+  inlineVideoItem.value = item
+  inlineVideoTitle.value = `${item.type} · ${item.deviceName || item.deviceId} · ${formatTime(item.createdAt)}`
+  inlineVideoVisible.value = true
+  inlineVideoLoading.value = true
+  inlineVideoUrl.value = ''
+  inlineVideoMode.value = 'none'
+
+  // 1. 如果已有 videoClip URL，直接用
+  if (item.videoClip) {
+    inlineVideoUrl.value = item.videoClip
+    inlineVideoMode.value = 'clip'
+    inlineVideoLoading.value = false
+    return
+  }
+
+  // 2. 尝试调 evidence API 获取 video_clip
+  try {
+    const ev = await alarmApi.getEvidence(item.id)
+    if (ev?.videoClipUrl) {
+      inlineVideoUrl.value = ev.videoClipUrl
+      inlineVideoMode.value = 'clip'
+      inlineVideoLoading.value = false
+      return
+    }
+  } catch { /* 继续降级 */ }
+
+  // 3. 降级: 查询告警时间段的设备录像 → 调 play 获取回放 FLV URL
+  const channelId = item.channelId || item.deviceId || ''
+  const deviceId = item.deviceId || ''
+  // [FIX 2026-07-15] 从 snapshot_url 中提取真实 ZLM stream name
+  //   snapshot_url 格式: /snapshots/rtp/gb_13120000001320000013/snap_xxx.jpg
+  //   告警的 channel_id 可能是国标编码(340开头), 而 ZLM stream 用设备注册ID(131开头)
+  let streamName = ''
+  if (item.snapshot) {
+    const m = item.snapshot.match(/\/snapshots\/rtp\/([^/]+)\//)
+    if (m) streamName = m[1]
+  }
+  if ((channelId || streamName) && deviceId && item.createdAt) {
+    try {
+      const alarmMs = new Date(item.createdAt).getTime()
+      const startMs = alarmMs - 60_000   // 告警前 60 秒
+      const endMs = alarmMs + 60_000     // 告警后 60 秒
+      const startTime = toLocalISOString(new Date(startMs))
+      const endTime = toLocalISOString(new Date(endMs))
+
+      // 传 stream_name 帮助后端用正确路径查 ZLM 录像
+      const recs = await queryRecordings({
+        device_id: deviceId,
+        channel_id: channelId,
+        start_time: startTime,
+        end_time: endTime,
+        ...(streamName ? { stream_name: streamName } : {}),
+      })
+      if (recs && recs.length > 0) {
+        // 调用 play 获取回放 URL
+        const rec = recs[0]
+        const playRes = await recordingHttp.post('/play', {
+          id: rec.id,
+          device_id: deviceId,
+          channel_id: channelId,
+          start_time: rec.start_time || startTime,
+          end_time: rec.end_time || endTime,
+        })
+        const playData = playRes?.data?.data ?? playRes?.data ?? {}
+        const urls = playData?.urls || {}
+        // 优先 wsFlv(浏览器内嵌播放最佳), 然后普通 flv
+        const flvUrl = urls.wsFlv || urls.ws_flv || urls.flv || urls['ws-flv'] || ''
+        if (flvUrl) {
+          inlineVideoUrl.value = flvUrl
+          inlineVideoMode.value = 'live'  // 用 flv.js 播放
+          inlineVideoIsPlayback.value = true  // 录像回放
+          inlineVideoLoading.value = false
+          return
+        }
+        // 如果有 HLS 也可以用 video 标签直接播
+        if (urls.hls) {
+          inlineVideoUrl.value = urls.hls
+          inlineVideoMode.value = 'clip'  // HLS 用 video 标签
+          inlineVideoLoading.value = false
+          return
+        }
+      }
+    } catch { /* 继续降级 */ }
+  }
+
+  // 4. 最终降级: 查询通道是否有实时流
+  if (channelId) {
+    try {
+      const { data } = await recordingHttp.get(`/streams/${encodeURIComponent(channelId)}/multi-urls`)
+      const urls = data?.data?.urls || data?.data || {}
+      const flvUrl = urls.flv || urls['ws-flv'] || urls.wsFlv || urls.ws_flv || ''
+      if (flvUrl) {
+        inlineVideoUrl.value = flvUrl
+        inlineVideoMode.value = 'live'
+        inlineVideoLoading.value = false
+        return
+      }
+    } catch { /* 继续降级 */ }
+  }
+
+  // 5. 全部失败 — 提示用户去回放页面
+  inlineVideoMode.value = 'none'
+  inlineVideoLoading.value = false
+}
+
+// [FIX 2026-07-15] FLV 直播流播放器: 当 mode=live 时自动初始化 flv.js
+const inlineFlvVideoRef = ref<HTMLVideoElement>()
+let inlineFlvPlayer: flvjs.Player | null = null
+
+watch(inlineVideoMode, async (mode) => {
+  // 清理旧播放器
+  if (inlineFlvPlayer) {
+    try { inlineFlvPlayer.destroy() } catch { /* ignore */ }
+    inlineFlvPlayer = null
+  }
+  if (mode !== 'live') return
+  await nextTick()
+  const video = inlineFlvVideoRef.value
+  if (!video || !inlineVideoUrl.value) return
+  if (flvjs.isSupported()) {
+    const player = flvjs.createPlayer({
+      type: 'flv',
+      url: inlineVideoUrl.value,
+      isLive: !inlineVideoIsPlayback.value,
+      hasAudio: true,
+      hasVideo: true,
+    }, { enableStashBuffer: false })
+    player.attachMediaElement(video)
+    player.load()
+    const playPromise = player.play()
+    if (playPromise && typeof (playPromise as any).catch === 'function') {
+      (playPromise as Promise<void>).catch(() => {})
+    }
+    inlineFlvPlayer = player
+  }
+})
+
+// 弹窗关闭时清理 FLV 播放器
+watch(inlineVideoVisible, (visible) => {
+  if (!visible && inlineFlvPlayer) {
+    try { inlineFlvPlayer.destroy() } catch { /* ignore */ }
+    inlineFlvPlayer = null
+  }
+})
+
+// [FIX 2026-07-15] Gallery 图片灯箱预览 (收集当前页所有截图)
+const galleryPreviewVisible = ref(false)
+const galleryPreviewList = ref<string[]>([])
+const galleryPreviewIndex = ref(0)
+function openGalleryPreview(item: any) {
+  // 收集当前页所有有截图的条目
+  galleryPreviewList.value = galleryItems.value
+    .filter(i => i.snapshot)
+    .map(i => i.snapshot)
+  galleryPreviewIndex.value = Math.max(0, galleryPreviewList.value.indexOf(item.snapshot))
+  galleryPreviewVisible.value = true
+}
+
 function playVideoClip(url: string) {
   window.open(url, '_blank')
 }
@@ -1140,6 +1388,15 @@ onUnmounted(() => {
   position: absolute; top: 6px; right: 6px;
   background: rgba(0,0,0,0.7); color: #FFB800;
   padding: 2px 6px; border-radius: 4px; font-size: 11px;
+}
+.evidence-actions {
+  margin-top: 8px;
+  display: flex;
+  gap: 6px;
+  justify-content: center;
+}
+.evidence-actions .el-button {
+  padding: 6px 10px;
 }
 
 /* ── 统计卡片 ── */

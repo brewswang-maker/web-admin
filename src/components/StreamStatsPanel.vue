@@ -52,6 +52,8 @@
         <thead>
           <tr>
             <th>通道</th>
+            <th>首帧(ms)</th>
+            <th>格式</th>
             <th>RTT(ms)</th>
             <th>丢包率(%)</th>
             <th>码率(kbps)</th>
@@ -65,6 +67,8 @@
               <span class="ch-idx">{{ row.slotIdx + 1 }}</span>
               <span class="ch-name-text">{{ row.name }}</span>
             </td>
+            <td :class="latencyClass(row.firstFrameLatencyMs)">{{ row.firstFrameLatencyMs > 0 ? row.firstFrameLatencyMs : '—' }}</td>
+            <td><el-tag v-if="row.format" size="small" :type="formatTagType(row.format)">{{ FORMAT_LABELS[row.format] || row.format }}</el-tag><span v-else>—</span></td>
             <td :class="rttClass(row.rttMs)">{{ row.rttMs > 0 ? row.rttMs : '—' }}</td>
             <td :class="lossClass(row.lossRate)">{{ row.lossRate > 0 ? (row.lossRate * 100).toFixed(1) : '0.0' }}</td>
             <td>{{ row.bitrate > 0 ? (row.bitrate / 1000).toFixed(0) : '—' }}</td>
@@ -135,6 +139,8 @@ interface StatsRow {
   lossRate: number
   bitrate: number   // bytes/s
   fps: number
+  firstFrameLatencyMs: number  // [P3-2] 首帧延迟
+  format: string               // [P3-2] 播放格式
 }
 
 const rows = computed<StatsRow[]>(() => {
@@ -148,6 +154,8 @@ const rows = computed<StatsRow[]>(() => {
       lossRate: h?.lossRate ?? 0,
       bitrate: h?.bytesPerSec ?? 0,
       fps: h?.fps ?? 0,
+      firstFrameLatencyMs: h?.firstFrameLatencyMs ?? 0,
+      format: h?.format ?? '',
     }
   })
 })
@@ -173,6 +181,28 @@ function lossClass(loss: number): string {
   if (loss > 0.15) return 'val-error'
   if (loss > 0.05) return 'val-warning'
   return ''
+}
+
+// [P3-2] 首帧延迟颜色分级
+const FORMAT_LABELS: Record<string, string> = {
+  'webrtc': 'WebRTC',
+  'flv': 'HTTP-FLV',
+  'ws-flv': 'WS-FLV',
+  'hls': 'HLS',
+}
+
+function latencyClass(ms: number): string {
+  if (ms <= 0) return ''
+  if (ms > 3000) return 'val-error'
+  if (ms > 1000) return 'val-warning'
+  return 'val-good'
+}
+
+function formatTagType(fmt: string): '' | 'success' | 'warning' | 'info' {
+  if (fmt === 'webrtc') return 'success'
+  if (fmt === 'flv' || fmt === 'ws-flv') return ''
+  if (fmt === 'hls') return 'warning'
+  return 'info'
 }
 
 onMounted(() => {

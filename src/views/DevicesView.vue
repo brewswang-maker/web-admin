@@ -154,6 +154,7 @@
             <el-button size="small" link type="warning" @click="openEditDialog(row)">编辑</el-button>
             <el-button size="small" link type="success" @click="handleLive(row)">预览</el-button>
             <el-button size="small" link @click="handleSync(row)">同步</el-button>
+            <el-button size="small" link type="info" @click="handleSyncTime(row)">校时</el-button>
             <el-button size="small" link type="danger" @click="handleDelete(row)">删除</el-button>
           </template>
         </el-table-column>

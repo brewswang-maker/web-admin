@@ -19,6 +19,8 @@ export interface StreamHealthState {
   firstFrameTime: number  // 首帧到达时间戳（用于计算首帧延迟）
   playbackStartTime: number  // 播放开始时间戳
   fps: number  // 实时帧率
+  firstFrameLatencyMs: number  // [P1-6] 首帧延迟（毫秒），0=尚未收到首帧
+  format: string  // [P1-6] 当前播放格式 (webrtc/flv/ws-flv/hls)
 }
 
 type HealthStates = Record<number, StreamHealthState>
@@ -79,6 +81,8 @@ export function useStreamHealth(onStall?: StallCallback, onReconnectExhausted?: 
       firstFrameTime: 0,
       playbackStartTime: 0,
       fps: 0,
+      firstFrameLatencyMs: 0,
+      format: '',
     }
   }
 
@@ -113,6 +117,23 @@ export function useStreamHealth(onStall?: StallCallback, onReconnectExhausted?: 
     }
 
     if (isWebRTC) {
+      // [P1-6] WebRTC 首帧延迟追踪: 通过 video 元素 'playing' 事件检测
+      if (videoEl) {
+        const onRtcPlaying = () => {
+          const now = Date.now()
+          if (healthStates[slotIdx].firstFrameTime === 0) {
+            healthStates[slotIdx].firstFrameTime = now
+            healthStates[slotIdx].playbackStartTime = now
+            healthStates[slotIdx].firstFrameLatencyMs = now - ctx.createdAt
+            healthStates[slotIdx].format = 'webrtc'
+            console.info(`[StreamHealth] slot${slotIdx} WebRTC首帧延迟=${now - ctx.createdAt}ms`)
+          }
+          ctx.noDataSeconds = 0
+          healthStates[slotIdx].lastDataTime = now
+        }
+        videoEl.addEventListener('playing', onRtcPlaying)
+        ctx.fpsWindow = []  // ensure fps window exists
+      }
       ctx.intervalId = setInterval(() => pollWebRtcStats(slotIdx, ctx), 1000)
     } else if (isFlv) {
       // FLV: 监听 statistics_info 事件（保存回调引用以便正确移除）
@@ -145,7 +166,9 @@ export function useStreamHealth(onStall?: StallCallback, onReconnectExhausted?: 
         if (healthStates[slotIdx].firstFrameTime === 0) {
           healthStates[slotIdx].firstFrameTime = now
           healthStates[slotIdx].playbackStartTime = now
-          console.debug(`[StreamHealth] slot${slotIdx} 首帧到达，延迟=${now - ctx.createdAt}ms`)
+          healthStates[slotIdx].firstFrameLatencyMs = now - ctx.createdAt
+          healthStates[slotIdx].format = 'flv'
+          console.info(`[StreamHealth] slot${slotIdx} FLV首帧延迟=${now - ctx.createdAt}ms`)
         }
       }
       flvPlayer.on(flvjs.Events.LOADING_COMPLETE, onLoadingComplete)
@@ -164,7 +187,9 @@ export function useStreamHealth(onStall?: StallCallback, onReconnectExhausted?: 
           if (healthStates[slotIdx].firstFrameTime === 0) {
             healthStates[slotIdx].firstFrameTime = now
             healthStates[slotIdx].playbackStartTime = now
-            console.debug(`[StreamHealth] slot${slotIdx} HLS首帧到达，延迟=${now - ctx.createdAt}ms`)
+            healthStates[slotIdx].firstFrameLatencyMs = now - ctx.createdAt
+            healthStates[slotIdx].format = 'hls'
+            console.info(`[StreamHealth] slot${slotIdx} HLS首帧延迟=${now - ctx.createdAt}ms`)
           }
           ctx.noDataSeconds = 0
           healthStates[slotIdx].lastDataTime = now
@@ -569,11 +594,29 @@ export function useStreamHealth(onStall?: StallCallback, onReconnectExhausted?: 
     cleanup()
   })
 
-  return {
+  // [P1-6] 获取所有 slot 的首帧延迟汇总
+  function getFirstFrameStats(): { avgMs: number; maxMs: number; minMs: number; count: number } {
+    const latencies: number[] = []
+    for (const key in healthStates) {
+      const lat = healthStates[key].firstFrameLatencyMs
+      if (lat > 0) latencies.push(lat)
+    }
+    if (latencies.length === 0) return { avgMs: 0, maxMs: 0, minMs: 0, count: 0 }
+    const sum = latencies.reduce((a, b) => a + b, 0)
+    return {
+      avgMs: Math.round(sum / latencies.length),
+      maxMs: Math.max(...latencies),
+      minMs: Math.min(...latencies),
+      count: latencies.length,
+    }
+  }
+
+return {
     healthStates,
     startMonitoring,
     stopMonitoring,
     getHealth,
+    getFirstFrameStats,
     cleanup,
   }
 }

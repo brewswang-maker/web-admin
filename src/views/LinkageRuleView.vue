@@ -261,9 +261,16 @@
                   <el-col :span="10"><el-time-select v-model="form.conditions.time.config.endTime" start="00:00" step="00:30" end="23:30" placeholder="结束时间" style="width: 100%" /></el-col>
                 </el-row>
                 <div class="weekdays">
+                  <span class="cond-sub-label">星期</span>
                   <el-checkbox-group v-model="form.conditions.time.config.weekdays">
                     <el-checkbox v-for="d in weekdays" :key="d.value" :label="d.label" :value="d.value" size="small" />
                   </el-checkbox-group>
+                </div>
+                <div class="monthdays">
+                  <span class="cond-sub-label">每月日期</span>
+                  <el-select v-model="form.conditions.time.config.monthdays" multiple collapse-tags collapse-tags-tooltip placeholder="不选=不限" size="small" style="width: 100%">
+                    <el-option v-for="d in monthdayOptions" :key="d.value" :label="d.label" :value="d.value" />
+                  </el-select>
                 </div>
                 <div class="time-template-actions">
                   <el-button size="small" text @click="showTimeTemplateDialog = true">管理时段模板</el-button>
@@ -1000,6 +1007,9 @@ const weekdays = [
   { label: '周四', value: 4 }, { label: '周五', value: 5 }, { label: '周六', value: 6 }, { label: '周日', value: 7 },
 ]
 
+// 每月日期选项 (1-31)
+const monthdayOptions = Array.from({ length: 31 }, (_, i) => ({ label: `${i + 1}日`, value: i + 1 }))
+
 // 动态选项 (从后端加载)
 const { eventTypeOptions, eventTypeGrouped, severityColor, channelOptions: channelOptionsDynamic, locationOptions: locationOptionsDynamic, loading: optionsLoading, fetchOptions } = useLinkageOptions()
 
@@ -1253,7 +1263,7 @@ const formRules = reactive<FormRules>({
 
 function defaultConditions() {
   return {
-    time: { enabled: false, config: { startTime: '08:00', endTime: '20:00', weekdays: [1, 2, 3, 4, 5] } },
+    time: { enabled: false, config: { startTime: '08:00', endTime: '20:00', weekdays: [1, 2, 3, 4, 5], monthdays: [] as number[] } },
     region: { enabled: false, config: { location: '', roi: '', group: '', roiPolygon: [] as RoiData[], channelId: '' } },
     location: { enabled: false, config: { point: '' } },
     eventType: { enabled: true, config: { types: [] as string[], minSeverity: 3, minConfidence: 50 } },
@@ -1508,8 +1518,8 @@ function openEditor(rule: LinkageRule | null) {
     // time_cond → time
     const tc = rule.time_cond || {} as any
     form.conditions.time = {
-      enabled: !!(tc.time_start || tc.time_end || tc.weekdays?.length),
-      config: { startTime: tc.time_start || '08:00', endTime: tc.time_end || '20:00', weekdays: tc.weekdays || [1, 2, 3, 4, 5] },
+      enabled: !!(tc.time_start || tc.time_end || tc.weekdays?.length || tc.monthdays?.length),
+      config: { startTime: tc.time_start || '08:00', endTime: tc.time_end || '20:00', weekdays: tc.weekdays || [1, 2, 3, 4, 5], monthdays: tc.monthdays || [] },
     }
     // spatial_cond → region + location
     const sc = rule.spatial_cond || {} as any
@@ -1584,7 +1594,7 @@ async function handleSave() {
       time_start: tc.config.startTime,
       time_end: tc.config.endTime,
       weekdays: tc.config.weekdays,
-      monthdays: [] as number[],
+      monthdays: tc.config.monthdays || [],
     } : { time_start: '', time_end: '', weekdays: [] as number[], monthdays: [] as number[] }
 
     const rc = form.conditions.region
@@ -2070,6 +2080,7 @@ function applyTimeTemplate(tmpl: TimeTemplate) {
   form.conditions.time.config.startTime = tmpl.time_start || '08:00'
   form.conditions.time.config.endTime = tmpl.time_end || '20:00'
   form.conditions.time.config.weekdays = [...(tmpl.weekdays || [1, 2, 3, 4, 5])]
+  form.conditions.time.config.monthdays = [...(tmpl.monthdays || [])]
   showTimeTemplateDialog.value = false
   ElMessage.success('已应用时段模板: ' + tmpl.name)
 }
@@ -2272,6 +2283,8 @@ watch(mainTab, (tab) => {
 
 /* ── 星期/事件/通道网格 ── */
 .weekdays { margin-top: 8px; }
+.monthdays { margin-top: 8px; }
+.cond-sub-label { font-size: 12px; color: var(--app-text-secondary); display: block; margin-bottom: 4px; }
 .event-type-grid { display: flex; flex-wrap: wrap; gap: 4px; }
 .event-type-group { width: 100%; margin-bottom: 4px; }
 .event-type-group__title { font-size: 11px; font-weight: 600; color: var(--color-primary-400, #3B82F6); margin-bottom: 2px; padding: 2px 0; }

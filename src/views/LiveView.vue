@@ -446,7 +446,7 @@ const gridSlots = reactive<GridSlot[]>(
     channelId: '', name: '', status: '', urls: {}, codec: '', playing: false, loading: false, muted: true, deviceId: '', playerInstance: null, recording: false, talking: false, currentFormat: '', webrtcRetryCount: 0, reconnectCount: 0, encrypted: false, _lastReconnectTime: 0, _videoEventCleanups: []
   }))
 )
-const preferredFormat = ref<PlayerFormat>('webrtc')  // [P2-VP2] 默认 WebRTC 超低延迟
+const preferredFormat = ref<PlayerFormat>('webrtc')  // [P0-5 FIX 2026-07-14] WebRTC 为首选 (超低延迟 <500ms), ZLM [rtc] 已配置
 const videoRefs = ref<Record<number, HTMLVideoElement>>({})
 const gridRef = ref<HTMLElement>()
 
@@ -1268,6 +1268,38 @@ function attachPlayerByFormat(slotIdx: number, fmt: PlayerFormat) {
 
         slot.playerInstance = player
         streamHealth.startMonitoring(slotIdx, player, video)
+
+        // [P2-1 FIX 2026-07-14] FLV SourceBuffer 定时清理
+        //   原问题: autoCleanupSourceBuffer=false (防 GB28181 DTS 负值崩溃) 导致
+        //           SourceBuffer 无限增长 → 长时间播放后浏览器内存 >2GB → 标签页崩溃
+        //   方案: 每 30s 手动 trim 旧数据 (保留最近 10s), 安全规避 DTS 问题
+        const sbCleanupTimer = setInterval(() => {
+          try {
+            const ts = video.currentTime
+            if (ts > 15) {
+              const sbList = (video as any).srcObject
+              // 通过 MSE 直接操作 SourceBuffer
+              const mediaSrc = flvjs.Features?.mseBase?._ms
+              // flv.js 内部管理 MediaSource, 通过 player._mediaDataSource 获取
+              const buffered = video.buffered
+              if (buffered.length > 0) {
+                // 使用 MSE API trim: 通过 player 内部的 ms 实例
+                const innerPlayer: any = player
+                if (innerPlayer?._msectrl?._mediaSource?.sourceBuffers?.length > 0) {
+                  const sb = innerPlayer._msectrl._mediaSource.sourceBuffers[0]
+                  if (sb && !sb.updating && ts > 10) {
+                    sb.remove(0, ts - 10)
+                    console.debug(`[LiveView] slot${slotIdx} SourceBuffer trim: removed [0, ${(ts-10).toFixed(1)}s]`)
+                  }
+                }
+              }
+            }
+          } catch (e) {
+            // 静默忽略 — SourceBuffer 操作失败不影响播放
+          }
+        }, 30000)
+        slot._timers = slot._timers || []
+        slot._timers.push(sbCleanupTimer as any)
       } else {
         attachPlayerByFormat(slotIdx, 'hls')
       }
@@ -1564,6 +1596,13 @@ async function attachWebRtc(slotIdx: number, webrtcUrl: string) {
       }
     } catch { /* 后端不支持此接口，使用空配置 */ }
 
+    // [P2-1 FIX 2026-07-14] 根据网络环境动态调整 ICE 超时
+    //   LAN (无 STUN/TURN): 3000ms (纯 host candidate, 快速建立)
+    //   WAN (有 STUN/TURN): 5000ms (需额外 srflx/relay 协商时间)
+    const isLan = iceServers.length === 0
+    const ICE_TIMEOUT_MS = isLan ? 3000 : 5000
+    const ICE_CANDIDATE_CHECK_MS = isLan ? 3000 : 5000
+
     const pc = new RTCPeerConnection({
       iceServers,
       bundlePolicy: 'max-bundle',
@@ -1587,13 +1626,13 @@ async function attachWebRtc(slotIdx: number, webrtcUrl: string) {
       }
     }
 
-    // 启动 ICE candidate 质量检测定时器：3 秒内仅收到 host 候选则发出警告
+    // 启动 ICE candidate 质量检测定时器：超时内仅收到 host 候选则发出警告
     candidateCheckTimer = setTimeout(() => {
       if (!hasSrflxOrRelay) {
-        console.warn(`[WebRTC] slot${slotIdx} 3秒内未收到 srflx/relay 候选，可能存在 NAT 穿透问题`)
+        console.warn(`[WebRTC] slot${slotIdx} ${ICE_CANDIDATE_CHECK_MS}ms 内未收到 srflx/relay 候选，可能存在 NAT 穿透问题`)
         ElMessage.warning('WebRTC 仅收到本地候选，可能存在 NAT 穿透问题')
       }
-    }, 3000)
+    }, ICE_CANDIDATE_CHECK_MS)
 
     const offer = await pc.createOffer()
     await pc.setLocalDescription(offer)
@@ -1601,11 +1640,11 @@ async function attachWebRtc(slotIdx: number, webrtcUrl: string) {
     // ZLM 模式 - 通过后端 API 交换 SDP
     await exchangeSdpViaBackend(pc, slot.channelId, offer)
 
-    // ICE 超时检测：创建 offer 后启动 3 秒定时器
+    // ICE 超时检测：创建 offer 后启动定时器
     iceTimeoutTimer = setTimeout(() => {
       const state = pc.iceConnectionState
       if (state === 'new' || state === 'checking') {
-        console.warn(`[WebRTC] slot${slotIdx} ICE 超时（状态=${state}），降级到 HLS`)
+        console.warn(`[WebRTC] slot${slotIdx} ICE 超时（状态=${state}，超时=${ICE_TIMEOUT_MS}ms），降级到 HLS`)
         slot.webrtcRetryCount++
         pc.close()
         slot.playerInstance = null
@@ -1617,7 +1656,7 @@ async function attachWebRtc(slotIdx: number, webrtcUrl: string) {
           ElMessage.error('WebRTC 和 HLS 均不可用，视频播放失败')
         }
       }
-    }, 3000)
+    }, ICE_TIMEOUT_MS)
 
     // [P1-VP1] ICE 连接状态监控：disconnected 宽限期 5s + failed 立即降级
     let iceDisconnectTimer: ReturnType<typeof setTimeout> | null = null

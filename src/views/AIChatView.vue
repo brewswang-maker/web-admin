@@ -116,6 +116,17 @@
               </div>
             </div>
 
+            <!-- 截图动作 -->
+            <div v-else-if="msg.role === 'action' && msg.actionType === 'snapshot'" class="msg-bubble ai-bubble">
+              <div class="msg-avatar ai-avatar">📷</div>
+              <div class="msg-content">
+                <div v-if="msg.status === 'success' && msg.snapshotUrl" class="snapshot-result">
+                  <img :src="msg.snapshotUrl" alt="实时截图" class="snapshot-img" @click="openSnapshot(msg.snapshotUrl)" />
+                </div>
+                <div v-else class="snapshot-error">截图不可用</div>
+              </div>
+            </div>
+
             <!-- 系统消息 -->
             <div v-else-if="msg.role === 'system'" class="msg-system">
               <span>{{ msg.content }}</span>
@@ -181,7 +192,7 @@ import type { ApiResponse } from '@/types/common'
 
 interface ThinkStep { text: string; status: 'pending' | 'running' | 'done'; duration?: number }
 interface ChatMessage {
-  role: 'user' | 'assistant' | 'thinking' | 'tool' | 'system'
+  role: 'user' | 'assistant' | 'thinking' | 'tool' | 'system' | 'action'
   content: string
   toolName?: string
   args?: any
@@ -190,6 +201,8 @@ interface ChatMessage {
   duration?: number
   steps?: ThinkStep[]
   running?: boolean
+  snapshotUrl?: string
+  actionType?: string
 }
 interface Conversation { id: string; title: string; created_at: string }
 
@@ -224,6 +237,10 @@ function renderMarkdown(text: string): string {
     .replace(/`([^`]+)`/g, '<code>$1</code>')
     .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
     .replace(/\n/g, '<br>')
+}
+
+function openSnapshot(url: string) {
+  window.open(url, '_blank')
 }
 
 function formatJson(obj: any): string {
@@ -465,6 +482,20 @@ function handleSSEEvent(evt: any, thinkSteps: ThinkStep[]) {
       const lastTool = [...messages.value].reverse().find(m => m.role === 'tool')
       if (lastTool) { lastTool.result = evt.result; lastTool.status = evt.success ? 'success' : 'error'; lastTool.duration = evt.duration }
       break
+    case 'action':
+      if (evt.action_type === 'snapshot') {
+        messages.value.push({
+          role: 'action',
+          content: '',
+          actionType: 'snapshot',
+          snapshotUrl: evt.snapshot_url || '',
+          status: evt.success ? 'success' : 'error'
+        })
+        if (!evt.success && evt.error) {
+          messages.value.push({ role: 'system', content: `⚠️ 截图失败: ${evt.error}` })
+        }
+      }
+      break
     case 'text':
       streamingText.value += evt.content
       break
@@ -480,6 +511,12 @@ onUnmounted(() => { if (abortCtrl) abortCtrl.abort() })
 <style scoped>
 .ai-chat-page { height: calc(100vh - 80px); }
 .chat-layout { display: flex; height: 100%; gap: 0; }
+
+/* 截图样式 */
+.snapshot-result { max-width: 480px; border-radius: 8px; overflow: hidden; cursor: pointer; }
+.snapshot-img { width: 100%; height: auto; display: block; border-radius: 8px; border: 1px solid #3C4043; transition: opacity 0.2s; }
+.snapshot-img:hover { opacity: 0.85; }
+.snapshot-error { color: #9AA0A6; font-size: 14px; padding: 12px; }
 
 /* 左侧对话列表 */
 .chat-sidebar { width: 240px; background: #252830; border-right: 1px solid #3C4043; display: flex; flex-direction: column; flex-shrink: 0; }

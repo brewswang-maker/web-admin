@@ -734,36 +734,85 @@ const router = useRouter()
 const route = useRoute()
 
 // [P2-CO3] 从告警弹窗自动跳转: 解析 route.query 中的 channelId/deviceId/time
+// [FIX 2026-07-15] 重构: 自动选中设备/通道 -> 自动触发录像查询 -> 自动定位到告警时刻
+const autoFetchTriggered = ref(false)
 function applyAlarmJumpParams() {
   const q = route.query
-  if (!q.channelId && !q.alarmId) return
+  if (!q.channelId && !q.deviceId && !q.time && !q.alarmId) return
+
   const chId = String(q.channelId || '')
   const devId = String(q.deviceId || '')
   const t = String(q.time || '')
+
+  // 1. 设置设备
+  if (devId) selectedDeviceId.value = devId
+
+  // 2. 尝试从 channelId 反查 deviceId (通过已知设备列表)
   if (chId) {
-    // 尝试从 channelId 反查 deviceId (通过已知设备列表)
+    let found = false
     for (const dev of devices.value) {
-      const ch = (dev.channels || []).find((c: any) => c.id === chId || c.channel_id === chId)
+      const ch = (dev.channels || []).find((c: any) =>
+        c.id === chId || (c as any).channel_id === chId || c.id === String(chId))
       if (ch) {
         selectedDeviceId.value = dev.id
-        selectedChannelId.value = ch.id
+        // nextTick 后设置 channelId (因为 watch(selectedDeviceId) 会清空 channelId)
+        nextTick(() => {
+          selectedChannelId.value = ch.id
+        })
+        found = true
         break
       }
     }
-    // 如果没找到，暂存
-    if (!selectedChannelId.value) {
+    if (!found) {
       pendingChannelId.value = chId
     }
   }
-  if (devId) selectedDeviceId.value = devId
+
+  // 3. 设置日期和跳转时间
   if (t) {
-    // t 是 ISO 时间或 ms 时间戳
     const ms = isFinite(Number(t)) ? Number(t) : new Date(t).getTime()
     if (!isNaN(ms)) {
       pendingJumpMs.value = ms
       const d = new Date(ms)
       selectedDate.value = d.toISOString().split('T')[0]
-      ElMessage.info(`[P2-CO3] 已定位到告警时刻: ${d.toLocaleString('zh-CN')}`)
+      ElMessage.info(`已定位到告警时刻: ${d.toLocaleString('zh-CN')}`)
+    }
+  }
+}
+
+// [FIX 2026-07-15] 自动触发录像查询 (设备/通道/日期均就绪后)
+async function autoFetchRecordingsIfNeeded() {
+  if (autoFetchTriggered.value) return
+  if (!selectedDeviceId.value || !selectedChannelId.value || !selectedDate.value) return
+
+  // 等待 watch(selectedDeviceId) 的清空效果被 nextTick 覆盖
+  await nextTick()
+  if (!selectedChannelId.value) return
+
+  autoFetchTriggered.value = true
+  ElMessage.info('正在自动查询告警时间段的录像...')
+  await fetchRecordings()
+  // 如果有跳转时间，等录像加载后尝试定位
+  if (pendingJumpMs.value) {
+    await nextTick()
+    // 自动播放包含告警时间的录像段
+    const alarmMs = pendingJumpMs.value
+    const alarmDate = new Date(alarmMs)
+    const alarmStr = alarmDate.toTimeString().substring(0, 8)
+    const matching = recordings.value.find(r => {
+      const s = r.startTime?.split('T')[1]?.substring(0, 8) || ''
+      const e = r.endTime?.split('T')[1]?.substring(0, 8) || ''
+      return s <= alarmStr && e >= alarmStr
+    })
+    if (matching) {
+      ElMessage.success('已找到包含告警时刻的录像，正在播放...')
+      await playSegment(matching)
+      // 播放后跳转到精确时间
+      if (pendingJumpMs.value) {
+        setTimeout(() => jumpToTime(pendingJumpMs.value), 1500)
+      }
+    } else {
+      ElMessage.warning('告警时刻附近无录像记录')
     }
   }
 }
@@ -833,15 +882,23 @@ onMounted(() => {
   window.addEventListener('keydown', handleKeydown)
   document.addEventListener('fullscreenchange', onFullscreenChange)
   document.addEventListener('webkitfullscreenchange', onFullscreenChange)
-  // [P2-CO3] 从告警自动跳转: 在设备加载后应用路由参数
-  watch(devices, () => {
-    if (pendingChannelId.value || pendingJumpMs.value) {
+  // [FIX 2026-07-15] 从告警自动跳转: 在设备加载后应用路由参数, 并自动触发录像查询
+  watch(devices, async () => {
+    if (route.query.channelId || route.query.deviceId || route.query.time || route.query.alarmId) {
       applyAlarmJumpParams()
-      if (pendingJumpMs.value && playingUrl.value) {
-        jumpToTime(pendingJumpMs.value)
-      }
+      // 等待设备/通道选中完成后触发自动查询
+      await nextTick()
+      await autoFetchRecordingsIfNeeded()
     }
   }, { immediate: true })
+
+  // [FIX 2026-07-15] 监听 channelId 变化, 处理 nextTick 延迟设置的情况
+  watch(selectedChannelId, async (newVal) => {
+    if (newVal && !autoFetchTriggered.value && route.query.time) {
+      await nextTick()
+      await autoFetchRecordingsIfNeeded()
+    }
+  })
 })
 onUnmounted(() => {
   stopPlay()

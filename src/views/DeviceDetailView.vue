@@ -9,6 +9,9 @@
         <el-button @click="handleSync" :loading="syncing">
           <el-icon><Refresh /></el-icon>同步
         </el-button>
+        <el-button @click="handleSyncTime" :loading="syncingTime">
+          <el-icon><Clock /></el-icon>校时
+        </el-button>
         <el-button type="primary" @click="showConfigDrawer = true">
           <el-icon><Setting /></el-icon>配置
         </el-button>
@@ -245,6 +248,7 @@ const device = computed(() => deviceStore.currentDevice)
 const syncRecords = ref<DeviceSyncRecord[]>([])
 const metricsHistory = ref<DeviceMetrics[]>([])
 const syncing = ref(false)
+const syncingTime = ref(false)
 const saving = ref(false)
 const showConfigDrawer = ref(false)
 
@@ -343,6 +347,24 @@ async function handleSync() {
     await loadData()
   } finally {
     syncing.value = false
+  }
+}
+
+async function handleSyncTime() {
+  if (!device.value) return
+  syncingTime.value = true
+  try {
+    const res = (await deviceApi.syncTime(device.value.id)) as any
+    const d = res?.data?.data ?? res?.data ?? res
+    if (d?.code === 0 || d?.message) {
+      ElMessage.success(`校时指令已发送：${d.message ?? ''}`)
+    } else {
+      ElMessage.warning(d?.message || '校时失败')
+    }
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.message || '校时失败')
+  } finally {
+    syncingTime.value = false
   }
 }
 

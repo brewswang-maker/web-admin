@@ -56,6 +56,38 @@ export function normalizeAlarmPayload(raw: any): AlarmEvent {
   return normalizeAlarmCore(raw)
 }
 
+// ── 时间条件检查 (与后端 matchTimeConditionWithCtx 逻辑一致) ──
+function checkTimeCondition(rule: LinkageRule): boolean {
+  const tc = rule.time_cond
+  if (!tc) return true // 无时间条件 = 始终匹配
+  if (!tc.time_start && !tc.time_end && !(tc.weekdays?.length) && !(tc.monthdays?.length)) return true
+
+  const now = new Date()
+  // 星期: JS getDay() 返回 0=Sunday..6=Saturday, 需转换为 1=Monday..7=Sunday
+  const wday = now.getDay() === 0 ? 7 : now.getDay()
+  const mday = now.getDate()
+  const nowMinutes = now.getHours() * 60 + now.getMinutes()
+
+  // 星期过滤
+  if (tc.weekdays?.length && !tc.weekdays.includes(wday)) return false
+  // 每月日期过滤
+  if (tc.monthdays?.length && !tc.monthdays.includes(mday)) return false
+  // 时间段过滤
+  if (tc.time_start && tc.time_end) {
+    const [sh, sm] = tc.time_start.split(':').map(Number)
+    const [eh, em] = tc.time_end.split(':').map(Number)
+    const startMin = sh * 60 + sm
+    const endMin = eh * 60 + em
+    if (startMin <= endMin) {
+      if (nowMinutes < startMin || nowMinutes > endMin) return false
+    } else {
+      // 跨天逻辑 (e.g. 22:00-06:00)
+      if (nowMinutes < startMin && nowMinutes > endMin) return false
+    }
+  }
+  return true
+}
+
 // ── 联动规则匹配 ──
 async function findMatchingRule(alarm: AlarmEvent): Promise<LinkageRule | null> {
   try {
@@ -93,6 +125,12 @@ async function findMatchingRule(alarm: AlarmEvent): Promise<LinkageRule | null> 
       if (severity < src.min_severity) continue
       // 置信度匹配
       if (confidence < src.min_confidence) continue
+      // 时间条件匹配 (与后端 LinkageEngine 一致)
+      if (!checkTimeCondition(rule)) {
+        console.log('[useAlarmPopup] Rule skipped by time condition:', rule.name,
+          'time_cond:', rule.time_cond)
+        continue
+      }
 
       return rule // 首个匹配的规则
     }
@@ -119,6 +157,7 @@ async function findMatchingRule(alarm: AlarmEvent): Promise<LinkageRule | null> 
         if (src.channel_ids?.length && !src.channel_ids.includes(chId)) continue
         if (severity < src.min_severity) continue
         if (confidence < src.min_confidence) continue
+        if (!checkTimeCondition(rule)) continue
         return rule
       }
     }

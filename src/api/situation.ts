@@ -16,6 +16,7 @@ export interface SituationOverview {
   systemHealth: SystemHealth
   activeAgents: number
   totalAgents: number
+  handleRate?: number  // [v8.3 fix] 真实处置率 (0~100)
 }
 
 /** 地图设备点位 */
