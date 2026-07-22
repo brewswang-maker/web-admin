@@ -446,7 +446,12 @@ const gridSlots = reactive<GridSlot[]>(
     channelId: '', name: '', status: '', urls: {}, codec: '', playing: false, loading: false, muted: true, deviceId: '', playerInstance: null, recording: false, talking: false, currentFormat: '', webrtcRetryCount: 0, reconnectCount: 0, encrypted: false, _lastReconnectTime: 0, _videoEventCleanups: []
   }))
 )
-const preferredFormat = ref<PlayerFormat>('webrtc')  // [P0-5 FIX 2026-07-14] WebRTC 为首选 (超低延迟 <500ms), ZLM [rtc] 已配置
+// [P0-1 FIX 2026-07-14] 默认首选 FLV 而非 WebRTC
+//   根因: ZLM 编译时 ENABLE_WEBRTC=ON 但 libsrtp2 sysroot 缺失, CMake 降级为 OFF。
+//   前端首选 'webrtc' 导致每次首屏等待 3-5s ICE 超时后才降级到 FLV。
+//   修复: 默认 'flv', WebRTC 降级链保留 (用户可手动切换)。
+//   预期: 首屏延迟 3-5s → <1s
+const preferredFormat = ref<PlayerFormat>('flv')
 const videoRefs = ref<Record<number, HTMLVideoElement>>({})
 const gridRef = ref<HTMLElement>()
 
