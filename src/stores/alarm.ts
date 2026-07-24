@@ -42,7 +42,8 @@ export const useAlarmStore = defineStore('alarm', () => {
       const res = await alarmApi.getList({
         page: currentPage.value,
         pageSize: pageSize.value,
-        count: pageSize.value * 3, // 后端用 count 参数
+        // [FIX 2026-07-24] 移除 count 参数: 后端会将 count 误解为 pageSize 覆盖,
+        //   导致分页 total/pagesize 计算混乱
         ...query.value,
       })
       const respData: any = res.data?.data ?? res.data

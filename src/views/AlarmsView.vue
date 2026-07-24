@@ -170,6 +170,19 @@
           </el-card>
         </el-col>
       </el-row>
+
+      <!-- 证据库分页 -->
+      <div class="pagination-wrap" v-if="totalAlarms > pageSize">
+        <el-pagination
+          v-model:current-page="currentPage"
+          v-model:page-size="pageSize"
+          :total="totalAlarms"
+          :page-sizes="[10, 20, 50, 100]"
+          layout="total, sizes, prev, pager, next, jumper"
+          background
+          @change="handlePageChange"
+        />
+      </div>
     </el-card>
 
     <!-- ===== 告警表格 ===== -->
@@ -1041,12 +1054,12 @@ const { alarmStatCards, filteredAlarms } = (() => {
   }
 })()
 
-// ── 分页后的告警 ──
-const paginatedAlarms = computed(() => {
-  const start = (currentPage.value - 1) * pageSize.value
-  const end = start + pageSize.value
-  return filteredAlarms.value.slice(start, end)
-})
+// ── 当前页告警 ──
+// [FIX 2026-07-24] 双重分页修复:
+//   原: filteredAlarms.value.slice((page-1)*pageSize, page*pageSize)
+//   后端已按 page/pageSize 返回正确切片, 前端再 slice 导致 page>=2 时取到空数组 (第二页空白)
+//   修: 服务端分页模式下, 直接使用后端返回的当前页数据, 不再二次切片
+const paginatedAlarms = computed(() => filteredAlarms.value)
 
 // ── 工具函数 ──
 function severityLabel(severity: string) {
