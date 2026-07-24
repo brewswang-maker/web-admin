@@ -3,20 +3,40 @@
     <!-- 返回栏 -->
     <div class="page-header">
       <div class="header-left">
-        <el-button link @click="$router.push(`/devices/${deviceId}`)">
-          <el-icon><ArrowLeft /></el-icon>返回设备详情
-        </el-button>
-        <el-divider direction="vertical" />
-        <span class="device-label">
-          <el-tag size="small" type="info">{{ device?.deviceType }}</el-tag>
-          <strong>{{ device?.name }}</strong>
-          <span class="ip">{{ device?.ip }}</span>
-        </span>
+        <!-- 有设备 ID 时显示返回设备详情 -->
+        <template v-if="hasDeviceId">
+          <el-button link @click="$router.push(`/devices/${deviceId}`)">
+            <el-icon><ArrowLeft /></el-icon>返回设备详情
+          </el-button>
+          <el-divider direction="vertical" />
+          <span class="device-label">
+            <el-tag size="small" type="info">{{ device?.deviceType }}</el-tag>
+            <strong>{{ device?.name }}</strong>
+            <span class="ip">{{ device?.ip }}</span>
+          </span>
+        </template>
+        <!-- 无设备 ID 时显示全局通道管理标题 -->
+        <template v-else>
+          <strong style="font-size:16px">通道管理</strong>
+          <el-input
+            v-model="searchKeyword"
+            placeholder="搜索通道名称..."
+            size="small"
+            clearable
+            style="width:200px;margin-left:12px"
+            @keyup.enter="loadChannels"
+            @clear="loadChannels"
+          />
+        </template>
       </div>
       <div class="header-right">
-        <el-tag :type="deviceOnline ? 'success' : 'danger'" size="small" effect="dark">
+        <el-tag v-if="hasDeviceId" :type="deviceOnline ? 'success' : 'danger'" size="small" effect="dark">
           {{ deviceOnline ? '设备在线' : '设备离线' }}
         </el-tag>
+        <el-tag v-else type="info" size="small">共 {{ channels.length }} 个通道</el-tag>
+        <el-button size="small" style="margin-left:8px" @click="loadChannels">
+          <el-icon><Refresh /></el-icon>刷新
+        </el-button>
       </div>
     </div>
 
@@ -27,7 +47,7 @@
     </div>
 
     <!-- 空状态 -->
-    <el-empty v-else-if="!channels.length" description="该设备暂无通道" />
+    <el-empty v-else-if="!channels.length" :description="hasDeviceId ? '该设备暂无通道' : '暂无通道数据'" />
 
     <!-- 通道卡片列表 -->
     <div v-else class="channel-grid">
@@ -204,10 +224,11 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useDeviceStore } from '@/stores/device'
 import { getDeviceChannels, updateChannel } from '@/api/devices'
+import { channelApi } from '@/api/channel'
 import { http } from '@/api/http'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { Channel, DeviceDetail } from '@/types/device'
@@ -228,6 +249,7 @@ const router = useRouter()
 const deviceStore = useDeviceStore()
 
 const deviceId = computed(() => route.params.id as string)
+const hasDeviceId = computed(() => !!deviceId.value && deviceId.value !== 'undefined')
 const device = computed(() => deviceStore.currentDevice)
 const deviceOnline = computed(() => device.value?.status === 'online')
 
@@ -237,6 +259,7 @@ const saving = ref(false)
 const showConfigDialog = ref(false)
 const showAlgoDialog = ref(false)
 const currentChannel = ref<Channel | null>(null)
+const searchKeyword = ref('')
 
 // ---- 配置表单 ----
 const configForm = ref({ name: '', resolution: '1920x1080', fps: 25, codec: 'H.264' as Channel['codec'], bitrate: 0, enabled: true })
@@ -263,22 +286,67 @@ function bitrateClass(bitrate: string | number) {
 async function loadChannels() {
   loading.value = true
   try {
-    // 先加载设备详情
-    await deviceStore.fetchDeviceDetail(deviceId.value)
+    if (hasDeviceId.value) {
+      // ==== 模式 1: 设备级通道（从设备详情页跳转） ====
+      // 先加载设备详情
+      await deviceStore.fetchDeviceDetail(deviceId.value)
 
-    // 再加载通道列表
-    const chRes = await getDeviceChannels(deviceId.value) as any
-    const chs: any[] = chRes?.data?.data ?? chRes?.data ?? chRes
-    channels.value = chs.length
-      ? chs
-      : (device.value as any)?.channels?.map((ch: any, idx: any) => ({
-          ...ch,
-          codec: (ch as any).codec || 'H.264',
-          isRecording: (ch as any).isRecording ?? false,
-          latency: (ch as any).latency ?? 0,
-          packetLoss: (ch as any).packetLoss ?? 0,
-          channelNo: ch.channelNo ?? idx + 1,
-        })) ?? []
+      // 再加载通道列表
+      const chRes = await getDeviceChannels(deviceId.value) as any
+      const chs: any[] = chRes?.data?.data ?? chRes?.data ?? chRes
+      channels.value = chs.length
+        ? chs.map((ch: any, idx: number) => ({
+            ...ch,
+            codec: ch.codec || 'H.264',
+            isRecording: ch.isRecording ?? false,
+            latency: ch.latency ?? 0,
+            packetLoss: ch.packetLoss ?? 0,
+            channelNo: ch.channelNo ?? idx + 1,
+            rtspUrl: ch.rtspUrl || '-',
+            algoPlugin: ch.algoPlugin || '无',
+            bitrate: ch.bitrate || '-',
+            resolution: ch.resolution || '-',
+            fps: ch.fps || 0,
+          }))
+        : (device.value as any)?.channels?.map((ch: any, idx: any) => ({
+            ...ch,
+            codec: (ch as any).codec || 'H.264',
+            isRecording: (ch as any).isRecording ?? false,
+            latency: (ch as any).latency ?? 0,
+            packetLoss: (ch as any).packetLoss ?? 0,
+            channelNo: ch.channelNo ?? idx + 1,
+          })) ?? []
+    } else {
+      // ==== 模式 2: 全局通道列表（侧边栏「通道管理」入口） ====
+      const res = await channelApi.getList({
+        page: 1,
+        pageSize: 200,
+        keyword: searchKeyword.value || undefined,
+      }) as any
+      const raw = res?.data as any
+      // 后端 GET /api/v1/channels 返回: { data: { channels/items: [...], total } }
+      const items: any[] = raw?.data?.channels ?? raw?.data?.items ?? raw?.data ?? []
+      channels.value = items.map((ch: any, idx: number) => ({
+        id: ch.channel_id || ch.id || `ch_${idx}`,
+        deviceId: ch.device_id || ch.deviceId || '',
+        channelNo: ch.channelNo ?? idx + 1,
+        name: ch.name || ch.channel_name || `通道 ${idx + 1}`,
+        status: ch.status || 'offline',
+        enabled: ch.enabled ?? true,
+        codec: ch.codec || 'H.264',
+        isRecording: ch.isRecording ?? false,
+        latency: ch.latency ?? 0,
+        packetLoss: ch.packetLoss ?? 0,
+        rtspUrl: ch.rtspUrl || ch.source_url || '-',
+        algoPlugin: ch.algoPlugin || ch.algo_plugin || '无',
+        bitrate: ch.bitrate || '-',
+        resolution: ch.resolution || '-',
+        fps: ch.fps || 0,
+        deviceType: ch.device_type || ch.deviceType || '',
+        vendor: ch.vendor || '',
+        model: ch.model || '',
+      }))
+    }
   } catch {
     ElMessage.error('加载通道信息失败')
   } finally {
@@ -379,6 +447,8 @@ async function saveAlgoConfig() {
 }
 
 onMounted(() => { loadModelList(); loadChannels() })
+// [FIX] 路由切换时重新加载（从 /devices/:id/channels ↔ /channels）
+watch(() => route.params.id, () => loadChannels())
 </script>
 
 <style scoped>

@@ -490,9 +490,10 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useDeviceStore } from '@/stores/device'
+import { useWebSocket } from '@/composables/useWebSocket'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { discoverGB28181, getGB28181Config } from '@/api/devices'
 import { deviceApi } from '@/api/device'
@@ -893,11 +894,38 @@ function resetEditForm() {
   }
 }
 
+// ---- WebSocket 实时设备状态订阅 ----
+const { connected: wsConnected, subscribe: wsSubscribe } = useWebSocket('/ws')
+let unsubDeviceOnline: (() => void) | null = null
+let unsubDeviceOffline: (() => void) | null = null
+let devicePollTimer: ReturnType<typeof setInterval> | null = null
+
 onMounted(() => {
   loadModelList()
   fetchData()
   deviceStore.fetchTemplates()
   fetchSipConfig()
+
+  // 订阅设备上线事件
+  unsubDeviceOnline = wsSubscribe('device.online', (data: any) => {
+    const dev = deviceStore.devices.find(d => d.id === data?.device_id)
+    if (dev) dev.status = 'online'
+    deviceStore.fetchStats() // 更新统计
+  })
+  // 订阅设备离线事件
+  unsubDeviceOffline = wsSubscribe('device.offline', (data: any) => {
+    const dev = deviceStore.devices.find(d => d.id === data?.device_id)
+    if (dev) dev.status = 'offline'
+    deviceStore.fetchStats()
+  })
+  // 兜底轮询：30秒全量刷新（WebSocket 断开时仍能更新）
+  devicePollTimer = setInterval(fetchData, 30000)
+})
+
+onUnmounted(() => {
+  unsubDeviceOnline?.()
+  unsubDeviceOffline?.()
+  if (devicePollTimer) clearInterval(devicePollTimer)
 })
 </script>
 
