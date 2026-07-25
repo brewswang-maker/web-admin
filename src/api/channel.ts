@@ -7,6 +7,16 @@ import { channelHttp, http } from './http'
 import type { ApiResponse, PageResponse } from '@/types/common'
 import type { ChannelItem } from '@/types/device'
 
+// [P1-3] ROI区域定义
+export interface RoiPoint { x: number; y: number }
+export interface RoiRegion {
+  id?: number
+  channel_id: string
+  roi_name: string
+  polygon: RoiPoint[]
+  enabled: boolean
+}
+
 export const channelApi = {
   /** 获取通道列表（全局） */
   getList(params?: { page?: number; pageSize?: number; keyword?: string; status?: string; deviceId?: string }) {
@@ -77,5 +87,33 @@ export const channelApi = {
       packetLoss: number
       resolution: string
     }>>(`/${id}/metrics`)
-  }
+  },
+
+  // ── [P1-3] ROI区域管理 ──
+
+  /** 获取通道ROI区域列表 */
+  async getRois(channelId: string): Promise<RoiRegion[]> {
+    const { data } = await channelHttp.get(`/${channelId}/roi`)
+    const d = data?.data ?? data
+    if (!Array.isArray(d)) return []
+    return d.map((r: any) => ({
+      ...r,
+      polygon: typeof r.polygon === 'string' ? JSON.parse(r.polygon || '[]') : (r.polygon || []),
+      enabled: r.enabled === 1 || r.enabled === true,
+    }))
+  },
+
+  /** 创建ROI区域 */
+  async createRoi(channelId: string, roi: { roi_name: string; polygon: RoiPoint[]; enabled?: boolean }): Promise<RoiRegion> {
+    const { data } = await channelHttp.post(`/${channelId}/roi`, {
+      ...roi,
+      polygon: roi.polygon,
+    })
+    return data?.data ?? data
+  },
+
+  /** 删除ROI区域 */
+  async deleteRoi(channelId: string, roiId: number): Promise<void> {
+    await channelHttp.delete(`/${channelId}/roi/${roiId}`)
+  },
 }

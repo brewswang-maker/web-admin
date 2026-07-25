@@ -5,7 +5,8 @@
  * 🆕 优化：使用专用 recordingHttp 客户端，移除硬编码 URL
  */
 
-import { recordingHttp } from './http'
+import { recordingHttp, channelHttp } from './http'
+import axios from 'axios'
 import type { ApiResponse } from '@/types/common'
 
 export interface RecordingSegment {
@@ -109,4 +110,151 @@ export async function queryRecordings(params: {
   const { data } = await recordingHttp.post('/query', params)
   const d = data?.data ?? data
   return d?.recordings ?? d ?? []
+}
+
+// ╒═════════════════════════════════════════════════════
+// [P0-1] 录像计划表 (Recording Schedule) CRUD
+// ═════════════════════════════════════════════════════
+
+export interface TimeSegment {
+  /** 0=周日, 1-6=周一~周六, 7=每天 */
+  day: number
+  /** "HH:mm" */
+  start: string
+  /** "HH:mm" */
+  end: string
+}
+
+export interface RecordingSchedule {
+  id?: number
+  channel_id: string
+  device_id?: string
+  schedule_name?: string
+  schedule_type: 'continuous' | 'time_segment' | 'event'
+  time_segments: TimeSegment[]
+  event_types?: string
+  stream_type?: 'main' | 'sub'
+  pre_record_seconds?: number
+  post_record_seconds?: number
+  enabled: boolean
+  created_at?: string
+  updated_at?: string
+}
+
+/** 查询录像计划列表 */
+export async function getRecordingSchedules(channelId?: string): Promise<RecordingSchedule[]> {
+  const { data } = await axios.get('/api/v1/recording-schedules', {
+    params: channelId ? { channel_id: channelId } : {},
+  })
+  const d = data?.data ?? data
+  if (!Array.isArray(d)) return []
+  return d.map((s: any) => ({
+    ...s,
+    time_segments: typeof s.time_segments === 'string' ? JSON.parse(s.time_segments || '[]') : (s.time_segments || []),
+    enabled: s.enabled === 1 || s.enabled === true,
+  }))
+}
+
+/** 创建录像计划 */
+export async function createRecordingSchedule(schedule: RecordingSchedule): Promise<RecordingSchedule> {
+  const { data } = await axios.post('/api/v1/recording-schedules', {
+    ...schedule,
+    time_segments: JSON.stringify(schedule.time_segments || []),
+    enabled: schedule.enabled ? 1 : 0,
+  })
+  return data?.data ?? data
+}
+
+/** 更新录像计划 */
+export async function updateRecordingSchedule(id: number, updates: Partial<RecordingSchedule>): Promise<void> {
+  const payload: any = { ...updates }
+  if (updates.time_segments) {
+    payload.time_segments = JSON.stringify(updates.time_segments)
+  }
+  if (updates.enabled !== undefined) {
+    payload.enabled = updates.enabled ? 1 : 0
+  }
+  await axios.put(`/api/v1/recording-schedules/${id}`, payload)
+}
+
+/** 删除录像计划 */
+export async function deleteRecordingSchedule(id: number): Promise<void> {
+  await axios.delete(`/api/v1/recording-schedules/${id}`)
+}
+
+// ╒═════════════════════════════════════════════════════
+// [P0-2] 录像水印配置
+// ═════════════════════════════════════════════════════
+
+export interface WatermarkConfig {
+  channel_id: string
+  enabled: boolean
+  show_timestamp: boolean
+  show_channel_name: boolean
+  custom_text: string
+  position: 'top_left' | 'top_right' | 'bottom_left' | 'bottom_right'
+  font_size: number
+  color: string
+  bg_color: string
+}
+
+/** 获取通道水印配置 */
+export async function getWatermark(channelId: string): Promise<WatermarkConfig> {
+  const { data } = await channelHttp.get(`/${channelId}/watermark`)
+  return data?.data ?? data
+}
+
+/** 设置通道水印配置 */
+export async function updateWatermark(channelId: string, config: Partial<WatermarkConfig>): Promise<WatermarkConfig> {
+  const { data } = await channelHttp.put(`/${channelId}/watermark`, config)
+  return data?.data ?? data
+}
+
+// ╒═════════════════════════════════════════════════════
+// [P1-2] 片段下载
+// ═════════════════════════════════════════════════════
+
+/** 下载指定时间范围的录像片段 */
+export async function downloadSegment(params: {
+  device_id: string
+  channel_id?: string
+  start_time: string
+  end_time: string
+}): Promise<void> {
+  const { data } = await recordingHttp.post('/download-segment', params)
+  const url = data?.data?.download_url
+  if (!url) throw new Error('download_url not provided by backend')
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `segment_${params.start_time}_${params.end_time}.mp4`
+  a.style.display = 'none'
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+}
+
+// ╒═════════════════════════════════════════════════════
+// [P2-1] 存储容量预估
+// ═════════════════════════════════════════════════════
+
+export interface StorageEstimate {
+  channels: number
+  hours_per_day: number
+  bitrate_kbps: number
+  retention_days: number
+  gb_per_channel_per_day: number
+  total_gb: number
+  total_tb: number
+  recommended_disk_tb: number
+}
+
+/** 计算存储容量预估 */
+export async function getStorageEstimate(params: {
+  channel_count?: number
+  hours_per_day?: number
+  bitrate_kbps?: number
+  retention_days?: number
+}): Promise<StorageEstimate> {
+  const { data } = await axios.get('/api/v1/recording/storage-estimate', { params })
+  return data?.data?.estimation ?? data?.estimation
 }

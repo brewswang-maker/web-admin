@@ -207,6 +207,21 @@
               <el-button @mousedown="ptzStart('zoom_in')" @mouseup="ptzStop">变倍 +</el-button>
               <el-button @mousedown="ptzStart('zoom_out')" @mouseup="ptzStop">变倍 -</el-button>
             </div>
+            <!-- [P0-3] 聚焦/光圈控制 -->
+            <div class="ptz-zoom-row">
+              <el-button @mousedown="ptzStart('focus_near')" @mouseup="ptzStop">聚焦 +</el-button>
+              <el-button @mousedown="ptzStart('focus_far')" @mouseup="ptzStop">聚焦 -</el-button>
+              <el-button @mousedown="ptzStart('iris_open')" @mouseup="ptzStop">光圈 +</el-button>
+              <el-button @mousedown="ptzStart('iris_close')" @mouseup="ptzStop">光圈 -</el-button>
+            </div>
+            <!-- [P0-3] 辅助开关 -->
+            <div class="ptz-aux-row">
+              <el-button-group size="small">
+                <el-button @click="ptzAux('wiper')" title="雨刷">雨刷</el-button>
+                <el-button @click="ptzAux('light')" title="灯光">灯光</el-button>
+                <el-button @click="ptzAux('heater')" title="加热">加热</el-button>
+              </el-button-group>
+            </div>
             <div class="ptz-speed">
               <span>速度</span>
               <el-slider v-model="ptzSpeed" :min="1" :max="255" :show-tooltip="false" size="small" />
@@ -2055,7 +2070,8 @@ function maximizeSlot(idx: number, event?: MouseEvent) {
 }
 
 // PTZ控制
-function ptzStart(direction: 'left' | 'right' | 'up' | 'down' | 'zoom_in' | 'zoom_out') {
+function ptzStart(direction: 'left' | 'right' | 'up' | 'down' | 'zoom_in' | 'zoom_out'
+  | 'focus_near' | 'focus_far' | 'iris_open' | 'iris_close') {
   const slot = gridSlots[activeSlotIdx.value]
   if (!slot.channelId) return
   ptzApi({
@@ -2075,6 +2091,20 @@ function ptzPreset(preset: number) {
   const slot = gridSlots[activeSlotIdx.value]
   if (!slot.channelId) return
   ptzApi({ deviceId: slot.deviceId, channelId: slot.channelId, direction: 'goto_preset', preset })
+}
+
+// [P0-3] 辅助开关 (雨刷/灯光/加热)
+const ptzAuxStates = reactive<Record<string, boolean>>({})
+function ptzAux(auxType: 'wiper' | 'light' | 'heater') {
+  const slot = gridSlots[activeSlotIdx.value]
+  if (!slot.channelId) return
+  const enable = !ptzAuxStates[auxType]
+  ptzAuxStates[auxType] = enable
+  ptzApi({
+    deviceId: slot.deviceId,
+    channelId: slot.channelId,
+    direction: enable ? `${auxType}_on` : `${auxType}_off`,
+  }).catch(() => { ptzAuxStates[auxType] = !enable })
 }
 
 // ═══ P0-1: 主/子码流切换 (对标海康 iVMS 双码流策略) ═══
@@ -2634,6 +2664,9 @@ onUnmounted(() => {
 .ptz-row { display: flex; gap: 16px; }
 .ptz-zoom-row { display: flex; gap: 8px; width: 100%; }
 .ptz-zoom-row .el-button { flex: 1; }
+.ptz-aux-row { display: flex; gap: 8px; width: 100%; margin-top: 4px; }
+.ptz-aux-row .el-button-group { width: 100%; }
+.ptz-aux-row .el-button { flex: 1; }
 .ptz-speed { display: flex; align-items: center; gap: 8px; width: 100%; font-size: 12px; color: #9AA0A6; }
 .ptz-speed .el-slider { flex: 1; }
 .ptz-presets { display: flex; align-items: center; gap: 8px; width: 100%; font-size: 12px; color: #9AA0A6; }

@@ -163,6 +163,13 @@
             >
               <el-button size="small" :icon="Promotion" circle title="上传图片" />
             </el-upload>
+            <!-- [P2-2] 语音输入按钮 -->
+            <el-button size="small" circle
+              :type="isRecording ? 'danger' : 'default'"
+              @click="toggleVoiceInput"
+              :title="isRecording ? '正在录音...点击停止' : '语音输入'">
+              {{ isRecording ? '🔴' : '🎤' }}
+            </el-button>
             <el-input v-model="inputText" type="textarea" :rows="2"
               placeholder="输入您的问题，如：帮我检查3号厂区的安全状况..."
               @keydown.enter.exact.prevent="sendMessage"
@@ -172,6 +179,9 @@
           </div>
           <div class="input-footer">
             <span class="input-hint">Enter发送 · Shift+Enter换行</span>
+            <!-- [P2-2] TTS开关 -->
+            <el-switch v-model="ttsEnabled" size="small" active-text="语音播报" inline-prompt
+              style="margin: 0 8px" />
             <div class="input-shortcuts">
               <el-button size="small" text v-for="qa in quickActions.slice(0,3)" :key="qa.text"
                 @click="sendQuickAction(qa.prompt)">{{ qa.text }}</el-button>
@@ -215,6 +225,12 @@ const streamingText = ref('')
 const agentOnline = ref(true)
 const msgContainer = ref<HTMLElement>()
 const pendingImages = ref<string[]>([])
+
+// [P2-2] 语音输入/TTS
+const isRecording = ref(false)
+const ttsEnabled = ref(false)
+let recognition: any = null
+let speechSynthesis: SpeechSynthesis | null = null
 
 const quickActions = [
   { icon: '📊', text: '今日报告', prompt: '帮我生成今日安全报告' },
@@ -300,6 +316,83 @@ function onToolbarAction(cmd: string) {
 function sendQuickAction(prompt: string) {
   inputText.value = prompt
   sendMessage()
+}
+
+// [P2-2] 语音输入 (Web Speech API SpeechRecognition)
+function toggleVoiceInput() {
+  const SpeechRecognitionClass = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
+  if (!SpeechRecognitionClass) {
+    ElMessage.warning('当前浏览器不支持语音识别，请使用 Chrome/Edge')
+    return
+  }
+
+  if (isRecording.value) {
+    // 停止录音
+    if (recognition) recognition.stop()
+    isRecording.value = false
+    return
+  }
+
+  recognition = new SpeechRecognitionClass()
+  recognition.lang = 'zh-CN'
+  recognition.continuous = false
+  recognition.interimResults = true
+
+  recognition.onresult = (event: any) => {
+    let interim = ''
+    let final = ''
+    for (let i = event.resultIndex; i < event.results.length; i++) {
+      const transcript = event.results[i][0].transcript
+      if (event.results[i].isFinal) {
+        final += transcript
+      } else {
+        interim += transcript
+      }
+    }
+    if (final) {
+      inputText.value += final
+    } else if (interim) {
+      inputText.value = interim
+    }
+  }
+
+  recognition.onerror = (event: any) => {
+    ElMessage.error('语音识别错误: ' + event.error)
+    isRecording.value = false
+  }
+
+  recognition.onend = () => {
+    isRecording.value = false
+  }
+
+  recognition.start()
+  isRecording.value = true
+  ElMessage.info('🎤 正在录音... 请说话')
+}
+
+// [P2-2] TTS 语音播报 (Web Speech API SpeechSynthesis)
+function speakText(text: string) {
+  if (!ttsEnabled.value) return
+  if (!('speechSynthesis' in window)) return
+
+  // 取消之前的播报
+  window.speechSynthesis.cancel()
+
+  // 清理HTML标签, 只播报纯文本
+  const plainText = text.replace(/<[^>]+>/g, '').replace(/[#*`_~]/g, '').substring(0, 500)
+  if (!plainText.trim()) return
+
+  const utterance = new SpeechSynthesisUtterance(plainText)
+  utterance.lang = 'zh-CN'
+  utterance.rate = 1.0
+  utterance.pitch = 1.0
+
+  // 尝试选择中文语音
+  const voices = window.speechSynthesis.getVoices()
+  const zhVoice = voices.find(v => v.lang.startsWith('zh'))
+  if (zhVoice) utterance.voice = zhVoice
+
+  window.speechSynthesis.speak(utterance)
 }
 
 function onImageSelected(file: any) {
@@ -443,6 +536,8 @@ async function sendMessage() {
     // 完成后，将streamingText推入messages
     if (streamingText.value) {
       messages.value.push({ role: 'assistant', content: streamingText.value })
+      // [P2-2] TTS 语音播报 AI 回复
+      speakText(streamingText.value)
     }
     // 更新对话标题
     if (!Array.isArray(conversations.value)) return
@@ -505,7 +600,12 @@ function handleSSEEvent(evt: any, thinkSteps: ThinkStep[]) {
 }
 
 onMounted(loadConversations)
-onUnmounted(() => { if (abortCtrl) abortCtrl.abort() })
+onUnmounted(() => {
+  if (abortCtrl) abortCtrl.abort()
+  // [P2-2] 清理语音资源
+  if (recognition) { try { recognition.stop() } catch {} }
+  if ('speechSynthesis' in window) window.speechSynthesis.cancel()
+})
 </script>
 
 <style scoped>

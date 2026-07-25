@@ -5,6 +5,13 @@ import { ElMessage } from 'element-plus'
 import { deviceHttp, recordingHttp } from '@/api/http'
 import { alarmApi } from '@/api/alarm'  // [P3-VP1] 时间轴告警标记
 import { getRecordings, playRecording, stopPlayback as stopRecordingPlayback, controlPlayback, type RecordingSegment as ApiRecordingSeg } from '@/api/recording'
+import {
+  getRecordingSchedules, createRecordingSchedule, updateRecordingSchedule, deleteRecordingSchedule,
+  getWatermark, updateWatermark,
+  downloadSegment as downloadSegmentApi,
+  getStorageEstimate,
+  type RecordingSchedule, type WatermarkConfig, type StorageEstimate,
+} from '@/api/recording'
 import Hls from 'hls.js'
 import flvjs from 'flv.js'
 import axios from 'axios'
@@ -70,7 +77,7 @@ function formatHMS(sec: number): string {
 }
 
 // Task #23: 本地录像 / 离线回放
-const recordingSource = ref<'device' | 'local' | 'smart'>('device')
+const recordingSource = ref<'device' | 'local' | 'smart' | 'schedule' | 'storage'>('device')
 const localRecordings = ref<LocalRecording[]>([])
 const localLoading = ref(false)
 const isOffline = ref(false)
@@ -89,6 +96,36 @@ const FORMAT_OPTIONS: { value: PlaybackFormat; label: string }[] = [
   { value: 'hls', label: 'HLS' },
 ]
 const playbackFormat = ref<PlaybackFormat>('flv')
+
+// [P0-1] 录像计划状态
+const schedules = ref<RecordingSchedule[]>([])
+const scheduleLoading = ref(false)
+const scheduleDialogVisible = ref(false)
+const editingSchedule = ref<RecordingSchedule | null>(null)
+const defaultSchedule = (): RecordingSchedule => ({
+  channel_id: '',
+  schedule_name: '',
+  schedule_type: 'time_segment',
+  time_segments: [{ day: 7, start: '08:00', end: '18:00' }],
+  stream_type: 'main',
+  pre_record_seconds: 10,
+  post_record_seconds: 60,
+  enabled: true,
+})
+
+// [P0-2] 水印配置状态
+const watermarkDialogVisible = ref(false)
+const watermarkConfig = ref<WatermarkConfig | null>(null)
+const watermarkLoading = ref(false)
+
+// [P1-2] 片段下载时间范围
+const segmentDownloadVisible = ref(false)
+const segStartTime = ref('')
+const segEndTime = ref('')
+
+// [P2-1] 存储预估状态
+const storageEstimate = ref<StorageEstimate | null>(null)
+const estParams = ref({ channel_count: 8, hours_per_day: 24, bitrate_kbps: 2048, retention_days: 30 })
 
 const channels = computed(() => {
   const dev = devices.value.find(d => d.id === selectedDeviceId.value)
@@ -874,6 +911,151 @@ function stopOfflineCheck() {
   }
 }
 
+// ---- [P0-1] 录像计划管理 ----
+async function fetchSchedules() {
+  scheduleLoading.value = true
+  try {
+    schedules.value = await getRecordingSchedules(selectedChannelId.value || undefined)
+  } catch (e: any) {
+    ElMessage.error('加载录像计划失败: ' + (e.message || ''))
+  } finally {
+    scheduleLoading.value = false
+  }
+}
+
+function openScheduleDialog(schedule?: RecordingSchedule) {
+  editingSchedule.value = schedule ? { ...schedule, time_segments: [...(schedule.time_segments || [])] } : defaultSchedule()
+  if (!editingSchedule.value.channel_id && selectedChannelId.value) {
+    editingSchedule.value.channel_id = selectedChannelId.value
+  }
+  if (!editingSchedule.value.device_id && selectedDeviceId.value) {
+    editingSchedule.value.device_id = selectedDeviceId.value
+  }
+  scheduleDialogVisible.value = true
+}
+
+function addTimeSegment() {
+  if (!editingSchedule.value) return
+  editingSchedule.value.time_segments.push({ day: 7, start: '08:00', end: '18:00' })
+}
+
+function removeTimeSegment(idx: number) {
+  if (!editingSchedule.value) return
+  editingSchedule.value.time_segments.splice(idx, 1)
+}
+
+async function saveSchedule() {
+  if (!editingSchedule.value) return
+  if (!editingSchedule.value.channel_id) {
+    ElMessage.warning('请选择通道')
+    return
+  }
+  try {
+    if (editingSchedule.value.id) {
+      await updateRecordingSchedule(editingSchedule.value.id, editingSchedule.value)
+      ElMessage.success('录像计划已更新')
+    } else {
+      await createRecordingSchedule(editingSchedule.value)
+      ElMessage.success('录像计划已创建')
+    }
+    scheduleDialogVisible.value = false
+    await fetchSchedules()
+  } catch (e: any) {
+    ElMessage.error('保存失败: ' + (e.message || ''))
+  }
+}
+
+async function toggleScheduleEnabled(schedule: RecordingSchedule) {
+  if (!schedule.id) return
+  try {
+    await updateRecordingSchedule(schedule.id, { enabled: !schedule.enabled })
+    schedule.enabled = !schedule.enabled
+    ElMessage.success(`计划已${schedule.enabled ? '启用' : '禁用'}`)
+  } catch (e: any) {
+    ElMessage.error('操作失败: ' + (e.message || ''))
+  }
+}
+
+async function removeSchedule(schedule: RecordingSchedule) {
+  if (!schedule.id) return
+  try {
+    await deleteRecordingSchedule(schedule.id)
+    ElMessage.success('删除成功')
+    await fetchSchedules()
+  } catch (e: any) {
+    ElMessage.error('删除失败: ' + (e.message || ''))
+  }
+}
+
+const DAY_LABELS = ['周日', '周一', '周二', '周三', '周四', '周五', '周六', '每天']
+
+// ---- [P0-2] 水印配置 ----
+async function openWatermarkDialog() {
+  if (!selectedChannelId.value) {
+    ElMessage.warning('请先选择通道')
+    return
+  }
+  watermarkLoading.value = true
+  watermarkDialogVisible.value = true
+  try {
+    watermarkConfig.value = await getWatermark(selectedChannelId.value)
+  } catch {
+    watermarkConfig.value = {
+      channel_id: selectedChannelId.value,
+      enabled: false,
+      show_timestamp: true,
+      show_channel_name: true,
+      custom_text: '',
+      position: 'top_left',
+      font_size: 16,
+      color: '#FFFFFF',
+      bg_color: '#00000080',
+    }
+  } finally {
+    watermarkLoading.value = false
+  }
+}
+
+async function saveWatermark() {
+  if (!watermarkConfig.value || !selectedChannelId.value) return
+  try {
+    await updateWatermark(selectedChannelId.value, watermarkConfig.value)
+    ElMessage.success('水印配置已保存')
+    watermarkDialogVisible.value = false
+  } catch (e: any) {
+    ElMessage.error('保存失败: ' + (e.message || ''))
+  }
+}
+
+// ---- [P1-2] 片段下载 ----
+async function doSegmentDownload() {
+  if (!selectedDeviceId.value || !segStartTime.value || !segEndTime.value) {
+    ElMessage.warning('请填写完整的时间范围')
+    return
+  }
+  try {
+    await downloadSegmentApi({
+      device_id: selectedDeviceId.value,
+      channel_id: selectedChannelId.value,
+      start_time: segStartTime.value,
+      end_time: segEndTime.value,
+    })
+    ElMessage.success('下载请求已发送')
+    segmentDownloadVisible.value = false
+  } catch (e: any) {
+    ElMessage.error('下载失败: ' + (e.message || ''))
+  }
+}
+
+// ---- [P2-1] 存储预估 ----
+async function calculateStorage() {
+  try {
+    storageEstimate.value = await getStorageEstimate(estParams.value)
+  } catch (e: any) {
+    ElMessage.error('预估失败: ' + (e.message || ''))
+  }
+}
+
 onMounted(() => {
   fetchDevices()
   fetchSmartFilterOptions()
@@ -933,12 +1115,19 @@ onUnmounted(() => {
               <el-radio-button value="device">设备录像</el-radio-button>
               <el-radio-button value="local">本地录像</el-radio-button>
               <el-radio-button value="smart">智能检索</el-radio-button>
+              <el-radio-button value="schedule">录像计划</el-radio-button>
+              <el-radio-button value="storage">存储预估</el-radio-button>
             </el-radio-group>
             <el-tag v-if="isOffline" type="warning" size="small" style="margin-left:4px">离线模式</el-tag>
             <span>日期:</span>
             <el-date-picker v-model="selectedDate" type="date" value-format="YYYY-MM-DD" placeholder="选择日期" />
             <el-button v-if="recordingSource === 'device'" type="primary" @click="fetchRecordings" :loading="loading">查询设备录像</el-button>
-            <el-button v-else-if="recordingSource === 'local'" type="primary" @click="fetchLocalRecordings" :loading="localLoading">查询本地录像</el-button>
+            <el-button v-if="recordingSource === 'device'" size="small" @click="openWatermarkDialog">水印设置</el-button>
+            <el-button v-if="recordingSource === 'device'" size="small" @click="segmentDownloadVisible = true">片段下载</el-button>
+            <el-button v-if="recordingSource === 'schedule'" type="primary" @click="fetchSchedules" :loading="scheduleLoading">加载计划</el-button>
+            <el-button v-if="recordingSource === 'schedule'" type="success" size="small" @click="openScheduleDialog()">+ 新增计划</el-button>
+            <el-button v-if="recordingSource === 'storage'" type="primary" @click="calculateStorage">计算预估</el-button>
+            <el-button v-if="recordingSource === 'local'" type="primary" @click="fetchLocalRecordings" :loading="localLoading">查询本地录像</el-button>
           </div>
         </el-card>
 
@@ -1092,6 +1281,95 @@ onUnmounted(() => {
           </div>
         </el-card>
 
+        <!-- [P0-1] 录像计划列表 -->
+        <el-card v-if="recordingSource === 'schedule'" shadow="never" style="flex:1;overflow:auto">
+          <template #header>录像计划 ({{ schedules.length }})
+            <span style="font-size:12px;color:#909399;margin-left:8px">按通道/时段/事件触发自动启停录像</span>
+          </template>
+          <el-table :data="schedules" v-loading="scheduleLoading" stripe size="small" empty-text="暂无计划，点击「+ 新增计划」创建">
+            <el-table-column label="计划名称" width="140">
+              <template #default="{ row }">{{ row.schedule_name || `#${row.id}` }}</template>
+            </el-table-column>
+            <el-table-column label="通道" width="120">
+              <template #default="{ row }">{{ row.channel_id }}</template>
+            </el-table-column>
+            <el-table-column label="类型" width="100">
+              <template #default="{ row }">
+                <el-tag size="small" :type="row.schedule_type === 'continuous' ? 'success' : row.schedule_type === 'event' ? 'danger' : 'primary'">
+                  {{ row.schedule_type === 'continuous' ? '连续录像' : row.schedule_type === 'event' ? '事件触发' : '分时段' }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="时间段" min-width="200">
+              <template #default="{ row }">
+                <span v-if="row.schedule_type === 'continuous'">24小时不间断</span>
+                <span v-else-if="row.schedule_type === 'event'">触发类型: {{ row.event_types || '(未设置)' }}</span>
+                <div v-else>
+                  <el-tag v-for="(seg, i) in (row.time_segments || [])" :key="i" size="small" style="margin:2px">
+                    {{ DAY_LABELS[seg.day] || `D${seg.day}` }} {{ seg.start }}-{{ seg.end }}
+                  </el-tag>
+                </div>
+              </template>
+            </el-table-column>
+            <el-table-column label="预录/延录" width="100">
+              <template #default="{ row }">{{ row.pre_record_seconds }}s / {{ row.post_record_seconds }}s</template>
+            </el-table-column>
+            <el-table-column label="状态" width="80">
+              <template #default="{ row }">
+                <el-switch :model-value="row.enabled" @change="toggleScheduleEnabled(row)" />
+              </template>
+            </el-table-column>
+            <el-table-column label="操作" width="130">
+              <template #default="{ row }">
+                <el-button size="small" @click="openScheduleDialog(row)">编辑</el-button>
+                <el-button type="danger" size="small" @click="removeSchedule(row)">删除</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+        </el-card>
+
+        <!-- [P2-1] 存储容量预估 -->
+        <el-card v-if="recordingSource === 'storage'" shadow="never">
+          <template #header>存储容量预估计算器</template>
+          <div style="display:flex;gap:32px;flex-wrap:wrap;align-items:flex-start">
+            <div style="display:flex;flex-direction:column;gap:16px">
+              <div style="display:flex;align-items:center;gap:12px">
+                <span style="width:100px">通道数量:</span>
+                <el-input-number v-model="estParams.channel_count" :min="1" :max="256" />
+              </div>
+              <div style="display:flex;align-items:center;gap:12px">
+                <span style="width:100px">每日录像时长:</span>
+                <el-input-number v-model="estParams.hours_per_day" :min="1" :max="24" /> 小时
+              </div>
+              <div style="display:flex;align-items:center;gap:12px">
+                <span style="width:100px">码率:</span>
+                <el-input-number v-model="estParams.bitrate_kbps" :min="256" :max="16384" :step="512" /> kbps
+              </div>
+              <div style="display:flex;align-items:center;gap:12px">
+                <span style="width:100px">保留天数:</span>
+                <el-input-number v-model="estParams.retention_days" :min="1" :max="365" /> 天
+              </div>
+            </div>
+            <div v-if="storageEstimate" class="storage-result">
+              <div class="storage-row">
+                <span class="storage-label">单通道/天</span>
+                <span class="storage-value">{{ storageEstimate.gb_per_channel_per_day }} GB</span>
+              </div>
+              <div class="storage-row highlight">
+                <span class="storage-label">总容量需求</span>
+                <span class="storage-value">{{ storageEstimate.total_tb }} TB</span>
+              </div>
+              <div class="storage-row">
+                <span class="storage-label">含20%冗余</span>
+                <span class="storage-value">{{ storageEstimate.recommended_disk_tb }} TB</span>
+              </div>
+              <div class="storage-formula">
+                公式: 码率 ÷ 8 × 3600 × 小时/天 × 通道数 × 天数
+              </div>
+            </div>
+          </div>
+        </el-card>
+
         <!-- 播放器 -->
         <el-card v-if="isPlaying" shadow="never">
           <template #header>
@@ -1155,6 +1433,119 @@ onUnmounted(() => {
         </el-card>
       </div>
     </div>
+
+    <!-- [P0-1] 录像计划编辑弹窗 -->
+    <el-dialog v-model="scheduleDialogVisible" :title="editingSchedule?.id ? '编辑录像计划' : '新增录像计划'" width="640px">
+      <el-form v-if="editingSchedule" label-width="100px" size="default">
+        <el-form-item label="计划名称">
+          <el-input v-model="editingSchedule.schedule_name" placeholder="如: 工作日白天录像" />
+        </el-form-item>
+        <el-form-item label="通道">
+          <el-input v-model="editingSchedule.channel_id" placeholder="通道ID" :disabled="!!editingSchedule.id" />
+        </el-form-item>
+        <el-form-item label="录像类型">
+          <el-radio-group v-model="editingSchedule.schedule_type">
+            <el-radio value="continuous">24小时连续</el-radio>
+            <el-radio value="time_segment">分时段</el-radio>
+            <el-radio value="event">事件触发</el-radio>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item v-if="editingSchedule.schedule_type === 'event'" label="触发类型">
+          <el-input v-model="editingSchedule.event_types" placeholder="如: fire_smoke,perimeter_intrusion" />
+        </el-form-item>
+        <el-form-item v-if="editingSchedule.schedule_type === 'time_segment'" label="时间段">
+          <div v-for="(seg, i) in editingSchedule.time_segments" :key="i" style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
+            <el-select v-model="seg.day" style="width:80px">
+              <el-option v-for="(label, di) in DAY_LABELS" :key="di" :label="label" :value="di" />
+            </el-select>
+            <el-time-picker v-model="seg.start" value-format="HH:mm" format="HH:mm" placeholder="开始" style="width:120px" />
+            <span>—</span>
+            <el-time-picker v-model="seg.end" value-format="HH:mm" format="HH:mm" placeholder="结束" style="width:120px" />
+            <el-button type="danger" size="small" circle @click="removeTimeSegment(i)">−</el-button>
+          </div>
+          <el-button size="small" @click="addTimeSegment">+ 添加时段</el-button>
+        </el-form-item>
+        <el-form-item label="码流类型">
+          <el-radio-group v-model="editingSchedule.stream_type">
+            <el-radio value="main">主码流</el-radio>
+            <el-radio value="sub">子码流</el-radio>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item label="预录时间">
+          <el-input-number v-model="editingSchedule.pre_record_seconds" :min="0" :max="300" /> 秒
+        </el-form-item>
+        <el-form-item label="延录时间">
+          <el-input-number v-model="editingSchedule.post_record_seconds" :min="0" :max="600" /> 秒
+        </el-form-item>
+        <el-form-item label="启用">
+          <el-switch v-model="editingSchedule.enabled" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="scheduleDialogVisible = false">取消</el-button>
+        <el-button type="primary" @click="saveSchedule">保存</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- [P0-2] 水印配置弹窗 -->
+    <el-dialog v-model="watermarkDialogVisible" title="录像水印配置" width="480px">
+      <el-form v-if="watermarkConfig" label-width="100px" v-loading="watermarkLoading">
+        <el-form-item label="启用水印">
+          <el-switch v-model="watermarkConfig.enabled" />
+        </el-form-item>
+        <el-form-item label="显示时间戳">
+          <el-switch v-model="watermarkConfig.show_timestamp" />
+        </el-form-item>
+        <el-form-item label="显示通道名">
+          <el-switch v-model="watermarkConfig.show_channel_name" />
+        </el-form-item>
+        <el-form-item label="自定义文字">
+          <el-input v-model="watermarkConfig.custom_text" placeholder="如: 华盾智能安防" />
+        </el-form-item>
+        <el-form-item label="位置">
+          <el-select v-model="watermarkConfig.position" style="width:160px">
+            <el-option label="左上" value="top_left" />
+            <el-option label="右上" value="top_right" />
+            <el-option label="左下" value="bottom_left" />
+            <el-option label="右下" value="bottom_right" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="字号">
+          <el-input-number v-model="watermarkConfig.font_size" :min="10" :max="48" />
+        </el-form-item>
+        <el-form-item label="文字颜色">
+          <el-color-picker v-model="watermarkConfig.color" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="watermarkDialogVisible = false">取消</el-button>
+        <el-button type="primary" @click="saveWatermark">保存</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- [P1-2] 片段下载弹窗 -->
+    <el-dialog v-model="segmentDownloadVisible" title="按时间范围下载录像片段" width="460px">
+      <el-form label-width="100px">
+        <el-form-item label="设备">
+          <el-input :model-value="selectedDeviceId" disabled />
+        </el-form-item>
+        <el-form-item label="通道">
+          <el-input :model-value="selectedChannelId" disabled />
+        </el-form-item>
+        <el-form-item label="开始时间">
+          <el-date-picker v-model="segStartTime" type="datetime" value-format="YYYY-MM-DDTHH:mm:ss"
+            placeholder="选择开始时间" style="width:100%" />
+        </el-form-item>
+        <el-form-item label="结束时间">
+          <el-date-picker v-model="segEndTime" type="datetime" value-format="YYYY-MM-DDTHH:mm:ss"
+            placeholder="选择结束时间" style="width:100%" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="segmentDownloadVisible = false">取消</el-button>
+        <el-button type="primary" @click="doSegmentDownload">下载片段</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -1227,5 +1618,37 @@ onUnmounted(() => {
   border-radius: 3px;
   box-shadow: 0 1px 0 rgba(0,0,0,0.05);
   margin: 0 2px;
+}
+
+/* [P2-1] 存储预估结果 */
+.storage-result {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 20px;
+  background: linear-gradient(135deg, #e8f5e9, #f3e5f5);
+  border-radius: 8px;
+  min-width: 280px;
+}
+.storage-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 0;
+}
+.storage-row.highlight {
+  font-size: 18px;
+  font-weight: bold;
+  color: #0066cc;
+  border-top: 1px solid #ddd;
+  border-bottom: 1px solid #ddd;
+  padding: 12px 0;
+}
+.storage-label { color: #606266; }
+.storage-value { font-weight: bold; }
+.storage-formula {
+  font-size: 11px;
+  color: #909399;
+  margin-top: 4px;
 }
 </style>

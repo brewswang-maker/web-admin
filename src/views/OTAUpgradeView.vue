@@ -97,6 +97,139 @@
           </el-table-column>
         </el-table>
       </el-tab-pane>
+
+      <!-- [P2-1] 批量配置 -->
+      <el-tab-pane label="批量配置" name="batch">
+        <div class="tab-toolbar">
+          <span class="tab-desc">批量下发设备配置参数（码流/系统/AI阈值）</span>
+          <el-button type="primary" size="small" @click="executeBatchConfig" :loading="batchConfigLoading"
+            :disabled="batchSelectedDevices.length === 0">
+            <el-icon><Promotion /></el-icon>批量下发 ({{ batchSelectedDevices.length }}台)
+          </el-button>
+        </div>
+
+        <el-row :gutter="16">
+          <!-- 左: 设备选择 -->
+          <el-col :span="8">
+            <el-card shadow="never">
+              <template #header>
+                <span style="font-weight:600">选择设备</span>
+                <el-button link size="small" @click="selectAllDevices" style="float:right">
+                  {{ batchSelectedDevices.length === batchDeviceList.length ? '取消全选' : '全选' }}
+                </el-button>
+              </template>
+              <el-table :data="batchDeviceList" height="420" @selection-change="onBatchSelectionChange"
+                ref="batchDeviceTableRef" size="small" stripe>
+                <el-table-column type="selection" width="40" />
+                <el-table-column prop="name" label="设备名称" min-width="120" show-overflow-tooltip />
+                <el-table-column prop="status" label="状态" width="70">
+                  <template #default="{ row }">
+                    <el-tag size="small" :type="row.status === 'online' ? 'success' : 'info'">
+                      {{ row.status === 'online' ? '在线' : '离线' }}
+                    </el-tag>
+                  </template>
+                </el-table-column>
+              </el-table>
+            </el-card>
+          </el-col>
+
+          <!-- 右: 配置参数 -->
+          <el-col :span="16">
+            <el-card shadow="never">
+              <template #header><span style="font-weight:600">配置参数</span></template>
+              <el-form label-width="120px" size="small">
+                <!-- 码流参数 -->
+                <el-divider content-position="left">码流参数</el-divider>
+                <el-form-item label="启用码流配置">
+                  <el-switch v-model="batchConfigGroups.stream" />
+                </el-form-item>
+                <template v-if="batchConfigGroups.stream">
+                  <el-form-item label="编码格式">
+                    <el-select v-model="batchConfig.videoCodec" style="width:160px">
+                      <el-option label="H.264" value="H264" />
+                      <el-option label="H.265" value="H265" />
+                    </el-select>
+                  </el-form-item>
+                  <el-form-item label="分辨率">
+                    <el-select v-model="batchConfig.resolution" style="width:160px">
+                      <el-option label="4K (3840×2160)" value="3840x2160" />
+                      <el-option label="1080P (1920×1080)" value="1920x1080" />
+                      <el-option label="720P (1280×720)" value="1280x720" />
+                      <el-option label="D1 (704×576)" value="704x576" />
+                    </el-select>
+                  </el-form-item>
+                  <el-form-item label="帧率 (FPS)">
+                    <el-input-number v-model="batchConfig.fps" :min="1" :max="60" />
+                  </el-form-item>
+                  <el-form-item label="码率 (Kbps)">
+                    <el-input-number v-model="batchConfig.bitrate" :min="256" :max="8192" :step="256" />
+                  </el-form-item>
+                </template>
+
+                <!-- 系统参数 -->
+                <el-divider content-position="left">系统参数</el-divider>
+                <el-form-item label="启用系统配置">
+                  <el-switch v-model="batchConfigGroups.system" />
+                </el-form-item>
+                <template v-if="batchConfigGroups.system">
+                  <el-form-item label="日志级别">
+                    <el-select v-model="batchConfig.logLevel" style="width:120px">
+                      <el-option label="Debug" value="debug" />
+                      <el-option label="Info" value="info" />
+                      <el-option label="Warn" value="warn" />
+                      <el-option label="Error" value="error" />
+                    </el-select>
+                  </el-form-item>
+                  <el-form-item label="录像保留(天)">
+                    <el-input-number v-model="batchConfig.recordRetentionDays" :min="1" :max="365" />
+                  </el-form-item>
+                  <el-form-item label="NTP服务器">
+                    <el-input v-model="batchConfig.ntpServer" placeholder="如 ntp.aliyun.com" style="width:240px" />
+                  </el-form-item>
+                  <el-form-item label="心跳间隔(s)">
+                    <el-input-number v-model="batchConfig.heartbeatInterval" :min="10" :max="3600" />
+                  </el-form-item>
+                </template>
+
+                <!-- AI参数 -->
+                <el-divider content-position="left">AI 推理参数</el-divider>
+                <el-form-item label="启用AI配置">
+                  <el-switch v-model="batchConfigGroups.ai" />
+                </el-form-item>
+                <template v-if="batchConfigGroups.ai">
+                  <el-form-item label="最小置信度">
+                    <el-slider v-model="batchConfig.minConfidence" :min="0.1" :max="0.9" :step="0.05" show-input style="max-width:360px" />
+                  </el-form-item>
+                  <el-form-item label="抓拍间隔(s)">
+                    <el-input-number v-model="batchConfig.snapshotInterval" :min="1" :max="60" />
+                  </el-form-item>
+                </template>
+
+                <el-form-item v-if="!batchConfigGroups.stream && !batchConfigGroups.system && !batchConfigGroups.ai">
+                  <el-alert type="warning" :closable="false" title="请至少启用一个参数组" />
+                </el-form-item>
+              </el-form>
+            </el-card>
+          </el-col>
+        </el-row>
+
+        <!-- 下发进度 -->
+        <el-card v-if="batchProgress.visible" shadow="never" style="margin-top:16px">
+          <template #header><span style="font-weight:600">下发进度</span></template>
+          <el-progress :percentage="batchProgress.percent" :status="batchProgress.status" />
+          <el-table :data="batchProgress.results" size="small" style="margin-top:12px">
+            <el-table-column prop="deviceName" label="设备" min-width="120" />
+            <el-table-column prop="status" label="状态" width="100">
+              <template #default="{ row }">
+                <el-tag size="small" :type="row.status === 'success' ? 'success' : 'danger'">
+                  {{ row.status === 'success' ? '成功' : '失败' }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column prop="message" label="详情" min-width="200" show-overflow-tooltip />
+          </el-table>
+        </el-card>
+      </el-tab-pane>
     </el-tabs>
 
     <!-- 上传固件弹窗 -->
@@ -109,7 +242,7 @@
           <el-input v-model="uploadForm.description" type="textarea" :rows="2" />
         </el-form-item>
         <el-form-item label="固件文件">
-          <el-upload drag action="#" :auto-upload="false">
+          <el-upload drag action="#" :auto-upload="false" :on-change="handleFileChange" :on-remove="() => selectedFirmwareFile = null" :limit="1">
             <el-icon class="el-icon--upload"><UploadFilled /></el-icon>
             <div class="el-upload__text">拖拽或 <em>点击上传</em></div>
             <template #tip>
@@ -147,10 +280,7 @@
         </el-form-item>
         <el-form-item label="目标设备">
           <el-select v-model="taskForm.deviceIds" style="width:100%" multiple placeholder="选择要升级的设备" filterable>
-            <el-option label="东门主摄像机 (IPC-A1)" value="dev-001" />
-            <el-option label="南门IPC-B1" value="dev-002" />
-            <el-option label="停车场IPC-C1" value="dev-003" />
-            <el-option label="工地边缘盒子" value="dev-004" />
+            <el-option v-for="d in batchDeviceList" :key="d.id" :label="`${d.name} (${d.id})`" :value="d.id" />
           </el-select>
         </el-form-item>
         <el-form-item label="升级策略">
@@ -170,15 +300,18 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, reactive, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { otaApi, type FirmwareItem, type OTATask } from '@/api/ota'
+import { deviceApi } from '@/api/device'
+import { UploadFilled } from '@element-plus/icons-vue'
 
 const activeTab = ref('firmware')
 const showUploadDialog = ref(false)
 const showCreateTaskDialog = ref(false)
 const uploading = ref(false)
 const loading = ref(false)
+const selectedFirmwareFile = ref<File | null>(null)
 
 const firmwares = ref<FirmwareItem[]>([])
 const otaTasks = ref<OTATask[]>([])
@@ -261,16 +394,22 @@ async function handleRetryTask(row: OTATask) {
   }
 }
 
+function handleFileChange(file: any) {
+  selectedFirmwareFile.value = file?.raw ?? null
+}
+
 async function confirmUpload() {
   if (!uploadForm.value.version) {
     ElMessage.warning('请输入版本号')
     return
   }
+  if (!selectedFirmwareFile.value) {
+    ElMessage.warning('请选择固件文件')
+    return
+  }
   uploading.value = true
   try {
-    // In a real scenario, a file would be attached; here we send metadata only
-    const dummyFile = new File([], 'firmware.bin')
-    await otaApi.uploadFirmware(dummyFile, {
+    await otaApi.uploadFirmware(selectedFirmwareFile.value, {
       version: uploadForm.value.version,
       description: uploadForm.value.description,
       targetHardware: uploadForm.value.targetHardware,
@@ -279,6 +418,7 @@ async function confirmUpload() {
     showUploadDialog.value = false
     ElMessage.success('固件上传成功')
     uploadForm.value = { version: '', description: '', targetHardware: ['BM1684X'], isForce: false, changelog: '' }
+    selectedFirmwareFile.value = null
     await loadFirmwares()
   } catch {
     ElMessage.error('固件上传失败')
@@ -328,8 +468,137 @@ async function loadTasks() {
   }
 }
 
+// ── [P2-1] 批量配置 ──
+const batchDeviceList = ref<Array<{ id: string; name: string; status: string }>>([])
+const batchSelectedDevices = ref<Array<{ id: string; name: string; status: string }>>([])
+const batchDeviceTableRef = ref()
+const batchConfigLoading = ref(false)
+
+const batchConfigGroups = reactive({
+  stream: true,
+  system: false,
+  ai: false,
+})
+
+const batchConfig = reactive({
+  videoCodec: 'H264',
+  resolution: '1920x1080',
+  fps: 25,
+  bitrate: 2048,
+  logLevel: 'info' as string,
+  recordRetentionDays: 30,
+  ntpServer: '',
+  heartbeatInterval: 60,
+  minConfidence: 0.5,
+  snapshotInterval: 5,
+})
+
+const batchProgress = reactive({
+  visible: false,
+  percent: 0,
+  status: '' as '' | 'success' | 'exception',
+  results: [] as Array<{ deviceName: string; status: string; message: string }>,
+})
+
+function onBatchSelectionChange(rows: Array<{ id: string; name: string; status: string }>) {
+  batchSelectedDevices.value = rows
+}
+
+function selectAllDevices() {
+  if (batchSelectedDevices.value.length === batchDeviceList.value.length) {
+    batchDeviceTableRef.value?.clearSelection()
+  } else {
+    batchDeviceList.value.forEach((row) => {
+      batchDeviceTableRef.value?.toggleRowSelection(row, true)
+    })
+  }
+}
+
+async function loadBatchDevices() {
+  try {
+    const { data: res } = await deviceApi.getList({ pageSize: 200 })
+    const d = (res as unknown as Record<string, unknown>).data ?? res
+    const items = (d as { items?: Array<{ id: string; name: string; status: string }> }).items ?? []
+    batchDeviceList.value = items.map((item) => ({
+      id: item.id,
+      name: item.name || item.id,
+      status: item.status || 'unknown',
+    }))
+  } catch {
+    batchDeviceList.value = []
+  }
+}
+
+async function executeBatchConfig() {
+  if (batchSelectedDevices.value.length === 0) {
+    ElMessage.warning('请先选择设备')
+    return
+  }
+  if (!batchConfigGroups.stream && !batchConfigGroups.system && !batchConfigGroups.ai) {
+    ElMessage.warning('请至少启用一个参数组')
+    return
+  }
+
+  try {
+    await ElMessageBox.confirm(
+      `确认向 ${batchSelectedDevices.value.length} 台设备批量下发配置？`,
+      '批量配置确认',
+      { type: 'warning' }
+    )
+  } catch {
+    return
+  }
+
+  // 构建配置 payload
+  const payload: Record<string, unknown> = {}
+  if (batchConfigGroups.stream) {
+    payload.videoCodec = batchConfig.videoCodec
+    payload.resolution = batchConfig.resolution
+    payload.fps = batchConfig.fps
+    payload.bitrate = batchConfig.bitrate
+  }
+  if (batchConfigGroups.system) {
+    payload.logLevel = batchConfig.logLevel
+    payload.recordRetentionDays = batchConfig.recordRetentionDays
+    if (batchConfig.ntpServer) payload.ntpServer = batchConfig.ntpServer
+    payload.heartbeatInterval = batchConfig.heartbeatInterval
+  }
+  if (batchConfigGroups.ai) {
+    payload.minConfidence = batchConfig.minConfidence
+    payload.snapshotInterval = batchConfig.snapshotInterval
+  }
+
+  batchConfigLoading.value = true
+  batchProgress.visible = true
+  batchProgress.percent = 0
+  batchProgress.status = ''
+  batchProgress.results = []
+
+  const total = batchSelectedDevices.value.length
+  let successCount = 0
+
+  for (let i = 0; i < total; i++) {
+    const device = batchSelectedDevices.value[i]
+    try {
+      await deviceApi.updateConfig(device.id, payload)
+      batchProgress.results.push({ deviceName: device.name, status: 'success', message: '配置下发成功' })
+      successCount++
+    } catch (err: any) {
+      const msg = err?.response?.data?.message || err?.message || '未知错误'
+      batchProgress.results.push({ deviceName: device.name, status: 'failed', message: msg })
+    }
+    batchProgress.percent = Math.round(((i + 1) / total) * 100)
+  }
+
+  batchProgress.status = successCount === total ? 'success' : 'exception'
+  batchConfigLoading.value = false
+  ElMessage[successCount === total ? 'success' : 'warning'](
+    `批量配置完成: ${successCount}/${total} 台设备成功`
+  )
+}
+
 onMounted(async () => {
-  await Promise.all([loadFirmwares(), loadTasks()])
+  await Promise.all([loadFirmwares(), loadTasks(), loadBatchDevices()])
 })
 </script>
 

@@ -13,6 +13,9 @@ export interface PTZParams {
   channelId?: string
   direction?: 'up' | 'down' | 'left' | 'right' | 'home' | 'zoom_in' | 'zoom_out' | 'goto_preset'
     | 'cruise_start' | 'cruise_stop' | 'track_start' | 'track_stop' | 'set_preset' | 'clear_preset'
+    // [P0-3] GB28181 PTZ扩展: 聚焦/光圈/辅助开关
+    | 'focus_near' | 'focus_far' | 'iris_open' | 'iris_close' | 'aux_on' | 'aux_off' | 'wiper_on' | 'wiper_off'
+    | 'light_on' | 'light_off' | 'heater_on' | 'heater_off'
   speed?: number
   preset?: number
   pan?: number
@@ -90,6 +93,27 @@ export function stopTrack(deviceId: string, channelId?: string) {
     deviceId,
     channelId,
     direction: 'track_stop',
+  })
+}
+
+/** [P0-3] 辅助开关控制 (雨刷/灯光/加热等) */
+export function ptzAuxControl(deviceId: string, params: {
+  channelId?: string
+  /** 辅助设备: wiper(雨刷) / light(灯光) / heater(加热) / fan(风扇) */
+  auxType: 'wiper' | 'light' | 'heater' | 'fan'
+  enable: boolean
+}) {
+  const dirMap: Record<string, string> = {
+    wiper: 'wiper',
+    light: 'light',
+    heater: 'heater',
+    fan: 'aux',
+  }
+  const auxName = dirMap[params.auxType] || 'aux'
+  return ptzHttp.post<ApiResponse<void>>('/control', {
+    deviceId,
+    channelId: params.channelId,
+    direction: params.enable ? `${auxName}_on` : `${auxName}_off`,
   })
 }
 
