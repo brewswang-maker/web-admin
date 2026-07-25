@@ -677,4 +677,25 @@ export const linkageApi = {
   retryAction(id: number) {
     return http.post<ApiResponse<{ message: string; id: string }>>(`/linkage/action-log/${id}/retry`)
   },
+
+  // ── P3-5: 规则GUI编辑器 API ──
+
+  /** 规则校验 (dry-run) */
+  validateRule(data: Partial<LinkageRule>) {
+    return http.post<ApiResponse<{ valid: boolean; errors: string[]; warnings: string[] }>>('/rules/validate', data)
+  },
+
+  /** 保存为自定义模板 */
+  saveAsTemplate(data: {
+    template_id?: string
+    name: string
+    description?: string
+    category?: string
+    icon?: string
+    priority?: number
+    cooldown_ms?: number
+    tags?: string[]
+  }) {
+    return http.post<ApiResponse<{ template_id: string; message: string }>>('/linkage/rule-templates', data)
+  },
 }
