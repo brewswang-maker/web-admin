@@ -344,5 +344,5 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-.onvif-page { padding: 0 4px; }
+/* .onvif-page { padding: 0 4px; } */
 </style>

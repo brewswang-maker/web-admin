@@ -239,7 +239,7 @@ onMounted(fetchModels)
 
 <style scoped>
 .model-management {
-  padding: 20px;
+  /* padding: 20px; */
 }
 .model-id {
   font-size: 12px;

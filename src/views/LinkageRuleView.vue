@@ -5,7 +5,8 @@
     <el-tab-pane label="联动规则" name="rules">
 
     <!-- ===== 统计卡片 ===== -->
-    <el-row :gutter="16" class="stat-row">
+    <el-row :gutter="16" class="stat-row" style="margin-left:0;margin-right:0;"
+    >
       <el-col :span="6" v-for="s in statCards" :key="s.label">
         <el-card shadow="hover" class="stat-card" :body-style="{ padding: '16px 20px' }">
           <div class="stat-content">
@@ -202,7 +203,7 @@
             </el-col>
             <el-col :span="6">
               <el-form-item label="启用状态">
-                <el-switch v-model="form.enabled" active-text="启用" inactive-text="停用" style="margin-top: 6px" />
+                <el-switch v-model="form.enabled"  />
               </el-form-item>
             </el-col>
           </el-row>
@@ -889,7 +890,7 @@
 
     <!-- ==================== 预案管理 Tab ==================== -->
     <el-tab-pane label="预案管理" name="plans">
-      <div class="tab-toolbar">
+      <div class="tab-toolbar" >
         <el-button type="primary" size="small" @click="openPlanEditor(null)">+ 新建预案</el-button>
         <el-button size="small" @click="fetchPlans">刷新</el-button>
       </div>
@@ -2190,17 +2191,18 @@ watch(mainTab, (tab) => {
 <style scoped>
 /* ── 页面容器 ── */
 .linkage-page {
-  padding: 20px 24px;
-  max-width: var(--content-max-width, 1440px);
-  margin: 0 auto;
+  /* padding: 20px 24px; */
+  /* max-width: var(--content-max-width, 1440px); */
+  /* margin: 0 auto; */
   animation: fadeIn 0.3s ease;
+  
 }
 
 /* ── 主页面 Tabs ── */
 .main-tabs :deep(.el-tabs__content) { padding: 16px 0 0 0; overflow: visible; }
 .main-tabs :deep(.el-tabs__header) { margin-bottom: 0; }
 .main-tabs :deep(.el-tabs__nav-wrap::after) { height: 0; }
-.tab-toolbar { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.tab-toolbar { display: flex; align-items: center; gap: 8px; margin-bottom: 8px;margin-left: 8px;margin-right: 8px; }
 
 /* ── 统计卡片 ── */
 .stat-row { margin-bottom: 16px; }

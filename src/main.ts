@@ -15,6 +15,7 @@ import { usePreferenceStore } from './stores/preference'
 
 // 全局样式
 import './styles/main.scss'
+import './styles/global.css'
 
 // ElNotification 命令式 API 样式（全局告警弹窗需要）
 import 'element-plus/es/components/notification/style/css'

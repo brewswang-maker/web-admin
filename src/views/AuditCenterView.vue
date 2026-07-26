@@ -222,7 +222,7 @@ onMounted(async () => {
 </script>
 
 <style scoped>
-.audit-page { padding: 0 4px; }
+/* .audit-page { padding: 0 4px; } */
 .page-title { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
 .page-title h2 { margin: 0; font-size: 20px; }
 .audit-stat-card { text-align: center; padding: 4px 0; }

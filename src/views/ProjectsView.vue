@@ -1,7 +1,8 @@
 <template>
   <div class="projects-page">
     <!-- ===== 工具栏 ===== -->
-    <div class="toolbar">
+    <el-card class="toolbar-card" shadow="never">
+      <div class="toolbar">
       <el-input
         v-model="searchKeyword"
         placeholder="搜索项目名称/负责人"
@@ -34,9 +35,11 @@
       <el-button @click="refreshProjects">
         <el-icon><Refresh /></el-icon>刷新
       </el-button>
-    </div>
+      </div>
+    </el-card>
 
     <!-- ===== 项目列表 ===== -->
+    <el-card class="project-list-card" shadow="never">
     <el-table
       :data="filteredProjects"
       stripe
@@ -114,6 +117,7 @@
         background
       />
     </div>
+    </el-card>
 
     <!-- ============================================================ -->
     <!-- 创建 / 编辑 弹窗                                              -->
@@ -436,8 +440,13 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.projects-page {
-  max-width: 1500px;
+.toolbar-card :deep(.el-card__body),
+.project-list-card :deep(.el-card__body) {
+  padding: 20px 24px;
+}
+
+.project-list-card {
+  margin-top: 16px;
 }
 
 .toolbar {
@@ -451,5 +460,30 @@ onMounted(() => {
   display: flex;
   justify-content: flex-end;
   margin-top: 16px;
+}
+
+@media (max-width: 640px) {
+  .projects-page {
+    width: calc(100% - 16px);
+    margin: 8px auto;
+  }
+
+  .toolbar-card :deep(.el-card__body),
+  .project-list-card :deep(.el-card__body) {
+    padding: 16px;
+  }
+
+  .toolbar {
+    align-items: stretch;
+  }
+
+  .toolbar > * {
+    width: 100% !important;
+  }
+
+  .pagination-wrapper {
+    justify-content: center;
+    overflow-x: auto;
+  }
 }
 </style>

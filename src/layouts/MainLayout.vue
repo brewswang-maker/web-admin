@@ -1,7 +1,7 @@
 <template>
   <el-container class="main-layout" :class="{ 'dark-theme': prefStore.themeMode === 'dark' }">
     <!-- ===== 侧边栏 ===== -->
-    <el-aside :width="isCollapsed ? '64px' : '230px'" class="sidebar" :class="{ collapsed: isCollapsed }">
+    <el-aside :width="isCollapsed ? '64px' : '245px'" class="sidebar" :class="{ collapsed: isCollapsed }">
       <!-- Logo -->
       <div class="logo" @click="router.push('/dashboard')">
         <img src="/favicon.svg" alt="logo" width="32" height="32" />
@@ -16,8 +16,8 @@
         :collapse="isCollapsed"
         router
         background-color="transparent"
-        text-color="rgba(255,255,255,0.85)"
-        active-text-color="#3B82F6"
+        :text-color="prefStore.themeMode === 'dark' ? '#AADDFF' : '#1F2937'"
+        :active-text-color="prefStore.themeMode === 'dark' ? '#60A5FA' : '#1890FF'"
         class="sidebar-menu"
         :collapse-transition="false"
       >
@@ -506,7 +506,7 @@ function handleUserCommand(command: string) {
 
 /* ── 侧边栏 ── */
 .sidebar {
-  background: var(--app-sidebar-bg, #0F1419);
+  background: var(--app-sidebar-bg, #002C73);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -567,7 +567,7 @@ function handleUserCommand(command: string) {
 
 .group-title {
   font-size: 11px;
-  color: rgba(255, 255, 255, 0.45);
+  color: rgba(255, 255, 255, 0.8);
   text-transform: uppercase;
   letter-spacing: 1px;
   font-weight: var(--font-semibold, 600);
@@ -633,27 +633,63 @@ function handleUserCommand(command: string) {
 }
 
 .main-layout:not(.dark-theme) .sidebar {
-  background: var(--app-sidebar-bg, #001529);
+  background: var(--app-sidebar-bg, #FFFFFF);
 }
 
 .main-layout:not(.dark-theme) .sidebar .logo-text {
-  color: #FFFFFF;
+  color: #000000;
 }
 
 .main-layout:not(.dark-theme) .sidebar .group-title {
-  color: rgba(255, 255, 255, 0.45);
+  color: rgba(31, 41, 55, 0.6);
+}
+
+.main-layout:not(.dark-theme) .sidebar-menu :deep(.el-menu-item:hover) {
+  background: rgba(31, 41, 55, 0.06) !important;
+  color: #1F2937;
+}
+
+.main-layout:not(.dark-theme) .sidebar-menu :deep(.el-menu-item.is-active) {
+  background: rgba(24, 144, 255, 0.12);
+  color: var(--app-sidebar-active, #1890FF) !important;
+}
+
+.main-layout:not(.dark-theme) .sidebar-menu :deep(.el-menu-item .el-icon) {
+  color: #1F2937;
+}
+
+.main-layout:not(.dark-theme) .sidebar-menu :deep(.el-menu-item.is-active .el-icon) {
+  color: var(--app-sidebar-active, #1890FF);
 }
 
 .main-layout:not(.dark-theme) .sidebar .sidebar-collapse-btn {
-  color: rgba(255, 255, 255, 0.45);
+  color: rgba(31, 41, 55, 0.55);
 }
 
 .main-layout:not(.dark-theme) .sidebar .sidebar-collapse-btn:hover {
-  color: rgba(255, 255, 255, 0.85);
+  color: #1F2937;
+  background: rgba(31, 41, 55, 0.06);
 }
 
 .main-layout.dark-theme .sidebar {
-  background: var(--app-sidebar-bg, #0F1419);
+  background: var(--app-sidebar-bg, #002C73);
+}
+
+.main-layout.dark-theme .sidebar-menu :deep(.el-menu-item) {
+  color: #AADDFF;
+}
+
+.main-layout.dark-theme .sidebar-menu :deep(.el-menu-item .el-icon) {
+  color: #AADDFF;
+}
+
+.main-layout.dark-theme .sidebar-menu :deep(.el-menu-item.is-active) {
+  background: #00419E;
+  color: #00FFFF !important;
+}
+
+.main-layout.dark-theme .sidebar-menu :deep(.el-menu-item.is-active .el-icon) {
+  color: #00FFFF;
 }
 
 /* ── 内容容器 ── */
@@ -671,7 +707,7 @@ function handleUserCommand(command: string) {
   align-items: center;
   justify-content: space-between;
   padding: 0 20px;
-  background: var(--app-header-bg, #1A1D23);
+  background: var(--app-header-bg, #FFFFFF);
   border-bottom: 1px solid var(--app-border);
   flex-shrink: 0;
   z-index: var(--z-header);
@@ -718,10 +754,20 @@ function handleUserCommand(command: string) {
   gap: 8px;
 }
 
-.header-icon-btn {
+.header-right :deep(.el-icon) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  vertical-align: middle;
+}
+
+.header-icon-btn,
+.header-right :deep(.notification-bell) {
   width: 36px;
   height: 36px;
-  display: flex;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
   border-radius: 50%;
@@ -739,12 +785,51 @@ function handleUserCommand(command: string) {
   color: var(--color-ai);
 }
 
+.main-layout.dark-theme .header {
+  color: #FFFFFF;
+}
+
+.main-layout.dark-theme .global-search {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.2);
+  color: #FFFFFF;
+}
+
+.main-layout.dark-theme .global-search:hover {
+  border-color: rgba(255, 255, 255, 0.45);
+  color: #FFFFFF;
+}
+
+.main-layout.dark-theme .search-hint {
+  background: rgba(255, 255, 255, 0.12);
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.main-layout.dark-theme .header-icon-btn,
+.main-layout.dark-theme .username,
+.main-layout.dark-theme .dropdown-icon,
+.main-layout.dark-theme :deep(.notification-bell) {
+  color: #FFFFFF;
+}
+
+.main-layout.dark-theme .header-icon-btn:hover,
+.main-layout.dark-theme .user-menu:hover,
+.main-layout.dark-theme :deep(.notification-bell:hover) {
+  background: rgba(255, 255, 255, 0.12);
+  color: #FFFFFF;
+}
+
+.main-layout.dark-theme :deep(.notification-bell.has-urgent) {
+  color: #F56C6C;
+}
+
 /* 用户菜单 */
 .user-menu {
-  display: flex;
+  display: inline-flex;
   align-items: center;
   gap: 8px;
-  padding: 4px 12px 4px 4px;
+  min-height: 36px;
+  padding: 2px 12px 2px 4px;
   border-radius: var(--radius-full);
   cursor: pointer;
   transition: all var(--transition-fast, 0.15s ease);
@@ -776,6 +861,7 @@ function handleUserCommand(command: string) {
   flex-direction: column;
   min-height: 0;
   position: relative;
+  padding: 20px 24px;
 }
 
 /* ── 页面过渡动画 ── */

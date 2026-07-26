@@ -745,11 +745,16 @@ onUnmounted(() => {
 
 <style scoped>
 .location-track {
+  --app-bg: #ffffff;
+  --app-card-bg: #ffffff;
+  --app-text: #303133;
+  --app-text-secondary: #606266;
+  --app-border: #e4e7ed;
   display: flex;
   flex-direction: column;
   height: calc(100vh - 64px);
-  background: var(--app-bg, #0a0e14);
-  color: var(--app-text, #e6edf3);
+  background: var(--app-bg);
+  color: var(--app-text);
 }
 
 /* 顶部工具栏 */

@@ -18,12 +18,14 @@
         <el-card shadow="hover" class="metric-card">
           <div class="metric-value blue">{{ federationStatus?.participatingBoxes ?? 0 }}/{{ federationStatus?.totalBoxes ?? 0 }}</div>
           <div class="metric-label">参与盒子</div>
+          <div class="metric-sub metric-sub-placeholder" aria-hidden="true"></div>
         </el-card>
       </el-col>
       <el-col :span="6">
         <el-card shadow="hover" class="metric-card">
           <div class="metric-value green">{{ aggregationAccuracy }}%</div>
           <div class="metric-label">聚合精度</div>
+          <div class="metric-sub metric-sub-placeholder" aria-hidden="true"></div>
         </el-card>
       </el-col>
       <el-col :span="6">
@@ -219,23 +221,53 @@ onMounted(refreshAll)
 </script>
 
 <style scoped>
-.federation-page { padding: 0 4px; }
+/* .federation-page { padding: 0 4px; } */
 .page-title { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
 .page-title h2 { margin: 0; font-size: 20px; }
-.status-card { text-align: center; padding: 8px 0; }
+.status-card,
+.metric-card {
+  min-height: 128px;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  text-align: center;
+  padding: 16px 12px;
+  border: 1px solid var(--app-border);
+  background: var(--app-surface);
+  color: var(--app-text-primary);
+  box-shadow: var(--shadow-card);
+}
+
 .status-card.running { border-color: #52c41a; }
 .status-card.paused { border-color: #faad14; }
 .status-card.error { border-color: #f5222d; }
-.status-indicator { font-size: 32px; }
-.status-text { font-size: 16px; font-weight: 600; margin-top: 4px; }
-.status-sub { font-size: 12px; color: #8c8c8c; margin-top: 4px; }
-.metric-card { text-align: center; padding: 8px 0; }
-.metric-value { font-size: 28px; font-weight: 700; }
+.status-indicator { font-size: 32px; line-height: 1; }
+.status-text { font-size: 16px; font-weight: 600; margin-top: 8px; }
+.status-sub { font-size: 12px; color: var(--app-text-secondary); margin-top: 6px; }
+.metric-value { font-size: 28px; font-weight: 700; line-height: 1.2; }
 .metric-value.blue { color: #1890ff; }
 .metric-value.green { color: #52c41a; }
 .metric-value.orange { color: #fa8c16; }
-.metric-label { font-size: 13px; color: #6b7280; margin-top: 2px; }
-.metric-sub { font-size: 11px; color: #9ca3af; margin-top: 4px; }
+.metric-label { font-size: 13px; color: var(--app-text-secondary); margin-top: 6px; }
+.metric-sub {
+  min-height: 15px;
+  font-size: 11px;
+  color: var(--app-text-disabled);
+  margin-top: 5px;
+}
+
+@media (max-width: 900px) {
+  .federation-page :deep(.el-col) {
+    margin-bottom: 16px;
+  }
+}
+
+@media (max-width: 600px) {
+  .federation-page :deep(.el-row) {
+    row-gap: 16px;
+  }
+}
 .privacy-rows { display: flex; flex-direction: column; gap: 14px; }
 .privacy-row { display: flex; align-items: center; }
 .privacy-label { width: 120px; font-size: 13px; color: #6b7280; flex-shrink: 0; }

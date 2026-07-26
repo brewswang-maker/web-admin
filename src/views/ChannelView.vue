@@ -463,7 +463,7 @@ watch(() => route.params.id, () => loadChannels())
 .header-left { display: flex; align-items: center; gap: 12px; }
 .device-label { display: flex; align-items: center; gap: 8px; font-size: 15px; }
 .device-label .ip { color: var(--el-text-color-secondary); font-size: 13px; font-family: monospace; }
-.header-right { display: flex; gap: 8px; }
+.header-right { display: flex; gap: 8px; display: flex; align-items: center;}
 
 /* 通道卡片网格 */
 .channel-grid { display: flex; flex-direction: column; gap: 16px; }

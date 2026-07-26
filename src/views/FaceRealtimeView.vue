@@ -46,7 +46,7 @@
           </div>
         </el-card>
       </el-col>
-      <el-col :span="4">
+      <el-col :span="4" >
         <el-card class="stat-card stat-conn" shadow="hover">
           <div class="stat-content">
             <el-icon class="stat-icon" :size="28" :color="connected ? '#67C23A' : '#F56C6C'">
@@ -679,11 +679,11 @@ defineOptions({ name: 'FaceRealtimeView' })
 </script>
 
 <style scoped>
-.face-realtime-view { padding: 16px; }
+/* .face-realtime-view { padding: 16px; } */
 
 /* ── 统计卡片 ── */
-.stats-row { margin-bottom: 12px; }
-.stat-card { border-radius: 8px; }
+.stats-row { margin-bottom: 12px; display: flex;align-items: center;}
+.stat-card { min-height: 88px; }
 .stat-content { display: flex; align-items: center; gap: 12px; padding: 4px 0; }
 .stat-info { flex: 1; }
 .stat-value { font-size: 26px; font-weight: 600; color: #303133; line-height: 1.2; }

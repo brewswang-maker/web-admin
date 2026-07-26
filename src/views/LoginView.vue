@@ -196,7 +196,7 @@ function handleCertLogin() {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: linear-gradient(135deg, #0a1628 0%, #102048 30%, #0d2340 60%, #0a1628 100%);
+  background: url('@/assets/bg_login.jpg') center / cover no-repeat;
   overflow: hidden;
 }
 
@@ -205,6 +205,7 @@ function handleCertLogin() {
   position: absolute;
   inset: 0;
   pointer-events: none;
+  background: linear-gradient(180deg, rgba(3, 35, 94, 0.18), rgba(0, 73, 160, 0.12));
 }
 
 .bg-grid {
@@ -251,21 +252,28 @@ function handleCertLogin() {
   display: flex;
   flex-direction: column;
   align-items: center;
+  justify-content: center;
+  width: 100%;
+  max-width: 520px;
+  min-height: 100vh;
+  box-sizing: border-box;
   gap: 24px;
+  padding: 32px 24px;
+  margin: 0 auto;
 }
 
 .login-card {
   width: 400px;
   padding: 48px 40px 36px;
-  background: rgba(255, 255, 255, 0.04);
+  background: rgba(255, 255, 255, 0.1);
   backdrop-filter: blur(24px);
   -webkit-backdrop-filter: blur(24px);
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: var(--radius-2xl, 16px);
-  box-shadow:
+  /* box-shadow:
     0 4px 24px rgba(0, 0, 0, 0.3),
     0 1px 3px rgba(0, 0, 0, 0.2),
-    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+    inset 0 1px 0 rgba(255, 255, 255, 0.05); */
 }
 
 /* ── Logo & 标题 ── */
@@ -301,14 +309,14 @@ function handleCertLogin() {
 
 .login-subtitle {
   font-size: 14px;
-  color: rgba(255, 255, 255, 0.5);
+  color: rgba(255, 255, 255, 1);
   font-family: var(--font-mono);
   margin: 0 0 4px;
 }
 
 .login-desc {
   font-size: 12px;
-  color: rgba(124, 58, 237, 0.7);
+  color: rgba(164, 235, 255, 0.86);
   margin: 0;
   letter-spacing: 0.5px;
 }
@@ -341,20 +349,30 @@ function handleCertLogin() {
   color: #FFFFFF;
 }
 
+.login-form :deep(.el-input__inner:-webkit-autofill),
+.login-form :deep(.el-input__inner:-webkit-autofill:hover),
+.login-form :deep(.el-input__inner:-webkit-autofill:focus),
+.login-form :deep(.el-input__inner:-webkit-autofill:active) {
+  -webkit-text-fill-color: #FFFFFF;
+  -webkit-box-shadow: 0 0 0 1000px transparent inset;
+  box-shadow: 0 0 0 1000px transparent inset;
+  transition: background-color 9999s ease-out 0s;
+}
+
 .login-form :deep(.el-input__inner::placeholder) {
   color: rgba(255, 255, 255, 0.3);
 }
 
 .login-form :deep(.el-input__prefix .el-icon) {
-  color: rgba(255, 255, 255, 0.35);
+  color: rgba(255, 255, 255, 1);
 }
 
 .login-form :deep(.el-input__suffix .el-icon) {
-  color: rgba(255, 255, 255, 0.35);
+  color: rgba(255, 255, 255, 1);
 }
 
 .login-form :deep(.el-input__clear) {
-  color: rgba(255, 255, 255, 0.35);
+  color: rgba(255, 255, 255, 1);
 }
 
 /* ── 记住设备 / 忘记密码 ── */
@@ -366,8 +384,8 @@ function handleCertLogin() {
 }
 
 .login-options :deep(.el-checkbox) {
-  color: rgba(255, 255, 255, 0.5);
-  --el-checkbox-checked-text-color: rgba(255, 255, 255, 0.5);
+  color: rgba(255, 255, 255, 1);
+  --el-checkbox-checked-text-color: rgba(255, 255, 255, 1);
 }
 
 .login-options :deep(.el-checkbox__label) {
@@ -375,12 +393,12 @@ function handleCertLogin() {
 }
 
 .forgot-link {
-  color: rgba(255, 255, 255, 0.4);
+  color: rgba(255, 255, 255, 1);
   font-size: 13px;
 }
 
 .forgot-link:hover {
-  color: var(--color-primary-light);
+  color: rgba(255, 255, 255, 0.5);
 }
 
 /* ── 登录按钮 ── */
@@ -391,7 +409,7 @@ function handleCertLogin() {
   font-weight: var(--font-semibold, 600);
   letter-spacing: 4px;
   border-radius: 8px;
-  background: linear-gradient(135deg, #3B82F6 0%, #2563EB 50%, #1D4ED8 100%);
+  /* background: linear-gradient(135deg, #3B82F6 0%, #2563EB 50%, #1D4ED8 100%); */
   border: none;
   transition: all var(--transition-normal, 0.2s ease);
   position: relative;
@@ -447,7 +465,7 @@ function handleCertLogin() {
 .divider-text {
   padding: 0 16px;
   font-size: 13px;
-  color: rgba(255, 255, 255, 0.3);
+  color: rgba(255, 255, 255, 0.5);
 }
 
 /* ── 第三方登录 ── */
@@ -460,10 +478,11 @@ function handleCertLogin() {
 .social-btn {
   width: 100%;
   height: 44px;
+  margin-left: 0 !important;
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.04);
   border: 1px solid rgba(255, 255, 255, 0.1);
-  color: rgba(255, 255, 255, 0.7);
+  color: rgba(255, 255, 255, 1);
   font-size: 14px;
   transition: all var(--transition-normal, 0.2s ease);
 }
@@ -487,7 +506,7 @@ function handleCertLogin() {
 
 .version-text {
   font-size: 12px;
-  color: rgba(255, 255, 255, 0.2);
+  color: rgba(255, 255, 255, 1);
   font-family: var(--font-mono);
   letter-spacing: 1px;
 }
@@ -499,7 +518,7 @@ function handleCertLogin() {
   justify-content: center;
   gap: 8px;
   font-size: 12px;
-  color: rgba(255, 255, 255, 0.25);
+  color: rgba(255, 255, 255, 1);
   letter-spacing: 0.5px;
 }
 

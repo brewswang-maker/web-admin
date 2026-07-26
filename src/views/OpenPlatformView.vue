@@ -316,7 +316,7 @@ onMounted(async () => {
 </script>
 
 <style scoped>
-.openapi-page { padding: 0 4px; }
+/* .openapi-page { padding: 0 4px; } */
 .page-title { margin-bottom: 16px; }
 .page-title h2 { margin: 0; font-size: 20px; }
 .tab-toolbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }

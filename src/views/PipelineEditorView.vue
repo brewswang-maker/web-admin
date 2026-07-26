@@ -160,7 +160,7 @@
         </div>
       </div>
       <div class="monitor-nodes">
-        <el-table :data="runtimeStatus.nodes" size="small" stripe :header-cell-style="{ background: '#2D3039', color: '#E8EAED' }" class="monitor-table">
+        <el-table :data="runtimeStatus.nodes" size="small" stripe :header-cell-style="{ background: '#f5f7fa', color: '#606266' }" class="monitor-table">
           <el-table-column prop="node_id" label="Node" width="120" />
           <el-table-column prop="type" label="Type" width="100" />
           <el-table-column prop="state" label="State" width="90">
@@ -569,60 +569,60 @@ async function fetchRuntime() {
 </script>
 
 <style scoped>
-.pipeline-editor { height: calc(100vh - 80px); display: flex; flex-direction: column; background: #1A1D23; }
-.pe-header { padding: 10px 16px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #3C4043; background: #252830; }
-.pe-title { display: flex; align-items: center; gap: 8px; color: #E8EAED; }
+.pipeline-editor { height: calc(100vh - 80px); display: flex; flex-direction: column; background: #f5f7fa; box-sizing: border-box; }
+.pe-header { padding: 12px 16px; display: flex; justify-content: space-between; align-items: center; border: 1px solid #e4e7ed; background: #ffffff; }
+.pe-title { display: flex; align-items: center; gap: 8px; color: #303133; }
 .pe-body { flex: 1; display: flex; overflow: hidden; }
 
 /* 组件面板 */
-.pe-palette { width: 200px; background: #252830; border-right: 1px solid #3C4043; overflow-y: auto; padding: 8px; }
+.pe-palette { width: 200px; background: #ffffff; border: 1px solid #e4e7ed; border-top: none; overflow-y: auto; padding: 12px; }
 .palette-group { margin-bottom: 12px; }
-.palette-cat { font-size: 12px; color: #9AA0A6; font-weight: 600; padding: 4px 8px; }
-.palette-item { display: flex; align-items: center; gap: 6px; padding: 6px 10px; border-radius: 6px; cursor: grab; color: #E8EAED; font-size: 13px; margin-bottom: 2px; background: #2D3039; }
-.palette-item:hover { background: #1E3A5F; }
+.palette-cat { font-size: 12px; color: #606266; font-weight: 600; padding: 4px 8px; }
+.palette-item { display: flex; align-items: center; gap: 6px; padding: 6px 10px; border-radius: 6px; cursor: grab; color: #303133; font-size: 13px; margin-bottom: 2px; background: #f5f7fa; }
+.palette-item:hover { background: #ecf5ff; }
 
 /* 画布 */
-.pe-canvas { flex: 1; position: relative; overflow: hidden; cursor: default; }
+.pe-canvas { flex: 1; position: relative; overflow: hidden; cursor: default; background: #ffffff; border: 1px solid #e4e7ed; border-top: none; }
 .pe-lines { position: absolute; top: 0; left: 0; pointer-events: none; }
 
 /* 节点 */
-.pe-node { position: absolute; width: 180px; background: #252830; border: 2px solid #3C4043; border-radius: 8px; cursor: move; user-select: none; z-index: 1; }
+.pe-node { position: absolute; width: 180px; background: #ffffff; border: 2px solid #dcdfe6; border-radius: 8px; cursor: move; user-select: none; z-index: 1; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
 .pe-node:hover { border-color: #1A73E8; }
 .pe-node.selected { border-color: #1A73E8; box-shadow: 0 0 12px rgba(26,115,232,0.3); }
-.node-header { padding: 6px 10px; background: #2D3039; border-radius: 6px 6px 0 0; display: flex; align-items: center; gap: 6px; font-size: 13px; color: #E8EAED; }
+.node-header { padding: 6px 10px; background: #f5f7fa; border-radius: 6px 6px 0 0; display: flex; align-items: center; gap: 6px; font-size: 13px; color: #303133; }
 .node-icon { font-size: 14px; }
 .node-title { flex: 1; font-weight: 600; }
-.node-del { color: #9AA0A6 !important; padding: 0 !important; }
+.node-del { color: #909399 !important; padding: 0 !important; }
 .node-del:hover { color: #DB4437 !important; }
 
 .node-ports { padding: 6px 0; }
 .ports-in { padding-left: 8px; }
 .ports-out { text-align: right; padding-right: 8px; }
-.port { font-size: 11px; color: #9AA0A6; padding: 2px 0; cursor: crosshair; display: flex; align-items: center; gap: 4px; }
+.port { font-size: 11px; color: #606266; padding: 2px 0; cursor: crosshair; display: flex; align-items: center; gap: 4px; }
 .out-port { justify-content: flex-end; }
 .port-dot { width: 8px; height: 8px; border-radius: 50%; background: #1A73E8; flex-shrink: 0; }
 .in-port .port-dot { background: #0F9D58; }
 
 /* 属性面板 */
-.pe-props { width: 280px; background: #252830; border-left: 1px solid #3C4043; overflow-y: auto; padding: 12px; }
-.pe-props h4 { color: #E8EAED; margin: 0 0 12px; font-size: 14px; }
-.props-empty { text-align: center; color: #666; padding: 40px 20px; }
+.pe-props { width: 280px; background: #ffffff; border: 1px solid #e4e7ed; border-top: none; overflow-y: auto; padding: 16px; }
+.pe-props h4 { color: #303133; margin: 0 0 12px; font-size: 14px; }
+.props-empty { text-align: center; color: #909399; padding: 40px 20px; }
 
-/* 暗色表单 */
-:deep(.el-form-item__label) { color: #9AA0A6; font-size: 12px; }
-:deep(.el-input__inner) { background: #1A1D23; border-color: #3C4043; color: #E8EAED; }
-:deep(.el-textarea__inner) { background: #1A1D23; border-color: #3C4043; color: #E8EAED; }
+/* 浅色表单 */
+:deep(.el-form-item__label) { color: #606266; font-size: 12px; }
+:deep(.el-input__inner) { background: #ffffff; border-color: #dcdfe6; color: #303133; }
+:deep(.el-textarea__inner) { background: #ffffff; border-color: #dcdfe6; color: #303133; }
 
 /* v7.0: 运行时监控面板 */
-.pe-monitor { height: 220px; background: #141720; border-top: 2px solid #1A73E8; overflow-y: auto; }
-.monitor-header { padding: 8px 16px; display: flex; align-items: center; gap: 8px; border-bottom: 1px solid #3C4043; }
-.monitor-title { font-size: 13px; font-weight: 600; color: #E8EAED; }
+.pe-monitor { height: 220px; background: #ffffff; border: 1px solid #e4e7ed; border-top: 2px solid #1A73E8; overflow-y: auto; }
+.monitor-header { padding: 8px 16px; display: flex; align-items: center; gap: 8px; border-bottom: 1px solid #e4e7ed; }
+.monitor-title { font-size: 13px; font-weight: 600; color: #303133; }
 .monitor-dashboard { display: flex; gap: 12px; padding: 10px 16px; }
-.metric-card { flex: 1; background: #252830; border-radius: 8px; padding: 10px 12px; text-align: center; }
-.metric-label { font-size: 11px; color: #9AA0A6; margin-bottom: 4px; }
+.metric-card { flex: 1; background: #f5f7fa; border: 1px solid #e4e7ed; padding: 10px 12px; text-align: center; }
+.metric-label { font-size: 11px; color: #606266; margin-bottom: 4px; }
 .metric-value { font-size: 18px; font-weight: 700; color: #1A73E8; }
 .monitor-nodes { padding: 0 16px 10px; }
-:deep(.monitor-table .el-table__row) { background: #1A1D23; }
-:deep(.monitor-table .el-table__row--striped) { background: #252830; }
-:deep(.monitor-table td) { color: #E8EAED; border-color: #3C4043; }
+:deep(.monitor-table .el-table__row) { background: #ffffff; }
+:deep(.monitor-table .el-table__row--striped) { background: #f5f7fa; }
+:deep(.monitor-table td) { color: #303133; border-color: #e4e7ed; }
 </style>

@@ -604,7 +604,7 @@ onMounted(() => { loadStats(); loadRecords() })
 </script>
 
 <style scoped>
-.face-database-view { padding: 20px; }
+/* .face-database-view { padding: 20px; } */
 .stats-card, .toolbar-card, .table-card { margin-bottom: 20px; }
 .stat-item { display: flex; align-items: center; gap: 15px; }
 .stat-icon {

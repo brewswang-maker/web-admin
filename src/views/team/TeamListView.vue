@@ -1,5 +1,5 @@
 <template>
-  <div class="team-list-page">
+  <el-card class="team-list-page" shadow="never">
     <div class="page-header">
       <h1>👥 团队管理</h1>
       <el-button v-if="auth.can('teams', 'write')" type="primary" @click="showCreateDialog = true">
@@ -78,7 +78,7 @@
       </el-table>
       <el-empty v-if="myInvites.length === 0" description="暂无待处理邀请" />
     </el-dialog>
-  </div>
+  </el-card>
 </template>
 
 <script setup lang="ts">
@@ -159,11 +159,23 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.team-list-page { max-width: 1200px; margin: 0 auto; }
+.team-list-page :deep(.el-card__body) {
+  padding: 24px;
+}
 .page-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
 .page-header h1 { margin: 0; font-size: 22px; }
 .invite-alert { margin-bottom: 16px; }
-.team-card { cursor: pointer; transition: transform .2s; margin-bottom: 16px; }
+.team-card {
+  height: calc(100% - 16px);
+  cursor: pointer;
+  transition: transform .2s, box-shadow .2s;
+  margin-bottom: 16px;
+}
+.team-card :deep(.el-card__body) {
+  display: flex;
+  flex-direction: column;
+  height: calc(100% - 58px);
+}
 .team-card:hover { transform: translateY(-2px); }
 .team-card-header { display: flex; align-items: center; }
 .team-info { display: flex; align-items: center; gap: 12px; }

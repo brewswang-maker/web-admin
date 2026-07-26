@@ -1550,7 +1550,7 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
-.recording-view { padding: 20px; }
+/* .recording-view { padding: 20px; } */
 .speed-btn-group .el-button { padding-left: 10px; padding-right: 10px; }
 
 /* AI 智能检索表单 */

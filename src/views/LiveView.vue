@@ -10,19 +10,19 @@
               {{ activeChannelName }}
             </span>
             <div class="toolbar-actions">
-              <span style="color:#9AA0A6;font-size:12px;margin-right:4px">播放格式:</span>
-              <el-radio-group v-model="preferredFormat" size="small" fill="#1A73E8">
-                <el-radio-button v-for="(label, key) in FORMAT_LABELS" :key="key" :value="key">{{ label }}</el-radio-button>
-              </el-radio-group>
-              <el-divider direction="vertical" />
-              <el-button-group size="small">
-                <el-button :type="layout === 1 ? 'primary' : 'default'" @click="setLayout(1)" title="单屏">1</el-button>
-                <el-button :type="layout === 4 ? 'primary' : 'default'" @click="setLayout(4)" title="四分屏">4</el-button>
-                <el-button :type="layout === 9 ? 'primary' : 'default'" @click="setLayout(9)" title="九分屏">9</el-button>
-                <el-button :type="layout === 16 ? 'primary' : 'default'" @click="setLayout(16)" title="十六分屏">16</el-button>
-                <el-button :type="layout === 25 ? 'primary' : 'default'" @click="setLayout(25)" title="二十五分屏 (大屏模式)">25</el-button>
-                <el-button :type="layout === 36 ? 'primary' : 'default'" @click="setLayout(36)" title="三十六分屏 (大屏模式)">36</el-button>
-              </el-button-group>
+              <span class="toolbar-label">播放格式:</span>
+              <el-select v-model="preferredFormat" size="small" style="width: 110px" aria-label="播放格式">
+                <el-option v-for="(label, key) in FORMAT_LABELS" :key="key" :label="label" :value="key" />
+              </el-select>
+              <span class="toolbar-label">分屏:</span>
+              <el-select :model-value="layout" size="small" style="width: 100px" aria-label="分屏布局" @update:model-value="setLayout">
+                <el-option :value="1" label="1 分屏" />
+                <el-option :value="4" label="4 分屏" />
+                <el-option :value="9" label="9 分屏" />
+                <el-option :value="16" label="16 分屏" />
+                <el-option :value="25" label="25 分屏" />
+                <el-option :value="36" label="36 分屏" />
+              </el-select>
               <!-- [P1-CO2] AI 检测框叠加开关 -->
               <el-button size="small" :type="detectionOverlay.enabled ? 'success' : 'default'" @click="detectionOverlay.enabled = !detectionOverlay.enabled" title="AI 检测框叠加">
                 <el-icon><Aim /></el-icon>
@@ -40,10 +40,10 @@
                 <el-icon><VideoCamera /></el-icon>{{ isRecording ? '停止录像' : '录像' }}
               </el-button>
               <!-- 主/子码流切换 -->
-              <el-button-group size="small">
-                <el-button :type="streamQuality === 'main' ? 'primary' : 'default'" @click="switchStreamQuality('main')" title="主码流 (高清)">主码流</el-button>
-                <el-button :type="streamQuality === 'sub' ? 'primary' : 'default'" @click="switchStreamQuality('sub')" title="子码流 (流畅)">子码流</el-button>
-              </el-button-group>
+              <el-select :model-value="streamQuality" size="small" style="width: 100px" aria-label="码流质量" @update:model-value="switchStreamQuality">
+                <el-option value="main" label="主码流" />
+                <el-option value="sub" label="子码流" />
+              </el-select>
               <el-button size="small" @click="openImageAdjust" :disabled="!hasActive">图像</el-button>
               <!-- P1-6: 电子放大 -->
               <el-button size="small" :type="eZoomActive ? 'primary' : 'default'" @click="toggleEZoom" :disabled="!hasActive" title="电子放大">
@@ -2519,9 +2519,10 @@ onUnmounted(() => {
 <style scoped>
 .live-page { max-width: 1920px; }
 .video-card { background: #1A1D23; border: 1px solid #3C4043; }
-.video-toolbar { display: flex; justify-content: space-between; align-items: center; padding: 10px 16px; border-bottom: 1px solid #3C4043; }
-.toolbar-title { color: #E8EAED; display: flex; align-items: center; gap: 8px; font-weight: 600; }
-.toolbar-actions { display: flex; gap: 8px; align-items: center; }
+.video-toolbar { display: flex; align-items: flex-start; gap: 16px; padding: 10px 16px; border-bottom: 1px solid #3C4043; }
+.toolbar-title { flex: 0 0 auto; color: #E8EAED; display: flex; align-items: center; gap: 8px; font-weight: 600; white-space: nowrap; }
+.toolbar-actions { flex: 1 1 auto; min-width: 0; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.toolbar-label { color: #9AA0A6; font-size: 12px; white-space: nowrap; }
 
 /* 视频网格 */
 .video-grid { display: grid; gap: 2px; background: #000; min-height: 480px; }
@@ -2691,4 +2692,42 @@ onUnmounted(() => {
 /* 25/36 宫格大屏模式 */
 .video-grid.grid-25 { display: grid; grid-template-columns: repeat(5, 1fr); grid-template-rows: repeat(5, 1fr); }
 .video-grid.grid-36 { display: grid; grid-template-columns: repeat(6, 1fr); grid-template-rows: repeat(6, 1fr); }
+
+.live-page > .el-row > .el-col:nth-child(2) :deep(.el-card) {
+  background: #fff;
+  border-color: #e5e7eb;
+  color: #303133;
+  box-shadow: 0 2px 10px rgba(15, 23, 42, 0.08);
+}
+.live-page > .el-row > .el-col:nth-child(2) :deep(.el-card__header) {
+  background: #fff;
+  border-color: #ebeef5;
+  color: #303133;
+}
+.live-page > .el-row > .el-col:nth-child(2) :deep(.el-card__body) {
+  color: #303133;
+}
+.ch-item {
+  background: #fff;
+  color: #303133;
+}
+.ch-item:hover {
+  background: #f5f9ff;
+  border-color: #bfdbfe;
+}
+.ch-name {
+  color: #303133;
+}
+.ch-meta {
+  color: #909399;
+}
+.ptz-speed,
+.ptz-presets,
+.ptz-advanced {
+  color: #606266;
+}
+.ptz-3d-hint {
+  color: #909399;
+}
+
 </style>

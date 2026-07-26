@@ -294,7 +294,7 @@ async function exportCSV() {
 </script>
 
 <style scoped>
-.statistics-page { padding: 0 4px; }
+/* .statistics-page { padding: 0 4px; } */
 .page-title { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
 .page-title h2 { margin: 0; font-size: 20px; }
 .score-card { text-align: center; padding: 8px 0; }

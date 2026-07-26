@@ -190,7 +190,7 @@
       <el-table
         :data="paginatedAlarms"
         stripe
-        height="calc(100vh - 360px)"
+        height="max(calc(100vh - 360px), 300px)"
         style="width: 100%"
         @selection-change="(val: any[]) => selected = val"
         :default-sort="{ prop: 'createdAt', order: 'descending' }"
@@ -1386,14 +1386,14 @@ onUnmounted(() => {
  * 告警中心 AlarmsView — v6.0 样式
  * ============================================================ */
 .alarms-page {
-  padding: 20px 24px;
+  /* padding: 20px 24px; */
   max-width: var(--content-max-width, 1440px);
-  margin: 0 auto;
+  /* margin: 0 auto; */
   animation: fadeIn 0.3s ease;
 }
 
 /* [P3-VP2] 证据库网格 */
-.evidence-gallery { margin-bottom: 16px; }
+.evidence-gallery { margin-top: 16px; margin-bottom: 16px; }
 .evidence-item { transition: transform 0.2s; }
 .evidence-item:hover { transform: translateY(-2px); }
 .evidence-thumb { position: relative; }

@@ -208,7 +208,7 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.team-detail-page { max-width: 1200px; margin: 0 auto; }
+/* .team-detail-page { max-width: 1200px; margin: 0 auto; } */
 .page-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
 .header-actions { display: flex; gap: 8px; }
 .team-profile { display: flex; align-items: center; gap: 16px; }

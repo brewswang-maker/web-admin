@@ -506,5 +506,5 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.gb28181-page { padding: 0 4px; }
+/* .gb28181-page { padding: 0 4px; } */
 </style>

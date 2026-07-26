@@ -49,6 +49,7 @@
                 {{ Math.abs(stat.trend) }}{{ stat.trendUnit ?? '%' }}
                 <span class="trend-desc">{{ stat.trendDesc }}</span>
               </div>
+              <div v-else class="stat-trend-placeholder" aria-hidden="true"></div>
             </div>
           </div>
         </el-card>
@@ -683,9 +684,9 @@ const projectHeatmap = ref<Array<{ name: string; rate: number }>>([])
  * ============================================================ */
 
 .dashboard {
-  padding: 20px 24px;
+  /* padding: 20px 24px; */
   max-width: var(--content-max-width, 1440px);
-  margin: 0 auto;
+  /* margin: 0 auto; */
   animation: fadeIn 0.3s ease;
 }
 .dashboard-empty {
@@ -739,6 +740,8 @@ const projectHeatmap = ref<Array<{ name: string; rate: number }>>([])
 }
 
 .stat-card {
+  min-height: 122px;
+  height: 100%;
   border-radius: var(--radius-xl, 12px);
   transition: all var(--transition-normal, 0.2s ease);
   border: 1px solid var(--app-border);
@@ -770,6 +773,10 @@ const projectHeatmap = ref<Array<{ name: string; rate: number }>>([])
 .stat-body {
   flex: 1;
   min-width: 0;
+  min-height: 78px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
 }
 
 .stat-value {
@@ -795,6 +802,11 @@ const projectHeatmap = ref<Array<{ name: string; rate: number }>>([])
   font-size: var(--text-sm, 13px);
   color: var(--app-text-secondary);
   margin-bottom: 4px;
+}
+
+.stat-trend,
+.stat-trend-placeholder {
+  min-height: 18px;
 }
 
 .stat-trend {

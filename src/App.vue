@@ -4,7 +4,8 @@
       <transition name="page-fade" mode="out-in">
         <suspense :timeout="0">
           <template #default>
-            <component :is="Component" :key="route.fullPath" />
+            <!-- <component :is="Component" :key="route.fullPath" /> -->
+            <component :is="Component" />
           </template>
           <template #fallback>
             <SkeletonLoader :variant="isDashboard(route) ? 'dashboard' : 'generic'" />

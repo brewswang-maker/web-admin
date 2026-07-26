@@ -1,5 +1,5 @@
 <template>
-  <div class="settings-page" v-loading="loading">
+  <el-card class="settings-page" shadow="never" v-loading="loading">
     <el-tabs tab-position="left">
       <el-tab-pane :label="$t('settings.tabBasic')">
         <el-form :model="basic" label-width="120px">
@@ -355,7 +355,7 @@
         </div>
       </el-tab-pane>
     </el-tabs>
-  </div>
+  </el-card>
 </template>
 
 <script setup lang="ts">
@@ -762,6 +762,9 @@ onMounted(async () => {
 </script>
 
 <style scoped>
-.settings-page { max-width: 900px; }
+
+.settings-page :deep(.el-card__body) {
+  padding: 20px 24px;
+}
 .opacity-60 { opacity: 0.6; }
 </style>

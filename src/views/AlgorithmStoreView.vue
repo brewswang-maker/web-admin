@@ -1,7 +1,8 @@
 <template>
   <div class="algorithm-store-view">
-    <div class="store-header">
-      <el-row :gutter="16" align="middle">
+    <el-card class="store-filter-card" shadow="never">
+      <div class="store-header">
+        <el-row :gutter="16" align="middle">
         <el-col :span="8">
           <el-input v-model="searchKeyword" placeholder="搜索算法名称、标签、厂商..." :prefix-icon="Search" clearable size="large" @clear="fetchProducts" @keyup.enter="fetchProducts" />
         </el-col>
@@ -19,10 +20,10 @@
             共 {{ pagination.total }} 个算法 · 已购买 {{ purchasedCount }} 个
           </el-tag>
         </el-col>
-      </el-row>
-    </div>
+        </el-row>
+      </div>
 
-    <div class="category-bar">
+      <div class="category-bar">
       <el-scrollbar>
         <div class="category-list">
           <el-tag
@@ -45,10 +46,12 @@
             <span class="cat-count">({{ cat.algorithmCount }})</span>
           </el-tag>
         </div>
-      </el-scrollbar>
-    </div>
+        </el-scrollbar>
+      </div>
+    </el-card>
 
-    <div v-loading="loading" class="product-grid">
+    <el-card class="product-list-card" shadow="never">
+      <div v-loading="loading" class="product-grid">
       <el-empty v-if="products.length === 0 && !loading" description="未找到匹配的算法" />
       <el-row v-else :gutter="16">
         <el-col v-for="product in products" :key="product.id" :xs="24" :sm="12" :md="8" :lg="6">
@@ -84,15 +87,16 @@
       </el-row>
     </div>
 
-    <div v-if="pagination.total > pagination.pageSize" class="pagination-wrapper">
-      <el-pagination
-        v-model:current-page="pagination.page"
-        :page-size="pagination.pageSize"
-        :total="pagination.total"
-        layout="total, prev, pager, next"
-        @current-change="fetchProducts"
-      />
-    </div>
+      <div v-if="pagination.total > pagination.pageSize" class="pagination-wrapper">
+        <el-pagination
+          v-model:current-page="pagination.page"
+          :page-size="pagination.pageSize"
+          :total="pagination.total"
+          layout="total, prev, pager, next"
+          @current-change="fetchProducts"
+        />
+      </div>
+    </el-card>
 
     <!-- 算法详情对话框 -->
     <el-dialog v-model="detailVisible" :title="selectedProduct?.name || '算法详情'" width="680px" destroy-on-close>
@@ -353,7 +357,11 @@ onMounted(async () => {
 </script>
 
 <style scoped lang="scss">
-.algorithm-store-view { padding: 0; }
+.store-filter-card :deep(.el-card__body),
+.product-list-card :deep(.el-card__body) {
+  padding: 20px 24px;
+}
+.product-list-card { margin-top: 16px; }
 .store-header { margin-bottom: 16px; }
 .category-bar {
   margin-bottom: 20px;
@@ -392,4 +400,26 @@ onMounted(async () => {
 .detail-section { margin-top: 20px; h4 { font-size: 14px; color: #303133; margin-bottom: 12px; } }
 .detail-text { font-size: 13px; color: #606266; line-height: 1.8; }
 .pagination-wrapper { display: flex; justify-content: flex-end; margin-top: 16px; }
+
+@media (max-width: 640px) {
+  .algorithm-store-view {
+    width: calc(100% - 16px);
+    margin: 8px auto;
+  }
+  .store-filter-card :deep(.el-card__body),
+  .product-list-card :deep(.el-card__body) {
+    padding: 16px;
+  }
+  .store-header :deep(.el-col) {
+    margin-bottom: 10px;
+  }
+  .store-header :deep(.el-col:last-child) {
+    margin-bottom: 0;
+    text-align: left !important;
+  }
+  .pagination-wrapper {
+    justify-content: center;
+    overflow-x: auto;
+  }
+}
 </style>
