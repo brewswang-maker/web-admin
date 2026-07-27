@@ -6,11 +6,36 @@
         <el-tag v-if="dirty" type="warning" size="small">未保存</el-tag>
       </div>
       <div class="pe-actions">
+        <el-button size="small" @click="undo" :disabled="!canUndo" title="Ctrl+Z">↶ 撤销</el-button>
+        <el-button size="small" @click="redo" :disabled="!canRedo" title="Ctrl+Y">↷ 重做</el-button>
+        <el-divider direction="vertical" />
+        <el-dropdown @command="applyTemplate" trigger="click">
+          <el-button size="small">📋 模板库 <el-icon><ArrowDown /></el-icon></el-button>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item command="perimeter">🚧 周界入侵检测</el-dropdown-item>
+              <el-dropdown-item command="pedestrian">🎯 人形检测+追踪</el-dropdown-item>
+              <el-dropdown-item command="face">👤 人脸识别门禁</el-dropdown-item>
+              <el-dropdown-item command="tripwire">〰️ 绊线检测</el-dropdown-item>
+              <el-dropdown-item command="multi">📹 多通道并发检测</el-dropdown-item>
+              <el-dropdown-item command="enhance">✨ 视频增强推流</el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
+        <el-button size="small" @click="zoomIn" title="放大">🔍+</el-button>
+        <el-button size="small" @click="zoomOut" title="缩小">🔍-</el-button>
+        <el-button size="small" @click="zoomReset" title="重置缩放">1:1</el-button>
         <el-button size="small" @click="loadPipeline">加载</el-button>
         <el-button size="small" type="primary" @click="handleSavePipeline" :disabled="!dirty">保存</el-button>
         <el-button size="small" type="warning" @click="handleValidate" :loading="validating">验证</el-button>
         <el-button size="small" type="success" @click="handleDeploy" :loading="deploying">部署</el-button>
         <el-button size="small" type="danger" @click="handleUndeploy" :loading="undeploying">停止</el-button>
+        <el-button size="small" type="danger" plain @click="handleDeletePipeline" :disabled="!pipelineId">删除</el-button>
+        <!-- [P2-5] 导出/导入 Pipeline -->
+        <el-divider direction="vertical" />
+        <el-button size="small" @click="handleExportPipeline" :disabled="nodes.length === 0">⬇ 导出</el-button>
+        <el-button size="small" @click="handleImportClick">⬆ 导入</el-button>
+        <input ref="importFileInput" type="file" accept=".json" style="display:none" @change="handleImportFile" />
         <el-button size="small" @click="toggleMonitor">{{ showMonitor ? '关闭监控' : '运行时监控' }}</el-button>
         <el-button size="small" @click="clearCanvas">清空</el-button>
       </div>
@@ -36,7 +61,9 @@
            @drop="onCanvasDrop"
            @mousedown="onCanvasMouseDown"
            @mousemove="onCanvasMouseMove"
-           @mouseup="onCanvasMouseUp">
+           @mouseup="onCanvasMouseUp"
+           @wheel="onCanvasWheel">
+        <div class="pe-canvas-inner" :style="{ transform: 'scale(' + canvasScale + ')', transformOrigin: '0 0' }">
         <svg class="pe-lines" :width="canvasW" :height="canvasH">
           <g v-for="(line, idx) in connections" :key="idx">
             <path :d="linePath(line)" stroke="#1A73E8" stroke-width="2" fill="none" />
@@ -72,9 +99,26 @@
             </div>
           </div>
         </div>
+        </div>
       </div>
 
-      <!-- 右侧属性面板 -->
+      <!-- [P1-8] 小地图 minimap -->
+      <div class="pe-minimap" v-if="nodes.length > 0">
+        <div class="minimap-title">小地图</div>
+        <svg class="minimap-svg" :width="minimapW" :height="minimapH">
+          <!-- 节点缩略 -->
+          <rect v-for="node in nodes" :key="node.id"
+                :x="minimapScaleX(node.x)" :y="minimapScaleY(node.y)"
+                :width="minimapNodeW" :height="minimapNodeH"
+                :fill="selectedNode === node.id ? '#1A73E8' : '#909399'"
+                rx="2" />
+          <!-- 连线缩略 -->
+          <line v-for="(line, idx) in connections" :key="'ml'+idx"
+                :x1="minimapPortX(line.fromNode)" :y1="minimapPortY(line.fromNode)"
+                :x2="minimapPortX(line.toNode)" :y2="minimapPortY(line.toNode)"
+                stroke="#dcdfe6" stroke-width="0.5" />
+        </svg>
+      </div>
       <div class="pe-props">
         <template v-if="selectedNodeData">
           <h4>{{ selectedNodeData.label }}</h4>
@@ -182,10 +226,11 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, reactive } from 'vue'
-import { savePipeline as apiSavePipeline, getPipelines, validatePipeline, deployPipeline, undeployPipeline, getPipelineRuntime } from '@/api/pipeline'
+import { ref, computed, reactive, onMounted, onUnmounted, watch } from 'vue'
+import { savePipeline as apiSavePipeline, getPipelines, deletePipeline, validatePipeline, deployPipeline, undeployPipeline, getPipelineRuntime } from '@/api/pipeline'
 import type { PipelineRuntimeStatus } from '@/api/pipeline'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox, ElNotification } from 'element-plus'
+import { ArrowDown } from '@element-plus/icons-vue'
 import RoiPolygonEditor from '@/components/RoiPolygonEditor.vue'
 import type { RoiData } from '@/composables/useRoiCanvas'
 
@@ -212,6 +257,91 @@ interface PipelineNode {
 }
 interface PropItem { key: string; label: string; type: string; value: any; min?: number; max?: number; step?: number; options?: string[]; multiline?: boolean }
 interface Connection { fromNode: string; fromPort: string; toNode: string; toPort: string }
+
+// [P0-5] 端口语义类型定义与兼容矩阵
+const PORT_SEMANTICS: Record<string, string> = {
+  video_out: 'video', video_in: 'video',
+  frame_out: 'frame', frame_in: 'frame',
+  dets_out: 'detection', dets_in: 'detection',
+  alarm_out: 'alarm', alarm_in: 'alarm',
+  face_out: 'face',
+  track_out: 'track',
+}
+const COMPATIBLE_TYPES: Record<string, string[]> = {
+  video: ['video'],
+  frame: ['frame', 'video'], // video 可以接受帧级输入
+  detection: ['detection', 'frame'], // detection 端口可以接收帧
+  alarm: ['alarm', 'detection'], // alarm 端口可以接收检测结果
+  face: ['face', 'detection'],
+  track: ['track', 'detection'],
+}
+function getPortType(portName: string): string {
+  return PORT_SEMANTICS[portName] || 'any'
+}
+function isPortCompatible(fromPort: string, toPort: string): boolean {
+  const fromType = getPortType(fromPort)
+  const toType = getPortType(toPort)
+  if (fromType === 'any' || toType === 'any') return true
+  const compatible = COMPATIBLE_TYPES[toType] || []
+  return compatible.includes(fromType)
+}
+
+// [P0-4] Undo/Redo 历史栈
+interface HistorySnapshot { nodes: PipelineNode[]; connections: Connection[] }
+const undoStack = ref<HistorySnapshot[]>([])
+const redoStack = ref<HistorySnapshot[]>([])
+const MAX_HISTORY = 50
+let suppressHistory = false
+function pushHistory() {
+  if (suppressHistory) return
+  const snapshot: HistorySnapshot = {
+    nodes: JSON.parse(JSON.stringify(nodes)),
+    connections: JSON.parse(JSON.stringify(connections)),
+  }
+  undoStack.value.push(snapshot)
+  if (undoStack.value.length > MAX_HISTORY) undoStack.value.shift()
+  redoStack.value = [] // 新操作清空 redo
+}
+const canUndo = computed(() => undoStack.value.length > 0)
+const canRedo = computed(() => redoStack.value.length > 0)
+function undo() {
+  if (!canUndo.value) return
+  const current: HistorySnapshot = {
+    nodes: JSON.parse(JSON.stringify(nodes)),
+    connections: JSON.parse(JSON.stringify(connections)),
+  }
+  redoStack.value.push(current)
+  const prev = undoStack.value.pop()!
+  suppressHistory = true
+  nodes.splice(0, ...JSON.parse(JSON.stringify(prev.nodes)))
+  connections.splice(0, ...JSON.parse(JSON.stringify(prev.connections)))
+  suppressHistory = false
+  dirty.value = true
+}
+function redo() {
+  if (!canRedo.value) return
+  const current: HistorySnapshot = {
+    nodes: JSON.parse(JSON.stringify(nodes)),
+    connections: JSON.parse(JSON.stringify(connections)),
+  }
+  undoStack.value.push(current)
+  const next = redoStack.value.pop()!
+  suppressHistory = true
+  nodes.splice(0, ...JSON.parse(JSON.stringify(next.nodes)))
+  connections.splice(0, ...JSON.parse(JSON.stringify(next.connections)))
+  suppressHistory = false
+  dirty.value = true
+}
+// 键盘快捷键
+function onKeydown(e: KeyboardEvent) {
+  if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
+    e.preventDefault(); undo()
+  } else if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || (e.key === 'z' && e.shiftKey))) {
+    e.preventDefault(); redo()
+  }
+}
+onMounted(() => window.addEventListener('keydown', onKeydown))
+onUnmounted(() => window.removeEventListener('keydown', onKeydown))
 
 const pipelineId = ref('')
 const pipelineName = ref('新建Pipeline')
@@ -269,6 +399,8 @@ const categories = [
   { name: '视频源', icon: '📹', items: [
     { type: 'rtsp', name: 'RTSP拉流', icon: '📡', inputs: [], outputs: ['video_out'], hasROI: false, hasSchedule: false, hasActions: false, props: [{ key: 'url', label: 'RTSP地址', type: 'text', value: 'rtsp://' }] },
     { type: 'onvif', name: 'ONVIF', icon: '📷', inputs: [], outputs: ['video_out'], hasROI: false, hasSchedule: false, hasActions: false, props: [{ key: 'ip', label: '设备IP', type: 'text', value: '' }] },
+    // [P1-6] GB28181通道节点 + [P1-9] 多通道配置
+    { type: 'gb28181', name: 'GB28181通道', icon: '📹', inputs: [], outputs: ['video_out'], hasROI: false, hasSchedule: false, hasActions: false, props: [{ key: 'channelId', label: '通道ID', type: 'text', value: '' }, { key: 'multiChannel', label: '多通道模式', type: 'switch', value: false }, { key: 'channelIds', label: '多通道选择', type: 'text', value: '', multiline: true }, { key: 'resolution', label: '分辨率', type: 'select', value: '1080p', options: ['720p', '1080p', '4K'] }] },
   ]},
   { name: '预处理', icon: '🔧', items: [
     { type: 'decode', name: '解码', icon: '🔓', inputs: ['video_in'], outputs: ['frame_out'], hasROI: false, hasSchedule: false, hasActions: false, props: [{ key: 'format', label: '输出格式', type: 'select', value: 'BGR', options: ['BGR', 'RGB', 'NV12'] }] },
@@ -300,6 +432,7 @@ function onDragStart(e: DragEvent, comp: any) {
 }
 function onCanvasDrop(e: DragEvent) {
   if (!dragComp) return
+  pushHistory()
   const rect = canvasContainer.value!.getBoundingClientRect()
   const x = e.clientX - rect.left
   const y = e.clientY - rect.top
@@ -366,16 +499,21 @@ function onCanvasMouseUp(e: MouseEvent) {
   }
 }
 
-// 辅助函数：添加连线（防重复）
+// [P0-5] 辅助函数：添加连线（防重复 + 语义校验）
 function addConnection(fromNode: string, fromPort: string, toNode: string, toPort: string) {
   const exists = connections.some(c =>
     c.fromNode === fromNode && c.fromPort === fromPort &&
     c.toNode === toNode && c.toPort === toPort
   )
-  if (!exists) {
-    connections.push({ fromNode, fromPort, toNode, toPort })
-    dirty.value = true
+  if (exists) return
+  // 端口语义兼容性检查
+  if (!isPortCompatible(fromPort, toPort)) {
+    ElMessage.warning(`端口不兼容: ${fromPort}(${getPortType(fromPort)}) → ${toPort}(${getPortType(toPort)})`)
+    return
   }
+  pushHistory()
+  connections.push({ fromNode, fromPort, toNode, toPort })
+  dirty.value = true
 }
 
 // 端口连线（支持双向：out→in 和 in→out）
@@ -405,6 +543,7 @@ const tempLinePath = computed(() => {
 })
 
 function removeNode(id: string) {
+  pushHistory()
   const idx = nodes.findIndex(n => n.id === id)
   if (idx >= 0) nodes.splice(idx, 1)
   // 删除关联连线
@@ -414,7 +553,10 @@ function removeNode(id: string) {
   if (selectedNode.value === id) selectedNode.value = ''
   dirty.value = true
 }
-function clearCanvas() { nodes.splice(0); connections.splice(0); selectedNode.value = ''; dirty.value = true }
+function clearCanvas() {
+  if (nodes.length > 0 || connections.length > 0) pushHistory()
+  nodes.splice(0); connections.splice(0); selectedNode.value = ''; dirty.value = true
+}
 
 // 保存/加载 [BUG 6 修复: 使用 pipelineId 而非 pipelineName 作为标识符]
 async function handleSavePipeline() {
@@ -539,6 +681,29 @@ async function handleUndeploy() {
   }
 }
 
+// [P0-3] 删除Pipeline
+async function handleDeletePipeline() {
+  if (!pipelineId.value) return
+  try {
+    await ElMessageBox.confirm(
+      `确定删除Pipeline "${pipelineName.value}" 吗？此操作不可撤销。`,
+      '删除确认', { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' }
+    )
+  } catch { return } // 用户取消
+  try {
+    await deletePipeline(pipelineId.value)
+    ElMessage.success('Pipeline已删除')
+    clearCanvas()
+    pipelineId.value = generatePipelineId()
+    pipelineName.value = '新建Pipeline'
+    dirty.value = false
+    undoStack.value = []
+    redoStack.value = []
+  } catch (e: any) {
+    ElMessage.error('删除失败: ' + e.message)
+  }
+}
+
 // v7.0: 运行时监控
 function toggleMonitor() {
   showMonitor.value = !showMonitor.value
@@ -564,7 +729,230 @@ async function fetchRuntime() {
   try {
     const { data: resp } = await getPipelineRuntime(pipelineId.value)
     runtimeStatus.value = ((resp as any)?.data || resp) as PipelineRuntimeStatus
+    // [P1-10] 节点异常告警
+    if (runtimeStatus.value?.nodes) {
+      for (const n of runtimeStatus.value.nodes) {
+        if (n.state === 'ERROR') {
+          ElNotification({ title: '节点异常', message: `节点 ${n.node_id} (${n.type}) 状态异常`, type: 'error', duration: 5000 })
+        }
+      }
+    }
+    // [P1-10] TPU 过载告警
+    if ((runtimeStatus.value as any)?.tpu_utilization > 85) {
+      ElNotification({ title: 'TPU过载', message: `TPU利用率 ${(runtimeStatus.value as any).tpu_utilization.toFixed(0)}% 超过阈值`, type: 'warning', duration: 4000 })
+    }
   } catch { /* ignore */ }
+}
+
+// [P1-8] 画布缩放
+const canvasScale = ref(1)
+
+// [P1-8] 小地图计算
+const minimapW = 148
+const minimapH = 80
+const minimapNodeW = 8
+const minimapNodeH = 5
+const minimapScaleX = (x: number) => {
+  if (nodes.length === 0) return 0
+  const minX = Math.min(...nodes.map(n => n.x), 0)
+  const maxX = Math.max(...nodes.map(n => n.x + 180), 200)
+  const range = Math.max(1, maxX - minX)
+  return ((x - minX) / range) * (minimapW - minimapNodeW) + 1
+}
+const minimapScaleY = (y: number) => {
+  if (nodes.length === 0) return 0
+  const minY = Math.min(...nodes.map(n => n.y), 0)
+  const maxY = Math.max(...nodes.map(n => n.y + 80), 100)
+  const range = Math.max(1, maxY - minY)
+  return ((y - minY) / range) * (minimapH - minimapNodeH) + 1
+}
+const minimapPortX = (nodeId: string) => {
+  const node = nodes.find(n => n.id === nodeId)
+  return node ? minimapScaleX(node.x) + minimapNodeW / 2 : 0
+}
+const minimapPortY = (nodeId: string) => {
+  const node = nodes.find(n => n.id === nodeId)
+  return node ? minimapScaleY(node.y) + minimapNodeH / 2 : 0
+}
+function zoomIn() { canvasScale.value = Math.min(2, +(canvasScale.value + 0.1).toFixed(1)) }
+function zoomOut() { canvasScale.value = Math.max(0.5, +(canvasScale.value - 0.1).toFixed(1)) }
+function zoomReset() { canvasScale.value = 1 }
+function onCanvasWheel(e: WheelEvent) {
+  if (!e.ctrlKey) return
+  e.preventDefault()
+  if (e.deltaY < 0) { zoomIn() } else { zoomOut() }
+}
+
+// [P2-5] 导入文件 input ref
+const importFileInput = ref<HTMLElement>()
+
+// [P2-5] Pipeline 导出为 JSON 文件下载
+function handleExportPipeline() {
+  const exportData = {
+    version: '2.0',
+    exported_at: new Date().toISOString(),
+    pipeline_id: pipelineId.value,
+    name: pipelineName.value,
+    nodes: JSON.parse(JSON.stringify(nodes)),
+    connections: JSON.parse(JSON.stringify(connections)),
+  }
+  const jsonStr = JSON.stringify(exportData, null, 2)
+  const blob = new Blob([jsonStr], { type: 'application/json' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  const safeName = pipelineName.value.replace(/[^a-zA-Z0-9_\u4e00-\u9fff]/g, '_')
+  a.download = `pipeline_${safeName}_${Date.now()}.json`
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  URL.revokeObjectURL(url)
+  ElMessage.success('Pipeline已导出为JSON文件')
+}
+
+// [P2-5] 触发文件选择
+function handleImportClick() {
+  importFileInput.value?.click()
+}
+
+// [P2-5] 导入 JSON 文件还原到画布
+async function handleImportFile(e: Event) {
+  const input = e.target as HTMLInputElement
+  const file = input.files?.[0]
+  if (!file) return
+  try {
+    const text = await file.text()
+    const data = JSON.parse(text)
+    if (!data.nodes || !Array.isArray(data.nodes)) {
+      ElMessage.error('无效的Pipeline JSON: 缺少nodes字段')
+      return
+    }
+    pushHistory()
+    nodes.splice(0); connections.splice(0); selectedNode.value = ''
+    // 恢复名称
+    if (data.name) pipelineName.value = data.name
+    if (data.pipeline_id) pipelineId.value = data.pipeline_id
+    else pipelineId.value = generatePipelineId()
+    // 恢复节点
+    for (const rn of data.nodes) {
+      const node: PipelineNode = {
+        id: rn.id || genNodeId(),
+        type: rn.type || '',
+        label: rn.label || rn.type || '',
+        icon: rn.icon || '🔧',
+        x: typeof rn.x === 'number' ? rn.x : 100,
+        y: typeof rn.y === 'number' ? rn.y : 100,
+        inputs: Array.isArray(rn.inputs) ? rn.inputs : [],
+        outputs: Array.isArray(rn.outputs) ? rn.outputs : [],
+        hasROI: !!rn.hasROI,
+        hasSchedule: !!rn.hasSchedule,
+        hasActions: !!rn.hasActions,
+        roiPolygon: Array.isArray(rn.roiPolygon) ? rn.roiPolygon : [],
+        props: Array.isArray(rn.props) ? rn.props.map((p: any) => ({ ...p })) : [],
+        scheduleType: rn.scheduleType || 'all',
+        actionAlarm: !!rn.actionAlarm,
+        actionLight: !!rn.actionLight,
+        actionGate: !!rn.actionGate,
+      }
+      nodes.push(node)
+    }
+    // 恢复连线
+    if (Array.isArray(data.connections)) {
+      for (const rc of data.connections) {
+        connections.push({
+          fromNode: rc.fromNode || rc.from_node || '',
+          fromPort: rc.fromPort || rc.from_port || '',
+          toNode: rc.toNode || rc.to_node || '',
+          toPort: rc.toPort || rc.to_port || '',
+        })
+      }
+    }
+    dirty.value = true
+    ElMessage.success(`导入成功: ${nodes.length}个节点, ${connections.length}条连线`)
+  } catch (err: any) {
+    ElMessage.error('导入失败: ' + (err.message || 'JSON解析错误'))
+  } finally {
+    // 清空 input 以便重复导入同一文件
+    input.value = ''
+  }
+}
+
+// [P1-7] 流水线模板库
+function applyTemplate(cmd: string) {
+  pushHistory()
+  nodes.splice(0); connections.splice(0); selectedNode.value = ''
+  const makeNode = (type: string, label: string, icon: string, x: number, y: number, inputs: string[], outputs: string[], extra: any = {}): PipelineNode => ({
+    id: genNodeId(), type, label, icon, x, y, inputs, outputs, roiPolygon: [],
+    props: [], scheduleType: 'all', actionAlarm: false, actionLight: false, actionGate: false, ...extra
+  })
+  const connect = (fn: number, fp: string, tn: number, tp: string) => {
+    connections.push({ fromNode: nodes[fn].id, fromPort: fp, toNode: nodes[tn].id, toPort: tp })
+  }
+
+  if (cmd === 'perimeter') {
+    pipelineName.value = '周界入侵检测'
+    nodes.push(makeNode('gb28181', 'GB28181通道', '📹', 50, 100, [], ['video_out'], { props: [{ key: 'channelId', label: '通道ID', type: 'text', value: '' }] }))
+    nodes.push(makeNode('decode', '解码', '🔓', 280, 100, ['video_in'], ['frame_out']))
+    nodes.push(makeNode('perimeter', '周界入侵', '🚧', 510, 100, ['frame_in'], ['alarm_out'], { hasROI: true, hasSchedule: true, hasActions: true, actionAlarm: true, props: [{ key: 'sensitivity', label: '灵敏度', type: 'slider', value: 0.8, min: 0, max: 1, step: 0.05 }] }))
+    nodes.push(makeNode('osd', 'OSD叠加', '🏷️', 740, 80, ['frame_in', 'dets_in'], ['frame_out']))
+    nodes.push(makeNode('mqtt_alarm', 'MQTT告警', '📡', 740, 200, ['alarm_in'], []))
+    connect(0, 'video_out', 1, 'video_in')
+    connect(1, 'frame_out', 2, 'frame_in')
+    connect(1, 'frame_out', 3, 'frame_in')
+    connect(2, 'alarm_out', 3, 'dets_in')
+    connect(2, 'alarm_out', 4, 'alarm_in')
+  } else if (cmd === 'pedestrian') {
+    pipelineName.value = '人形检测+追踪'
+    nodes.push(makeNode('gb28181', 'GB28181通道', '📹', 50, 100, [], ['video_out']))
+    nodes.push(makeNode('decode', '解码', '🔓', 280, 100, ['video_in'], ['frame_out']))
+    nodes.push(makeNode('yolo', 'YOLO检测', '🎯', 510, 100, ['frame_in'], ['dets_out'], { hasROI: true, props: [{ key: 'model', label: '模型', type: 'select', value: 'yolov8s', options: ['yolov8n', 'yolov8s'] }, { key: 'conf', label: '置信度', type: 'slider', value: 0.5, min: 0, max: 1, step: 0.05 }] }))
+    nodes.push(makeNode('reid', 'ReID追踪', '🔄', 740, 100, ['frame_in', 'dets_in'], ['track_out']))
+    nodes.push(makeNode('osd', 'OSD叠加', '🏷️', 970, 100, ['frame_in', 'dets_in'], ['frame_out']))
+    connect(0, 'video_out', 1, 'video_in'); connect(1, 'frame_out', 2, 'frame_in')
+    connect(1, 'frame_out', 3, 'frame_in'); connect(2, 'dets_out', 3, 'dets_in')
+    connect(1, 'frame_out', 4, 'frame_in'); connect(3, 'track_out', 4, 'dets_in')
+  } else if (cmd === 'face') {
+    pipelineName.value = '人脸识别门禁'
+    nodes.push(makeNode('gb28181', 'GB28181通道', '📹', 50, 100, [], ['video_out']))
+    nodes.push(makeNode('decode', '解码', '🔓', 280, 100, ['video_in'], ['frame_out']))
+    nodes.push(makeNode('face', '人脸识别', '👤', 510, 100, ['frame_in'], ['face_out'], { props: [{ key: 'model', label: '模型', type: 'select', value: 'arcface', options: ['arcface', 'mobileface'] }] }))
+    nodes.push(makeNode('osd', 'OSD叠加', '🏷️', 740, 80, ['frame_in', 'dets_in'], ['frame_out']))
+    nodes.push(makeNode('mqtt_alarm', 'HTTP Webhook', '📡', 740, 200, ['alarm_in'], [], { props: [{ key: 'topic', label: 'Webhook URL', type: 'text', value: 'http://localhost/webhook' }] }))
+    connect(0, 'video_out', 1, 'video_in'); connect(1, 'frame_out', 2, 'frame_in')
+    connect(1, 'frame_out', 3, 'frame_in'); connect(2, 'face_out', 3, 'dets_in')
+  } else if (cmd === 'tripwire') {
+    pipelineName.value = '绊线检测'
+    nodes.push(makeNode('gb28181', 'GB28181通道', '📹', 50, 100, [], ['video_out']))
+    nodes.push(makeNode('decode', '解码', '🔓', 280, 100, ['video_in'], ['frame_out']))
+    nodes.push(makeNode('tripwire', '绊线检测', '〰️', 510, 100, ['frame_in'], ['alarm_out'], { hasROI: true, hasSchedule: true, hasActions: true, actionAlarm: true }))
+    nodes.push(makeNode('osd', 'OSD叠加', '🏷️', 740, 80, ['frame_in', 'dets_in'], ['frame_out']))
+    nodes.push(makeNode('mqtt_alarm', 'MQTT告警', '📡', 740, 200, ['alarm_in'], []))
+    connect(0, 'video_out', 1, 'video_in'); connect(1, 'frame_out', 2, 'frame_in')
+    connect(1, 'frame_out', 3, 'frame_in'); connect(2, 'alarm_out', 3, 'dets_in')
+    connect(2, 'alarm_out', 4, 'alarm_in')
+  } else if (cmd === 'multi') {
+    pipelineName.value = '多通道并发检测'
+    nodes.push(makeNode('gb28181', '通道1', '📹', 50, 60, [], ['video_out']))
+    nodes.push(makeNode('gb28181', '通道2', '📹', 50, 200, [], ['video_out']))
+    nodes.push(makeNode('decode', '解码1', '🔓', 280, 60, ['video_in'], ['frame_out']))
+    nodes.push(makeNode('decode', '解码2', '🔓', 280, 200, ['video_in'], ['frame_out']))
+    nodes.push(makeNode('yolo', 'YOLO检测', '🎯', 510, 130, ['frame_in'], ['dets_out'], { hasROI: true }))
+    nodes.push(makeNode('osd', 'OSD叠加', '🏷️', 740, 130, ['frame_in', 'dets_in'], ['frame_out']))
+    connect(0, 'video_out', 2, 'video_in'); connect(1, 'video_out', 3, 'video_in')
+    connect(2, 'frame_out', 4, 'frame_in'); connect(3, 'frame_out', 4, 'frame_in')
+    connect(4, 'dets_out', 5, 'dets_in'); connect(2, 'frame_out', 5, 'frame_in')
+  } else if (cmd === 'enhance') {
+    pipelineName.value = '视频增强推流'
+    nodes.push(makeNode('gb28181', 'GB28181通道', '📹', 50, 100, [], ['video_out']))
+    nodes.push(makeNode('decode', '解码', '🔓', 280, 100, ['video_in'], ['frame_out']))
+    nodes.push(makeNode('resize', 'Resize', '📐', 510, 100, ['frame_in'], ['frame_out'], { props: [{ key: 'width', label: '宽度', type: 'number', value: 1920, min: 64, max: 3840 }, { key: 'height', label: '高度', type: 'number', value: 1080, min: 64, max: 2160 }] }))
+    nodes.push(makeNode('osd', 'OSD叠加', '🏷️', 740, 100, ['frame_in', 'dets_in'], ['frame_out']))
+    nodes.push(makeNode('rtsp_out', 'RTSP推流', '📺', 970, 100, ['frame_in'], [], { props: [{ key: 'url', label: '推流地址', type: 'text', value: 'rtsp://localhost/live' }] }))
+    connect(0, 'video_out', 1, 'video_in'); connect(1, 'frame_out', 2, 'frame_in')
+    connect(2, 'frame_out', 3, 'frame_in'); connect(3, 'frame_out', 4, 'frame_in')
+  }
+  dirty.value = true
+  ElMessage.success(`模板 "${pipelineName.value}" 已加载，请配置通道ID和参数`)
 }
 </script>
 
@@ -583,6 +971,12 @@ async function fetchRuntime() {
 
 /* 画布 */
 .pe-canvas { flex: 1; position: relative; overflow: hidden; cursor: default; background: #ffffff; border: 1px solid #e4e7ed; border-top: none; }
+.pe-canvas-inner { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
+
+/* [P1-8] 小地图 */
+.pe-minimap { position: absolute; right: 12px; bottom: 12px; width: 160px; height: 100px; background: rgba(255,255,255,0.95); border: 1px solid #dcdfe6; border-radius: 6px; z-index: 10; pointer-events: none; box-shadow: 0 2px 8px rgba(0,0,0,0.12); }
+.minimap-title { font-size: 10px; color: #909399; padding: 2px 6px; border-bottom: 1px solid #f0f0f0; }
+.minimap-svg { display: block; }
 .pe-lines { position: absolute; top: 0; left: 0; pointer-events: none; }
 
 /* 节点 */

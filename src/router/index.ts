@@ -36,6 +36,7 @@ const RecordingView = () => import('@/views/RecordingView.vue')
 const PipelineEditorView = () => import('@/views/PipelineEditorView.vue')
 const LinkageRuleView = () => import('@/views/LinkageRuleView.vue')
 const FederationDashboard = () => import('@/views/FederationDashboard.vue')
+const FLConfigView = () => import('@/views/FLConfigView.vue')
 const PermissionManagementView = () => import('@/views/rbac/PermissionManagementView.vue')
 const RoleManagementView = () => import('@/views/rbac/RoleManagementView.vue')
 const UserManagementView = () => import('@/views/rbac/UserManagementView.vue')
@@ -267,6 +268,12 @@ export const asyncRoutes: RouteRecordRaw[] = [
         name: 'FederationDashboard',
         component: FederationDashboard,
         meta: { title: '联邦学习', icon: 'Share', roles: ['admin'] }
+      },
+      {
+        path: 'fl-config',
+        name: 'FLConfig',
+        component: FLConfigView,
+        meta: { title: 'FL高级配置', icon: 'Setting', roles: ['admin'] }
       },
       {
         path: 'permissions',

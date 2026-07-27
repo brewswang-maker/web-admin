@@ -93,6 +93,43 @@
       </el-table>
     </el-card>
 
+    <!-- P2-3: Pipeline History Trend -->
+    <el-card shadow="never" class="mt-16">
+      <template #header>
+        <div class="metrics-history-header">
+          <span>Pipeline Performance Trend</span>
+          <div class="metrics-history-controls">
+            <el-select v-model="selectedPipelineId" placeholder="Select Pipeline" size="small" style="width:280px" @change="fetchMetricsHistory">
+              <el-option v-for="p in pipelineList" :key="p.id" :label="p.name" :value="p.id" />
+            </el-select>
+            <el-radio-group v-model="metricsRange" size="small" @change="fetchMetricsHistory">
+              <el-radio-button label="1h">1h</el-radio-button>
+              <el-radio-button label="24h">24h</el-radio-button>
+              <el-radio-button label="7d">7d</el-radio-button>
+            </el-radio-group>
+          </div>
+        </div>
+      </template>
+      <div ref="metricsChartEl" style="width:100%;height:360px" v-loading="metricsLoading"></div>
+      <el-empty v-if="!metricsLoading && !selectedPipelineId" description="Select a pipeline to view trend" />
+    </el-card>
+
+    <!-- P1-10: Event Timeline -->
+    <el-card shadow="never" class="mt-16" v-if="eventTimeline.length > 0">
+      <template #header>Event Timeline (recent {{ eventTimeline.length }})</template>
+      <el-timeline>
+        <el-timeline-item
+          v-for="(evt, idx) in eventTimeline"
+          :key="idx"
+          :timestamp="evt.time"
+          :type="evt.severity === 'danger' ? 'danger' : evt.severity === 'warning' ? 'warning' : 'primary'"
+          placement="top"
+        >
+          <span class="event-text">{{ evt.message }}</span>
+        </el-timeline-item>
+      </el-timeline>
+    </el-card>
+
     <el-empty v-if="!loading && irmStats.active_channels === 0 && slmStats.total_streams === 0"
               description="No active pipelines. Deploy a pipeline to see runtime metrics." />
   </div>
@@ -100,8 +137,15 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
-import { getIRMStats, getSLMStats, getPluginTypes,
+import { getIRMStats, getSLMStats, getPluginTypes, getPipelines,
+         getPipelineMetricsHistory,
          type IRMStats, type SLMStats, type PluginTypeInfo } from '@/api/pipeline'
+import * as echarts from 'echarts/core'
+import { LineChart } from 'echarts/charts'
+import { GridComponent, TooltipComponent, LegendComponent, DataZoomComponent } from 'echarts/components'
+import { CanvasRenderer } from 'echarts/renderers'
+
+echarts.use([LineChart, GridComponent, TooltipComponent, LegendComponent, DataZoomComponent, CanvasRenderer])
 
 const loading = ref(true)
 
@@ -119,8 +163,27 @@ const slmStats = ref<SLMStats>({
 })
 
 const plugins = ref<PluginTypeInfo[]>([])
-
 let refreshTimer: ReturnType<typeof setInterval> | null = null
+
+// P2-3: Pipeline metrics history
+const metricsChartEl = ref<HTMLElement>()
+let metricsChart: echarts.ECharts | null = null
+const metricsLoading = ref(false)
+const metricsRange = ref('1h')
+const selectedPipelineId = ref('')
+const pipelineList = ref<{id: string; name: string}[]>([])
+
+// P1-10: Event timeline
+interface TimelineEvent { time: string; message: string; severity: 'danger' | 'warning' | 'primary' }
+const eventTimeline = ref<TimelineEvent[]>([])
+const MAX_EVENTS = 20
+function addEvent(message: string, severity: 'danger' | 'warning' | 'primary') {
+  eventTimeline.value.unshift({
+    time: new Date().toLocaleString('zh-CN'),
+    message, severity,
+  })
+  if (eventTimeline.value.length > MAX_EVENTS) eventTimeline.value.pop()
+}
 
 async function fetchStats() {
   try {
@@ -129,11 +192,25 @@ async function fetchStats() {
     ])
     if (irmRes.status === 'fulfilled') {
       const d = irmRes.value.data?.data
-      if (d) Object.assign(irmStats.value, d)
+      if (d) {
+        if (d.tpu_utilization > 0.85 && irmStats.value.tpu_utilization <= 0.85) {
+          addEvent(`TPU > 85%: ${(d.tpu_utilization * 100).toFixed(0)}%`, 'danger')
+        }
+        if (d.avg_inference_ms > 35 && irmStats.value.avg_inference_ms <= 35) {
+          addEvent(`Inference latency > 35ms: ${d.avg_inference_ms.toFixed(1)}ms`, 'warning')
+        }
+        Object.assign(irmStats.value, d)
+      }
     }
     if (slmRes.status === 'fulfilled') {
       const d = slmRes.value.data?.data
-      if (d) Object.assign(slmStats.value, d)
+      if (d) {
+        const newDisc = d.disconnected_streams - slmStats.value.disconnected_streams
+        if (newDisc > 0) addEvent(`${newDisc} stream(s) disconnected`, 'danger')
+        const newDegr = d.degraded_streams - slmStats.value.degraded_streams
+        if (newDegr > 0) addEvent(`${newDegr} stream(s) degraded`, 'warning')
+        Object.assign(slmStats.value, d)
+      }
     }
     if (pluginRes.status === 'fulfilled') {
       const d = pluginRes.value.data?.data
@@ -143,14 +220,89 @@ async function fetchStats() {
   loading.value = false
 }
 
+async function fetchPipelineList() {
+  try {
+    const { data: resp } = await getPipelines()
+    const list = (resp as any)?.data || resp
+    if (Array.isArray(list)) {
+      pipelineList.value = list.map((p: any) => ({ id: p.id || '', name: p.name || p.id || '' }))
+    }
+  } catch { /* ignore */ }
+}
+
+async function fetchMetricsHistory() {
+  if (!selectedPipelineId.value) return
+  metricsLoading.value = true
+  try {
+    const { data: resp } = await getPipelineMetricsHistory(selectedPipelineId.value, metricsRange.value)
+    const d = (resp as any)?.data || resp
+    if (!d || !d.timestamps || d.timestamps.length === 0) {
+      renderEmptyChart()
+      return
+    }
+    const xLabels = d.timestamps.map((ts: number) => {
+      const dt = new Date(ts)
+      return dt.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+    })
+    renderChart(xLabels, d.fps, d.latency_ms, d.tpu_utilization)
+  } catch {
+    renderEmptyChart()
+  } finally {
+    metricsLoading.value = false
+  }
+}
+
+function renderChart(xLabels: string[], fps: number[], latency: number[], tpu: number[]) {
+  if (!metricsChartEl.value) return
+  if (!metricsChart) metricsChart = echarts.init(metricsChartEl.value)
+  const tpuPct = tpu.map((v: number) => +(v).toFixed(1))
+  metricsChart.setOption({
+    tooltip: { trigger: 'axis' },
+    legend: { data: ['FPS', 'Latency(ms)', 'TPU(%)'], top: 5 },
+    grid: { left: 60, right: 60, bottom: 60, top: 40 },
+    dataZoom: [{ type: 'inside' }, { type: 'slider' }],
+    xAxis: { type: 'category', data: xLabels, axisLabel: { fontSize: 10 } },
+    yAxis: [
+      { type: 'value', name: 'FPS / ms', position: 'left' },
+      { type: 'value', name: 'TPU(%)', position: 'right', max: 100 },
+    ],
+    series: [
+      { name: 'FPS', type: 'line', data: fps, smooth: true, itemStyle: { color: '#1A73E8' }, areaStyle: { opacity: 0.1 } },
+      { name: 'Latency(ms)', type: 'line', data: latency, smooth: true, itemStyle: { color: '#e6a23c' } },
+      { name: 'TPU(%)', type: 'line', data: tpuPct, smooth: true, yAxisIndex: 1, itemStyle: { color: '#f56c6c' } },
+    ],
+  })
+}
+
+function renderEmptyChart() {
+  if (!metricsChartEl.value) return
+  if (!metricsChart) metricsChart = echarts.init(metricsChartEl.value)
+  metricsChart.setOption({
+    title: { text: 'No data', left: 'center', top: 'center', textStyle: { color: '#909399', fontSize: 14 } },
+    xAxis: { type: 'category', data: [] },
+    yAxis: { type: 'value' },
+    series: [{ type: 'line', data: [] }],
+  })
+}
+
 onMounted(async () => {
   await fetchStats()
-  refreshTimer = setInterval(fetchStats, 10000)  // 10s 刷新
+  refreshTimer = setInterval(fetchStats, 10000)
+  await fetchPipelineList()
+  if (pipelineList.value.length > 0) {
+    selectedPipelineId.value = pipelineList.value[0].id
+    await fetchMetricsHistory()
+  }
+  window.addEventListener('resize', handleResize)
 })
 
 onUnmounted(() => {
   if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null }
+  window.removeEventListener('resize', handleResize)
+  if (metricsChart) { metricsChart.dispose(); metricsChart = null }
 })
+
+function handleResize() { metricsChart?.resize() }
 
 const tpuClass = computed(() => {
   const pct = irmStats.value.tpu_utilization * 100
@@ -174,28 +326,14 @@ function stateTag(state: string): 'success' | 'warning' | 'danger' | 'info' {
 </script>
 
 <style scoped>
-.pipeline-health {
-  padding: 20px;
-}
-.mt-16 {
-  margin-top: 16px;
-}
-.latency-ok {
-  color: #67c23a;
-  font-weight: 600;
-}
-.latency-warn {
-  color: #e6a23c;
-  font-weight: 600;
-}
-.latency-danger {
-  color: #f56c6c;
-  font-weight: 600;
-}
-.text-warning {
-  color: #e6a23c;
-}
-.plugin-tag {
-  margin: 2px 4px;
-}
+.pipeline-health { padding: 20px; }
+.mt-16 { margin-top: 16px; }
+.latency-ok { color: #67c23a; font-weight: 600; }
+.latency-warn { color: #e6a23c; font-weight: 600; }
+.latency-danger { color: #f56c6c; font-weight: 600; }
+.text-warning { color: #e6a23c; }
+.plugin-tag { margin: 2px 4px; }
+.metrics-history-header { display: flex; justify-content: space-between; align-items: center; }
+.metrics-history-controls { display: flex; gap: 12px; align-items: center; }
+.event-text { font-size: 13px; color: #303133; }
 </style>

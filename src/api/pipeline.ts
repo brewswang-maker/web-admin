@@ -213,6 +213,25 @@ export function updateNodeParams(pipelineId: string, nodeId: string, params: any
   })
 }
 
+// [P2-3] Pipeline 指标历史趋势
+export interface PipelineMetricsHistory {
+  pipeline_id: string
+  range: string
+  count: number
+  timestamps: number[]
+  fps: number[]
+  latency_ms: number[]
+  tpu_utilization: number[]
+  active_channels: number[]
+}
+
+/** 获取Pipeline指标历史趋势 */
+export function getPipelineMetricsHistory(id: string, range: string = '1h') {
+  return pipelineHttp.get<ApiResponse<PipelineMetricsHistory>>(
+    `/${id}/metrics-history`, { params: { pipeline_id: id, range } }
+  )
+}
+
 /** 获取IRM统计 */
 export function getIRMStats() {
   return pipelineHttp.get<ApiResponse<IRMStats>>('/irm/stats')
