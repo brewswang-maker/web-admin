@@ -397,7 +397,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useDeviceStore } from '@/stores/device'
 import { getDeviceChannels } from '@/api/devices'
 import { streamHttp, deviceHttp, http } from '@/api/http'
-import { ptzControl as ptzApi, startCruise as ptzStartCruise, stopCruise as ptzStopCruise, startTrack as ptzStartTrack, stopTrack as ptzStopTrack, ptz3DPosition } from '@/api/ptz'
+import { ptzControl as ptzApi, ptzStop as ptzStopApi, startCruise as ptzStartCruise, stopCruise as ptzStopCruise, startTrack as ptzStartTrack, stopTrack as ptzStopTrack, ptz3DPosition } from '@/api/ptz'
 import { ElMessage } from 'element-plus'
 import { Lock, Unlock } from '@element-plus/icons-vue'
 import type { Channel, DeviceItem } from '@/types/device'
@@ -2081,7 +2081,11 @@ function ptzStart(direction: 'left' | 'right' | 'up' | 'down' | 'zoom_in' | 'zoo
     speed: ptzSpeed.value
   }).catch(() => {})
 }
-function ptzStop() { /* 停止持续移动 */ }
+function ptzStop() {
+  const slot = gridSlots[activeSlotIdx.value]
+  if (!slot.deviceId) return
+  ptzStopApi(slot.deviceId, slot.channelId).catch(() => {})
+}
 function ptzHome() {
   const slot = gridSlots[activeSlotIdx.value]
   if (!slot.channelId) return

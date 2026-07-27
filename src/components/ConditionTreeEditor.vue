@@ -13,6 +13,10 @@
       <el-button size="small" @click="addLeafNode('spatial')">+ 空间条件</el-button>
       <el-button size="small" @click="addLeafNode('source')">+ 事件源</el-button>
       <el-button size="small" @click="addLeafNode('merge')">+ 合并条件</el-button>
+      <el-divider direction="vertical" />
+      <el-button size="small" :icon="Download" @click="exportJson" :disabled="!modelValue">导出 JSON</el-button>
+      <el-button size="small" :icon="Upload" @click="triggerImport">导入 JSON</el-button>
+      <input ref="fileInputRef" type="file" accept=".json" style="display:none" @change="importJson" />
     </div>
     <div class="tree-container" v-if="modelValue">
       <TreeNode :node="modelValue" :depth="0" @update="onNodeUpdate" @remove="onRootReset" />
@@ -22,7 +26,9 @@
 </template>
 
 <script setup lang="ts">
-import { defineProps, defineEmits, h, FunctionalComponent } from 'vue'
+import { defineProps, defineEmits, h, FunctionalComponent, ref } from 'vue'
+import { Download, Upload } from '@element-plus/icons-vue'
+import { ElMessage } from 'element-plus'
 import type { ConditionNode } from '@/api/linkage'
 
 const props = defineProps<{
@@ -107,6 +113,44 @@ function onNodeUpdate(updated: ConditionNode) {
 
 function onRootReset() {
   emit('update:modelValue', undefined)
+}
+
+// [P1-5] JSON 导入/导出
+const fileInputRef = ref<HTMLInputElement | null>(null)
+
+function exportJson() {
+  if (!props.modelValue) return
+  const blob = new Blob([JSON.stringify(props.modelValue, null, 2)], { type: 'application/json' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `condition_tree_${new Date().toISOString().slice(0, 10)}.json`
+  a.click()
+  URL.revokeObjectURL(url)
+  ElMessage.success('条件树已导出')
+}
+
+function triggerImport() {
+  fileInputRef.value?.click()
+}
+
+function importJson(event: Event) {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  if (!file) return
+  const reader = new FileReader()
+  reader.onload = (e) => {
+    try {
+      const data = JSON.parse(e.target?.result as string)
+      if (!data.type) throw new Error('缺少 type 字段')
+      emit('update:modelValue', data as ConditionNode)
+      ElMessage.success('条件树已导入')
+    } catch (err: any) {
+      ElMessage.error('导入失败: ' + (err.message || '无效的 JSON 格式'))
+    }
+  }
+  reader.readAsText(file)
+  input.value = ''  // 重置以支持重复导入同一文件
 }
 
 // 内联递归节点组件
