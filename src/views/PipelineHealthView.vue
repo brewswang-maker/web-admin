@@ -82,18 +82,31 @@
       </el-col>
     </el-row>
 
-    <el-card header="SLM Channel States" shadow="never" class="mt-16" v-if="slmStats.streams && slmStats.streams.length > 0">
+    <el-card header="SLM Channel States (每通道独立指标)" shadow="never" class="mt-16" v-if="slmStats.streams && slmStats.streams.length > 0">
       <el-table :data="slmStats.streams" size="small" stripe>
         <el-table-column prop="channel_id" label="Channel ID" width="140" />
-        <el-table-column prop="state" label="State" width="160">
+        <el-table-column prop="state" label="State" width="140">
           <template #default="{ row }">
             <el-tag :type="stateTag(row.state)" effect="dark" size="small">{{ row.state }}</el-tag>
           </template>
         </el-table-column>
+        <el-table-column label="FPS" width="100">
+          <template #default="{ row }">
+            <span :style="{ color: (row.fps ?? 0) < 5 ? '#f56c6c' : '#67c23a' }">{{ (row.fps ?? 0).toFixed(1) }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="Latency (ms)" width="120">
+          <template #default="{ row }">
+            <span :style="{ color: (row.avg_latency_ms ?? 0) > 100 ? '#f56c6c' : '#606266' }">{{ (row.avg_latency_ms ?? 0).toFixed(1) }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="Frames" width="100">
+          <template #default="{ row }">{{ row.frame_count ?? '--' }}</template>
+        </el-table-column>
       </el-table>
     </el-card>
 
-    <!-- P2-3: Pipeline History Trend -->
+    <!-- P2-3: Pipeline History Trend + 性能基线对比 -->
     <el-card shadow="never" class="mt-16">
       <template #header>
         <div class="metrics-history-header">
@@ -107,6 +120,11 @@
               <el-radio-button label="24h">24h</el-radio-button>
               <el-radio-button label="7d">7d</el-radio-button>
             </el-radio-group>
+            <!-- [P2-3] 性能基线对比 -->
+            <el-button size="small" :type="baseline ? 'success' : 'info'" @click="saveBaseline" :disabled="!metricsData.length">
+              {{ baseline ? '✓ 基线已保存' : '保存为基线' }}
+            </el-button>
+            <el-button v-if="baseline" size="small" @click="clearBaseline">清除基线</el-button>
           </div>
         </div>
       </template>
@@ -173,6 +191,11 @@ const metricsRange = ref('1h')
 const selectedPipelineId = ref('')
 const pipelineList = ref<{id: string; name: string}[]>([])
 
+// [P2-3] 性能基线对比
+const metricsData = ref<{fps: number; latency: number; tpu: number}[]>([])
+interface BaselineData { avg_fps: number; avg_latency: number; avg_tpu: number; saved_at: string }
+const baseline = ref<BaselineData | null>(null)
+
 // P1-10: Event timeline
 interface TimelineEvent { time: string; message: string; severity: 'danger' | 'warning' | 'primary' }
 const eventTimeline = ref<TimelineEvent[]>([])
@@ -237,6 +260,7 @@ async function fetchMetricsHistory() {
     const { data: resp } = await getPipelineMetricsHistory(selectedPipelineId.value, metricsRange.value)
     const d = (resp as any)?.data || resp
     if (!d || !d.timestamps || d.timestamps.length === 0) {
+      metricsData.value = []
       renderEmptyChart()
       return
     }
@@ -244,8 +268,11 @@ async function fetchMetricsHistory() {
       const dt = new Date(ts)
       return dt.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
     })
+    // 缓存最新数据供基线使用
+    metricsData.value = d.fps.map((v: number, i: number) => ({ fps: v, latency: d.latency_ms[i], tpu: d.tpu_utilization[i] }))
     renderChart(xLabels, d.fps, d.latency_ms, d.tpu_utilization)
   } catch {
+    metricsData.value = []
     renderEmptyChart()
   } finally {
     metricsLoading.value = false
@@ -256,21 +283,50 @@ function renderChart(xLabels: string[], fps: number[], latency: number[], tpu: n
   if (!metricsChartEl.value) return
   if (!metricsChart) metricsChart = echarts.init(metricsChartEl.value)
   const tpuPct = tpu.map((v: number) => +(v).toFixed(1))
+
+  // [P2-3] 基线对比 — 计算当前均值
+  const curAvgFps = fps.reduce((a: number, b: number) => a + b, 0) / (fps.length || 1)
+  const curAvgLat = latency.reduce((a: number, b: number) => a + b, 0) / (latency.length || 1)
+
+  const series: any[] = [
+    { name: 'FPS', type: 'line', data: fps, smooth: true, itemStyle: { color: '#1A73E8' }, areaStyle: { opacity: 0.1 } },
+    { name: 'Latency(ms)', type: 'line', data: latency, smooth: true, itemStyle: { color: '#e6a23c' } },
+    { name: 'TPU(%)', type: 'line', data: tpuPct, smooth: true, yAxisIndex: 1, itemStyle: { color: '#f56c6c' } },
+  ]
+  const legendData = ['FPS', 'Latency(ms)', 'TPU(%)']
+
+  // 添加基线参考线
+  if (baseline.value) {
+    const bl = baseline.value
+    const fpsDelta = curAvgFps - bl.avg_fps
+    const latDelta = curAvgLat - bl.avg_latency
+    series.push({
+      name: `基线 FPS (${bl.avg_fps.toFixed(1)})  Δ=${fpsDelta >= 0 ? '+' : ''}${fpsDelta.toFixed(1)}`,
+      type: 'line', data: fps.map(() => bl.avg_fps),
+      lineStyle: { type: 'dashed', color: '#1A73E8', width: 1 },
+      symbol: 'none',
+    })
+    series.push({
+      name: `基线 Latency (${bl.avg_latency.toFixed(1)})  Δ=${latDelta >= 0 ? '+' : ''}${latDelta.toFixed(1)}`,
+      type: 'line', data: latency.map(() => bl.avg_latency),
+      lineStyle: { type: 'dashed', color: '#e6a23c', width: 1 },
+      symbol: 'none',
+    })
+    legendData.push(`基线 FPS (${bl.avg_fps.toFixed(1)})  Δ=${fpsDelta >= 0 ? '+' : ''}${fpsDelta.toFixed(1)}`)
+    legendData.push(`基线 Latency (${bl.avg_latency.toFixed(1)})  Δ=${latDelta >= 0 ? '+' : ''}${latDelta.toFixed(1)}`)
+  }
+
   metricsChart.setOption({
     tooltip: { trigger: 'axis' },
-    legend: { data: ['FPS', 'Latency(ms)', 'TPU(%)'], top: 5 },
-    grid: { left: 60, right: 60, bottom: 60, top: 40 },
+    legend: { data: legendData, top: 5, textStyle: { fontSize: 10 } },
+    grid: { left: 60, right: 60, bottom: 60, top: 60 },
     dataZoom: [{ type: 'inside' }, { type: 'slider' }],
     xAxis: { type: 'category', data: xLabels, axisLabel: { fontSize: 10 } },
     yAxis: [
       { type: 'value', name: 'FPS / ms', position: 'left' },
       { type: 'value', name: 'TPU(%)', position: 'right', max: 100 },
     ],
-    series: [
-      { name: 'FPS', type: 'line', data: fps, smooth: true, itemStyle: { color: '#1A73E8' }, areaStyle: { opacity: 0.1 } },
-      { name: 'Latency(ms)', type: 'line', data: latency, smooth: true, itemStyle: { color: '#e6a23c' } },
-      { name: 'TPU(%)', type: 'line', data: tpuPct, smooth: true, yAxisIndex: 1, itemStyle: { color: '#f56c6c' } },
-    ],
+    series,
   })
 }
 
@@ -286,6 +342,7 @@ function renderEmptyChart() {
 }
 
 onMounted(async () => {
+  loadBaseline()  // [P2-3] 恢复基线
   await fetchStats()
   refreshTimer = setInterval(fetchStats, 10000)
   await fetchPipelineList()
@@ -303,6 +360,33 @@ onUnmounted(() => {
 })
 
 function handleResize() { metricsChart?.resize() }
+
+// [P2-3] 性能基线对比 — 保存/加载/清除
+function saveBaseline() {
+  if (!metricsData.value.length) return
+  const avg = (arr: number[]) => arr.reduce((a, b) => a + b, 0) / arr.length
+  const bl: BaselineData = {
+    avg_fps: avg(metricsData.value.map(d => d.fps)),
+    avg_latency: avg(metricsData.value.map(d => d.latency)),
+    avg_tpu: avg(metricsData.value.map(d => d.tpu)),
+    saved_at: new Date().toISOString(),
+  }
+  baseline.value = bl
+  try { localStorage.setItem('fl_pipeline_baseline', JSON.stringify(bl)) } catch {}
+  // 重绘图表显示基线
+  fetchMetricsHistory()
+}
+function clearBaseline() {
+  baseline.value = null
+  try { localStorage.removeItem('fl_pipeline_baseline') } catch {}
+  fetchMetricsHistory()
+}
+function loadBaseline() {
+  try {
+    const s = localStorage.getItem('fl_pipeline_baseline')
+    if (s) baseline.value = JSON.parse(s)
+  } catch {}
+}
 
 const tpuClass = computed(() => {
   const pct = irmStats.value.tpu_utilization * 100

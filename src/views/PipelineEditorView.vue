@@ -25,6 +25,7 @@
         <el-button size="small" @click="zoomIn" title="放大">🔍+</el-button>
         <el-button size="small" @click="zoomOut" title="缩小">🔍-</el-button>
         <el-button size="small" @click="zoomReset" title="重置缩放">1:1</el-button>
+        <el-button size="small" @click="fitView" title="适应窗口">⤢ 适应</el-button>
         <el-button size="small" @click="loadPipeline">加载</el-button>
         <el-button size="small" type="primary" @click="handleSavePipeline" :disabled="!dirty">保存</el-button>
         <el-button size="small" type="warning" @click="handleValidate" :loading="validating">验证</el-button>
@@ -777,6 +778,23 @@ const minimapPortY = (nodeId: string) => {
 function zoomIn() { canvasScale.value = Math.min(2, +(canvasScale.value + 0.1).toFixed(1)) }
 function zoomOut() { canvasScale.value = Math.max(0.5, +(canvasScale.value - 0.1).toFixed(1)) }
 function zoomReset() { canvasScale.value = 1 }
+// [P1-8] 适应窗口 — 自动计算缩放比例使所有节点可见
+function fitView() {
+  if (nodes.length === 0) { canvasScale.value = 1; return }
+  const minX = Math.min(...nodes.map(n => n.x), 0)
+  const maxX = Math.max(...nodes.map(n => n.x + 200), 400)
+  const minY = Math.min(...nodes.map(n => n.y), 0)
+  const maxY = Math.max(...nodes.map(n => n.y + 100), 200)
+  const contentW = maxX - minX
+  const contentH = maxY - minY
+  const canvas = document.querySelector('.pe-canvas') as HTMLElement
+  if (!canvas) return
+  const availW = canvas.clientWidth - 80
+  const availH = canvas.clientHeight - 80
+  const scaleX = availW / contentW
+  const scaleY = availH / contentH
+  canvasScale.value = Math.min(2, Math.max(0.5, Math.min(scaleX, scaleY)))
+}
 function onCanvasWheel(e: WheelEvent) {
   if (!e.ctrlKey) return
   e.preventDefault()

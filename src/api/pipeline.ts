@@ -143,7 +143,7 @@ export interface SLMStats {
   disconnected_streams: number
   total_frames_dispatched: number
   total_reconnect_attempts: number
-  streams: { channel_id: number; state: string }[]
+  streams: { channel_id: number; state: string; fps?: number; avg_latency_ms?: number; frame_count?: number }[]
 }
 
 export interface PluginTypeInfo {
