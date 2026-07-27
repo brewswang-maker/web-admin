@@ -69,17 +69,17 @@
                  @click="activeSlotIdx = idx"
                  @dblclick="maximizeSlot(idx, $event)"
                  @wheel="onEZoomWheel($event, idx)">
-              <!-- 真实视频播放 P2-2: CSS filter + P1-6: 电子放大 -->
+              <!-- 真实视频播放 P2-2: CSS filter + P1-6: 电子放大 + [FIX] 统一transform -->
               <video v-if="slot.playing"
                      :ref="el => setVideoRef(el, idx)"
                      class="video-player"
-                     :style="{ filter: videoFilterStyle.filter, transform: (idx === activeSlotIdx && eZoomActive ? eZoomStyle.transform : '') + (videoFilterStyle.transform !== 'none' ? ' ' + videoFilterStyle.transform : '') }"
+                     :style="{ filter: videoFilterStyle.filter, transform: idx === activeSlotIdx ? activeSlotTransform : otherSlotTransform }"
                      muted autoplay playsinline />
               <!-- [P1-CO2] AI 推理检测框 Canvas 叠加层 -->
               <canvas v-if="slot.playing && detectionOverlay.enabled"
                       :ref="(el: any) => setDetectionCanvasRef(el, idx)"
                       class="detection-canvas"
-                      :style="{ transform: (idx === activeSlotIdx && eZoomActive ? eZoomStyle.transform : '') }" />
+                      :style="{ transform: idx === activeSlotIdx ? activeSlotTransform : otherSlotTransform }" />
               <div v-if="slot.loading" class="video-loading">
                 <el-icon class="spin"><Loading /></el-icon>
                 <span>连接中...</span>
@@ -769,14 +769,31 @@ const videoFilterStyle = computed(() => {
   const contrast = imageAdjust.contrast / 50
   const saturate = imageAdjust.saturation / 50
   const hueRotate = (imageAdjust.hue - 50) * 1.8  // -90~90deg
-  let transform = ''
-  if (imageAdjust.mirrorH) transform += ' scaleX(-1)'
-  if (imageAdjust.mirrorV) transform += ' scaleY(-1)'
-  if (imageAdjust.rotate !== 0) transform += ` rotate(${imageAdjust.rotate}deg)`
+  // [FIX] 画面变换 transform 由 activeSlotTransform/otherSlotTransform 统一构建
   return {
-    filter: `brightness(${brightness}) contrast(${contrast}) saturate(${saturate}) hue-rotate(${hueRotate}deg)`,
-    transform: transform.trim() || 'none'
+    filter: `brightness(${brightness}) contrast(${contrast}) saturate(${saturate}) hue-rotate(${hueRotate}deg)`
   }
+})
+// [FIX] 统一构建 transform 字符串，避免模板内字符串拼接产生无效 CSS
+// 修复：镜像/翻转/旋转单独使用时无效（旧代码拼接出 ' scaleX(-1)' 裸值被浏览器忽略）
+const activeSlotTransform = computed(() => {
+  const parts: string[] = []
+  if (eZoomActive.value && eZoomScale.value > 1) {
+    const tx = 50 - eZoomX.value
+    const ty = 50 - eZoomY.value
+    parts.push(`scale(${eZoomScale.value}) translate(${tx}%, ${ty}%)`)
+  }
+  if (imageAdjust.mirrorH) parts.push('scaleX(-1)')
+  if (imageAdjust.mirrorV) parts.push('scaleY(-1)')
+  if (imageAdjust.rotate !== 0) parts.push(`rotate(${imageAdjust.rotate}deg)`)
+  return parts.length ? parts.join(' ') : 'none'
+})
+const otherSlotTransform = computed(() => {
+  const parts: string[] = []
+  if (imageAdjust.mirrorH) parts.push('scaleX(-1)')
+  if (imageAdjust.mirrorV) parts.push('scaleY(-1)')
+  if (imageAdjust.rotate !== 0) parts.push(`rotate(${imageAdjust.rotate}deg)`)
+  return parts.length ? parts.join(' ') : 'none'
 })
 
 // P1-3: WebCodecs 硬件解码检测
