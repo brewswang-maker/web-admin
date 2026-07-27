@@ -67,7 +67,8 @@
                  class="video-cell"
                  :class="{ active: activeSlotIdx === idx, 'has-stream': slot.channelId }"
                  @click="activeSlotIdx = idx"
-                 @dblclick="maximizeSlot(idx, $event)">
+                 @dblclick="maximizeSlot(idx, $event)"
+                 @wheel="onEZoomWheel($event, idx)">
               <!-- 真实视频播放 P2-2: CSS filter + P1-6: 电子放大 -->
               <video v-if="slot.playing"
                      :ref="el => setVideoRef(el, idx)"
@@ -955,12 +956,24 @@ const eZoomX = ref(50)  // 中心点百分比 0-100
 const eZoomY = ref(50)
 function toggleEZoom() {
   eZoomActive.value = !eZoomActive.value
-  if (!eZoomActive.value) { eZoomScale.value = 1; eZoomX.value = 50; eZoomY.value = 50 }
+  if (eZoomActive.value) {
+    // [FIX] 开启时默认放大2倍，给出即时视觉反馈（此前scale=1导致点击无效果）
+    eZoomScale.value = 2; eZoomX.value = 50; eZoomY.value = 50
+  } else { eZoomScale.value = 1; eZoomX.value = 50; eZoomY.value = 50 }
+}
+// [FIX] 滚轮缩放：电子放大激活时，在视频格上滚动鼠标滚轮直接变倍
+function onEZoomWheel(e: WheelEvent, idx: number) {
+  if (!eZoomActive.value || idx !== activeSlotIdx.value) return
+  e.preventDefault()
+  const delta = e.deltaY > 0 ? -0.2 : 0.2
+  eZoomScale.value = Math.min(5, Math.max(1, +(eZoomScale.value + delta).toFixed(1)))
 }
 const eZoomStyle = computed(() => {
   if (!eZoomActive.value || eZoomScale.value <= 1) return { transform: 'none' }
-  const tx = (50 - eZoomX.value) * (eZoomScale.value - 1) / eZoomScale.value
-  const ty = (50 - eZoomY.value) * (eZoomScale.value - 1) / eZoomScale.value
+  // [FIX] translate 位于 scale 之内，位移会被乘以缩放倍数，
+  // 正确公式为 tx = 50 - eZoomX（原 (50-eZoomX)*(s-1)/s 导致平移定位不准）
+  const tx = 50 - eZoomX.value
+  const ty = 50 - eZoomY.value
   return { transform: `scale(${eZoomScale.value}) translate(${tx}%, ${ty}%)` }
 })
 

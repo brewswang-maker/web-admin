@@ -116,6 +116,7 @@ declare module 'vue' {
     RoiPolygonEditor: typeof import('./components/RoiPolygonEditor.vue')['default']
     RouterLink: typeof import('vue-router')['RouterLink']
     RouterView: typeof import('vue-router')['RouterView']
+    RuleGuiEditor: typeof import('./components/RuleGuiEditor.vue')['default']
     Scene3D: typeof import('./components/Scene3D.vue')['default']
     Search: typeof import('@element-plus/icons-vue')['Search']
     Setting: typeof import('@element-plus/icons-vue')['Setting']
