@@ -10,15 +10,65 @@
         <el-button size="small" @click="redo" :disabled="!canRedo" title="Ctrl+Y">↷ 重做</el-button>
         <el-divider direction="vertical" />
         <el-dropdown @command="applyTemplate" trigger="click">
-          <el-button size="small">📋 模板库 <el-icon><ArrowDown /></el-icon></el-button>
+          <el-button size="small">📋 场景模板 <el-icon><ArrowDown /></el-icon></el-button>
           <template #dropdown>
-            <el-dropdown-menu>
+            <el-dropdown-menu style="max-height: 480px; overflow-y: auto;">
+              <!-- ═══ 智慧安防 ═══ -->
+              <el-dropdown-item disabled class="tpl-cat">🏠 智慧安防</el-dropdown-item>
               <el-dropdown-item command="perimeter">🚧 周界入侵检测</el-dropdown-item>
-              <el-dropdown-item command="pedestrian">🎯 人形检测+追踪</el-dropdown-item>
-              <el-dropdown-item command="face">👤 人脸识别门禁</el-dropdown-item>
               <el-dropdown-item command="tripwire">〰️ 绊线检测</el-dropdown-item>
+              <el-dropdown-item command="fire_smoke">🔥 火灾烟雾检测</el-dropdown-item>
+              <el-dropdown-item command="fighting">⚔️ 打架斗殴检测</el-dropdown-item>
+              <el-dropdown-item command="loitering">🕐 区域徘徊检测</el-dropdown-item>
+              <el-dropdown-item command="gathering">👥 人员聚集检测</el-dropdown-item>
+              <el-dropdown-item command="fall_detection">🩹 跌倒检测</el-dropdown-item>
+              <el-dropdown-item command="abandoned">📦 遗留物检测</el-dropdown-item>
+              <el-dropdown-item command="tailgating">🚪 门禁尾随检测</el-dropdown-item>
+              <el-dropdown-item command="climbing">🧗 翻越检测</el-dropdown-item>
+              <el-dropdown-item command="running">🏃 异常奔跑检测</el-dropdown-item>
+              <el-dropdown-item command="fire_lane">🚒 消防通道堵塞</el-dropdown-item>
+              <!-- ═══ 智慧交通 ═══ -->
+              <el-dropdown-item disabled divided class="tpl-cat">🚗 智慧交通</el-dropdown-item>
+              <el-dropdown-item command="traffic_lpr">🔢 车牌识别记录</el-dropdown-item>
+              <el-dropdown-item command="parking_violation">🅿️ 违停检测</el-dropdown-item>
+              <el-dropdown-item command="wrong_direction">↩️ 逆行检测</el-dropdown-item>
+              <el-dropdown-item command="traffic_flow">📊 车流量统计</el-dropdown-item>
+              <!-- ═══ 生产安全 ═══ -->
+              <el-dropdown-item disabled divided class="tpl-cat">🏭 生产安全</el-dropdown-item>
+              <el-dropdown-item command="helmet">⛑️ 安全帽检测</el-dropdown-item>
+              <el-dropdown-item command="ppe">🦺 PPE合规检测</el-dropdown-item>
+              <el-dropdown-item command="smoking">🚬 吸烟检测</el-dropdown-item>
+              <el-dropdown-item command="guard_absence">💤 离岗检测</el-dropdown-item>
+              <el-dropdown-item command="phone_call">📱 打电话检测</el-dropdown-item>
+              <el-dropdown-item command="vest">🦺 反光衣检测</el-dropdown-item>
+              <!-- ═══ 智慧校园 ═══ -->
+              <el-dropdown-item disabled divided class="tpl-cat">🏫 智慧校园</el-dropdown-item>
+              <el-dropdown-item command="campus_safety">🛡️ 校园防霸凌</el-dropdown-item>
+              <el-dropdown-item command="dangerous_item">🔪 危险物品检测</el-dropdown-item>
+              <!-- ═══ 智慧养老 ═══ -->
+              <el-dropdown-item disabled divided class="tpl-cat">👴 智慧养老</el-dropdown-item>
+              <el-dropdown-item command="eldercare">🧓 养老看护(跌倒+滞留)</el-dropdown-item>
+              <!-- ═══ 智慧城市 ═══ -->
+              <el-dropdown-item disabled divided class="tpl-cat">🏙️ 智慧城市</el-dropdown-item>
+              <el-dropdown-item command="high_altitude">📉 高空抛物检测</el-dropdown-item>
+              <el-dropdown-item command="crowd_density">🌡️ 人群密度热图</el-dropdown-item>
+              <!-- ═══ 商业运营 ═══ -->
+              <el-dropdown-item disabled divided class="tpl-cat">💼 商业运营</el-dropdown-item>
+              <el-dropdown-item command="face">👤 人脸识别门禁</el-dropdown-item>
+              <el-dropdown-item command="face_attendance">📋 人脸考勤打卡</el-dropdown-item>
+              <el-dropdown-item command="queue_length">🧍 排队长度检测</el-dropdown-item>
+              <el-dropdown-item command="people_counting">🔢 人流计数</el-dropdown-item>
+              <!-- ═══ 环境监测 ═══ -->
+              <el-dropdown-item disabled divided class="tpl-cat">📷 环境监测</el-dropdown-item>
+              <el-dropdown-item command="camera_health">🔧 摄像头健康检测</el-dropdown-item>
+              <el-dropdown-item command="night_vision">🌙 夜间安防增强</el-dropdown-item>
+              <el-dropdown-item command="animal">🐈 动物入侵检测</el-dropdown-item>
+              <!-- ═══ 工具模板 ═══ -->
+              <el-dropdown-item disabled divided class="tpl-cat">🔧 工具模板</el-dropdown-item>
+              <el-dropdown-item command="pedestrian">🎯 人形检测+追踪</el-dropdown-item>
               <el-dropdown-item command="multi">📹 多通道并发检测</el-dropdown-item>
               <el-dropdown-item command="enhance">✨ 视频增强推流</el-dropdown-item>
+              <el-dropdown-item command="privacy_mask">🙈 隐私遮罩合规</el-dropdown-item>
             </el-dropdown-menu>
           </template>
         </el-dropdown>
@@ -64,10 +114,16 @@
            @mousemove="onCanvasMouseMove"
            @mouseup="onCanvasMouseUp"
            @wheel="onCanvasWheel">
+        <!-- [UX] 连线中的动画提示条 -->
+        <div v-if="drawingLine && sourceNodeLabel" class="pe-draw-hint">
+          <span>🎯 拖动到目标端口: {{ sourceNodeLabel }}.{{ lineFrom.port }}（{{ lineFrom.dir === 'out' ? '输出' : '输入' }}）</span>
+          <span class="pe-hint-cancel" @click="cancelDrawing" title="取消">✕</span>
+        </div>
         <div class="pe-canvas-inner" :style="{ transform: 'scale(' + canvasScale + ')', transformOrigin: '0 0' }">
-        <svg class="pe-lines" :width="canvasW" :height="canvasH">
-          <g v-for="(line, idx) in connections" :key="idx">
-            <path :d="linePath(line)" stroke="#1A73E8" stroke-width="2" fill="none" />
+        <svg ref="svgCanvas" class="pe-lines" :width="canvasW" :height="canvasH" style="overflow: visible; z-index: 0;">
+          <g v-for="(line, idx) in connections" :key="idx" class="conn-group" @click="removeConnection(idx)">
+            <path :d="linePath(line)" stroke="#1A73E8" stroke-width="2" fill="none" marker-end="url(#arrowhead)" class="conn-line" />
+            <path :d="linePath(line)" stroke="transparent" stroke-width="12" fill="none" class="conn-hit" />
             <circle :cx="portPos(line.toNode, line.toPort).x" :cy="portPos(line.toNode, line.toPort).y" r="4" fill="#0F9D58" />
           </g>
           <!-- 正在连线 -->
@@ -86,15 +142,21 @@
           <div class="node-ports">
             <div class="ports-in">
               <div v-for="p in node.inputs" :key="p" class="port in-port"
+                   :class="portClass(node.id, p, 'in')"
                    :data-node="node.id" :data-port="p" :data-dir="'in'"
-                   @mousedown.stop="onPortMouseDown($event, node.id, p, 'in')">
+                   @mousedown.stop="onPortMouseDown($event, node.id, p, 'in')"
+                   @mouseup.stop="onPortMouseUp($event, node.id, p, 'in')"
+                   @click.stop="onPortClick($event, node.id, p, 'in')">
                 <span class="port-dot"></span>{{ p }}
               </div>
             </div>
             <div class="ports-out">
               <div v-for="p in node.outputs" :key="p" class="port out-port"
+                   :class="portClass(node.id, p, 'out')"
                    :data-node="node.id" :data-port="p" :data-dir="'out'"
-                   @mousedown.stop="onPortMouseDown($event, node.id, p, 'out')">
+                   @mousedown.stop="onPortMouseDown($event, node.id, p, 'out')"
+                   @mouseup.stop="onPortMouseUp($event, node.id, p, 'out')"
+                   @click.stop="onPortClick($event, node.id, p, 'out')">
                 {{ p }}<span class="port-dot"></span>
               </div>
             </div>
@@ -227,7 +289,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, reactive, onMounted, onUnmounted, watch } from 'vue'
+import { ref, computed, reactive, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { savePipeline as apiSavePipeline, getPipelines, deletePipeline, validatePipeline, deployPipeline, undeployPipeline, getPipelineRuntime } from '@/api/pipeline'
 import type { PipelineRuntimeStatus } from '@/api/pipeline'
 import { ElMessage, ElMessageBox, ElNotification } from 'element-plus'
@@ -314,8 +376,10 @@ function undo() {
   redoStack.value.push(current)
   const prev = undoStack.value.pop()!
   suppressHistory = true
-  nodes.splice(0, ...JSON.parse(JSON.stringify(prev.nodes)))
-  connections.splice(0, ...JSON.parse(JSON.stringify(prev.connections)))
+  const restoredNodes = JSON.parse(JSON.stringify(prev.nodes)) as PipelineNode[]
+  const restoredConns = JSON.parse(JSON.stringify(prev.connections)) as Connection[]
+  nodes.splice(0, nodes.length, ...restoredNodes)
+  connections.splice(0, connections.length, ...restoredConns)
   suppressHistory = false
   dirty.value = true
 }
@@ -328,8 +392,10 @@ function redo() {
   undoStack.value.push(current)
   const next = redoStack.value.pop()!
   suppressHistory = true
-  nodes.splice(0, ...JSON.parse(JSON.stringify(next.nodes)))
-  connections.splice(0, ...JSON.parse(JSON.stringify(next.connections)))
+  const restoredNodes = JSON.parse(JSON.stringify(next.nodes)) as PipelineNode[]
+  const restoredConns = JSON.parse(JSON.stringify(next.connections)) as Connection[]
+  nodes.splice(0, nodes.length, ...restoredNodes)
+  connections.splice(0, connections.length, ...restoredConns)
   suppressHistory = false
   dirty.value = true
 }
@@ -382,10 +448,10 @@ let dragComp: any = null
 let dragNode: PipelineNode | null = null
 let dragOffset = { x: 0, y: 0 }
 
-// 连线
-let drawingLine = ref(false)
-let lineFrom = { node: '', port: '', dir: '' }
-let lineTo = { x: 0, y: 0 }
+// 连线 — 使用 reactive 确保拖拽时虚线能响应式更新
+const drawingLine = ref(false)
+const lineFrom = reactive({ node: '', port: '', dir: '' })
+const lineTo = reactive({ x: 0, y: 0 })
 
 // ROI - computed bridge for RoiPolygonEditor v-model
 const roiFlatPoints = computed({
@@ -435,8 +501,9 @@ function onCanvasDrop(e: DragEvent) {
   if (!dragComp) return
   pushHistory()
   const rect = canvasContainer.value!.getBoundingClientRect()
-  const x = e.clientX - rect.left
-  const y = e.clientY - rect.top
+  // 除以缩放比例，确保缩放后拖放位置准确
+  const x = (e.clientX - rect.left) / canvasScale.value
+  const y = (e.clientY - rect.top) / canvasScale.value
   const node: PipelineNode = {
     id: genNodeId(), type: dragComp.type, label: dragComp.name, icon: dragComp.icon,
     x, y, inputs: [...dragComp.inputs], outputs: [...dragComp.outputs],
@@ -454,52 +521,37 @@ function onCanvasDrop(e: DragEvent) {
 function onNodeMouseDown(e: MouseEvent, node: PipelineNode) {
   selectedNode.value = node.id
   dragNode = node
-  dragOffset = { x: e.clientX - node.x, y: e.clientY - node.y }
+  // 考虑缩放比例：屏幕偏移 / scale = 画布偏移
+  dragOffset = { x: (e.clientX - node.x) / canvasScale.value, y: (e.clientY - node.y) / canvasScale.value }
 }
 function onCanvasMouseDown(e: MouseEvent) {
   if (!dragNode) selectedNode.value = ''
 }
 function onCanvasMouseMove(e: MouseEvent) {
   if (dragNode) {
-    dragNode.x = Math.max(0, e.clientX - dragOffset.x)
-    dragNode.y = Math.max(0, e.clientY - dragOffset.y)
+    // 考虑缩放比例
+    dragNode.x = Math.max(0, (e.clientX - dragOffset.x) / canvasScale.value)
+    dragNode.y = Math.max(0, (e.clientY - dragOffset.y) / canvasScale.value)
     dirty.value = true
   }
   if (drawingLine.value) {
     const rect = canvasContainer.value!.getBoundingClientRect()
-    lineTo = { x: e.clientX - rect.left, y: e.clientY - rect.top }
+    // 除以缩放比例，将屏幕坐标转换为画布坐标
+    lineTo.x = (e.clientX - rect.left) / canvasScale.value
+    lineTo.y = (e.clientY - rect.top) / canvasScale.value
   }
 }
-// [BUG 1 修复] onCanvasMouseUp: 检测端口落点并创建连线
-function onCanvasMouseUp(e: MouseEvent) {
+// onCanvasMouseUp: 鼠标释放在画布空白处时取消连线
+// 端口上的释放由 onPortMouseUp 处理（通过 @mouseup.stop 拦截）
+function onCanvasMouseUp(_e: MouseEvent) {
   dragNode = null
   if (drawingLine.value) {
     drawingLine.value = false
-    // 使用 elementFromPoint 检测鼠标释放位置是否在端口上
-    const target = document.elementFromPoint(e.clientX, e.clientY)
-    if (target) {
-      // 向上查找最近的有 data-dir 属性的端口元素
-      const portEl = (target as HTMLElement).closest('[data-dir]') as HTMLElement | null
-      if (portEl) {
-        const targetNode = portEl.dataset.node || ''
-        const targetPort = portEl.dataset.port || ''
-        const targetDir = portEl.dataset.dir || ''
-
-        // 正向连线: out → in
-        if (lineFrom.dir === 'out' && targetDir === 'in' && lineFrom.node !== targetNode) {
-          addConnection(lineFrom.node, lineFrom.port, targetNode, targetPort)
-        }
-        // 反向连线: in → out
-        if (lineFrom.dir === 'in' && targetDir === 'out' && lineFrom.node !== targetNode) {
-          addConnection(targetNode, targetPort, lineFrom.node, lineFrom.port)
-        }
-      }
-    }
-    // 清理连线起点状态
-    lineFrom = { node: '', port: '', dir: '' }
+    lineFrom.node = ''
+    lineFrom.port = ''
+    lineFrom.dir = ''
   }
 }
-
 // [P0-5] 辅助函数：添加连线（防重复 + 语义校验）
 function addConnection(fromNode: string, fromPort: string, toNode: string, toPort: string) {
   const exists = connections.some(c =>
@@ -517,32 +569,160 @@ function addConnection(fromNode: string, fromPort: string, toNode: string, toPor
   dirty.value = true
 }
 
-// 端口连线（支持双向：out→in 和 in→out）
+// 端口连线起点（支持双向：out→in 和 in→out）
 function onPortMouseDown(e: MouseEvent, nodeId: string, port: string, dir: string) {
   drawingLine.value = true
-  lineFrom = { node: nodeId, port, dir }
+  lineFrom.node = nodeId
+  lineFrom.port = port
+  lineFrom.dir = dir
+}
+// 端口连线终点 — 鼠标在目标端口上释放时创建连线
+function onPortMouseUp(e: MouseEvent, nodeId: string, port: string, dir: string) {
+  if (!drawingLine.value) return
+  drawingLine.value = false
+  if (lineFrom.node && lineFrom.node !== nodeId) {
+    // 正向连线: out → in
+    if (lineFrom.dir === 'out' && dir === 'in') {
+      addConnection(lineFrom.node, lineFrom.port, nodeId, port)
+    }
+    // 反向连线: in → out
+    else if (lineFrom.dir === 'in' && dir === 'out') {
+      addConnection(nodeId, port, lineFrom.node, lineFrom.port)
+    }
+  }
+  lineFrom.node = ''
+  lineFrom.port = ''
+  lineFrom.dir = ''
+}
+
+// [UX] 点击端口也可连线：首次点击作为起点（高亮），再次点击同向或目标端口连线
+function onPortClick(e: MouseEvent, nodeId: string, port: string, dir: string) {
+  // 如果当前未在连线：把这个端口当起点
+  if (!drawingLine.value) {
+    drawingLine.value = true
+    lineFrom.node = nodeId
+    lineFrom.port = port
+    lineFrom.dir = dir
+    return
+  }
+  // 已经在连线中：点击同一端点 → 取消
+  if (lineFrom.node === nodeId && lineFrom.port === port && lineFrom.dir === dir) {
+    cancelDrawing()
+    return
+  }
+  // 点击同节点的其他端口：换个方向/起点
+  if (lineFrom.node === nodeId) {
+    lineFrom.port = port
+    lineFrom.dir = dir
+    return
+  }
+  // 点击另一个节点的端口：创建连线
+  if (lineFrom.dir === 'out' && dir === 'in') {
+    addConnection(lineFrom.node, lineFrom.port, nodeId, port)
+    cancelDrawing()
+  }
+  else if (lineFrom.dir === 'in' && dir === 'out') {
+    addConnection(nodeId, port, lineFrom.node, lineFrom.port)
+    cancelDrawing()
+  }
+  else {
+    ElMessage.warning('请从输出端口连到输入端口（绿色为输入、蓝色为输出）')
+  }
+}
+
+function cancelDrawing() {
+  drawingLine.value = false
+  lineFrom.node = ''
+  lineFrom.port = ''
+  lineFrom.dir = ''
+}
+
+// 计算属性：起点节点名称（用于画线提示条）
+const sourceNodeLabel = computed(() => {
+  if (!lineFrom.node) return ''
+  const n = nodes.find(nd => nd.id === lineFrom.node)
+  return n?.label || lineFrom.node
+})
+
+// [UX] 端口状态 class：起点黄色高亮，目标蓝色高亮，提示中间状态
+function portClass(nodeId: string, port: string, dir: string): string {
+  if (!drawingLine.value) return ''
+  if (lineFrom.node === nodeId && lineFrom.port === port && lineFrom.dir === dir) {
+    return 'port-drawing-source'
+  }
+  // 反向端口灰变蓝高亮（提示可连接）
+  if (lineFrom.node !== nodeId && ((lineFrom.dir === 'out' && dir === 'in') || (lineFrom.dir === 'in' && dir === 'out'))) {
+    const compatible = isPortCompatible(lineFrom.port, port)
+    return compatible ? 'port-drawing-target' : ''
+  }
+  return ''
 }
 
 function portPos(nodeId: string, port: string): { x: number; y: number } {
   const node = nodes.find(n => n.id === nodeId)
   if (!node) return { x: 0, y: 0 }
-  const idx = node.inputs.includes(port) ? node.inputs.indexOf(port) : node.outputs.indexOf(port) + node.inputs.length
-  return { x: node.x + (node.inputs.includes(port) ? 0 : 180), y: node.y + 30 + idx * 22 + 10 }
+  const isInput = node.inputs.includes(port)
+  let portIndex: number
+  if (isInput) {
+    portIndex = node.inputs.indexOf(port)
+  } else {
+    portIndex = node.inputs.length + Math.max(0, node.outputs.indexOf(port))
+  }
+  // CSS 实际渲染: header padding 6px + 内容 ~22px + padding 6px ≈ 34px
+  // node-ports padding-top 6px, 每个 port 行高 ≈ 20px, port-dot 中心偏移 ≈ 10px
+  return {
+    x: node.x + (isInput ? 0 : 180),
+    y: node.y + 50 + portIndex * 20,
+  }
 }
 
 function linePath(conn: Connection): string {
   const from = portPos(conn.fromNode, conn.fromPort)
   const to = portPos(conn.toNode, conn.toPort)
-  const cx = Math.abs(to.x - from.x) * 0.5
+  const dx = Math.abs(to.x - from.x)
+  // 最小控制点距离 30px，确保短连线也有平滑曲线
+  const cx = Math.max(30, dx * 0.5)
   return `M${from.x},${from.y} C${from.x + cx},${from.y} ${to.x - cx},${to.y} ${to.x},${to.y}`
 }
 
 const tempLinePath = computed(() => {
   const from = portPos(lineFrom.node, lineFrom.port)
-  const cx = Math.abs(lineTo.x - from.x) * 0.5
+  const dx = Math.abs(lineTo.x - from.x)
+  const cx = Math.max(30, dx * 0.5)
   return `M${from.x},${from.y} C${from.x + cx},${from.y} ${lineTo.x - cx},${lineTo.y} ${lineTo.x},${lineTo.y}`
 })
 
+// SVG canvas ref + 动态创建 marker (避免 Vue 模板编译 SVG defs/marker 命名空间丢失)
+const svgCanvas = ref<SVGSVGElement | null>(null)
+function ensureArrowMarker() {
+  const svg = svgCanvas.value
+  if (!svg) return
+  if (svg.querySelector('#arrowhead')) return  // 已存在
+  const SVG_NS = 'http://www.w3.org/2000/svg'
+  const defs = document.createElementNS(SVG_NS, 'defs')
+  const marker = document.createElementNS(SVG_NS, 'marker')
+  marker.setAttribute('id', 'arrowhead')
+  marker.setAttribute('markerWidth', '10')
+  marker.setAttribute('markerHeight', '7')
+  marker.setAttribute('refX', '8')
+  marker.setAttribute('refY', '3.5')
+  marker.setAttribute('orient', 'auto')
+  marker.setAttribute('markerUnits', 'strokeWidth')
+  const polygon = document.createElementNS(SVG_NS, 'polygon')
+  polygon.setAttribute('points', '0 0, 10 3.5, 0 7')
+  polygon.setAttribute('fill', '#1A73E8')
+  marker.appendChild(polygon)
+  defs.appendChild(marker)
+  svg.insertBefore(defs, svg.firstChild)
+}
+// 监听 svgCanvas ref，挂载后注入 marker
+watch(svgCanvas, (el) => { if (el) ensureArrowMarker() }, { flush: 'post' })
+// 点击连线删除
+function removeConnection(idx: number) {
+  pushHistory()
+  connections.splice(idx, 1)
+  dirty.value = true
+}
 function removeNode(id: string) {
   pushHistory()
   const idx = nodes.findIndex(n => n.id === id)
@@ -968,6 +1148,348 @@ function applyTemplate(cmd: string) {
     nodes.push(makeNode('rtsp_out', 'RTSP推流', '📺', 970, 100, ['frame_in'], [], { props: [{ key: 'url', label: '推流地址', type: 'text', value: 'rtsp://localhost/live' }] }))
     connect(0, 'video_out', 1, 'video_in'); connect(1, 'frame_out', 2, 'frame_in')
     connect(2, 'frame_out', 3, 'frame_in'); connect(3, 'frame_out', 4, 'frame_in')
+  } else if (cmd === 'privacy_mask') {
+    pipelineName.value = '隐私遮罩合规'
+    nodes.push(makeNode('gb28181', 'GB28181通道', '📹', 50, 100, [], ['video_out'], { props: [{ key: 'channelId', label: '通道ID', type: 'text', value: '' }] }))
+    nodes.push(makeNode('decode', '解码', '🔓', 280, 100, ['video_in'], ['frame_out']))
+    nodes.push(makeNode('osd', 'OSD叠加', '🏷️', 510, 100, ['frame_in', 'dets_in'], ['frame_out']))
+    nodes.push(makeNode('privacy_mask', '隐私遮罩', '🙈', 740, 100, ['frame_in'], ['frame_out'], { props: [{ key: 'mode', label: '遮罩模式', type: 'select', value: 'solid_black', options: ['solid_black', 'solid_white', 'blur', 'mosaic'] }, { key: 'regions', label: '遮罩区域', type: 'text', value: '[]', description: 'JSON数组: [{"x":0.1,"y":0.1,"width":0.2,"height":0.2}]' }] }))
+    nodes.push(makeNode('rtsp_out', 'RTSP推流', '📺', 970, 100, ['frame_in'], [], { props: [{ key: 'url', label: '推流地址', type: 'text', value: 'rtsp://localhost/live' }] }))
+    connect(0, 'video_out', 1, 'video_in'); connect(1, 'frame_out', 2, 'frame_in')
+    connect(2, 'frame_out', 3, 'frame_in'); connect(3, 'frame_out', 4, 'frame_in')
+  } else if (cmd === 'fire_smoke') {
+    pipelineName.value = '火灾烟雾检测'
+    nodes.push(makeNode('gb28181', 'GB28181通道', '📹', 50, 100, [], ['video_out'], { props: [{ key: 'channelId', label: '通道ID', type: 'text', value: '' }] }))
+    nodes.push(makeNode('decode', '解码', '🔓', 280, 100, ['video_in'], ['frame_out']))
+    nodes.push(makeNode('yolo', '烟火检测', '🔥', 510, 100, ['frame_in'], ['dets_out'], { hasROI: true, hasSchedule: true, hasActions: true, actionAlarm: true, props: [{ key: 'model', label: '模型', type: 'select', value: 'fire_smoke_v2', options: ['fire_smoke_v2', 'smoke_v4', 'flame_v4'] }, { key: 'conf', label: '置信度', type: 'slider', value: 0.5, min: 0, max: 1, step: 0.05 }] }))
+    nodes.push(makeNode('osd', 'OSD叠加', '🏷️', 740, 80, ['frame_in', 'dets_in'], ['frame_out']))
+    nodes.push(makeNode('mqtt_alarm', 'MQTT告警', '📡', 740, 200, ['alarm_in'], []))
+    connect(0, 'video_out', 1, 'video_in'); connect(1, 'frame_out', 2, 'frame_in')
+    connect(1, 'frame_out', 3, 'frame_in'); connect(2, 'dets_out', 3, 'dets_in')
+    connect(2, 'dets_out', 4, 'alarm_in')
+  } else if (cmd === 'fighting') {
+    pipelineName.value = '打架斗殴检测'
+    nodes.push(makeNode('gb28181', 'GB28181通道', '📹', 50, 100, [], ['video_out'], { props: [{ key: 'channelId', label: '通道ID', type: 'text', value: '' }] }))
+    nodes.push(makeNode('decode', '解码', '🔓', 280, 100, ['video_in'], ['frame_out']))
+    nodes.push(makeNode('yolo', '打架检测', '⚔️', 510, 100, ['frame_in'], ['dets_out'], { hasROI: true, hasSchedule: true, hasActions: true, actionAlarm: true, props: [{ key: 'model', label: '模型', type: 'select', value: 'fighting_v3', options: ['fighting_v3'] }, { key: 'conf', label: '置信度', type: 'slider', value: 0.5, min: 0, max: 1, step: 0.05 }] }))
+    nodes.push(makeNode('osd', 'OSD叠加', '🏷️', 740, 80, ['frame_in', 'dets_in'], ['frame_out']))
+    nodes.push(makeNode('mqtt_alarm', 'MQTT告警', '📡', 740, 200, ['alarm_in'], []))
+    connect(0, 'video_out', 1, 'video_in'); connect(1, 'frame_out', 2, 'frame_in')
+    connect(1, 'frame_out', 3, 'frame_in'); connect(2, 'dets_out', 3, 'dets_in')
+    connect(2, 'dets_out', 4, 'alarm_in')
+  } else if (cmd === 'loitering') {
+    pipelineName.value = '区域徘徊检测'
+    nodes.push(makeNode('gb28181', 'GB28181通道', '📹', 50, 100, [], ['video_out'], { props: [{ key: 'channelId', label: '通道ID', type: 'text', value: '' }] }))
+    nodes.push(makeNode('decode', '解码', '🔓', 280, 100, ['video_in'], ['frame_out']))
+    nodes.push(makeNode('yolo', '人形检测', '🎯', 510, 100, ['frame_in'], ['dets_out'], { hasROI: true, hasSchedule: true, hasActions: true, actionAlarm: true, props: [{ key: 'model', label: '模型', type: 'select', value: 'yolov8n', options: ['yolov8n', 'yolov8s'] }, { key: 'conf', label: '置信度', type: 'slider', value: 0.5, min: 0, max: 1, step: 0.05 }] }))
+    nodes.push(makeNode('reid', '徘徊追踪', '🔄', 740, 100, ['frame_in', 'dets_in'], ['track_out'], { props: [{ key: 'maxTrackAge', label: '追踪帧数', type: 'number', value: 300, min: 30, max: 900 }] }))
+    nodes.push(makeNode('osd', 'OSD叠加', '🏷️', 970, 80, ['frame_in', 'dets_in'], ['frame_out']))
+    nodes.push(makeNode('mqtt_alarm', 'MQTT告警', '📡', 970, 200, ['alarm_in'], []))
+    connect(0, 'video_out', 1, 'video_in'); connect(1, 'frame_out', 2, 'frame_in')
+    connect(1, 'frame_out', 3, 'frame_in'); connect(2, 'dets_out', 3, 'dets_in')
+    connect(1, 'frame_out', 4, 'frame_in'); connect(3, 'track_out', 4, 'dets_in')
+    connect(3, 'track_out', 5, 'alarm_in')
+  } else if (cmd === 'gathering') {
+    pipelineName.value = '人员聚集检测'
+    nodes.push(makeNode('gb28181', 'GB28181通道', '📹', 50, 100, [], ['video_out'], { props: [{ key: 'channelId', label: '通道ID', type: 'text', value: '' }] }))
+    nodes.push(makeNode('decode', '解码', '🔓', 280, 100, ['video_in'], ['frame_out']))
+    nodes.push(makeNode('yolo', '聚集检测', '👥', 510, 100, ['frame_in'], ['dets_out'], { hasROI: true, hasSchedule: true, hasActions: true, actionAlarm: true, props: [{ key: 'model', label: '模型', type: 'select', value: 'gathering_v3', options: ['gathering_v3', 'crowd_count_v1'] }, { key: 'conf', label: '置信度', type: 'slider', value: 0.5, min: 0, max: 1, step: 0.05 }] }))
+    nodes.push(makeNode('osd', 'OSD叠加', '🏷️', 740, 80, ['frame_in', 'dets_in'], ['frame_out']))
+    nodes.push(makeNode('mqtt_alarm', 'MQTT告警', '📡', 740, 200, ['alarm_in'], []))
+    connect(0, 'video_out', 1, 'video_in'); connect(1, 'frame_out', 2, 'frame_in')
+    connect(1, 'frame_out', 3, 'frame_in'); connect(2, 'dets_out', 3, 'dets_in')
+    connect(2, 'dets_out', 4, 'alarm_in')
+  } else if (cmd === 'fall_detection') {
+    pipelineName.value = '跌倒检测'
+    nodes.push(makeNode('gb28181', 'GB28181通道', '📹', 50, 100, [], ['video_out'], { props: [{ key: 'channelId', label: '通道ID', type: 'text', value: '' }] }))
+    nodes.push(makeNode('decode', '解码', '🔓', 280, 100, ['video_in'], ['frame_out']))
+    nodes.push(makeNode('yolo', '摔倒检测', '🩹', 510, 100, ['frame_in'], ['dets_out'], { hasROI: true, hasSchedule: true, hasActions: true, actionAlarm: true, props: [{ key: 'model', label: '模型', type: 'select', value: 'fall_v3', options: ['fall_v3'] }, { key: 'conf', label: '置信度', type: 'slider', value: 0.5, min: 0, max: 1, step: 0.05 }] }))
+    nodes.push(makeNode('osd', 'OSD叠加', '🏷️', 740, 80, ['frame_in', 'dets_in'], ['frame_out']))
+    nodes.push(makeNode('mqtt_alarm', 'MQTT告警', '📡', 740, 200, ['alarm_in'], []))
+    connect(0, 'video_out', 1, 'video_in'); connect(1, 'frame_out', 2, 'frame_in')
+    connect(1, 'frame_out', 3, 'frame_in'); connect(2, 'dets_out', 3, 'dets_in')
+    connect(2, 'dets_out', 4, 'alarm_in')
+  } else if (cmd === 'abandoned') {
+    pipelineName.value = '遗留物检测'
+    nodes.push(makeNode('gb28181', 'GB28181通道', '📹', 50, 100, [], ['video_out'], { props: [{ key: 'channelId', label: '通道ID', type: 'text', value: '' }] }))
+    nodes.push(makeNode('decode', '解码', '🔓', 280, 100, ['video_in'], ['frame_out']))
+    nodes.push(makeNode('yolo', '遗留物检测', '📦', 510, 100, ['frame_in'], ['dets_out'], { hasROI: true, hasSchedule: true, hasActions: true, actionAlarm: true, props: [{ key: 'model', label: '模型', type: 'select', value: 'abandoned_v1', options: ['abandoned_v1'] }, { key: 'conf', label: '置信度', type: 'slider', value: 0.5, min: 0, max: 1, step: 0.05 }] }))
+    nodes.push(makeNode('reid', 'ReID追踪', '🔄', 740, 100, ['frame_in', 'dets_in'], ['track_out'], { props: [{ key: 'maxTrackAge', label: '追踪帧数', type: 'number', value: 180, min: 30, max: 600 }] }))
+    nodes.push(makeNode('osd', 'OSD叠加', '🏷️', 970, 80, ['frame_in', 'dets_in'], ['frame_out']))
+    nodes.push(makeNode('mqtt_alarm', 'MQTT告警', '📡', 970, 200, ['alarm_in'], []))
+    connect(0, 'video_out', 1, 'video_in'); connect(1, 'frame_out', 2, 'frame_in')
+    connect(1, 'frame_out', 3, 'frame_in'); connect(2, 'dets_out', 3, 'dets_in')
+    connect(1, 'frame_out', 4, 'frame_in'); connect(3, 'track_out', 4, 'dets_in')
+    connect(3, 'track_out', 5, 'alarm_in')
+  } else if (cmd === 'tailgating') {
+    pipelineName.value = '门禁尾随检测'
+    nodes.push(makeNode('gb28181', 'GB28181通道', '📹', 50, 100, [], ['video_out'], { props: [{ key: 'channelId', label: '通道ID', type: 'text', value: '' }] }))
+    nodes.push(makeNode('decode', '解码', '🔓', 280, 100, ['video_in'], ['frame_out']))
+    nodes.push(makeNode('yolo', '人形检测', '🎯', 510, 100, ['frame_in'], ['dets_out'], { hasROI: true, hasSchedule: true, hasActions: true, actionAlarm: true, props: [{ key: 'model', label: '模型', type: 'select', value: 'yolov8n', options: ['yolov8n', 'yolov8s'] }, { key: 'conf', label: '置信度', type: 'slider', value: 0.5, min: 0, max: 1, step: 0.05 }] }))
+    nodes.push(makeNode('reid', '尾随追踪', '🔄', 740, 100, ['frame_in', 'dets_in'], ['track_out'], { props: [{ key: 'maxTrackAge', label: '追踪帧数', type: 'number', value: 120, min: 30, max: 600 }] }))
+    nodes.push(makeNode('osd', 'OSD叠加', '🏷️', 970, 80, ['frame_in', 'dets_in'], ['frame_out']))
+    nodes.push(makeNode('mqtt_alarm', 'MQTT告警', '📡', 970, 200, ['alarm_in'], []))
+    connect(0, 'video_out', 1, 'video_in'); connect(1, 'frame_out', 2, 'frame_in')
+    connect(1, 'frame_out', 3, 'frame_in'); connect(2, 'dets_out', 3, 'dets_in')
+    connect(1, 'frame_out', 4, 'frame_in'); connect(3, 'track_out', 4, 'dets_in')
+    connect(3, 'track_out', 5, 'alarm_in')
+  } else if (cmd === 'climbing') {
+    pipelineName.value = '翻越检测'
+    nodes.push(makeNode('gb28181', 'GB28181通道', '📹', 50, 100, [], ['video_out'], { props: [{ key: 'channelId', label: '通道ID', type: 'text', value: '' }] }))
+    nodes.push(makeNode('decode', '解码', '🔓', 280, 100, ['video_in'], ['frame_out']))
+    nodes.push(makeNode('perimeter', '翻越检测', '🧗', 510, 100, ['frame_in'], ['dets_out'], { hasROI: true, hasSchedule: true, hasActions: true, actionAlarm: true, props: [{ key: 'model', label: '模型', type: 'select', value: 'climbing_v4', options: ['climbing_v4'] }, { key: 'conf', label: '置信度', type: 'slider', value: 0.5, min: 0, max: 1, step: 0.05 }] }))
+    nodes.push(makeNode('osd', 'OSD叠加', '🏷️', 740, 80, ['frame_in', 'dets_in'], ['frame_out']))
+    nodes.push(makeNode('mqtt_alarm', 'MQTT告警', '📡', 740, 200, ['alarm_in'], []))
+    connect(0, 'video_out', 1, 'video_in'); connect(1, 'frame_out', 2, 'frame_in')
+    connect(1, 'frame_out', 3, 'frame_in'); connect(2, 'dets_out', 3, 'dets_in')
+    connect(2, 'dets_out', 4, 'alarm_in')
+  } else if (cmd === 'running') {
+    pipelineName.value = '异常奔跑检测'
+    nodes.push(makeNode('gb28181', 'GB28181通道', '📹', 50, 100, [], ['video_out'], { props: [{ key: 'channelId', label: '通道ID', type: 'text', value: '' }] }))
+    nodes.push(makeNode('decode', '解码', '🔓', 280, 100, ['video_in'], ['frame_out']))
+    nodes.push(makeNode('yolo', '人形检测', '🎯', 510, 100, ['frame_in'], ['dets_out'], { hasROI: true, hasSchedule: true, hasActions: true, actionAlarm: true, props: [{ key: 'model', label: '模型', type: 'select', value: 'yolov8n', options: ['yolov8n', 'yolov8s'] }, { key: 'conf', label: '置信度', type: 'slider', value: 0.5, min: 0, max: 1, step: 0.05 }] }))
+    nodes.push(makeNode('reid', '速度追踪', '🔄', 740, 100, ['frame_in', 'dets_in'], ['track_out'], { props: [{ key: 'maxTrackAge', label: '追踪帧数', type: 'number', value: 90, min: 15, max: 300 }, { key: 'speedThreshold', label: '速度阈值(m/s)', type: 'number', value: 3, min: 1, max: 10 }] }))
+    nodes.push(makeNode('osd', 'OSD叠加', '🏷️', 970, 80, ['frame_in', 'dets_in'], ['frame_out']))
+    nodes.push(makeNode('mqtt_alarm', 'MQTT告警', '📡', 970, 200, ['alarm_in'], []))
+    connect(0, 'video_out', 1, 'video_in'); connect(1, 'frame_out', 2, 'frame_in')
+    connect(1, 'frame_out', 3, 'frame_in'); connect(2, 'dets_out', 3, 'dets_in')
+    connect(1, 'frame_out', 4, 'frame_in'); connect(3, 'track_out', 4, 'dets_in')
+    connect(3, 'track_out', 5, 'alarm_in')
+  } else if (cmd === 'fire_lane') {
+    pipelineName.value = '消防通道堵塞'
+    nodes.push(makeNode('gb28181', 'GB28181通道', '📹', 50, 100, [], ['video_out'], { props: [{ key: 'channelId', label: '通道ID', type: 'text', value: '' }] }))
+    nodes.push(makeNode('decode', '解码', '🔓', 280, 100, ['video_in'], ['frame_out']))
+    nodes.push(makeNode('yolo', '障碍物检测', '🚒', 510, 100, ['frame_in'], ['dets_out'], { hasROI: true, hasSchedule: true, hasActions: true, actionAlarm: true, props: [{ key: 'model', label: '模型', type: 'select', value: 'blocked_exit_v1', options: ['blocked_exit_v1'] }, { key: 'conf', label: '置信度', type: 'slider', value: 0.5, min: 0, max: 1, step: 0.05 }, { key: 'dwellTime', label: '持续阈值(秒)', type: 'number', value: 30, min: 5, max: 300 }] }))
+    nodes.push(makeNode('osd', 'OSD叠加', '🏷️', 740, 80, ['frame_in', 'dets_in'], ['frame_out']))
+    nodes.push(makeNode('mqtt_alarm', 'MQTT告警', '📡', 740, 200, ['alarm_in'], []))
+    connect(0, 'video_out', 1, 'video_in'); connect(1, 'frame_out', 2, 'frame_in')
+    connect(1, 'frame_out', 3, 'frame_in'); connect(2, 'dets_out', 3, 'dets_in')
+    connect(2, 'dets_out', 4, 'alarm_in')
+  } else if (cmd === 'traffic_lpr') {
+    pipelineName.value = '车牌识别记录'
+    nodes.push(makeNode('gb28181', 'GB28181通道', '📹', 50, 100, [], ['video_out'], { props: [{ key: 'channelId', label: '通道ID', type: 'text', value: '' }] }))
+    nodes.push(makeNode('decode', '解码', '🔓', 280, 100, ['video_in'], ['frame_out']))
+    nodes.push(makeNode('yolo', '车牌识别', '🔢', 510, 100, ['frame_in'], ['dets_out'], { hasROI: true, hasSchedule: true, hasActions: true, actionAlarm: true, props: [{ key: 'model', label: '模型', type: 'select', value: 'lpr_v1', options: ['lpr_v1'] }, { key: 'conf', label: '置信度', type: 'slider', value: 0.5, min: 0, max: 1, step: 0.05 }] }))
+    nodes.push(makeNode('osd', 'OSD叠加', '🏷️', 740, 80, ['frame_in', 'dets_in'], ['frame_out']))
+    nodes.push(makeNode('mqtt_alarm', 'MQTT告警', '📡', 740, 200, ['alarm_in'], []))
+    connect(0, 'video_out', 1, 'video_in'); connect(1, 'frame_out', 2, 'frame_in')
+    connect(1, 'frame_out', 3, 'frame_in'); connect(2, 'dets_out', 3, 'dets_in')
+    connect(2, 'dets_out', 4, 'alarm_in')
+  } else if (cmd === 'parking_violation') {
+    pipelineName.value = '违停检测'
+    nodes.push(makeNode('gb28181', 'GB28181通道', '📹', 50, 100, [], ['video_out'], { props: [{ key: 'channelId', label: '通道ID', type: 'text', value: '' }] }))
+    nodes.push(makeNode('decode', '解码', '🔓', 280, 100, ['video_in'], ['frame_out']))
+    nodes.push(makeNode('yolo', '车辆检测', '🚗', 510, 100, ['frame_in'], ['dets_out'], { hasROI: true, hasSchedule: true, hasActions: true, actionAlarm: true, props: [{ key: 'model', label: '模型', type: 'select', value: 'yolov8n', options: ['yolov8n', 'yolov8s'] }, { key: 'conf', label: '置信度', type: 'slider', value: 0.5, min: 0, max: 1, step: 0.05 }] }))
+    nodes.push(makeNode('reid', '违停追踪', '🔄', 740, 100, ['frame_in', 'dets_in'], ['track_out'], { props: [{ key: 'maxTrackAge', label: '追踪帧数', type: 'number', value: 600, min: 60, max: 1800 }] }))
+    nodes.push(makeNode('osd', 'OSD叠加', '🏷️', 970, 80, ['frame_in', 'dets_in'], ['frame_out']))
+    nodes.push(makeNode('mqtt_alarm', 'MQTT告警', '📡', 970, 200, ['alarm_in'], []))
+    connect(0, 'video_out', 1, 'video_in'); connect(1, 'frame_out', 2, 'frame_in')
+    connect(1, 'frame_out', 3, 'frame_in'); connect(2, 'dets_out', 3, 'dets_in')
+    connect(1, 'frame_out', 4, 'frame_in'); connect(3, 'track_out', 4, 'dets_in')
+    connect(3, 'track_out', 5, 'alarm_in')
+  } else if (cmd === 'wrong_direction') {
+    pipelineName.value = '逆行检测'
+    nodes.push(makeNode('gb28181', 'GB28181通道', '📹', 50, 100, [], ['video_out'], { props: [{ key: 'channelId', label: '通道ID', type: 'text', value: '' }] }))
+    nodes.push(makeNode('decode', '解码', '🔓', 280, 100, ['video_in'], ['frame_out']))
+    nodes.push(makeNode('yolo', '车辆检测', '🚗', 510, 100, ['frame_in'], ['dets_out'], { hasROI: true, hasSchedule: true, hasActions: true, actionAlarm: true, props: [{ key: 'model', label: '模型', type: 'select', value: 'yolov8n', options: ['yolov8n', 'yolov8s'] }, { key: 'conf', label: '置信度', type: 'slider', value: 0.5, min: 0, max: 1, step: 0.05 }] }))
+    nodes.push(makeNode('reid', '轨迹分析', '🔄', 740, 100, ['frame_in', 'dets_in'], ['track_out'], { props: [{ key: 'maxTrackAge', label: '追踪帧数', type: 'number', value: 180, min: 30, max: 600 }] }))
+    nodes.push(makeNode('osd', 'OSD叠加', '🏷️', 970, 80, ['frame_in', 'dets_in'], ['frame_out']))
+    nodes.push(makeNode('mqtt_alarm', 'MQTT告警', '📡', 970, 200, ['alarm_in'], []))
+    connect(0, 'video_out', 1, 'video_in'); connect(1, 'frame_out', 2, 'frame_in')
+    connect(1, 'frame_out', 3, 'frame_in'); connect(2, 'dets_out', 3, 'dets_in')
+    connect(1, 'frame_out', 4, 'frame_in'); connect(3, 'track_out', 4, 'dets_in')
+    connect(3, 'track_out', 5, 'alarm_in')
+  } else if (cmd === 'traffic_flow') {
+    pipelineName.value = '车流量统计'
+    nodes.push(makeNode('gb28181', 'GB28181通道', '📹', 50, 100, [], ['video_out'], { props: [{ key: 'channelId', label: '通道ID', type: 'text', value: '' }] }))
+    nodes.push(makeNode('decode', '解码', '🔓', 280, 100, ['video_in'], ['frame_out']))
+    nodes.push(makeNode('yolo', '车辆检测', '🚗', 510, 100, ['frame_in'], ['dets_out'], { hasROI: true, hasSchedule: false, hasActions: true, actionAlarm: true, props: [{ key: 'model', label: '模型', type: 'select', value: 'yolov8n', options: ['yolov8n', 'yolov8s'] }, { key: 'conf', label: '置信度', type: 'slider', value: 0.5, min: 0, max: 1, step: 0.05 }] }))
+    nodes.push(makeNode('reid', '车流追踪', '🔄', 740, 100, ['frame_in', 'dets_in'], ['track_out'], { props: [{ key: 'maxTrackAge', label: '追踪帧数', type: 'number', value: 120, min: 30, max: 600 }] }))
+    nodes.push(makeNode('osd', 'OSD叠加', '🏷️', 970, 80, ['frame_in', 'dets_in'], ['frame_out']))
+    nodes.push(makeNode('mqtt_alarm', 'MQTT告警', '📡', 970, 200, ['alarm_in'], []))
+    connect(0, 'video_out', 1, 'video_in'); connect(1, 'frame_out', 2, 'frame_in')
+    connect(1, 'frame_out', 3, 'frame_in'); connect(2, 'dets_out', 3, 'dets_in')
+    connect(1, 'frame_out', 4, 'frame_in'); connect(3, 'track_out', 4, 'dets_in')
+    connect(3, 'track_out', 5, 'alarm_in')
+  } else if (cmd === 'helmet') {
+    pipelineName.value = '安全帽检测'
+    nodes.push(makeNode('gb28181', 'GB28181通道', '📹', 50, 100, [], ['video_out'], { props: [{ key: 'channelId', label: '通道ID', type: 'text', value: '' }] }))
+    nodes.push(makeNode('decode', '解码', '🔓', 280, 100, ['video_in'], ['frame_out']))
+    nodes.push(makeNode('yolo', '安全帽检测', '⛑️', 510, 100, ['frame_in'], ['dets_out'], { hasROI: true, hasSchedule: true, hasActions: true, actionAlarm: true, props: [{ key: 'model', label: '模型', type: 'select', value: 'helmet_v4', options: ['helmet_v4'] }, { key: 'conf', label: '置信度', type: 'slider', value: 0.5, min: 0, max: 1, step: 0.05 }] }))
+    nodes.push(makeNode('osd', 'OSD叠加', '🏷️', 740, 80, ['frame_in', 'dets_in'], ['frame_out']))
+    nodes.push(makeNode('mqtt_alarm', 'MQTT告警', '📡', 740, 200, ['alarm_in'], []))
+    connect(0, 'video_out', 1, 'video_in'); connect(1, 'frame_out', 2, 'frame_in')
+    connect(1, 'frame_out', 3, 'frame_in'); connect(2, 'dets_out', 3, 'dets_in')
+    connect(2, 'dets_out', 4, 'alarm_in')
+  } else if (cmd === 'ppe') {
+    pipelineName.value = 'PPE合规检测'
+    nodes.push(makeNode('gb28181', 'GB28181通道', '📹', 50, 100, [], ['video_out'], { props: [{ key: 'channelId', label: '通道ID', type: 'text', value: '' }] }))
+    nodes.push(makeNode('decode', '解码', '🔓', 280, 100, ['video_in'], ['frame_out']))
+    nodes.push(makeNode('yolo', 'PPE检测', '🦺', 510, 100, ['frame_in'], ['dets_out'], { hasROI: true, hasSchedule: true, hasActions: true, actionAlarm: true, props: [{ key: 'model', label: '模型', type: 'select', value: 'ppe_v1', options: ['ppe_v1', 'helmet_v4', 'uniform_v3'] }, { key: 'conf', label: '置信度', type: 'slider', value: 0.5, min: 0, max: 1, step: 0.05 }] }))
+    nodes.push(makeNode('osd', 'OSD叠加', '🏷️', 740, 80, ['frame_in', 'dets_in'], ['frame_out']))
+    nodes.push(makeNode('mqtt_alarm', 'MQTT告警', '📡', 740, 200, ['alarm_in'], []))
+    connect(0, 'video_out', 1, 'video_in'); connect(1, 'frame_out', 2, 'frame_in')
+    connect(1, 'frame_out', 3, 'frame_in'); connect(2, 'dets_out', 3, 'dets_in')
+    connect(2, 'dets_out', 4, 'alarm_in')
+  } else if (cmd === 'smoking') {
+    pipelineName.value = '吸烟检测'
+    nodes.push(makeNode('gb28181', 'GB28181通道', '📹', 50, 100, [], ['video_out'], { props: [{ key: 'channelId', label: '通道ID', type: 'text', value: '' }] }))
+    nodes.push(makeNode('decode', '解码', '🔓', 280, 100, ['video_in'], ['frame_out']))
+    nodes.push(makeNode('yolo', '吸烟检测', '🚬', 510, 100, ['frame_in'], ['dets_out'], { hasROI: true, hasSchedule: true, hasActions: true, actionAlarm: true, props: [{ key: 'model', label: '模型', type: 'select', value: 'smoking_v1', options: ['smoking_v1'] }, { key: 'conf', label: '置信度', type: 'slider', value: 0.5, min: 0, max: 1, step: 0.05 }] }))
+    nodes.push(makeNode('osd', 'OSD叠加', '🏷️', 740, 80, ['frame_in', 'dets_in'], ['frame_out']))
+    nodes.push(makeNode('mqtt_alarm', 'MQTT告警', '📡', 740, 200, ['alarm_in'], []))
+    connect(0, 'video_out', 1, 'video_in'); connect(1, 'frame_out', 2, 'frame_in')
+    connect(1, 'frame_out', 3, 'frame_in'); connect(2, 'dets_out', 3, 'dets_in')
+    connect(2, 'dets_out', 4, 'alarm_in')
+  } else if (cmd === 'guard_absence') {
+    pipelineName.value = '离岗检测'
+    nodes.push(makeNode('gb28181', 'GB28181通道', '📹', 50, 100, [], ['video_out'], { props: [{ key: 'channelId', label: '通道ID', type: 'text', value: '' }] }))
+    nodes.push(makeNode('decode', '解码', '🔓', 280, 100, ['video_in'], ['frame_out']))
+    nodes.push(makeNode('yolo', '人形检测', '🎯', 510, 100, ['frame_in'], ['dets_out'], { hasROI: true, hasSchedule: true, hasActions: true, actionAlarm: true, props: [{ key: 'model', label: '模型', type: 'select', value: 'yolov8n', options: ['yolov8n', 'yolov8s'] }, { key: 'conf', label: '置信度', type: 'slider', value: 0.5, min: 0, max: 1, step: 0.05 }] }))
+    nodes.push(makeNode('reid', '离岗追踪', '🔄', 740, 100, ['frame_in', 'dets_in'], ['track_out'], { props: [{ key: 'maxTrackAge', label: '追踪帧数', type: 'number', value: 600, min: 60, max: 1800 }] }))
+    nodes.push(makeNode('osd', 'OSD叠加', '🏷️', 970, 80, ['frame_in', 'dets_in'], ['frame_out']))
+    nodes.push(makeNode('mqtt_alarm', 'MQTT告警', '📡', 970, 200, ['alarm_in'], []))
+    connect(0, 'video_out', 1, 'video_in'); connect(1, 'frame_out', 2, 'frame_in')
+    connect(1, 'frame_out', 3, 'frame_in'); connect(2, 'dets_out', 3, 'dets_in')
+    connect(1, 'frame_out', 4, 'frame_in'); connect(3, 'track_out', 4, 'dets_in')
+    connect(3, 'track_out', 5, 'alarm_in')
+  } else if (cmd === 'phone_call') {
+    pipelineName.value = '打电话检测'
+    nodes.push(makeNode('gb28181', 'GB28181通道', '📹', 50, 100, [], ['video_out'], { props: [{ key: 'channelId', label: '通道ID', type: 'text', value: '' }] }))
+    nodes.push(makeNode('decode', '解码', '🔓', 280, 100, ['video_in'], ['frame_out']))
+    nodes.push(makeNode('yolo', '打电话检测', '📱', 510, 100, ['frame_in'], ['dets_out'], { hasROI: true, hasSchedule: true, hasActions: true, actionAlarm: true, props: [{ key: 'model', label: '模型', type: 'select', value: 'phone_call_v1', options: ['phone_call_v1'] }, { key: 'conf', label: '置信度', type: 'slider', value: 0.5, min: 0, max: 1, step: 0.05 }] }))
+    nodes.push(makeNode('osd', 'OSD叠加', '🏷️', 740, 80, ['frame_in', 'dets_in'], ['frame_out']))
+    nodes.push(makeNode('mqtt_alarm', 'MQTT告警', '📡', 740, 200, ['alarm_in'], []))
+    connect(0, 'video_out', 1, 'video_in'); connect(1, 'frame_out', 2, 'frame_in')
+    connect(1, 'frame_out', 3, 'frame_in'); connect(2, 'dets_out', 3, 'dets_in')
+    connect(2, 'dets_out', 4, 'alarm_in')
+  } else if (cmd === 'vest') {
+    pipelineName.value = '反光衣检测'
+    nodes.push(makeNode('gb28181', 'GB28181通道', '📹', 50, 100, [], ['video_out'], { props: [{ key: 'channelId', label: '通道ID', type: 'text', value: '' }] }))
+    nodes.push(makeNode('decode', '解码', '🔓', 280, 100, ['video_in'], ['frame_out']))
+    nodes.push(makeNode('yolo', '反光衣检测', '🦺', 510, 100, ['frame_in'], ['dets_out'], { hasROI: true, hasSchedule: true, hasActions: true, actionAlarm: true, props: [{ key: 'model', label: '模型', type: 'select', value: 'uniform_v3', options: ['uniform_v3', 'helmet_v4'] }, { key: 'conf', label: '置信度', type: 'slider', value: 0.5, min: 0, max: 1, step: 0.05 }] }))
+    nodes.push(makeNode('osd', 'OSD叠加', '🏷️', 740, 80, ['frame_in', 'dets_in'], ['frame_out']))
+    nodes.push(makeNode('mqtt_alarm', 'MQTT告警', '📡', 740, 200, ['alarm_in'], []))
+    connect(0, 'video_out', 1, 'video_in'); connect(1, 'frame_out', 2, 'frame_in')
+    connect(1, 'frame_out', 3, 'frame_in'); connect(2, 'dets_out', 3, 'dets_in')
+    connect(2, 'dets_out', 4, 'alarm_in')
+  } else if (cmd === 'campus_safety') {
+    pipelineName.value = '校园防霸凌'
+    nodes.push(makeNode('gb28181', 'GB28181通道', '📹', 50, 100, [], ['video_out'], { props: [{ key: 'channelId', label: '通道ID', type: 'text', value: '' }] }))
+    nodes.push(makeNode('decode', '解码', '🔓', 280, 100, ['video_in'], ['frame_out']))
+    nodes.push(makeNode('yolo', '打架检测', '⚔️', 510, 50, ['frame_in'], ['dets_out'], { hasROI: true, hasSchedule: true, hasActions: true, actionAlarm: true, props: [{ key: 'model', label: '模型', type: 'select', value: 'fighting_v3', options: ['fighting_v3'] }, { key: 'conf', label: '置信度', type: 'slider', value: 0.5, min: 0, max: 1, step: 0.05 }] }))
+    nodes.push(makeNode('yolo', '危险物品', '🔪', 510, 200, ['frame_in'], ['dets_out'], { hasROI: true, props: [{ key: 'model', label: '模型', type: 'select', value: 'knife_detect', options: ['knife_detect'] }, { key: 'conf', label: '置信度', type: 'slider', value: 0.5, min: 0, max: 1, step: 0.05 }] }))
+    nodes.push(makeNode('osd', 'OSD叠加', '🏷️', 740, 50, ['frame_in', 'dets_in'], ['frame_out']))
+    nodes.push(makeNode('mqtt_alarm', 'MQTT告警', '📡', 740, 260, ['alarm_in'], []))
+    connect(0, 'video_out', 1, 'video_in')
+    connect(1, 'frame_out', 2, 'frame_in'); connect(1, 'frame_out', 3, 'frame_in')
+    connect(1, 'frame_out', 4, 'frame_in')
+    connect(2, 'dets_out', 4, 'dets_in'); connect(3, 'dets_out', 4, 'dets_in')
+    connect(2, 'dets_out', 5, 'alarm_in'); connect(3, 'dets_out', 5, 'alarm_in')
+  } else if (cmd === 'dangerous_item') {
+    pipelineName.value = '危险物品检测'
+    nodes.push(makeNode('gb28181', 'GB28181通道', '📹', 50, 100, [], ['video_out'], { props: [{ key: 'channelId', label: '通道ID', type: 'text', value: '' }] }))
+    nodes.push(makeNode('decode', '解码', '🔓', 280, 100, ['video_in'], ['frame_out']))
+    nodes.push(makeNode('yolo', '危险物品', '🔪', 510, 100, ['frame_in'], ['dets_out'], { hasROI: true, hasSchedule: true, hasActions: true, actionAlarm: true, props: [{ key: 'model', label: '模型', type: 'select', value: 'knife_detect', options: ['knife_detect'] }, { key: 'conf', label: '置信度', type: 'slider', value: 0.5, min: 0, max: 1, step: 0.05 }] }))
+    nodes.push(makeNode('osd', 'OSD叠加', '🏷️', 740, 80, ['frame_in', 'dets_in'], ['frame_out']))
+    nodes.push(makeNode('mqtt_alarm', 'MQTT告警', '📡', 740, 200, ['alarm_in'], []))
+    connect(0, 'video_out', 1, 'video_in'); connect(1, 'frame_out', 2, 'frame_in')
+    connect(1, 'frame_out', 3, 'frame_in'); connect(2, 'dets_out', 3, 'dets_in')
+    connect(2, 'dets_out', 4, 'alarm_in')
+  } else if (cmd === 'eldercare') {
+    pipelineName.value = '养老看护(跌倒+滞留)'
+    nodes.push(makeNode('gb28181', 'GB28181通道', '📹', 50, 100, [], ['video_out'], { props: [{ key: 'channelId', label: '通道ID', type: 'text', value: '' }] }))
+    nodes.push(makeNode('decode', '解码', '🔓', 280, 100, ['video_in'], ['frame_out']))
+    nodes.push(makeNode('yolo', '跌倒检测', '🩹', 510, 50, ['frame_in'], ['dets_out'], { hasROI: true, hasSchedule: true, hasActions: true, actionAlarm: true, props: [{ key: 'model', label: '模型', type: 'select', value: 'fall_v3', options: ['fall_v3'] }, { key: 'conf', label: '置信度', type: 'slider', value: 0.5, min: 0, max: 1, step: 0.05 }] }))
+    nodes.push(makeNode('yolo', '滞留检测', '🕐', 510, 200, ['frame_in'], ['dets_out'], { hasROI: true, props: [{ key: 'model', label: '模型', type: 'select', value: 'yolov8n', options: ['yolov8n'] }, { key: 'conf', label: '置信度', type: 'slider', value: 0.4, min: 0, max: 1, step: 0.05 }] }))
+    nodes.push(makeNode('osd', 'OSD叠加', '🏷️', 740, 120, ['frame_in', 'dets_in'], ['frame_out']))
+    nodes.push(makeNode('mqtt_alarm', 'MQTT告警', '📡', 740, 260, ['alarm_in'], []))
+    connect(0, 'video_out', 1, 'video_in')
+    connect(1, 'frame_out', 2, 'frame_in'); connect(1, 'frame_out', 3, 'frame_in')
+    connect(1, 'frame_out', 4, 'frame_in')
+    connect(2, 'dets_out', 4, 'dets_in'); connect(3, 'dets_out', 4, 'dets_in')
+    connect(2, 'dets_out', 5, 'alarm_in'); connect(3, 'dets_out', 5, 'alarm_in')
+  } else if (cmd === 'high_altitude') {
+    pipelineName.value = '高空抛物检测'
+    nodes.push(makeNode('gb28181', 'GB28181通道', '📹', 50, 100, [], ['video_out'], { props: [{ key: 'channelId', label: '通道ID', type: 'text', value: '' }] }))
+    nodes.push(makeNode('decode', '解码', '🔓', 280, 100, ['video_in'], ['frame_out']))
+    nodes.push(makeNode('yolo', '抛物检测', '📉', 510, 100, ['frame_in'], ['dets_out'], { hasROI: true, hasSchedule: true, hasActions: true, actionAlarm: true, props: [{ key: 'model', label: '模型', type: 'select', value: 'abandoned_v1', options: ['abandoned_v1'] }, { key: 'conf', label: '置信度', type: 'slider', value: 0.4, min: 0, max: 1, step: 0.05 }] }))
+    nodes.push(makeNode('osd', 'OSD叠加', '🏷️', 740, 80, ['frame_in', 'dets_in'], ['frame_out']))
+    nodes.push(makeNode('mqtt_alarm', 'MQTT告警', '📡', 740, 200, ['alarm_in'], []))
+    connect(0, 'video_out', 1, 'video_in'); connect(1, 'frame_out', 2, 'frame_in')
+    connect(1, 'frame_out', 3, 'frame_in'); connect(2, 'dets_out', 3, 'dets_in')
+    connect(2, 'dets_out', 4, 'alarm_in')
+  } else if (cmd === 'crowd_density') {
+    pipelineName.value = '人群密度热图'
+    nodes.push(makeNode('gb28181', 'GB28181通道', '📹', 50, 100, [], ['video_out'], { props: [{ key: 'channelId', label: '通道ID', type: 'text', value: '' }] }))
+    nodes.push(makeNode('decode', '解码', '🔓', 280, 100, ['video_in'], ['frame_out']))
+    nodes.push(makeNode('yolo', '密度统计', '🌡️', 510, 100, ['frame_in'], ['dets_out'], { hasROI: true, hasActions: true, actionAlarm: true, props: [{ key: 'model', label: '模型', type: 'select', value: 'crowd_count_v1', options: ['crowd_count_v1'] }, { key: 'conf', label: '置信度', type: 'slider', value: 0.3, min: 0, max: 1, step: 0.05 }] }))
+    nodes.push(makeNode('osd', 'OSD叠加', '🏷️', 740, 80, ['frame_in', 'dets_in'], ['frame_out']))
+    nodes.push(makeNode('mqtt_alarm', 'MQTT告警', '📡', 740, 200, ['alarm_in'], []))
+    connect(0, 'video_out', 1, 'video_in'); connect(1, 'frame_out', 2, 'frame_in')
+    connect(1, 'frame_out', 3, 'frame_in'); connect(2, 'dets_out', 3, 'dets_in')
+    connect(2, 'dets_out', 4, 'alarm_in')
+  } else if (cmd === 'face_attendance') {
+    pipelineName.value = '人脸考勤打卡'
+    nodes.push(makeNode('gb28181', 'GB28181通道', '📹', 50, 100, [], ['video_out'], { props: [{ key: 'channelId', label: '通道ID', type: 'text', value: '' }] }))
+    nodes.push(makeNode('decode', '解码', '🔓', 280, 100, ['video_in'], ['frame_out']))
+    nodes.push(makeNode('face', '人脸识别', '👤', 510, 100, ['frame_in'], ['face_out'], { props: [{ key: 'model', label: '模型', type: 'select', value: 'arcface', options: ['arcface', 'mobileface'] }] }))
+    nodes.push(makeNode('osd', 'OSD叠加', '🏷️', 740, 80, ['frame_in', 'dets_in'], ['frame_out']))
+    nodes.push(makeNode('mqtt_alarm', '考勤推送', '📋', 740, 200, ['alarm_in'], [], { props: [{ key: 'topic', label: 'Webhook URL', type: 'text', value: 'http://localhost/attendance' }] }))
+    connect(0, 'video_out', 1, 'video_in'); connect(1, 'frame_out', 2, 'frame_in')
+    connect(1, 'frame_out', 3, 'frame_in'); connect(2, 'face_out', 3, 'dets_in')
+    connect(2, 'face_out', 4, 'alarm_in')
+  } else if (cmd === 'queue_length') {
+    pipelineName.value = '排队长度检测'
+    nodes.push(makeNode('gb28181', 'GB28181通道', '📹', 50, 100, [], ['video_out'], { props: [{ key: 'channelId', label: '通道ID', type: 'text', value: '' }] }))
+    nodes.push(makeNode('decode', '解码', '🔓', 280, 100, ['video_in'], ['frame_out']))
+    nodes.push(makeNode('yolo', '排队检测', '🧍', 510, 100, ['frame_in'], ['dets_out'], { hasROI: true, hasActions: true, actionAlarm: true, props: [{ key: 'model', label: '模型', type: 'select', value: 'yolov8n', options: ['yolov8n', 'yolov8s'] }, { key: 'conf', label: '置信度', type: 'slider', value: 0.4, min: 0, max: 1, step: 0.05 }] }))
+    nodes.push(makeNode('osd', 'OSD叠加', '🏷️', 740, 80, ['frame_in', 'dets_in'], ['frame_out']))
+    nodes.push(makeNode('mqtt_alarm', 'MQTT告警', '📡', 740, 200, ['alarm_in'], []))
+    connect(0, 'video_out', 1, 'video_in'); connect(1, 'frame_out', 2, 'frame_in')
+    connect(1, 'frame_out', 3, 'frame_in'); connect(2, 'dets_out', 3, 'dets_in')
+    connect(2, 'dets_out', 4, 'alarm_in')
+  } else if (cmd === 'people_counting') {
+    pipelineName.value = '人流计数'
+    nodes.push(makeNode('gb28181', 'GB28181通道', '📹', 50, 100, [], ['video_out'], { props: [{ key: 'channelId', label: '通道ID', type: 'text', value: '' }] }))
+    nodes.push(makeNode('decode', '解码', '🔓', 280, 100, ['video_in'], ['frame_out']))
+    nodes.push(makeNode('yolo', '人流检测', '🔢', 510, 100, ['frame_in'], ['dets_out'], { hasROI: true, hasActions: true, actionAlarm: true, props: [{ key: 'model', label: '模型', type: 'select', value: 'yolov8n', options: ['yolov8n', 'yolov8s'] }, { key: 'conf', label: '置信度', type: 'slider', value: 0.4, min: 0, max: 1, step: 0.05 }] }))
+    nodes.push(makeNode('osd', 'OSD叠加', '🏷️', 740, 80, ['frame_in', 'dets_in'], ['frame_out']))
+    nodes.push(makeNode('mqtt_alarm', 'MQTT告警', '📡', 740, 200, ['alarm_in'], []))
+    connect(0, 'video_out', 1, 'video_in'); connect(1, 'frame_out', 2, 'frame_in')
+    connect(1, 'frame_out', 3, 'frame_in'); connect(2, 'dets_out', 3, 'dets_in')
+    connect(2, 'dets_out', 4, 'alarm_in')
+  } else if (cmd === 'camera_health') {
+    pipelineName.value = '摄像头健康检测'
+    nodes.push(makeNode('gb28181', 'GB28181通道', '📹', 50, 100, [], ['video_out'], { props: [{ key: 'channelId', label: '通道ID', type: 'text', value: '' }] }))
+    nodes.push(makeNode('decode', '解码', '🔓', 280, 100, ['video_in'], ['frame_out']))
+    nodes.push(makeNode('yolo', '摄像头异常', '🔧', 510, 100, ['frame_in'], ['dets_out'], { hasActions: true, actionAlarm: true, props: [{ key: 'model', label: '检测类型', type: 'select', value: 'camera_tamper', options: ['camera_tamper', 'brightness_abnormal', 'image_freeze', 'glare'] }, { key: 'conf', label: '灵敏度', type: 'slider', value: 0.5, min: 0, max: 1, step: 0.05 }] }))
+    nodes.push(makeNode('osd', 'OSD叠加', '🏷️', 740, 80, ['frame_in', 'dets_in'], ['frame_out']))
+    nodes.push(makeNode('mqtt_alarm', 'MQTT告警', '📡', 740, 200, ['alarm_in'], []))
+    connect(0, 'video_out', 1, 'video_in'); connect(1, 'frame_out', 2, 'frame_in')
+    connect(1, 'frame_out', 3, 'frame_in'); connect(2, 'dets_out', 3, 'dets_in')
+    connect(2, 'dets_out', 4, 'alarm_in')
+  } else if (cmd === 'night_vision') {
+    pipelineName.value = '夜间安防增强'
+    nodes.push(makeNode('gb28181', 'GB28181通道', '📹', 50, 100, [], ['video_out'], { props: [{ key: 'channelId', label: '通道ID', type: 'text', value: '' }] }))
+    nodes.push(makeNode('decode', '解码', '🔓', 280, 100, ['video_in'], ['frame_out']))
+    nodes.push(makeNode('resize', '暗光增强', '🌙', 510, 100, ['frame_in'], ['frame_out'], { props: [{ key: 'width', label: '宽度', type: 'number', value: 1920, min: 64, max: 3840 }, { key: 'height', label: '高度', type: 'number', value: 1080, min: 64, max: 2160 }, { key: 'enhance', label: '暗光增强', type: 'switch', value: true }] }))
+    nodes.push(makeNode('yolo', '人形检测', '🎯', 740, 100, ['frame_in'], ['dets_out'], { hasROI: true, hasSchedule: true, hasActions: true, actionAlarm: true, props: [{ key: 'model', label: '模型', type: 'select', value: 'yolov8n', options: ['yolov8n', 'yolov8s'] }, { key: 'conf', label: '置信度', type: 'slider', value: 0.4, min: 0, max: 1, step: 0.05 }] }))
+    nodes.push(makeNode('osd', 'OSD叠加', '🏷️', 970, 80, ['frame_in', 'dets_in'], ['frame_out']))
+    nodes.push(makeNode('mqtt_alarm', 'MQTT告警', '📡', 970, 200, ['alarm_in'], []))
+    connect(0, 'video_out', 1, 'video_in'); connect(1, 'frame_out', 2, 'frame_in')
+    connect(2, 'frame_out', 3, 'frame_in'); connect(2, 'frame_out', 4, 'frame_in')
+    connect(3, 'dets_out', 4, 'dets_in'); connect(3, 'dets_out', 5, 'alarm_in')
+  } else if (cmd === 'animal') {
+    pipelineName.value = '动物入侵检测'
+    nodes.push(makeNode('gb28181', 'GB28181通道', '📹', 50, 100, [], ['video_out'], { props: [{ key: 'channelId', label: '通道ID', type: 'text', value: '' }] }))
+    nodes.push(makeNode('decode', '解码', '🔓', 280, 100, ['video_in'], ['frame_out']))
+    nodes.push(makeNode('yolo', '动物检测', '🐈', 510, 100, ['frame_in'], ['dets_out'], { hasROI: true, hasSchedule: true, hasActions: true, actionAlarm: true, props: [{ key: 'model', label: '模型', type: 'select', value: 'animal_filter_v1', options: ['animal_filter_v1'] }, { key: 'conf', label: '置信度', type: 'slider', value: 0.4, min: 0, max: 1, step: 0.05 }] }))
+    nodes.push(makeNode('osd', 'OSD叠加', '🏷️', 740, 80, ['frame_in', 'dets_in'], ['frame_out']))
+    nodes.push(makeNode('mqtt_alarm', 'MQTT告警', '📡', 740, 200, ['alarm_in'], []))
+    connect(0, 'video_out', 1, 'video_in'); connect(1, 'frame_out', 2, 'frame_in')
+    connect(1, 'frame_out', 3, 'frame_in'); connect(2, 'dets_out', 3, 'dets_in')
+    connect(2, 'dets_out', 4, 'alarm_in')
   }
   dirty.value = true
   ElMessage.success(`模板 "${pipelineName.value}" 已加载，请配置通道ID和参数`)
@@ -995,7 +1517,11 @@ function applyTemplate(cmd: string) {
 .pe-minimap { position: absolute; right: 12px; bottom: 12px; width: 160px; height: 100px; background: rgba(255,255,255,0.95); border: 1px solid #dcdfe6; border-radius: 6px; z-index: 10; pointer-events: none; box-shadow: 0 2px 8px rgba(0,0,0,0.12); }
 .minimap-title { font-size: 10px; color: #909399; padding: 2px 6px; border-bottom: 1px solid #f0f0f0; }
 .minimap-svg { display: block; }
-.pe-lines { position: absolute; top: 0; left: 0; pointer-events: none; }
+.pe-lines { position: absolute; top: 0; left: 0; pointer-events: none; z-index: 0; overflow: visible; }
+.conn-group { pointer-events: all; cursor: pointer; }
+.conn-line { transition: stroke 0.15s; }
+.conn-group:hover .conn-line { stroke: #DB4437 !important; }
+.conn-hit { pointer-events: stroke; }
 
 /* 节点 */
 .pe-node { position: absolute; width: 180px; background: #ffffff; border: 2px solid #dcdfe6; border-radius: 8px; cursor: move; user-select: none; z-index: 1; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
@@ -1010,10 +1536,26 @@ function applyTemplate(cmd: string) {
 .node-ports { padding: 6px 0; }
 .ports-in { padding-left: 8px; }
 .ports-out { text-align: right; padding-right: 8px; }
-.port { font-size: 11px; color: #606266; padding: 2px 0; cursor: crosshair; display: flex; align-items: center; gap: 4px; }
+.port { font-size: 11px; color: #606266; padding: 5px 6px; cursor: crosshair; display: flex; align-items: center; gap: 5px; transition: color 0.15s, background-color 0.15s; border-radius: 4px; margin: 1px 2px; min-height: 18px; }
 .out-port { justify-content: flex-end; }
-.port-dot { width: 8px; height: 8px; border-radius: 50%; background: #1A73E8; flex-shrink: 0; }
+.port:hover { color: #1A73E8; background: rgba(26,115,232,0.08); }
+.port-drawing-source { color: #F9AB00 !important; background: rgba(249,171,0,0.12) !important; box-shadow: inset 0 0 0 1px rgba(249,171,0,0.5); }
+.port-drawing-target { color: #1A73E8 !important; background: rgba(26,115,232,0.12) !important; box-shadow: inset 0 0 0 1px rgba(26,115,232,0.6); }
+.port-dot { width: 12px; height: 12px; border-radius: 50%; background: #1A73E8; flex-shrink: 0; transition: transform 0.15s, box-shadow 0.15s; box-shadow: 0 0 0 0 rgba(26,115,232,0); }
+/* [UX] 扩大点击热区，不影响布局 */
+.port::before { content: ''; position: absolute; left: -6px; right: -6px; top: -2px; bottom: -2px; }
+.ports-in .port, .ports-out .port { position: relative; }
+.port:hover .port-dot { transform: scale(1.4); box-shadow: 0 0 8px rgba(26,115,232,0.7); }
 .in-port .port-dot { background: #0F9D58; }
+.port-drawing-source .port-dot { background: #F9AB00; box-shadow: 0 0 10px rgba(249,171,0,0.7); transform: scale(1.3); }
+.port-drawing-target .port-dot { transform: scale(1.5); box-shadow: 0 0 12px rgba(26,115,232,0.8); }
+.in-port:hover .port-dot { box-shadow: 0 0 6px rgba(15,157,88,0.7); }
+
+/* [UX] 连线中的顶部提示条 */
+.pe-draw-hint { position: absolute; top: 8px; left: 50%; transform: translateX(-50%); z-index: 5; background: #1A73E8; color: #fff; padding: 6px 14px; border-radius: 18px; font-size: 12px; font-weight: 500; box-shadow: 0 4px 12px rgba(26,115,232,0.4); pointer-events: none; animation: peHintPulse 1.2s ease-in-out infinite; }
+.pe-draw-hint .pe-hint-cancel { margin-left: 10px; padding: 0 6px; cursor: pointer; pointer-events: auto; opacity: 0.85; font-size: 14px; line-height: 1; }
+.pe-draw-hint .pe-hint-cancel:hover { opacity: 1; }
+@keyframes peHintPulse { 0%, 100% { box-shadow: 0 4px 12px rgba(26,115,232,0.4); } 50% { box-shadow: 0 4px 18px rgba(26,115,232,0.7); } }
 
 /* 属性面板 */
 .pe-props { width: 280px; background: #ffffff; border: 1px solid #e4e7ed; border-top: none; overflow-y: auto; padding: 16px; }
@@ -1037,4 +1579,7 @@ function applyTemplate(cmd: string) {
 :deep(.monitor-table .el-table__row) { background: #ffffff; }
 :deep(.monitor-table .el-table__row--striped) { background: #f5f7fa; }
 :deep(.monitor-table td) { color: #303133; border-color: #e4e7ed; }
+
+/* 场景模板分类标题 */
+:deep(.tpl-cat) { font-size: 11px; font-weight: 700; color: #909399; padding: 4px 16px; cursor: default; text-transform: uppercase; letter-spacing: 0.5px; }
 </style>
