@@ -196,6 +196,29 @@
               <el-select v-else-if="prop.type === 'select'" v-model="prop.value" style="width:100%">
                 <el-option v-for="o in prop.options" :key="o" :label="o" :value="o" />
               </el-select>
+              <!-- [P2-X] 通道单选选择器 (filter+allow-create, 可手动输入) -->
+              <el-select v-else-if="prop.type === 'channel-picker'" v-model="prop.value"
+                         filterable allow-create default-first-option clearable
+                         :loading="channelsLoading"
+                         :no-data-text="channelsLoading ? '加载通道中...' : '暂无通道 (可手动输入 ID)'"
+                         placeholder="选择或输入通道 ID" style="width:100%">
+                <el-option v-for="c in channelOptions" :key="c.value"
+                           :label="c.label" :value="c.value">
+                  <div style="display:flex;justify-content:space-between;gap:8px;align-items:center">
+                    <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ c.label }}</span>
+                    <span style="font-size:11px;color:#909399;flex-shrink:0">{{ c.subLabel }}</span>
+                  </div>
+                </el-option>
+              </el-select>
+              <!-- [P2-X] 通道多选选择器 -->
+              <el-select v-else-if="prop.type === 'channels-picker'" v-model="prop.value"
+                         multiple filterable allow-create default-first-option
+                         :loading="channelsLoading"
+                         :no-data-text="channelsLoading ? '加载通道中...' : '暂无通道'"
+                         placeholder="选择或输入多个通道 ID (回车确认)" style="width:100%">
+                <el-option v-for="c in channelOptions" :key="c.value"
+                           :label="c.label" :value="c.value" />
+              </el-select>
               <!-- 开关 -->
               <el-switch v-else-if="prop.type === 'switch'" v-model="prop.value" />
               <!-- 文本 -->
@@ -296,6 +319,8 @@ import { ElMessage, ElMessageBox, ElNotification } from 'element-plus'
 import { ArrowDown } from '@element-plus/icons-vue'
 import RoiPolygonEditor from '@/components/RoiPolygonEditor.vue'
 import type { RoiData } from '@/composables/useRoiCanvas'
+import { channelApi } from '@/api/channel'
+import type { ChannelItem } from '@/types/device'
 
 interface PipelineNode {
   id: string
@@ -407,7 +432,38 @@ function onKeydown(e: KeyboardEvent) {
     e.preventDefault(); redo()
   }
 }
-onMounted(() => window.addEventListener('keydown', onKeydown))
+// [P2-X] 通道选择器: 加载后端通道列表供 GB28181 节点 channelId 选择
+const channelOptions = ref<{ value: string; label: string; subLabel: string; status: string }[]>([])
+const channelsLoading = ref(false)
+async function loadChannels() {
+  channelsLoading.value = true
+  try {
+    // 拉取前 200 条通道 (跨设备、跨状态)
+    const { data } = await channelApi.getList({ page: 1, pageSize: 200 })
+    const rawList: any[] = (data?.data as any)?.items || (data?.data as any)?.list || []
+    channelOptions.value = rawList.map((c: any) => {
+      // 兼容后端多键名 (snake_case / camelCase / GB28181 数字 ID)
+      const id = String(c.channel_id ?? c.channelId ?? c.id ?? c.channel ?? c.channelNo ?? '')
+      const deviceId = String(c.device_id ?? c.deviceId ?? '')
+      const name = c.channel_name ?? c.channelName ?? c.name ?? (id ? `通道${id}` : '(未命名)')
+      const status = c.status ?? c.channel_status ?? 'unknown'
+      const resolution = c.resolution ?? c.res ?? '?'
+      const codec = c.codec ?? ''
+      const fps = Number(c.fps ?? c.frame_rate ?? 0)
+      return {
+        value: id,
+        label: id ? `${id} · ${name}` : `${deviceId} · ${name}`,
+        subLabel: `${resolution} ${codec} · ${fps.toFixed(0)}fps · ${status}`,
+        status,
+      }
+    }).filter((c: any) => c.value)
+  } catch (err) {
+    console.warn('[Pipeline] 通道列表加载失败:', err)
+  } finally {
+    channelsLoading.value = false
+  }
+}
+onMounted(() => { loadChannels(); window.addEventListener('keydown', onKeydown) })
 onUnmounted(() => window.removeEventListener('keydown', onKeydown))
 
 const pipelineId = ref('')
@@ -467,7 +523,7 @@ const categories = [
     { type: 'rtsp', name: 'RTSP拉流', icon: '📡', inputs: [], outputs: ['video_out'], hasROI: false, hasSchedule: false, hasActions: false, props: [{ key: 'url', label: 'RTSP地址', type: 'text', value: 'rtsp://' }] },
     { type: 'onvif', name: 'ONVIF', icon: '📷', inputs: [], outputs: ['video_out'], hasROI: false, hasSchedule: false, hasActions: false, props: [{ key: 'ip', label: '设备IP', type: 'text', value: '' }] },
     // [P1-6] GB28181通道节点 + [P1-9] 多通道配置
-    { type: 'gb28181', name: 'GB28181通道', icon: '📹', inputs: [], outputs: ['video_out'], hasROI: false, hasSchedule: false, hasActions: false, props: [{ key: 'channelId', label: '通道ID', type: 'text', value: '' }, { key: 'multiChannel', label: '多通道模式', type: 'switch', value: false }, { key: 'channelIds', label: '多通道选择', type: 'text', value: '', multiline: true }, { key: 'resolution', label: '分辨率', type: 'select', value: '1080p', options: ['720p', '1080p', '4K'] }] },
+    { type: 'gb28181', name: 'GB28181通道', icon: '📹', inputs: [], outputs: ['video_out'], hasROI: false, hasSchedule: false, hasActions: false, props: [{ key: 'channelId', label: '通道ID', type: 'channel-picker', value: '' }, { key: 'multiChannel', label: '多通道模式', type: 'switch', value: false }, { key: 'channelIds', label: '多通道选择', type: 'channels-picker', value: '', multiline: true }, { key: 'resolution', label: '分辨率', type: 'select', value: '1080p', options: ['720p', '1080p', '4K'] }] },
   ]},
   { name: '预处理', icon: '🔧', items: [
     { type: 'decode', name: '解码', icon: '🔓', inputs: ['video_in'], outputs: ['frame_out'], hasROI: false, hasSchedule: false, hasActions: false, props: [{ key: 'format', label: '输出格式', type: 'select', value: 'BGR', options: ['BGR', 'RGB', 'NV12'] }] },
