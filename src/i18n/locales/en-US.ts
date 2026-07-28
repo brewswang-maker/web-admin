@@ -765,7 +765,65 @@ const enUS: MessageSchema = {
       type_unknown: 'Unknown',
       type_unknown_type: 'Unknown'
     }
-  }
+  },
+
+  // ============= Pipeline List Page v7.4 =============
+  pipelineList: {
+    create: 'New Pipeline',
+    createFirst: 'Create Your First',
+    empty: 'No pipelines yet. Click the button above to create one.',
+    emptyFiltered: 'No pipelines match the current filter',
+    batchActions: 'Batch Actions',
+    batchDelete: 'Batch Delete',
+    batchExport: 'Batch Export',
+    batchDeleteConfirm: 'Delete the selected {n} pipeline(s)? This cannot be undone.',
+    batchDeleteResult: 'Batch delete done: {ok} succeeded, {fail} failed',
+    batchExportOk: 'Exported {n} pipeline(s) to local JSON file',
+    loadFailed: 'Failed to load pipeline list',
+    invalidId: 'Invalid pipeline ID',
+    cloneSuffix: '-Copy',
+    state: {
+      running: 'Running',
+      deployed: 'Deployed',
+      stopped: 'Stopped',
+      idle: 'Idle',
+      error: 'Error',
+      deploying: 'Deploying',
+      undeploying: 'Undeploying',
+    },
+    col: {
+      name: 'Name',
+      structure: 'Structure',
+      status: 'Status',
+      runtime: 'Runtime',
+      latency: 'Lat',
+      tpu: 'TPU',
+      channels: 'Ch',
+      frames: 'Total Frames',
+      actions: 'Actions',
+      nodes: '{n} nodes',
+      edges: '{n} edges',
+    },
+    action: {
+      deploy: 'Deploy',
+      deployOk: 'Deployed: {name}',
+      deployFail: 'Deploy failed',
+      stop: 'Stop',
+      stopConfirm: 'Stop pipeline "{name}"?',
+      stopOk: 'Stopped: {name}',
+      stopFail: 'Stop failed',
+      delete: 'Delete',
+      deleteConfirm: 'Delete pipeline "{name}"? This cannot be undone.',
+      deleteOk: 'Deleted: {name}',
+      deleteFail: 'Delete failed',
+      clone: 'Clone as new',
+      cloneOk: 'Copy created, redirecting to editor…',
+      cloneFail: 'Clone failed',
+      export: 'Export as JSON',
+      exportOk: 'Exported to local',
+      redeploy: 'Redeploy',
+    },
+  },
 }
 
 export default enUS

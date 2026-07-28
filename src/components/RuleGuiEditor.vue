@@ -246,6 +246,7 @@ import { linkageApi, ACTION_TYPE_REVERSE_MAP } from '@/api/linkage'
 import type { LinkageRule } from '@/api/linkage'
 
 const emit = defineEmits<{
+  'update:modelValue': [value: boolean]
   'saved': []
 }>()
 
@@ -256,7 +257,7 @@ const props = defineProps<{
 
 const visible = computed({
   get: () => props.modelValue,
-  set: (v) => emit('update:modelValue' as any, v)
+  set: (v: boolean) => emit('update:modelValue', v)
 })
 
 const isEdit = computed(() => !!props.editRule)
@@ -325,7 +326,10 @@ const channelOptions = ref<Array<{ value: string; label: string }>>([])
 
 // ---- 计算属性 ----
 const filteredActionTypes = computed(() => {
-  const all = Object.entries(ACTION_TYPE_REVERSE_MAP || {}).map(([k, v]) => ({ value: v as number, label: k }))
+  // [TS 修复] ACTION_TYPE_REVERSE_MAP: Record<number, string>
+  //   Object.entries 返回 [string, string][]，需要将 key 解析为 number
+  const all = Object.entries(ACTION_TYPE_REVERSE_MAP || {})
+    .map(([k, label]) => ({ value: Number(k), label: String(label) }))
   if (!actionSearch.value) return all
   return all.filter(a => a.label.toLowerCase().includes(actionSearch.value.toLowerCase()))
 })
@@ -334,17 +338,16 @@ const cooldownMs = computed(() => cooldownSeconds.value * 1000)
 
 // ---- 方法 ----
 function getActionLabel(typeNum: number): string {
-  for (const [k, v] of Object.entries(ACTION_TYPE_REVERSE_MAP || {})) {
-    if (v === typeNum) return k
+  for (const [k, label] of Object.entries(ACTION_TYPE_REVERSE_MAP || {})) {
+    if (Number(k) === typeNum) return String(label)
   }
   return `Action(${typeNum})`
 }
 
-function getActionTagType(typeNum: number): string {
+function getActionTagType(typeNum: number): 'success' | 'warning' | 'info' | 'danger' {
   if (typeNum >= 100 && typeNum < 200) return 'success'
-  if (typeNum >= 200 && typeNum < 300) return ''
   if (typeNum >= 300 && typeNum < 400) return 'warning'
-  if (typeNum >= 500) return 'info'
+  if (typeNum >= 500) return 'danger'
   return 'info'
 }
 

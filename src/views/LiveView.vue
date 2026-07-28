@@ -448,6 +448,9 @@ interface GridSlot {
   encrypted: boolean
   _lastReconnectTime: number
   _videoEventCleanups: Array<() => void>  // video 事件监听器清理函数
+  // [TS 修复] 运行时动态注入的内部状态，与计时器清理相关
+  _timers?: ReturnType<typeof setTimeout>[]
+  _webrtcTimers?: ReturnType<typeof setTimeout>[]
 }
 
 const route = useRoute()
@@ -459,7 +462,7 @@ const layout = ref(4)
 const activeSlotIdx = ref(0)
 const gridSlots = reactive<GridSlot[]>(
   Array.from({ length: 36 }, () => ({
-    channelId: '', name: '', status: '', urls: {}, codec: '', playing: false, loading: false, muted: true, deviceId: '', playerInstance: null, recording: false, talking: false, currentFormat: '', webrtcRetryCount: 0, reconnectCount: 0, encrypted: false, _lastReconnectTime: 0, _videoEventCleanups: []
+    channelId: '', name: '', status: '', urls: {}, codec: '', playing: false, loading: false, muted: true, deviceId: '', playerInstance: null, recording: false, talking: false, currentFormat: '', webrtcRetryCount: 0, reconnectCount: 0, encrypted: false, _lastReconnectTime: 0, _videoEventCleanups: [], _timers: [], _webrtcTimers: []
   }))
 )
 // [P0-1 FIX 2026-07-14] 默认首选 FLV 而非 WebRTC
@@ -1275,19 +1278,19 @@ function attachPlayerByFormat(slotIdx: number, fmt: PlayerFormat) {
             }).catch(() => {})
           }
           // 从 _timers 移除自身（避免 destroyPlayer 重复清理）
-          const idx = slot._timers.indexOf(firstFrameTimerId)
-          if (idx >= 0) slot._timers.splice(idx, 1)
+          const idx = slot._timers!.indexOf(firstFrameTimerId)
+          if (idx >= 0) slot._timers!.splice(idx, 1)
         }, 2000)
-        slot._timers.push(firstFrameTimerId)
+        slot._timers!.push(firstFrameTimerId)
 
         const onFlvFirstFrame = () => {
           if (!firstFramePlayed) {
             firstFramePlayed = true
             // [FIX-P3.3] 清理 timer
-            const idx = slot._timers.indexOf(firstFrameTimerId)
+            const idx = slot._timers!.indexOf(firstFrameTimerId)
             if (idx >= 0) {
               clearTimeout(firstFrameTimerId)
-              slot._timers.splice(idx, 1)
+              slot._timers!.splice(idx, 1)
             }
             console.debug(`[LiveView] slot${slotIdx} 首帧已显示`)
           }
@@ -1329,7 +1332,9 @@ function attachPlayerByFormat(slotIdx: number, fmt: PlayerFormat) {
             if (ts > 15) {
               const sbList = (video as any).srcObject
               // 通过 MSE 直接操作 SourceBuffer
-              const mediaSrc = flvjs.Features?.mseBase?._ms
+              // [TS 修复] flvjs 官方类型不包含 Features 字段，运行时通过 as any 访问
+              const flvjsAny = flvjs as any
+              const mediaSrc = flvjsAny.Features?.mseBase?._ms
               // flv.js 内部管理 MediaSource, 通过 player._mediaDataSource 获取
               const buffered = video.buffered
               if (buffered.length > 0) {
@@ -1574,7 +1579,7 @@ function selectBestFormat(urls: Partial<Record<PlayerFormat, string>>, codec?: s
   })()
 
   // H.265 + 浏览器不支持 WebRTC H.265 → 使用纯 HLS 降级链
-  const chain = (isH265 && !h265WebRtcSupported)
+  const chain: PlayerFormat[] = (isH265 && !h265WebRtcSupported)
     ? ['hls']
     : (isH265 ? DEGRADATION_CHAINS.h265 : DEGRADATION_CHAINS.h264)
 

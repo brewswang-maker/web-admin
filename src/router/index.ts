@@ -33,6 +33,7 @@ const ONVIFDiscoveryView = () => import('@/views/ONVIFDiscoveryView.vue')
 const StreamManagementView = () => import('@/views/StreamManagementView.vue')
 const ModelManagementView = () => import('@/views/ModelManagementView.vue')
 const RecordingView = () => import('@/views/RecordingView.vue')
+const PipelineListView = () => import('@/views/PipelineListView.vue')
 const PipelineEditorView = () => import('@/views/PipelineEditorView.vue')
 const LinkageRuleView = () => import('@/views/LinkageRuleView.vue')
 const FederationDashboard = () => import('@/views/FederationDashboard.vue')
@@ -259,9 +260,22 @@ export const asyncRoutes: RouteRecordRaw[] = [
       },
       {
         path: 'pipelines',
+        name: 'PipelineList',
+        component: PipelineListView,
+        meta: { title: '流水线', icon: 'SetUp', roles: ['admin', 'user'] }
+      },
+      {
+        path: 'pipelines/editor',
+        name: 'PipelineEditorNew',
+        component: PipelineEditorView,
+        meta: { title: '新建流水线', icon: 'SetUp', hidden: true, roles: ['admin', 'user'] }
+      },
+      {
+        path: 'pipelines/editor/:id',
         name: 'PipelineEditor',
         component: PipelineEditorView,
-        meta: { title: 'Pipeline编辑', icon: 'SetUp', roles: ['admin', 'user'] }
+        meta: { title: '编辑流水线', icon: 'SetUp', hidden: true, roles: ['admin', 'user'] },
+        props: true
       },
       {
         path: 'federation',

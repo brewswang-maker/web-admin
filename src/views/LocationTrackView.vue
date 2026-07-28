@@ -711,14 +711,14 @@ function onAlarmMapMarker(e: Event) {
   // 限制最多 50 个告警标记 (防止内存泄漏)
   if (alarmMarkers.value.length > 50) {
     const old = alarmMarkers.value.shift()
-    if (old) map.removeLayer(old)
+    if (old && map) map.removeLayer(old as unknown as L.Layer)
   }
 
   // 30 秒后自动移除标记 (除非鼠标 hover)
   setTimeout(() => {
     const idx = alarmMarkers.value.indexOf(marker)
-    if (idx >= 0) {
-      map.removeLayer(marker)
+    if (idx >= 0 && map) {
+      map.removeLayer(marker as unknown as L.Layer)
       alarmMarkers.value.splice(idx, 1)
     }
   }, 30000)
@@ -737,7 +737,9 @@ onUnmounted(() => {
   clearTrack()
   // [Audit-Add] 清理告警标记
   window.removeEventListener('alarm-map-marker', onAlarmMapMarker as EventListener)
-  alarmMarkers.value.forEach(m => { if (map) map.removeLayer(m) })
+  if (map) {
+    alarmMarkers.value.forEach(m => { map!.removeLayer(m as unknown as L.Layer) })
+  }
   alarmMarkers.value = []
   if (map) { map.remove(); map = null }
 })

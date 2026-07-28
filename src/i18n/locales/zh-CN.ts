@@ -762,7 +762,65 @@ const zhCN = {
       type_unknown: '陌生人',
       type_unknown_type: '未知'
     }
-  }
+  },
+
+  // ============= 流水线列表页 v7.4 =============
+  pipelineList: {
+    create: '新建流水线',
+    createFirst: '立即新建第一条',
+    empty: '还没有任何流水线，点击右上方按钮创建第一条。',
+    emptyFiltered: '当前筛选条件下没有匹配的流水线',
+    batchActions: '批量操作',
+    batchDelete: '批量删除',
+    batchExport: '批量导出',
+    batchDeleteConfirm: '确定要删除选中的 {n} 条流水线吗？此操作不可恢复。',
+    batchDeleteResult: '批量删除完成：成功 {ok} 条，失败 {fail} 条',
+    batchExportOk: '已导出 {n} 条流水线到本地 JSON 文件',
+    loadFailed: '加载流水线列表失败',
+    invalidId: '流水线 ID 无效',
+    cloneSuffix: '-副本',
+    state: {
+      running: '运行中',
+      deployed: '已部署',
+      stopped: '已停止',
+      idle: '未部署',
+      error: '错误',
+      deploying: '部署中',
+      undeploying: '卸载中',
+    },
+    col: {
+      name: '名称',
+      structure: '结构',
+      status: '状态',
+      runtime: '运行时',
+      latency: '延迟',
+      tpu: 'TPU',
+      channels: '通道',
+      frames: '总帧数',
+      actions: '操作',
+      nodes: '{n} 节点',
+      edges: '{n} 连线',
+    },
+    action: {
+      deploy: '部署',
+      deployOk: '已部署: {name}',
+      deployFail: '部署失败',
+      stop: '停止',
+      stopConfirm: '确定要停止流水线 “{name}” 吗？',
+      stopOk: '已停止: {name}',
+      stopFail: '停止失败',
+      delete: '删除',
+      deleteConfirm: '确定要删除流水线 “{name}” 吗？此操作不可恢复。',
+      deleteOk: '已删除: {name}',
+      deleteFail: '删除失败',
+      clone: '克隆为新流水线',
+      cloneOk: '已创建副本，正在跳转编辑器…',
+      cloneFail: '克隆失败',
+      export: '导出为 JSON',
+      exportOk: '已导出到本地',
+      redeploy: '重新部署',
+    },
+  },
 }
 
 export default zhCN

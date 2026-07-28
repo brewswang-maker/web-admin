@@ -327,24 +327,29 @@ async function loadChannels() {
       // 后端 GET /api/v1/channels 返回: { data: { channels/items: [...], total } }
       const items: any[] = raw?.data?.channels ?? raw?.data?.items ?? raw?.data ?? []
       channels.value = items.map((ch: any, idx: number) => ({
-        id: ch.channel_id || ch.id || `ch_${idx}`,
-        deviceId: ch.device_id || ch.deviceId || '',
-        channelNo: ch.channelNo ?? idx + 1,
-        name: ch.name || ch.channel_name || `通道 ${idx + 1}`,
-        status: ch.status || 'offline',
+        id: String(ch.channel_id ?? ch.id ?? `ch_${idx}`),
+        deviceId: String(ch.device_id ?? ch.deviceId ?? ''),
+        channelNo: Number(ch.channelNo ?? idx + 1),
+        name: String(ch.name || ch.channel_name || `通道 ${idx + 1}`),
+        status: (ch.status === 'online' || ch.status === 'active') ? 'active'
+              : (ch.status === 'error') ? 'error'
+              : 'inactive',
         enabled: ch.enabled ?? true,
-        codec: ch.codec || 'H.264',
-        isRecording: ch.isRecording ?? false,
-        latency: ch.latency ?? 0,
-        packetLoss: ch.packetLoss ?? 0,
-        rtspUrl: ch.rtspUrl || ch.source_url || '-',
-        algoPlugin: ch.algoPlugin || ch.algo_plugin || '无',
-        bitrate: ch.bitrate || '-',
-        resolution: ch.resolution || '-',
-        fps: ch.fps || 0,
-        deviceType: ch.device_type || ch.deviceType || '',
-        vendor: ch.vendor || '',
-        model: ch.model || '',
+        codec: String(ch.codec || 'H.264'),
+        isRecording: Boolean(ch.isRecording ?? false),
+        latency: Number(ch.latency ?? 0),
+        packetLoss: Number(ch.packetLoss ?? 0),
+        rtspUrl: String(ch.rtspUrl || ch.source_url || '-'),
+        streamUrl: String(ch.streamUrl || ch.rtspUrl || ch.source_url || '-'),
+        algoPlugin: String(ch.algoPlugin || ch.algo_plugin || '无'),
+        bitrate: Number(ch.bitrate ?? 0),
+        resolution: String(ch.resolution || '-'),
+        fps: Number(ch.fps ?? 0),
+        deviceType: String(ch.device_type || ch.deviceType || ''),
+        vendor: String(ch.vendor || ''),
+        model: String(ch.model || ''),
+        snapshotUrl: ch.snapshotUrl,
+        metadata: (ch.metadata as Record<string, unknown>) || {},
       }))
     }
   } catch {

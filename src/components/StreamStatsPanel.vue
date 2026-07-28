@@ -198,9 +198,9 @@ function latencyClass(ms: number): string {
   return 'val-good'
 }
 
-function formatTagType(fmt: string): '' | 'success' | 'warning' | 'info' {
+function formatTagType(fmt: string): 'primary' | 'success' | 'warning' | 'info' | 'danger' {
   if (fmt === 'webrtc') return 'success'
-  if (fmt === 'flv' || fmt === 'ws-flv') return ''
+  if (fmt === 'flv' || fmt === 'ws-flv') return 'primary'
   if (fmt === 'hls') return 'warning'
   return 'info'
 }

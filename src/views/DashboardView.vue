@@ -539,7 +539,7 @@ const topStats = computed(() => [
 ])
 
 // ── 安全评分 ──
-const securityScore = ref<{ overall: number; trend: number } | null>(null)
+const securityScore = ref<{ overall: number; trend?: number } | null>(null)
 const securityScoreFailed = ref(false)
 
 const scoreDeg = computed(() => `${((securityScore.value?.overall ?? 0) / 100) * 360}deg`)
