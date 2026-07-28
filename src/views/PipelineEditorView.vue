@@ -1067,9 +1067,12 @@ async function handleUndeploy() {
   }
 }
 
-// [P0-3] 删除Pipeline
+// [P0-3 + DELETE-FIX 2026-07-14] 删除Pipeline — 成功后跳转列表页自动刷新
 async function handleDeletePipeline() {
-  if (!pipelineId.value) return
+  if (!pipelineId.value) {
+    ElMessage.warning('请先加载或选择一个 Pipeline')
+    return
+  }
   try {
     await ElMessageBox.confirm(
       `确定删除Pipeline "${pipelineName.value}" 吗？此操作不可撤销。`,
@@ -1077,14 +1080,21 @@ async function handleDeletePipeline() {
     )
   } catch { return } // 用户取消
   try {
-    await deletePipeline(pipelineId.value)
-    ElMessage.success('Pipeline已删除')
+    const resp = await deletePipeline(pipelineId.value)
+    const deleted = (resp?.data as any)?.deleted ?? true
+    if (deleted === false) {
+      ElMessage.warning('Pipeline 不存在或已被删除 (idempotent)')
+    } else {
+      ElMessage.success('Pipeline已删除')
+    }
     clearCanvas()
     pipelineId.value = generatePipelineId()
     pipelineName.value = '新建Pipeline'
     dirty.value = false
     undoStack.value = []
     redoStack.value = []
+    // 跳转列表页：列表页 onMounted 会自动调 loadAll() 刷新列表
+    router.push('/pipelines')
   } catch (e: any) {
     ElMessage.error('删除失败: ' + e.message)
   }
