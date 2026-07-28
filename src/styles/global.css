@@ -549,13 +549,13 @@ a:hover {
 }
 
 .dark-theme .el-dropdown-menu__item {
-  color: #091748;
+  /*color: #091748;*/
 }
 
 .dark-theme .el-dropdown-menu__item:hover,
 .dark-theme .el-dropdown-menu__item:focus {
   background-color: #F0F7FF;
-  color: #091748;
+  /*color: #091748;*/
 }
 
 .dark-theme .el-dropdown-menu__item.is-disabled {

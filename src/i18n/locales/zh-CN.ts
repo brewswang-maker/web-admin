@@ -673,6 +673,15 @@ const zhCN = {
     management: '管理',
     security: '安全与集成'
   },
+  menuPrimary: {
+    home: '首页',
+    location: '定位',
+    video: '视频',
+    alarm: '报警',
+    ai: 'AI 智能',
+    platform: '平台管理'
+  },
+
 
   search: {
     title: '全局搜索',

@@ -133,7 +133,7 @@ onMounted(loadLogs)
 <style scoped>
 .system-logs-page {
   padding: 20px 24px;
-  max-width: var(--content-max-width, 1440px);
+  /* max-width: var(--content-max-width, 1440px); */
   margin: 0 auto;
 }
 .page-header {

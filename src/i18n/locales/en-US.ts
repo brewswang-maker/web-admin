@@ -676,6 +676,16 @@ const enUS: MessageSchema = {
     management: 'Management',
     security: 'Security & Integration'
   },
+  
+  menuPrimary: {
+    home: 'Home',
+    location: 'Location',
+    video: 'Video',
+    alarm: 'Alarm',
+    ai: 'AI',
+    platform: 'Platform Management'
+  },
+
 
   search: {
     title: 'Global Search',

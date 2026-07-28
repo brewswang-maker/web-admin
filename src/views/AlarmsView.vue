@@ -1387,7 +1387,7 @@ onUnmounted(() => {
  * ============================================================ */
 .alarms-page {
   /* padding: 20px 24px; */
-  max-width: var(--content-max-width, 1440px);
+  /* max-width: var(--content-max-width, 1440px); */
   /* margin: 0 auto; */
   animation: fadeIn 0.3s ease;
 }

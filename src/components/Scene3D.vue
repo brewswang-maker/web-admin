@@ -1,18 +1,65 @@
 <template>
   <div class="scene3d-container" ref="containerRef">
     <div class="scene-toolbar">
-      <el-button-group size="small">
+      <!-- <el-button-group size="small">
         <el-button @click="resetCamera"><el-icon><RefreshRight /></el-icon>复位</el-button>
         <el-button @click="toggleAlarmPulse">{{ alarmPulse ? '关闭脉冲' : '开启脉冲' }}</el-button>
         <el-button @click="toggleLabels">{{ showLabels ? '隐藏标签' : '显示标签' }}</el-button>
         <el-button @click="togglePerfPanel">{{ showPerfPanel ? '关闭性能面板' : '性能面板' }}</el-button>
-      </el-button-group>
+      </el-button-group> -->
       <div class="legend-bar">
-        <span class="legend-item"><span class="dot online"></span>在线设备</span>
-        <span class="legend-item"><span class="dot alarm"></span>告警点位</span>
-        <span class="legend-item"><span class="dot offline"></span>离线设备</span>
+        <span class="legend-item">
+          <i class="iconfont1 icon1-yingyanshexiangtou legend-icon online" aria-hidden="true"></i>
+          在线设备
+        </span>
+        <span class="legend-item">
+          <i class="iconfont1 icon1-yingyanshexiangtou legend-icon alarm" aria-hidden="true"></i>
+          告警点位
+        </span>
+        <span class="legend-item">
+          <i class="iconfont1 icon1-yingyanshexiangtou legend-icon offline" aria-hidden="true"></i>
+          离线设备
+        </span>
+        <button class="scene-tool-button" type="button" aria-label="复位视角" @click="resetCamera">
+          <i class="iconfont1 icon1-fuwei" aria-hidden="true"></i>
+          <span>复位</span>
+        </button>
+        <button
+          class="scene-tool-button"
+          type="button"
+          :aria-label="showLabels ? '隐藏标签' : '显示标签'"
+          :aria-pressed="!showLabels"
+          @click="toggleLabels"
+        >
+          <i class="iconfont1 icon1-xianshiyincangbiaoqian" aria-hidden="true"></i>
+          <span>{{ showLabels ? '隐藏标签' : '显示标签' }}</span>
+        </button>
       </div>
     </div>
+    <Teleport to="body">
+      <div
+        class="scene-ai-assistant"
+        :class="{ dragging: aiDragging, 'message-on-right': aiMessagePlacement === 'right' }"
+        :style="aiAssistantStyle"
+      >
+        <button
+          ref="aiTriggerRef"
+          class="ai-trigger"
+          type="button"
+          aria-label="打开 AI 助手"
+          @pointerdown="startAiDrag"
+          @pointermove="moveAiDrag"
+          @pointerup="endAiDrag"
+          @pointercancel="endAiDrag"
+          @click="openAiChat"
+        >
+          <img :src="aiGif" alt="AI 助手" draggable="false" />
+        </button>
+        <div class="ai-message" role="tooltip">
+          <span>随时待命：巡检、调策略、数据分析都交给我</span>
+        </div>
+      </div>
+    </Teleport>
     <!-- 性能监控面板 -->
     <div class="perf-panel" v-if="showPerfPanel && perfSnapshot">
       <div class="perf-title">📊 性能监控</div>
@@ -54,7 +101,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, watch, computed } from 'vue'
-import { RefreshRight } from '@element-plus/icons-vue'
+import { useRouter } from 'vue-router'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { CSS2DRenderer, CSS2DObject } from 'three/examples/jsm/renderers/CSS2DRenderer.js'
@@ -64,6 +111,7 @@ import {
   type PerformanceSnapshot,
   type PerformanceReport,
 } from '@/utils/performance'
+import aiGif from '@/assets/ai.gif'
 
 // ── Props ──
 interface Device3D {
@@ -92,12 +140,29 @@ const emit = defineEmits<{
   'performance-report': [report: PerformanceReport]
 }>()
 
+const router = useRouter()
 const containerRef = ref<HTMLElement>()
+const aiTriggerRef = ref<HTMLButtonElement>()
 const alarmPulse = ref(true)
 const showLabels = ref(true)
 const showPerfPanel = ref(props.showPerformance ?? false)
 const hoveredDevice = ref<Device3D | null>(null)
 const perfSnapshot = ref<PerformanceSnapshot | null>(null)
+const aiDragging = ref(false)
+const aiMessagePlacement = ref<'left' | 'right'>('left')
+const aiOffset = ref({ x: 0, y: 0 })
+const aiAssistantStyle = computed(() => ({
+  transform: `translate3d(${aiOffset.value.x}px, ${aiOffset.value.y}px, 0)`,
+}))
+let aiDragPointerId: number | null = null
+let aiDragStartX = 0
+let aiDragStartY = 0
+let aiDragStartOffsetX = 0
+let aiDragStartOffsetY = 0
+let aiDragStartLeft = 0
+let aiDragStartTop = 0
+let aiDragMoved = false
+let suppressAiNavigation = false
 
 let scene: THREE.Scene
 let camera: THREE.PerspectiveCamera
@@ -171,6 +236,59 @@ const fpsClass = computed(() => {
   if (fps >= 30) return 'fps-warn'
   return 'fps-bad'
 })
+
+function startAiDrag(event: PointerEvent) {
+  if (event.button !== 0 || !aiTriggerRef.value) return
+  const triggerRect = aiTriggerRef.value.getBoundingClientRect()
+
+  aiDragging.value = true
+  aiDragPointerId = event.pointerId
+  aiDragStartX = event.clientX
+  aiDragStartY = event.clientY
+  aiDragStartOffsetX = aiOffset.value.x
+  aiDragStartOffsetY = aiOffset.value.y
+  aiDragStartLeft = triggerRect.left
+  aiDragStartTop = triggerRect.top
+  aiDragMoved = false
+  aiTriggerRef.value.setPointerCapture(event.pointerId)
+}
+
+function moveAiDrag(event: PointerEvent) {
+  if (!aiDragging.value || aiDragPointerId !== event.pointerId || !aiTriggerRef.value) return
+  const triggerRect = aiTriggerRef.value.getBoundingClientRect()
+  const deltaX = event.clientX - aiDragStartX
+  const deltaY = event.clientY - aiDragStartY
+  const maxLeft = Math.max(0, window.innerWidth - triggerRect.width)
+  const maxTop = Math.max(0, window.innerHeight - triggerRect.height)
+  const nextLeft = Math.min(maxLeft, Math.max(0, aiDragStartLeft + deltaX))
+  const nextTop = Math.min(maxTop, Math.max(0, aiDragStartTop + deltaY))
+
+  if (Math.hypot(deltaX, deltaY) > 4) aiDragMoved = true
+  aiMessagePlacement.value = nextLeft < window.innerWidth / 2 ? 'right' : 'left'
+  aiOffset.value = {
+    x: aiDragStartOffsetX + nextLeft - aiDragStartLeft,
+    y: aiDragStartOffsetY + nextTop - aiDragStartTop,
+  }
+  event.preventDefault()
+}
+
+function endAiDrag(event: PointerEvent) {
+  if (aiDragPointerId !== event.pointerId) return
+  if (aiTriggerRef.value?.hasPointerCapture(event.pointerId)) {
+    aiTriggerRef.value.releasePointerCapture(event.pointerId)
+  }
+  aiDragging.value = false
+  aiDragPointerId = null
+  if (aiDragMoved) {
+    suppressAiNavigation = true
+    setTimeout(() => { suppressAiNavigation = false }, 200)
+  }
+}
+
+function openAiChat() {
+  if (suppressAiNavigation) return
+  void router.push('/ai-chat')
+}
 
 /** 递归释放场景中所有 GPU 资源（geometry + material） */
 function disposeSceneResources(sc: THREE.Scene) {
@@ -754,28 +872,158 @@ onUnmounted(() => {
   left: 8px;
   z-index: 10;
   display: flex;
-  gap: 12px;
   align-items: center;
+  justify-content: flex-end;
   /* 防止工具栏超出容器 */
   max-width: calc(100% - 16px);
+  width: 100%;
   flex-wrap: wrap;
 }
 
 .legend-bar {
   display: flex;
+  margin-left: auto;
   gap: 10px;
-  font-size: 11px;
-  color: rgba(255,255,255,0.6);
-  background: rgba(0,0,0,0.4);
+  font-size: 14px;
+  color:#AADDFF;
   padding: 4px 10px;
   border-radius: 4px;
 }
 
 .legend-item { display: flex; align-items: center; gap: 4px; }
-.dot { width: 8px; height: 8px; border-radius: 50%; }
-.dot.online { background: #0F9D58; }
-.dot.alarm { background: #DB4437; animation: pulse-dot 1.5s infinite; }
-.dot.offline { background: #555; }
+.legend-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 17px;
+  height: 17px;
+  flex: 0 0 17px;
+  font-size: 17px;
+  line-height: 1;
+}
+.legend-icon.online { color: #39C76F; }
+.legend-icon.alarm { color: #F45B69; animation: pulse-dot 1.5s infinite; }
+.legend-icon.offline { color: #667386; }
+
+.scene-tool-button {
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 0 9px;
+  border: 1px solid #05357C;
+  border-radius: 2px;
+  background: rgba(0, 47, 117, 0.35);
+  color: #00B4FF;
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 26px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.scene-tool-button i {
+  font-size: 15px;
+  line-height: 1;
+}
+
+.scene-tool-button:hover,
+.scene-tool-button:focus-visible {
+  border-color: #00B4FF;
+  background: #003076;
+  outline: none;
+}
+
+.scene-ai-assistant {
+  position: fixed;
+  right: 14px;
+  bottom: 12px;
+  z-index: 3000;
+  width: 100px;
+  height: 100px;
+  will-change: transform;
+}
+
+.ai-message {
+  position: absolute;
+  top: 50%;
+  right: 110px;
+  box-sizing: border-box;
+  /*width: 340px;*/
+  min-height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 5px 12px;
+  border: 1px solid #05357C;
+  border-radius: 8px;
+  background: #002F75;
+  color: #03C6DE;
+  font-size: 14px;
+  line-height: 20px;
+  text-align: center;
+  white-space: nowrap;
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(-50%) translateX(6px);
+  pointer-events: none;
+  transition: opacity 0.12s ease, transform 0.12s ease, visibility 0s linear 0.12s;
+}
+
+.ai-trigger:hover + .ai-message,
+.ai-trigger:focus-visible + .ai-message {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(-50%) translateX(0);
+  transition-delay: 0s;
+}
+
+.ai-message span {
+  display: block;
+  width: max-content;
+}
+
+.scene-ai-assistant.message-on-right .ai-message {
+  right: auto;
+  left: 110px;
+  transform: translateY(-50%) translateX(-6px);
+}
+
+.scene-ai-assistant.message-on-right .ai-trigger:hover + .ai-message,
+.scene-ai-assistant.message-on-right .ai-trigger:focus-visible + .ai-message {
+  transform: translateY(-50%) translateX(0);
+}
+
+.ai-trigger {
+  width: 100px;
+  height: 100px;
+  display: block;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+
+.scene-ai-assistant.dragging .ai-trigger {
+  cursor: grabbing;
+}
+
+.ai-trigger:focus-visible {
+  outline: 1px solid #00B4FF;
+  outline-offset: 2px;
+}
+
+.ai-trigger img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  pointer-events: none;
+  user-select: none;
+}
 
 @keyframes pulse-dot {
   0%, 100% { opacity: 1; transform: scale(1); }

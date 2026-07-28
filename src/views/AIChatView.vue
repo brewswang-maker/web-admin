@@ -51,7 +51,7 @@
         <div class="chat-messages" ref="msgContainer">
           <!-- 欢迎区 -->
           <div v-if="messages.length === 0" class="welcome">
-            <div class="welcome-icon">🛡️</div>
+            <img class="welcome-icon" :src="aiWelcomeGif" alt="华盾AI安全助手" />
             <h2>华盾AI安全助手</h2>
             <p>基于MACSA五智能体架构，融合感知、研判、决策、执行、元认知五环认知</p>
             <div class="quick-actions">
@@ -65,13 +65,13 @@
           <div v-for="(msg, idx) in messages" :key="idx" :class="['msg-row', msg.role]">
             <!-- 用户消息 -->
             <div v-if="msg.role === 'user'" class="msg-bubble user-bubble">
-              <div class="msg-avatar user-avatar">👤</div>
+              <img class="msg-avatar user-avatar" :src="userAvatarImage" alt="用户" />
               <div class="msg-content">{{ msg.content }}</div>
             </div>
 
             <!-- AI文本回复 -->
             <div v-else-if="msg.role === 'assistant'" class="msg-bubble ai-bubble">
-              <div class="msg-avatar ai-avatar">🤖</div>
+              <img class="msg-avatar ai-avatar" :src="aiAvatarImage" alt="AI助手" />
               <div class="msg-content" v-html="renderMarkdown(msg.content)"></div>
             </div>
 
@@ -119,7 +119,7 @@
 
             <!-- 截图动作 -->
             <div v-else-if="msg.role === 'action' && msg.actionType === 'snapshot'" class="msg-bubble ai-bubble">
-              <div class="msg-avatar ai-avatar">📷</div>
+              <img class="msg-avatar ai-avatar" :src="aiAvatarImage" alt="AI助手" />
               <div class="msg-content">
                 <div v-if="msg.status === 'success' && msg.snapshotUrl" class="snapshot-result">
                   <img :src="msg.snapshotUrl" alt="实时截图" class="snapshot-img" @click="openSnapshot(msg.snapshotUrl)" />
@@ -137,7 +137,7 @@
           <!-- 正在输入指示 -->
           <div v-if="isStreaming" class="msg-row assistant">
             <div class="msg-bubble ai-bubble">
-              <div class="msg-avatar ai-avatar">🤖</div>
+              <img class="msg-avatar ai-avatar" :src="aiAvatarImage" alt="AI助手" />
               <div class="msg-content streaming">
                 <span v-html="renderMarkdown(streamingText)"></span>
                 <span class="cursor-blink">▊</span>
@@ -201,6 +201,9 @@ import { aiHttp } from '@/api/http'
 import { ElMessage } from 'element-plus'
 import { Promotion } from '@element-plus/icons-vue'
 import type { ApiResponse } from '@/types/common'
+import aiWelcomeGif from '@/assets/ai1.gif'
+import aiAvatarImage from '@/assets/photo1.jpg'
+import userAvatarImage from '@/assets/photo2.jpg'
 
 interface ThinkStep { text: string; status: 'pending' | 'running' | 'done'; duration?: number }
 interface ChatMessage {
@@ -613,7 +616,7 @@ onUnmounted(() => {
 <style scoped>
 .ai-chat-page {
   height: calc(100vh - 80px);
-  padding: 20px;
+
   box-sizing: border-box;
 }
 .chat-shell {
@@ -655,7 +658,7 @@ onUnmounted(() => {
 
 /* 欢迎区 */
 .welcome { text-align: center; padding: 60px 20px; }
-.welcome-icon { font-size: 48px; margin-bottom: 16px; }
+.welcome-icon { display: block; width: 100px; height: 100px; margin: 0 auto 0px; object-fit: contain; }
 .welcome h2 { color: #303133; margin: 0 0 8px; }
 .welcome p { color: #606266; max-width: 500px; margin: 0 auto 24px; }
 .quick-actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
@@ -671,6 +674,8 @@ onUnmounted(() => {
 .msg-avatar { width: 32px; height: 32px; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 16px; flex-shrink: 0; }
 .user-avatar { background: #dbeafe; }
 .ai-avatar { background: #e0f2fe; }
+.user-avatar,
+.ai-avatar { border-radius: 50%; object-fit: cover; }
 .think-avatar { background: #fef3c7; }
 .tool-avatar { background: #dcfce7; }
 

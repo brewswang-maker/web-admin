@@ -418,7 +418,7 @@ function drawPlaceholder(canvas: HTMLCanvasElement, sample: Sample) {
   display: flex;
   gap: 16px;
   padding: 20px 24px;
-  max-width: var(--content-max-width, 1440px);
+  /* max-width: var(--content-max-width, 1440px); */
   margin: 0 auto;
   height: calc(100vh - 80px);
   animation: fadeIn 0.3s ease;

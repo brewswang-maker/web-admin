@@ -1,24 +1,144 @@
 <template>
   <el-container class="main-layout" :class="{ 'dark-theme': prefStore.themeMode === 'dark' }">
-    <!-- ===== 侧边栏 ===== -->
-    <el-aside :width="isCollapsed ? '64px' : '245px'" class="sidebar" :class="{ collapsed: isCollapsed }">
-      <!-- Logo -->
-      <div class="logo" @click="router.push('/dashboard')">
-        <img src="/favicon.svg" alt="logo" width="32" height="32" />
-        <transition name="logo-fade">
-          <span v-if="!isCollapsed" class="logo-text">{{ $t('menu.shieldBox') }} v7.0</span>
-        </transition>
+    <!-- ===== 顶部导航 ===== -->
+    <el-header class="header">
+      <button class="logo" type="button" aria-label="ShieldAI 首页" @click="router.push('/situation')">
+        <img :src="logoUrl" alt="ShieldAI" height="48" />
+        <span class="logo-text">v7.0</span>
+      </button>
+
+      <div class="header-left">
+        <nav class="primary-nav" aria-label="主导航">
+          <button
+            v-for="item in primaryMenus"
+            :key="item.key"
+            type="button"
+            class="primary-nav-item"
+            :class="{ 'is-active': item.key === activePrimaryKey }"
+            :aria-current="item.key === activePrimaryKey ? 'page' : undefined"
+            @click="selectPrimary(item.key)"
+          >
+            {{ item.label }}
+            <span class="line" aria-hidden="true">|</span>
+          </button>
+        </nav>
+        <!-- <div class="global-search" @click="showSearch = true">
+          <el-icon><Search /></el-icon>
+          <span class="search-hint">{{ $t('search.hint') }}</span>
+        </div> -->
       </div>
 
+      <div class="header-right">
+        <el-tooltip :content="$t('language.title')" placement="bottom">
+          <el-dropdown trigger="click" @command="onLanguageChange">
+            <div class="header-icon-btn">
+              <el-icon :size="20"><Position /></el-icon>
+            </div>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item
+                  v-for="loc in SUPPORTED_LOCALES"
+                  :key="loc"
+                  :command="loc"
+                  :disabled="prefStore.language === loc"
+                >
+                  {{ LOCALE_LABELS[loc] }}
+                </el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
+        </el-tooltip>
+
+        <el-tooltip :content="themeTip" placement="bottom">
+          <div class="header-icon-btn" @click="prefStore.toggleTheme()">
+            <el-icon :size="20">
+              <Sunny v-if="prefStore.themeMode === 'dark'" />
+              <Moon v-else />
+            </el-icon>
+          </div>
+        </el-tooltip>
+
+        <NotificationBell />
+
+        <el-tooltip :content="$t('layout.aiAssistant')" placement="bottom">
+          <div class="header-icon-btn ai-btn" @click="router.push('/ai-chat')">
+            <el-icon :size="20"><Cpu /></el-icon>
+          </div>
+        </el-tooltip>
+
+        <el-dropdown trigger="click" @command="handleUserCommand">
+          <div class="user-menu">
+            <el-avatar :size="32" :src="userAvatarUrl" />
+            <span class="username hidden-mobile">{{ auth.username || $t('layout.defaultUser') }}</span>
+            <el-icon class="dropdown-icon"><ArrowDown /></el-icon>
+          </div>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item command="profile">
+                <el-icon><User /></el-icon>{{ $t('layout.profile') }}
+              </el-dropdown-item>
+              <el-dropdown-item command="settings">
+                <el-icon><Setting /></el-icon>{{ $t('layout.settings') }}
+              </el-dropdown-item>
+              <el-dropdown-item divided command="logout">
+                <el-icon><SwitchButton /></el-icon>{{ $t('menu.logout') }}
+              </el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
+      </div>
+    </el-header>
+
+    <el-container class="workspace">
+    <!-- ===== 侧边栏 ===== -->
+    <el-aside
+      v-if="showSidebar"
+      :width="isCollapsed ? '64px' : '245px'"
+      class="sidebar"
+      :class="{ collapsed: isCollapsed }"
+    >
       <!-- 导航菜单 -->
       <el-menu
+        class="sidebar-menu"
+        :default-active="displayedActiveMenu"
+        :collapse="isCollapsed"
+        background-color="transparent"
+        :text-color="prefStore.themeMode === 'dark' ? '#AADDFF' : '#1F2937'"
+        :active-text-color="prefStore.themeMode === 'dark' ? '#60A5FA' : '#1890FF'"
+        :collapse-transition="false"
+        @select="handleSidebarSelect"
+      >
+        <el-menu-item-group>
+          <template #title>
+            <span class="group-title">
+              <span v-if="!isCollapsed">{{ activePrimaryMenu.label }}</span>
+            </span>
+          </template>
+          <el-menu-item v-for="item in activePrimaryMenu.items" :key="item.path" :index="item.path">
+            <el-icon><component :is="item.icon" /></el-icon>
+            <template #title>
+              <span v-if="item.path === '/alarms'" class="alarm-menu-label">{{ item.label }}</span>
+              <span v-else>{{ item.label }}</span>
+              <el-badge
+                v-if="item.path === '/alarms' && alarmStore.unhandledCount > 0"
+                :value="alarmStore.unhandledCount > 99 ? '99+' : alarmStore.unhandledCount"
+                class="menu-badge"
+              />
+            </template>
+          </el-menu-item>
+        </el-menu-item-group>
+      </el-menu>
+
+      <!-- Legacy groups remain in the template as a compatibility fallback, but are not rendered. -->
+      <el-menu
+        v-if="false"
+        class="sidebar-menu legacy-sidebar-menu"
         :default-active="activeMenu"
         :collapse="isCollapsed"
         router
         background-color="transparent"
         :text-color="prefStore.themeMode === 'dark' ? '#AADDFF' : '#1F2937'"
         :active-text-color="prefStore.themeMode === 'dark' ? '#60A5FA' : '#1890FF'"
-        class="sidebar-menu"
         :collapse-transition="false"
       >
         <!-- ===== 监控总览 ===== -->
@@ -26,13 +146,13 @@
           <template #title v-if="!isCollapsed">
             <span class="group-title">{{ $t('menuGroup.monitor') }}</span>
           </template>
-          <el-menu-item index="/dashboard">
-            <el-icon><Odometer /></el-icon>
-            <template #title>{{ $t('menu.dashboard') }}</template>
-          </el-menu-item>
           <el-menu-item index="/situation">
             <el-icon><DataAnalysis /></el-icon>
             <template #title>{{ $t('menu.situationScreen') }}</template>
+          </el-menu-item>
+          <el-menu-item index="/dashboard">
+            <el-icon><Odometer /></el-icon>
+            <template #title>{{ $t('menu.dashboard') }}</template>
           </el-menu-item>
         </el-menu-item-group>
 
@@ -207,8 +327,21 @@
     <!-- ===== 主内容区 ===== -->
     <el-container class="content-container">
       <!-- 顶部导航 -->
-      <el-header class="header">
+      <el-header v-if="false" class="header">
         <div class="header-left">
+          <nav class="primary-nav" aria-label="主导航">
+            <button
+              v-for="item in primaryMenus"
+              :key="item.key"
+              type="button"
+              class="primary-nav-item"
+              :class="{ 'is-active': item.key === activePrimaryKey }"
+              :aria-current="item.key === activePrimaryKey ? 'page' : undefined"
+              @click="selectPrimary(item.key)"
+            >
+              {{ item.label }}
+            </button>
+          </nav>
           <!-- 全局搜索 -->
           <div class="global-search" @click="showSearch = true">
             <el-icon><Search /></el-icon>
@@ -261,7 +394,7 @@
           <!-- 用户菜单 -->
           <el-dropdown trigger="click" @command="handleUserCommand">
             <div class="user-menu">
-              <el-avatar :size="32" :icon="UserFilled" />
+              <el-avatar :size="32" :src="userAvatarUrl" />
               <span class="username hidden-mobile">{{ auth.username || $t('layout.defaultUser') }}</span>
               <el-icon class="dropdown-icon"><ArrowDown /></el-icon>
             </div>
@@ -283,13 +416,18 @@
       </el-header>
 
       <!-- 页面内容 -->
-      <el-main class="main-content">
+      <el-main
+        v-loading="routeLoading"
+        class="main-content"
+        element-loading-background="rgba(3, 43, 104, 0.18)"
+      >
         <router-view v-slot="{ Component, route }">
           <transition name="page-fade" mode="out-in">
             <component :is="Component" :key="route.fullPath" />
           </transition>
         </router-view>
       </el-main>
+    </el-container>
     </el-container>
 
     <!-- ===== 全局搜索弹窗 ===== -->
@@ -327,7 +465,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted, nextTick, type Component } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ElMessageBox } from 'element-plus'
@@ -335,10 +473,12 @@ import {
   Odometer, DataAnalysis, Monitor, VideoCamera, Bell, TrendCharts,
   ChatDotRound, Connection, FolderOpened, Upload, Setting,
   DocumentChecked, Link, User, Avatar, Lock, Search,
-  Sunny, Moon, Cpu, UserFilled, ArrowDown, SwitchButton,
+  Sunny, Moon, Cpu, ArrowDown, SwitchButton,
   DArrowLeft, DArrowRight, VideoPlay, Film, VideoPause, Camera, SetUp,
-  Location, Share, ShoppingCart, Wallet, Position,
+  Location, Share, ShoppingCart, Wallet, Position, Aim,
 } from '@element-plus/icons-vue'
+import logoUrl from '@/assets/logo.png'
+import userAvatarUrl from '@/assets/photo2.jpg'
 import { useAuthStore } from '@/stores/auth'
 import { useAlarmStore } from '@/stores/alarm'
 import { usePreferenceStore } from '@/stores/preference'
@@ -352,6 +492,130 @@ const auth = useAuthStore()
 const alarmStore = useAlarmStore()
 const prefStore = usePreferenceStore()
 const { t } = useI18n()
+
+type PrimaryMenuKey = 'home' | 'location' | 'video' | 'alarm' | 'ai' | 'platform'
+type SidebarItem = {
+  path: string
+  label: string
+  icon: Component
+}
+type PrimaryMenu = {
+  key: PrimaryMenuKey
+  label: string
+  items: SidebarItem[]
+}
+
+const primaryMenus = computed<PrimaryMenu[]>(() => [
+  {
+    key: 'home',
+    label: t('menuPrimary.home'),
+    items: [{ path: '/situation', label: t('menu.situationScreen'), icon: DataAnalysis }],
+  },
+  {
+    key: 'location',
+    label: t('menuPrimary.location'),
+    items: [{ path: '/location', label: t('menu.location'), icon: Location }],
+  },
+  {
+    key: 'video',
+    label: t('menuPrimary.video'),
+    items: [
+      { path: '/live', label: t('menu.live'), icon: VideoCamera },
+      { path: '/channels', label: t('menu.channels'), icon: VideoPlay },
+      { path: '/streams', label: t('menu.streams'), icon: Film },
+      { path: '/recordings', label: t('menu.recording'), icon: VideoPause },
+      { path: '/gb28181', label: t('menu.gb28181'), icon: Connection },
+      { path: '/onvif', label: t('menu.onvif'), icon: Camera },
+    ],
+  },
+  {
+    key: 'alarm',
+    label: t('menuPrimary.alarm'),
+    items: [{ path: '/alarms', label: t('menu.alarms'), icon: Bell }],
+  },
+  {
+    key: 'ai',
+    label: t('menuPrimary.ai'),
+    items: [
+      { path: '/dashboard', label: t('menu.dashboard'), icon: Odometer },
+      { path: '/pipelines', label: t('menu.pipelineEditor'), icon: SetUp },
+      { path: '/models', label: t('menu.models'), icon: Cpu },
+      { path: '/ai-chat', label: t('menu.aiChat'), icon: ChatDotRound },
+      { path: '/statistics', label: t('menu.statistics'), icon: TrendCharts },
+      { path: '/federation', label: t('menu.federation'), icon: Connection },
+      { path: '/algorithm-store', label: t('menu.algorithms'), icon: ShoppingCart },
+      { path: '/face-database', label: t('menu.face'), icon: User },
+      { path: '/face-realtime', label: t('menu.faceRealtime'), icon: Aim },
+    ],
+  },
+  {
+    key: 'platform',
+    label: t('menuPrimary.platform'),
+    items: [
+      { path: '/devices', label: t('menu.devices'), icon: Monitor },
+      { path: '/topology', label: t('menu.topology'), icon: Share },
+      { path: '/linkage', label: t('menu.linkage'), icon: Connection },
+      { path: '/projects', label: t('menu.projects'), icon: FolderOpened },
+      { path: '/teams', label: t('menu.team'), icon: User },
+      { path: '/upgrade', label: t('menu.ota'), icon: Upload },
+      { path: '/settings', label: t('menu.settings'), icon: Setting },
+      { path: '/audit', label: t('menu.audit'), icon: DocumentChecked },
+      { path: '/open-platform', label: t('menu.openPlatform'), icon: Link },
+      { path: '/users', label: t('menu.user'), icon: User },
+      { path: '/roles', label: t('menu.role'), icon: Avatar },
+      { path: '/permissions', label: t('menu.permission'), icon: Lock },
+      { path: '/billing', label: t('menu.billing'), icon: Wallet },
+    ].filter(item => item.path !== '/projects' || auth.can('projects', 'read')),
+  },
+])
+
+const activePrimaryKey = ref<PrimaryMenuKey>('home')
+const activePrimaryMenu = computed(() =>
+  primaryMenus.value.find(item => item.key === activePrimaryKey.value) ?? primaryMenus.value[0]
+)
+const showSidebar = computed(() => activePrimaryKey.value !== 'home')
+const pendingMenuPath = ref<string | null>(null)
+const routeLoading = ref(false)
+let navigationSequence = 0
+
+function findPrimaryKey(path: string): PrimaryMenuKey | undefined {
+  return primaryMenus.value.find(menu => menu.items.some(item => path === item.path || path.startsWith(`${item.path}/`)))?.key
+}
+
+async function navigateToMenu(path: string) {
+  if (pendingMenuPath.value === path) return
+  if (route.path === path) {
+    pendingMenuPath.value = null
+    routeLoading.value = false
+    return
+  }
+
+  const sequence = ++navigationSequence
+  pendingMenuPath.value = path
+  routeLoading.value = true
+
+  try {
+    await router.push(path)
+  } finally {
+    if (sequence === navigationSequence) {
+      pendingMenuPath.value = null
+      routeLoading.value = false
+    }
+  }
+}
+
+async function selectPrimary(key: PrimaryMenuKey) {
+  const menu = primaryMenus.value.find(item => item.key === key)
+  const firstItem = menu?.items[0]
+  if (!firstItem) return
+
+  activePrimaryKey.value = key
+  await navigateToMenu(firstItem.path)
+}
+
+async function handleSidebarSelect(path: string) {
+  await navigateToMenu(path)
+}
 
 // ── 侧边栏折叠(双向同步到 prefStore) ──
 const isCollapsed = computed({
@@ -381,6 +645,12 @@ const activeMenu = computed(() => {
   if (path.startsWith('/devices/')) return '/devices'
   return path
 })
+const displayedActiveMenu = computed(() => pendingMenuPath.value ?? activeMenu.value)
+
+watch(() => route.path, path => {
+  const key = findPrimaryKey(path)
+  if (key) activePrimaryKey.value = key
+}, { immediate: true })
 
 // ── 全局搜索 ──
 const showSearch = ref(false)
@@ -498,10 +768,19 @@ function handleUserCommand(command: string) {
  * MainLayout — 主布局 v6.0 暗色主题优先
  * ============================================================ */
 .main-layout {
+  --header-height: 64px;
+  flex-direction: column;
   width: 100%;
   height: 100vh;
   overflow: hidden;
   background: var(--app-bg);
+}
+
+.workspace {
+  flex: 1;
+  width: 100%;
+  min-height: 0;
+  overflow: hidden;
 }
 
 /* ── 侧边栏 ── */
@@ -512,7 +791,7 @@ function handleUserCommand(command: string) {
   overflow: hidden;
   transition: width var(--transition-normal, 0.2s ease);
   position: relative;
-  border-right: 1px solid rgba(255, 255, 255, 0.06);
+  border-right: 0;
 }
 
 .sidebar.collapsed {
@@ -523,24 +802,43 @@ function handleUserCommand(command: string) {
 .logo {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 16px 20px;
+  /*gap: 8px;*/
+  /*width: 245px;*/
+  height: 100%;
+  box-sizing: border-box;
+  /*padding: 0 18px;*/
   cursor: pointer;
   user-select: none;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  border: 0;
+  /*border-right: 1px solid rgba(0, 148, 210, 0.28);*/
   flex-shrink: 0;
+  background-color: #032b68;
+  background-image: linear-gradient(0deg, rgba(9,107,236,0.7), rgba(9,107,236,0.01));
+}
+
+.sidebar.collapsed .logo {
+  justify-content: center;
+  padding: 0;
+}
+
+.sidebar.collapsed .logo img {
+  width: 32px;
+  height: 32px;
 }
 
 .logo img {
   flex-shrink: 0;
+  height: 48px;
+  width: auto;
+  max-width: 100%;
+  object-fit: contain;
 }
 
 .logo-text {
-  font-size: 16px;
-  font-weight: var(--font-bold, 700);
-  color: #FFFFFF;
-  white-space: nowrap;
-  letter-spacing: 0.5px;
+  flex-shrink: 0;
+  font-size: 12px;
+  font-weight: 700;
+  color: #00e4ff;
 }
 
 .logo-fade-enter-active,
@@ -558,33 +856,140 @@ function handleUserCommand(command: string) {
   overflow-y: auto;
   overflow-x: hidden;
   border-right: none;
-  padding: 8px 0;
+  /*padding: 8px 0;*/
+  scrollbar-color: transparent transparent;
+  scrollbar-width: thin;
+}
+
+.sidebar-menu:hover {
+  scrollbar-color: rgba(43, 91, 158, 0.9) rgba(5, 28, 75, 0.72);
+}
+
+.sidebar-menu::-webkit-scrollbar {
+  width: 5px;
+}
+
+.sidebar-menu::-webkit-scrollbar-track {
+  background: transparent;
+  border-radius: 4px;
+}
+
+.sidebar-menu::-webkit-scrollbar-thumb {
+  min-height: 28px;
+  background: transparent;
+  border-radius: 4px;
+}
+
+.sidebar-menu:hover::-webkit-scrollbar-track {
+  background: rgba(5, 28, 75, 0.72);
+}
+
+.sidebar-menu:hover::-webkit-scrollbar-thumb {
+  background: rgba(43, 91, 158, 0.9);
+  box-shadow: inset 0 0 0 1px rgba(73, 133, 207, 0.22);
+}
+
+.sidebar-menu:hover::-webkit-scrollbar-thumb:hover {
+  background: rgba(57, 112, 184, 0.96);
+}
+
+.legacy-sidebar-menu {
+  display: none;
 }
 
 .sidebar-menu :deep(.el-menu-item-group__title) {
-  padding: 12px 20px 4px;
+  height: 42px;
+  /*margin: 0 8px 8px;*/
+  padding: 0 !important;
+  line-height: 42px;
+  background-image: url('../assets/siderbar.png');
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: 100% 100%;
 }
 
 .group-title {
-  font-size: 11px;
-  color: rgba(255, 255, 255, 0.8);
-  text-transform: uppercase;
-  letter-spacing: 1px;
-  font-weight: var(--font-semibold, 600);
+  position: relative;
+  display: flex;
+  align-items: center;
+  height: 42px;
+  padding-left: 45px;
+  font-size: 18px;
+  color: #8ff7ff;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-shadow: 0 0 8px rgba(0, 228, 255, 0.65);
+}
+
+.group-title::before {
+  position: absolute;
+  top: 50%;
+  left: 10px;
+  width: 24px;
+  height: 24px;
+  background-image: url('../assets/siderbar1.png');
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: contain;
+  content: '';
+  transform: translateY(-50%);
+}
+
+.sidebar.collapsed .sidebar-menu :deep(.el-menu-item-group__title) {
+  height: 42px;
+  padding: 0 !important;
+}
+
+.sidebar.collapsed .group-title {
+  justify-content: center;
+  width: 100%;
+  height: 42px;
+  padding-left: 0;
+}
+
+.sidebar.collapsed .group-title::before {
+  left: 50%;
+  width: 24px;
+  height: 24px;
+  transform: translate(-50%, -50%);
+}
+
+.sidebar.collapsed .sidebar-menu :deep(.el-menu-item) {
+  position: relative;
+  justify-content: center;
+  width: 100%;
+  margin: 0;
+  padding: 0 !important;
+  border-radius: 0;
+}
+
+.sidebar.collapsed .sidebar-menu :deep(.el-menu-item .el-icon) {
+  margin: 0;
+}
+
+.sidebar.collapsed .sidebar-menu :deep(.el-menu-item.is-active)::before {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 3px;
+  background: #00e4ff;
+  box-shadow: 0 0 8px rgba(0, 228, 255, 0.7);
+  content: '';
 }
 
 .sidebar-menu :deep(.el-menu-item) {
-  height: 42px;
-  line-height: 42px;
-  margin: 2px 8px;
-  border-radius: 8px;
+  height: 50px;
+  line-height: 50px;
+  /*margin: 2px 8px;*/
+  /*border-radius: 8px;*/
   font-size: 14px;
   transition: all var(--transition-fast, 0.15s ease);
 }
 
 .sidebar-menu :deep(.el-menu-item:hover) {
-  background: rgba(255, 255, 255, 0.08) !important;
-  color: rgba(255, 255, 255, 0.95);
+  background: #002c73 !important;
+  color: var(--app-sidebar-active, #3B82F6) !important;
 }
 
 .sidebar-menu :deep(.el-menu-item.is-active) {
@@ -641,7 +1046,7 @@ function handleUserCommand(command: string) {
 }
 
 .main-layout:not(.dark-theme) .sidebar .group-title {
-  color: rgba(31, 41, 55, 0.6);
+  color: #8ff7ff;
 }
 
 .main-layout:not(.dark-theme) .sidebar-menu :deep(.el-menu-item:hover) {
@@ -702,13 +1107,17 @@ function handleUserCommand(command: string) {
 
 /* ── 顶部导航 ── */
 .header {
-  height: var(--header-height, 56px);
+  height: var(--header-height, 64px);
+  min-height: var(--header-height, 64px);
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 20px;
-  background: var(--app-header-bg, #FFFFFF);
-  border-bottom: 1px solid var(--app-border);
+  gap: 10px;
+  padding: 0 22px 0 0;
+  box-sizing: border-box;
+  background-color: #032b68;
+  background-image: linear-gradient(0deg, rgba(9,107,236,0.7), rgba(9,107,236,0.01));
+  /*border-bottom: 8px solid #00265e;*/
   flex-shrink: 0;
   z-index: var(--z-header);
 }
@@ -716,6 +1125,91 @@ function handleUserCommand(command: string) {
 .header-left {
   display: flex;
   align-items: center;
+  min-width: 0;
+  flex: 1;
+  margin-left:50px;
+  height: 100%;
+}
+
+.primary-nav {
+  display: flex;
+  align-items: stretch;
+  align-self: stretch;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.primary-nav::-webkit-scrollbar {
+  display: none;
+}
+
+.primary-nav-item {
+  position: relative;
+  padding: 0 35px;
+  border: 0;
+  background: transparent;
+  color: #0094D2;
+  font: inherit;
+  font-size: 16px;
+  font-weight: 400;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color 0.18s ease, background-color 0.18s ease;
+}
+
+.primary-nav-item::after {
+  position: absolute;
+  bottom: 8px;
+  left: 0;
+  width: 100%;
+  height: 2px;
+  background-image: url('../assets/line.png');
+  background-position: top;
+  background-repeat: no-repeat;
+  background-size: 100%;
+  content: '';
+  opacity: 0;
+  transform: scaleX(0.45);
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+
+.primary-nav-item .line {
+  position: absolute;
+  top: 50%;
+  right: -5px;
+  width: 11px;
+  height: 28px;
+  color: #0094d280 !important;
+  font-weight: 100;
+  line-height: 28px;
+  text-align: center;
+  transform: translateY(-50%);
+}
+
+.primary-nav-item:last-child .line {
+  display: none;
+}
+
+.primary-nav-item:hover,
+.primary-nav-item:focus-visible,
+.primary-nav-item.is-active {
+  color: #00E4FF;
+}
+
+.primary-nav-item.is-active {
+  font-weight: 700;
+}
+
+.primary-nav-item.is-active::after {
+  opacity: 1;
+  transform: scaleX(1);
+}
+
+.primary-nav-item:focus-visible,
+.logo:focus-visible {
+  outline: 2px solid #00E4FF;
+  outline-offset: -2px;
 }
 
 .global-search {
@@ -723,19 +1217,19 @@ function handleUserCommand(command: string) {
   align-items: center;
   gap: 8px;
   padding: 6px 14px;
-  background: var(--app-surface);
-  border: 1px solid var(--app-border);
+  background: rgba(1, 31, 86, 0.32);
+  border: 1px solid rgba(0, 148, 210, 0.5);
   border-radius: var(--radius-lg, 8px);
   cursor: pointer;
-  color: var(--app-text-secondary);
+  color: #0094D2;
   font-size: 13px;
   transition: all var(--transition-fast, 0.15s ease);
   min-width: 200px;
 }
 
 .global-search:hover {
-  border-color: var(--color-primary-400);
-  color: var(--app-text-primary);
+  border-color: #00E4FF;
+  color: #00E4FF;
 }
 
 .search-hint {
@@ -752,6 +1246,7 @@ function handleUserCommand(command: string) {
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-shrink: 0;
 }
 
 .header-right :deep(.el-icon) {
@@ -772,13 +1267,13 @@ function handleUserCommand(command: string) {
   justify-content: center;
   border-radius: 50%;
   cursor: pointer;
-  color: var(--app-text-secondary);
+  color: #0094D2;
   transition: all var(--transition-fast, 0.15s ease);
 }
 
 .header-icon-btn:hover {
-  background: var(--app-surface-hover);
-  color: var(--app-text-primary);
+  background: rgba(0, 228, 255, 0.1);
+  color: #00E4FF;
 }
 
 .ai-btn:hover {
@@ -789,38 +1284,51 @@ function handleUserCommand(command: string) {
   color: #FFFFFF;
 }
 
+.main-layout:not(.dark-theme) .header,
+.main-layout.dark-theme .header {
+  color: #0094D2;
+}
+
 .main-layout.dark-theme .global-search {
-  background: rgba(255, 255, 255, 0.1);
-  border-color: rgba(255, 255, 255, 0.2);
-  color: #FFFFFF;
+  background: rgba(1, 31, 86, 0.32);
+  border-color: rgba(0, 148, 210, 0.5);
+  color: #0094D2;
 }
 
 .main-layout.dark-theme .global-search:hover {
-  border-color: rgba(255, 255, 255, 0.45);
-  color: #FFFFFF;
+  border-color: #00E4FF;
+  color: #00E4FF;
 }
 
 .main-layout.dark-theme .search-hint {
-  background: rgba(255, 255, 255, 0.12);
-  color: rgba(255, 255, 255, 0.7);
+  background: rgba(0, 228, 255, 0.1);
+  color: #0094D2;
 }
 
 .main-layout.dark-theme .header-icon-btn,
 .main-layout.dark-theme .username,
 .main-layout.dark-theme .dropdown-icon,
 .main-layout.dark-theme :deep(.notification-bell) {
-  color: #FFFFFF;
+  color: #0094D2;
 }
 
 .main-layout.dark-theme .header-icon-btn:hover,
 .main-layout.dark-theme .user-menu:hover,
 .main-layout.dark-theme :deep(.notification-bell:hover) {
-  background: rgba(255, 255, 255, 0.12);
-  color: #FFFFFF;
+  background: rgba(0, 228, 255, 0.1);
+  color: #00E4FF;
 }
 
 .main-layout.dark-theme :deep(.notification-bell.has-urgent) {
   color: #F56C6C;
+}
+
+.main-layout:not(.dark-theme) .logo-text,
+.main-layout.dark-theme .logo-text {
+  /*color: #00E4FF;*/
+  background: linear-gradient(0deg, #096bec, #00e4ff);
+  -webkit-background-clip: text;
+  color: transparent;
 }
 
 /* 用户菜单 */
@@ -841,13 +1349,39 @@ function handleUserCommand(command: string) {
 
 .username {
   font-size: 13px;
-  color: var(--app-text-primary);
+  /*color: var(--app-text-primary);*/
+  color:#0094D2;
   font-weight: var(--font-medium, 500);
 }
 
 .dropdown-icon {
   font-size: 12px;
-  color: var(--app-text-secondary);
+  /*color: var(--app-text-secondary);*/
+   color:#0094D2;
+}
+
+/* 顶部栏背景不随主题变化，右侧工具区也固定使用同一套颜色。 */
+.header-right .header-icon-btn,
+.header-right .username,
+.header-right .dropdown-icon,
+.header-right :deep(.notification-bell) {
+  color: #0094d2;
+}
+
+.header-right .header-icon-btn:hover,
+.header-right .user-menu:hover,
+.header-right :deep(.notification-bell:hover) {
+  color: #00e4ff;
+  background: rgba(0, 228, 255, 0.1);
+}
+
+.header-right :deep(.el-avatar) {
+  color: #ffffff;
+  background: #b8c3d4;
+}
+
+.header-right :deep(.notification-bell.has-urgent) {
+  color: #f56c6c;
 }
 
 /* ── 主内容区域 ── */
@@ -925,6 +1459,16 @@ function handleUserCommand(command: string) {
     width: 36px;
     justify-content: center;
     padding: 6px;
+  }
+
+  .primary-nav-item {
+    min-width: 72px;
+    padding: 0 10px;
+  }
+
+  .primary-nav-item::after {
+    right: auto;
+    left: 0;
   }
 
   .search-hint {

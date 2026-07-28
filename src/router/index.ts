@@ -74,7 +74,7 @@ export const asyncRoutes: RouteRecordRaw[] = [
   {
     path: '/',
     component: MainLayout,
-    redirect: '/dashboard',
+    redirect: '/situation',
     children: [
       {
         path: 'dashboard',
