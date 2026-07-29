@@ -111,6 +111,12 @@ const defaultSchedule = (): RecordingSchedule => ({
   pre_record_seconds: 10,
   post_record_seconds: 60,
   enabled: true,
+  // [P2-3] 节假日排除策略
+  holiday_exclusion: {
+    enabled: false,
+    holiday_dates: [] as string[],  // ['2026-01-01', '2026-02-10', ...]
+    holiday_name: '',               // 节假日名称
+  },
 })
 
 // [P0-2] 水印配置状态
@@ -1479,6 +1485,36 @@ onUnmounted(() => {
         </el-form-item>
         <el-form-item label="启用">
           <el-switch v-model="editingSchedule.enabled" />
+        </el-form-item>
+        <!-- [P2-3] 节假日排除策略 -->
+        <el-form-item label="节假日排除">
+          <el-switch v-model="editingSchedule.holiday_exclusion!.enabled" />
+          <span style="margin-left:8px;color:#909399;font-size:12px">启用后指定日期不录像</span>
+        </el-form-item>
+        <el-form-item v-if="editingSchedule.holiday_exclusion?.enabled" label="排除日期">
+          <el-input
+            v-model="editingSchedule.holiday_exclusion.holiday_name"
+            placeholder="节假日名称（如：春节）"
+            style="margin-bottom:8px"
+          />
+          <el-select
+            v-model="editingSchedule.holiday_exclusion.holiday_dates"
+            multiple
+            filterable
+            allow-create
+            default-first-option
+            placeholder="选择或输入日期 (YYYY-MM-DD)"
+            style="width:100%"
+          >
+            <el-option label="元旦 01-01" value="2026-01-01" />
+            <el-option label="春节 除夕" value="2026-02-09" />
+            <el-option label="春节 初一" value="2026-02-10" />
+            <el-option label="清明节" value="2026-04-04" />
+            <el-option label="劳动节" value="2026-05-01" />
+            <el-option label="端午节" value="2026-06-10" />
+            <el-option label="中秋节" value="2026-09-17" />
+            <el-option label="国庆节" value="2026-10-01" />
+          </el-select>
         </el-form-item>
       </el-form>
       <template #footer>

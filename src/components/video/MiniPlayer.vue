@@ -90,9 +90,11 @@ const muted = ref(props.muted)
 let playerInstance: Hls | flvjs.Player | null = null
 let currentFormat: PlayerFormat | '' = ''
 let codec = ''
+let currentUrls: Partial<Record<PlayerFormat, string>> = {}  // P0-1.2: WebRTC 降级用
 
 // ── 播放器销毁 ──
 function destroyPlayer() {
+  destroyWebRtc()  // P0-1.2: 清理 WebRTC 连接
   if (playerInstance) {
     try {
       if ('destroy' in playerInstance) playerInstance.destroy()
@@ -256,11 +258,102 @@ function attachPlayer(video: HTMLVideoElement, fmt: PlayerFormat, url: string) {
       break
 
     case 'webrtc': {
-      // 简化 WebRTC：直接设置 src 为 HTTP-FLV/WebSocket URL
-      // 完整 WebRTC 需要 SDP 交换，这里 fallback 到 HLS
-      errorMsg.value = 'WebRTC 暂不支持弹窗播放'
-      emit('error', 'WebRTC not supported in mini player')
-      return
+      // P0-1.2: WebRTC 超低延迟播放 (SDP 交换 via 后端代理 ZLM)
+      attachWebRtcMini(video)
+      break
+    }
+  }
+}
+
+// ── WebRTC 播放实现 ──
+let peerConnection: RTCPeerConnection | null = null
+
+function destroyWebRtc() {
+  if (peerConnection) {
+    peerConnection.close()
+    peerConnection = null
+  }
+}
+
+async function attachWebRtcMini(video: HTMLVideoElement) {
+  destroyWebRtc()
+  const chId = props.channelId
+  if (!chId) {
+    errorMsg.value = 'WebRTC: 缺少通道ID'
+    return
+  }
+
+  try {
+    // ICE 配置: 局域网使用空数组 (纯 host candidate)
+    const iceServers: RTCIceServer[] = []
+    try {
+      const { data: iceResp } = await streamHttp.get('/ice-config')
+      const servers = iceResp?.data?.iceServers
+      if (Array.isArray(servers) && servers.length > 0) iceServers.push(...servers)
+    } catch { /* 后端不支持, 使用空配置 */ }
+
+    const pc = new RTCPeerConnection({ iceServers, bundlePolicy: 'max-bundle' })
+    peerConnection = pc
+    pc.addTransceiver('video', { direction: 'recvonly' })
+    pc.addTransceiver('audio', { direction: 'recvonly' })
+
+    pc.ontrack = (ev) => {
+      if (ev.streams && ev.streams[0]) {
+        video.srcObject = ev.streams[0]
+        video.play().catch(() => {})
+        loading.value = false
+        playing.value = true
+        emit('playing')
+      }
+    }
+
+    pc.oniceconnectionstatechange = () => {
+      if (pc.iceConnectionState === 'failed' || pc.iceConnectionState === 'disconnected') {
+        // WebRTC 失败, 降级到 FLV
+        console.warn('[MiniPlayer WebRTC] ICE failed, fallback to FLV')
+        destroyWebRtc()
+        if (currentUrls['flv']) {
+          attachPlayer(video, 'flv', currentUrls['flv'])
+        } else if (currentUrls['hls']) {
+          attachPlayer(video, 'hls', currentUrls['hls'])
+        }
+      }
+    }
+
+    // 创建 SDP offer
+    const offer = await pc.createOffer()
+    await pc.setLocalDescription(offer)
+
+    // 通过后端代理与 ZLM 交换 SDP
+    const { data: resp } = await streamHttp.post(`/${chId}/webrtc`, {
+      type: 'offer',
+      sdp: offer.sdp,
+    })
+    const answerSdp = resp?.data?.sdp || resp?.sdp
+    if (!answerSdp) {
+      throw new Error('WebRTC SDP answer empty')
+    }
+
+    await pc.setRemoteDescription(new RTCSessionDescription({ type: 'answer', sdp: answerSdp }))
+
+    // 3s 超时检测: 如果还没收到 track, 降级
+    setTimeout(() => {
+      if (peerConnection === pc && !playing.value) {
+        console.warn('[MiniPlayer WebRTC] timeout, fallback')
+        destroyWebRtc()
+        if (currentUrls['flv']) attachPlayer(video, 'flv', currentUrls['flv'])
+        else if (currentUrls['hls']) attachPlayer(video, 'hls', currentUrls['hls'])
+      }
+    }, 3000)
+  } catch (err: any) {
+    console.warn('[MiniPlayer WebRTC] failed:', err?.message)
+    destroyWebRtc()
+    // 降级到 FLV/HLS
+    if (currentUrls['flv']) attachPlayer(video, 'flv', currentUrls['flv'])
+    else if (currentUrls['hls']) attachPlayer(video, 'hls', currentUrls['hls'])
+    else {
+      errorMsg.value = 'WebRTC 连接失败'
+      emit('error', 'WebRTC failed')
     }
   }
 }
@@ -355,6 +448,7 @@ async function startPlay() {
   }
 
   codec = result.codec || ''
+  currentUrls = result.urls  // P0-1.2: 保存 URLs 供 WebRTC 降级使用
   const fmt = selectBestFormat(result.urls)
   if (!fmt || !result.urls[fmt]) {
     errorMsg.value = '无可用播放格式'
