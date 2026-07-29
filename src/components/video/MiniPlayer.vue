@@ -428,13 +428,19 @@ onBeforeUnmount(() => {
 .mini-player__overlay {
   position: absolute;
   inset: 0;
+  z-index: 1;
   display: flex;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   gap: 8px;
-  color: #8b8fa3;
+  color: #AADDFF;
+  background: #262626;
   font-size: 13px;
+  text-align: center;
 }
 .mini-player__error {
   color: #f56c6c;

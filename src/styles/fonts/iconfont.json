@@ -6,6 +6,20 @@
   "description": "",
   "glyphs": [
     {
+      "icon_id": "14279541",
+      "name": "密码",
+      "font_class": "mima",
+      "unicode": "e76e",
+      "unicode_decimal": 59246
+    },
+    {
+      "icon_id": "43428791",
+      "name": "人员",
+      "font_class": "renyuan",
+      "unicode": "e770",
+      "unicode_decimal": 59248
+    },
+    {
       "icon_id": "15283311",
       "name": "显示隐藏标签",
       "font_class": "xianshiyincangbiaoqian",

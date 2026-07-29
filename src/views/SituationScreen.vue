@@ -18,7 +18,11 @@
             <i class="iconfont1 icon1-anquanpingfen panel-title-icon" aria-hidden="true"></i>
             <span>安全评分</span>
           </div>
-          <div class="score-gauge" ref="scoreGaugeRef" v-if="!overviewFailed"></div>
+          <div class="score-gauge" ref="scoreGaugeRef" v-if="!overviewFailed && overview"></div>
+          <div v-else-if="!overviewFailed" class="empty-state panel-empty">
+            <!-- <i class="iconfont1 icon1-anquanpingfen score-empty-icon" aria-hidden="true"></i> -->
+            <span>暂无安全评分数据</span>
+          </div>
           <div v-else class="empty-state error">
             <span>概览数据加载失败</span>
             <el-button size="small" link type="primary" @click="fetchSituationData">重试</el-button>
@@ -29,7 +33,7 @@
             <i class="iconfont1 icon1-jinritongji panel-title-icon" aria-hidden="true"></i>
             <span>今日统计</span>
           </div>
-          <div class="stats-grid" v-if="!overviewFailed">
+          <div class="stats-grid" v-if="!overviewFailed && todayStats.length">
             <div class="stat-card" v-for="s in todayStats" :key="s.label">
               <div class="stat-main">
                 <i :class="['iconfont1', s.icon, 'stat-icon']" :style="{ color: s.iconColor }" aria-hidden="true"></i>
@@ -40,6 +44,7 @@
               <div class="stat-label">{{ s.label }}</div>
             </div>
           </div>
+          <div v-else-if="!overviewFailed" class="empty-state panel-empty">暂无今日统计数据</div>
           <div v-else class="empty-state error">
             <span>今日统计数据加载失败</span>
             <el-button size="small" link type="primary" @click="fetchSituationData">重试</el-button>
@@ -81,7 +86,7 @@
               </div>
             </div>
           </div>
-          <div v-else-if="!overviewFailed" class="empty-state">暂无设备数据</div>
+          <div v-else-if="!overviewFailed" class="empty-state panel-empty">暂无设备数据</div>
           <div v-else class="empty-state error">
             <span>设备数据加载失败</span>
             <el-button size="small" link type="primary" @click="fetchSituationData">重试</el-button>
@@ -102,7 +107,7 @@
             <span>地图设备数据加载失败</span>
             <el-button size="small" link type="primary" @click="fetchSituationData">重试</el-button>
           </div>
-          <div v-else class="empty-state scene-empty">暂无地图设备</div>
+          <div v-else class="empty-state panel-empty scene-empty">暂无地图设备</div>
         </div>
         <div class="ss-panel">
           <div class="panel-title">
@@ -154,7 +159,7 @@
                     {{ alarm.status === '已处置' ? '查看' : '去处警' }}
                   </button>
                 </div>
-                <div v-if="!latestAlarms.length" class="empty-state">暂无最新告警</div>
+                <div v-if="!latestAlarms.length" class="empty-state panel-empty" style="margin-top:20px;">暂无最新告警</div>
               </div>
             </el-scrollbar>
           </div>
@@ -173,7 +178,7 @@
             <span>告警类型分布</span>
           </div>
           <div class="chart-box" ref="alarmTypeRef" v-if="!overviewFailed && overview"></div>
-          <div v-else-if="!overviewFailed" class="empty-state">暂无告警类型数据</div>
+          <div v-else-if="!overviewFailed" class="empty-state panel-empty">暂无告警类型数据</div>
           <div v-else class="empty-state error">
             <span>告警类型数据加载失败</span>
             <el-button size="small" link type="primary" @click="fetchSituationData">重试</el-button>
@@ -185,7 +190,7 @@
             <span>告警趋势 (24h)</span>
           </div>
           <div class="chart-box" ref="alarmTrendRef" v-if="!hourlyFailed && hourlyData.length"></div>
-          <div v-else-if="!hourlyFailed" class="empty-state">暂无时段数据</div>
+          <div v-else-if="!hourlyFailed" class="empty-state panel-empty">暂无时段数据</div>
           <div v-else class="empty-state error">
             <span>时段统计加载失败</span>
             <el-button size="small" link type="primary" @click="fetchSituationData">重试</el-button>
@@ -197,7 +202,7 @@
             <span>多盒子算力负载活跃度柱状图</span>
           </div>
           <div class="chart-box" ref="agentBarRef" v-if="!agentsFailed && agentData.length"></div>
-          <div v-else-if="!agentsFailed" class="empty-state">暂无Agent数据</div>
+          <div v-else-if="!agentsFailed" class="empty-state panel-empty">暂无Agent数据</div>
           <div v-else class="empty-state error">
             <span>Agent数据加载失败</span>
             <el-button size="small" link type="primary" @click="fetchSituationData">重试</el-button>
@@ -1341,6 +1346,13 @@ onUnmounted(() => {
   color: #6b7280;
   font-size: 13px;
   min-height: 80px;
+}
+.panel-empty {
+  flex: 1;
+  min-height: 0;
+  padding: 0;
+  color: #4F8DBD;
+  font-size: 14px;
 }
 .empty-state.error { color: #ef4444; }
 .scene-empty { min-height: 200px; }

@@ -4,7 +4,7 @@
       v-if="imageUrl"
       :src="imageUrl"
       fit="contain"
-      style="width:100%;height:100%;border-radius:6px;background:#0a0c10"
+      class="alarm-snapshot__image"
       :preview-src-list="[imageUrl]"
       :preview-teleported="true"
       @load="onImageLoad"
@@ -132,10 +132,15 @@ function onImageError() {
   position: relative;
   width: 100%;
   height: 100%;
-  min-height: 200px;
-  background: #0a0c10;
-  border-radius: 6px;
+  min-height: 0;
   overflow: hidden;
+  background: #262626;
+}
+.alarm-snapshot__image {
+  width: 100%;
+  height: 100%;
+  border-radius: 0;
+  background: #262626;
 }
 .alarm-snapshot__canvas {
   position: absolute;
@@ -150,8 +155,8 @@ function onImageError() {
   justify-content: center;
   width: 100%;
   height: 100%;
-  min-height: 200px;
-  color: #4a4d58;
+  min-height: 0;
+  color: #AADDFF;
   font-size: 14px;
 }
 </style>

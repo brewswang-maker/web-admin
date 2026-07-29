@@ -24,11 +24,14 @@
           <el-form-item prop="username">
             <el-input
               v-model="form.username"
-              placeholder="用户名或邮箱"
-              :prefix-icon="User"
+              placeholder="用户名"
               clearable
               autocomplete="username"
-            />
+            >
+              <template #prefix>
+                <i class="iconfont1 icon1-renyuan login-field-icon" aria-hidden="true"></i>
+              </template>
+            </el-input>
           </el-form-item>
 
           <el-form-item prop="password">
@@ -36,16 +39,17 @@
               v-model="form.password"
               type="password"
               placeholder="密码"
-              :prefix-icon="Lock"
               show-password
               autocomplete="current-password"
               @keyup.enter="handleLogin"
-            />
+            >
+              <template #prefix>
+                <i class="iconfont1 icon1-mima login-field-icon" aria-hidden="true"></i>
+              </template>
+            </el-input>
           </el-form-item>
 
-          <div class="login-options">
-            <el-checkbox v-model="form.remember" size="small">记住密码</el-checkbox>
-          </div>
+
 
           <!-- 登录按钮 -->
           <el-form-item>
@@ -55,9 +59,12 @@
               :loading="loading"
               @click="handleLogin"
             >
-              {{ loading ? '验证中...' : '登 录' }}
+              {{ loading ? '登录中...' : '登 录' }}
             </el-button>
           </el-form-item>
+          <div class="login-options">
+            <el-checkbox v-model="form.remember" size="small">记住密码</el-checkbox>
+          </div>
 
           <!-- 错误提示 -->
           <transition name="fade">
@@ -110,7 +117,6 @@
 import { ref, reactive } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { User, Lock } from '@element-plus/icons-vue'
 import type { FormInstance } from 'element-plus'
 import { useAuthStore } from '@/stores/auth'
 import loginLeftImage from '@/assets/login_left.png'
@@ -158,7 +164,7 @@ async function handleLogin() {
     })
 
     // 跳转到目标页面或默认仪表盘
-    const redirect = (router.currentRoute.value.query.redirect as string) || '/dashboard'
+    const redirect = (router.currentRoute.value.query.redirect as string) || '/situation'
     router.push(redirect)
   } catch (err: any) {
     authError.value = err?.message || '登录失败，请检查用户名和密码'
@@ -285,6 +291,7 @@ function handleCertLogin() {
 
 .login-form :deep(.el-input__inner) {
   color: #00CAFD;
+  background: transparent;
   font-size: 16px;
 }
 
@@ -292,10 +299,14 @@ function handleCertLogin() {
   color: #1450A8;
 }
 
+.login-form :deep(.login-field-icon),
 .login-form :deep(.el-input__prefix .el-icon),
 .login-form :deep(.el-input__suffix .el-icon) {
+  display: inline-flex;
   width: 18px;
   height: 18px;
+  align-items: center;
+  justify-content: center;
   color: #00CAFD;
   font-size: 18px;
 }
@@ -309,8 +320,13 @@ function handleCertLogin() {
 .login-form :deep(.el-input__inner:-webkit-autofill:focus),
 .login-form :deep(.el-input__inner:-webkit-autofill:active) {
   -webkit-text-fill-color: #00CAFD;
-  -webkit-box-shadow: 0 0 0 1000px #052653 inset;
+  -webkit-background-clip: text;
+  background-clip: text;
+  background-color: transparent !important;
+  -webkit-box-shadow: 0 0 0 1000px transparent inset;
+  box-shadow: 0 0 0 1000px transparent inset;
   caret-color: #00CAFD;
+  transition: background-color 9999s ease-out 0s;
 }
 
 .login-options {

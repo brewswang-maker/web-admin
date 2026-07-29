@@ -1,8 +1,8 @@
 <template>
   <div class="live-page">
-    <el-row :gutter="16">
+    <el-row :gutter="16" class="live-layout">
       <!-- 左侧: 视频区 -->
-      <el-col :span="18">
+      <el-col :span="18" class="live-main-column">
         <el-card class="video-card" :body-style="{ padding: '0' }">
           <div class="video-toolbar">
             <span class="toolbar-title">
@@ -159,8 +159,8 @@
       </el-col>
 
       <!-- 右侧: 通道 + PTZ -->
-      <el-col :span="6">
-        <el-card>
+      <el-col :span="6" class="live-side-column">
+        <el-card class="channel-card">
           <template #header>
             <div style="display:flex;justify-content:space-between;align-items:center">
               <span>通道列表</span>
@@ -192,7 +192,7 @@
         </el-card>
 
         <!-- PTZ面板 -->
-        <el-card v-if="hasActive" style="margin-top:12px">
+        <el-card v-if="hasActive" class="ptz-card">
           <template #header>PTZ 云台</template>
           <div class="ptz-panel">
             <div class="ptz-dpad">
@@ -2556,15 +2556,75 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-.live-page { max-width: 1920px; }
-.video-card { background: #1A1D23; border: 1px solid #3C4043; }
+.live-page {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  max-width: 1920px;
+  flex: 1;
+  flex-direction: column;
+}
+.live-layout {
+  height: 100%;
+  min-height: 0;
+  flex: 1;
+  align-items: stretch;
+  margin:-16px -20px !important;
+
+}
+.live-main-column,
+.live-side-column {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+  flex-direction: column;
+  padding-left:0 !important;
+  padding-right:0 !important;
+}
+.live-main-column{
+    padding-right:8px !important;
+}
+.video-card {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  flex-direction: column;
+  border: 1px solid #3C4043;
+  background: #1A1D23;
+}
+.video-card :deep(.el-card__body) {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+}
+/*.live-side-column {
+  gap: 12px;
+}*/
+.channel-card {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+}
+.channel-card :deep(.el-card__body) {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+}
+.ptz-card {
+  flex: 0 0 auto;
+}
 .video-toolbar { display: flex; align-items: flex-start; gap: 16px; padding: 10px 16px; border-bottom: 1px solid #3C4043; }
 .toolbar-title { flex: 0 0 auto; color: #E8EAED; display: flex; align-items: center; gap: 8px; font-weight: 600; white-space: nowrap; }
 .toolbar-actions { flex: 1 1 auto; min-width: 0; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .toolbar-label { color: #9AA0A6; font-size: 12px; white-space: nowrap; }
 
 /* 视频网格 */
-.video-grid { display: grid; gap: 2px; background: #000; min-height: 480px; }
+.video-grid { display: grid; min-height: 0; flex: 1; gap: 2px; background: #000; }
 .grid-1 { grid-template-columns: 1fr; }
 .grid-4 { grid-template-columns: 1fr 1fr; }
 .grid-9 { grid-template-columns: 1fr 1fr 1fr; }
@@ -2687,7 +2747,7 @@ onUnmounted(() => {
 @keyframes pulse-rec { 0%,100% { opacity: 1; } 50% { opacity: 0.6; } }
 
 /* 通道列表 */
-.channel-list { max-height: 400px; overflow-y: auto; }
+.channel-list { min-height: 0; flex: 1; overflow-y: auto; }
 .ch-item { display: flex; gap: 10px; padding: 8px 10px; border-radius: 6px; cursor: pointer; margin-bottom: 4px; transition: all 0.15s; border: 1px solid transparent; }
 .ch-item:hover { background: #2D3039; border-color: #1A73E8; }
 .ch-icon { width: 36px; height: 36px; border-radius: 6px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
