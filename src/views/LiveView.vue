@@ -447,6 +447,7 @@ interface GridSlot {
   reconnectCount: number
   encrypted: boolean
   _lastReconnectTime: number
+  _streamRequestTs?: number
   _videoEventCleanups: Array<() => void>  // video 事件监听器清理函数
   // [TS 修复] 运行时动态注入的内部状态，与计时器清理相关
   _timers?: ReturnType<typeof setTimeout>[]
@@ -1269,6 +1270,7 @@ function attachPlayerByFormat(slotIdx: number, fmt: PlayerFormat) {
         //   修复: 存到 slot._timers[] (统一管理)，destroyPlayer 时迭代清理
         let firstFramePlayed = false
         slot._timers = slot._timers || []
+        slot._streamRequestTs = Date.now()  // [P0-6] Record request timestamp
         const firstFrameTimerId = setTimeout(() => {
           if (!firstFramePlayed && slot.channelId) {
             console.warn(`[LiveView] slot${slotIdx} 2秒内未收到首帧，发送I帧请求`)
@@ -1293,6 +1295,11 @@ function attachPlayerByFormat(slotIdx: number, fmt: PlayerFormat) {
               slot._timers!.splice(idx, 1)
             }
             console.debug(`[LiveView] slot${slotIdx} 首帧已显示`)
+            // [P0-6] Report first-frame latency to backend
+            if (slot._streamRequestTs && slot.channelId) {
+              const latencyMs = Date.now() - slot._streamRequestTs
+              streamHealth.reportFirstFrameLatency(slot.channelId, latencyMs, 'flv')
+            }
           }
         }
         video.addEventListener('playing', onFlvFirstFrame)
@@ -1381,10 +1388,16 @@ function attachPlayerByFormat(slotIdx: number, fmt: PlayerFormat) {
 
         // 首帧显示事件（保存回调引用以便销毁时移除）
         let wsFirstFramePlayed = false
+        slot._streamRequestTs = slot._streamRequestTs || Date.now()  // [P0-6]
         const onWsFlvFirstFrame = () => {
           if (!wsFirstFramePlayed) {
             wsFirstFramePlayed = true
             console.debug(`[LiveView] slot${slotIdx} WS-FLV 首帧已显示`)
+            // [P0-6] Report first-frame latency to backend
+            if (slot._streamRequestTs && slot.channelId) {
+              const latencyMs = Date.now() - slot._streamRequestTs
+              streamHealth.reportFirstFrameLatency(slot.channelId, latencyMs, 'ws-flv')
+            }
           }
         }
         video.addEventListener('playing', onWsFlvFirstFrame)

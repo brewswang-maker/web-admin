@@ -611,12 +611,39 @@ export function useStreamHealth(onStall?: StallCallback, onReconnectExhausted?: 
     }
   }
 
+  // [P0-6] Report first-frame latency to backend for monitoring
+  async function reportFirstFrameLatency(
+    channelId: string,
+    latencyMs: number,
+    protocol: string = '',
+    gridMode: number = 1
+  ): Promise<void> {
+    if (!channelId || latencyMs <= 0) return
+    try {
+      await fetch('/api/v1/metrics/first-frame', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          channel_id: channelId,
+          latency_ms: latencyMs,
+          protocol,
+          grid_mode: gridMode,
+        }),
+      })
+      console.info(`[P0-6] First-frame latency reported: ch=${channelId} latency=${latencyMs}ms protocol=${protocol}`)
+    } catch (e) {
+      // Non-blocking — metrics reporting should never break playback
+      console.debug('[P0-6] Failed to report first-frame latency:', e)
+    }
+  }
+
 return {
     healthStates,
     startMonitoring,
     stopMonitoring,
     getHealth,
     getFirstFrameStats,
+    reportFirstFrameLatency,
     cleanup,
   }
 }

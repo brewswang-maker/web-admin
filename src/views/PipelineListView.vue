@@ -157,14 +157,14 @@
               <div class="runtime-row secondary">
                 <span class="rt-label">{{ $t('pipelineList.col.tpu') }}</span>
                 <el-progress
-                  :percentage="Math.round((row.runtime?.tpu_utilization || 0) * 100)"
+                  :percentage="Math.min(100, Math.round(row.runtime?.tpu_utilization || 0))"
                   :stroke-width="6"
                   :show-text="false"
                   :color="tpuColor"
                   style="flex: 1; min-width: 80px; max-width: 120px;"
                 />
                 <span class="rt-value small">
-                  {{ Math.round((row.runtime?.tpu_utilization || 0) * 100) }}%
+                  {{ Math.round(row.runtime?.tpu_utilization || 0) }}%
                 </span>
                 <span class="rt-sep">·</span>
                 <span class="rt-label">{{ $t('pipelineList.col.channels') }}</span>

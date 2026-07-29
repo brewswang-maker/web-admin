@@ -30,7 +30,7 @@
         <el-card shadow="hover">
           <el-statistic title="TPU Utilization">
             <template #default>
-              <span :class="tpuClass">{{ (irmStats.tpu_utilization * 100).toFixed(0) }}%</span>
+              <span :class="tpuClass">{{ (irmStats.tpu_utilization || 0).toFixed(0) }}%</span>
             </template>
           </el-statistic>
         </el-card>
@@ -216,8 +216,8 @@ async function fetchStats() {
     if (irmRes.status === 'fulfilled') {
       const d = irmRes.value.data?.data
       if (d) {
-        if (d.tpu_utilization > 0.85 && irmStats.value.tpu_utilization <= 0.85) {
-          addEvent(`TPU > 85%: ${(d.tpu_utilization * 100).toFixed(0)}%`, 'danger')
+        if (d.tpu_utilization > 85 && irmStats.value.tpu_utilization <= 85) {
+          addEvent(`TPU > 85%: ${(d.tpu_utilization || 0).toFixed(0)}%`, 'danger')
         }
         if (d.avg_inference_ms > 35 && irmStats.value.avg_inference_ms <= 35) {
           addEvent(`Inference latency > 35ms: ${d.avg_inference_ms.toFixed(1)}ms`, 'warning')
@@ -389,7 +389,7 @@ function loadBaseline() {
 }
 
 const tpuClass = computed(() => {
-  const pct = irmStats.value.tpu_utilization * 100
+  const pct = irmStats.value.tpu_utilization || 0
   if (pct > 85) return 'latency-danger'
   if (pct > 60) return 'latency-warn'
   return 'latency-ok'

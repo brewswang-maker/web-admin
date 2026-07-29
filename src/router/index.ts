@@ -52,6 +52,7 @@ const AlgoConfigView = () => import('@/views/AlgoConfigView.vue')
 const AlgoQualityView = () => import('@/views/AlgoQualityView.vue')
 const PipelineHealthView = () => import('@/views/PipelineHealthView.vue')
 const AnnotationView = () => import('@/views/AnnotationView.vue')
+const TrainingView = () => import('@/views/TrainingView.vue')
 
 // 基础路由（无需权限）
 export const constantRoutes: RouteRecordRaw[] = [
@@ -330,6 +331,12 @@ export const asyncRoutes: RouteRecordRaw[] = [
         name: 'Annotation',
         component: AnnotationView,
         meta: { title: '标注管理', icon: 'Edit', roles: ['admin', 'user'] }
+      },
+      {
+        path: 'training',
+        name: 'Training',
+        component: TrainingView,
+        meta: { title: '零代码训练', icon: 'Cpu', roles: ['admin', 'user'] }
       },
     ]
   },

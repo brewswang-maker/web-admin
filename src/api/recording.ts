@@ -139,6 +139,12 @@ export interface RecordingSchedule {
   enabled: boolean
   created_at?: string
   updated_at?: string
+  // [P2-3] 节假日排除策略
+  holiday_exclusion?: {
+    enabled: boolean
+    holiday_dates: string[]
+    holiday_name?: string
+  }
 }
 
 /** 查询录像计划列表 */
@@ -151,6 +157,9 @@ export async function getRecordingSchedules(channelId?: string): Promise<Recordi
   return d.map((s: any) => ({
     ...s,
     time_segments: typeof s.time_segments === 'string' ? JSON.parse(s.time_segments || '[]') : (s.time_segments || []),
+    holiday_exclusion: typeof s.holiday_exclusion === 'string'
+      ? JSON.parse(s.holiday_exclusion || '{"enabled":false,"holiday_dates":[]}')
+      : (s.holiday_exclusion || { enabled: false, holiday_dates: [] }),
     enabled: s.enabled === 1 || s.enabled === true,
   }))
 }
@@ -160,6 +169,7 @@ export async function createRecordingSchedule(schedule: RecordingSchedule): Prom
   const { data } = await axios.post('/api/v1/recording-schedules', {
     ...schedule,
     time_segments: JSON.stringify(schedule.time_segments || []),
+    holiday_exclusion: JSON.stringify(schedule.holiday_exclusion || { enabled: false, holiday_dates: [] }),
     enabled: schedule.enabled ? 1 : 0,
   })
   return data?.data ?? data
@@ -170,6 +180,9 @@ export async function updateRecordingSchedule(id: number, updates: Partial<Recor
   const payload: any = { ...updates }
   if (updates.time_segments) {
     payload.time_segments = JSON.stringify(updates.time_segments)
+  }
+  if (updates.holiday_exclusion) {
+    payload.holiday_exclusion = JSON.stringify(updates.holiday_exclusion)
   }
   if (updates.enabled !== undefined) {
     payload.enabled = updates.enabled ? 1 : 0
