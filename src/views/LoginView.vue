@@ -110,6 +110,15 @@
         <span>等保三级合规</span>
       </div> -->
     </div>
+
+    <footer class="login-copyright">
+      <span>版权所有:北京华盾互联科技有限公司</span>
+      <a
+        href="https://beian.miit.gov.cn/"
+        target="_blank"
+        rel="noopener noreferrer"
+      >备案号:京ICP备18019259号-1</a>
+    </footer>
   </div>
 </template>
 
@@ -203,6 +212,36 @@ function handleCertLogin() {
   flex-direction: column;
   align-items: center;
   transform: translateY(-20px);
+}
+
+.login-copyright {
+  position: absolute;
+  right: 16px;
+  bottom: 22px;
+  left: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 44px;
+  color: #33B2FF;
+  font-size: 14px;
+  line-height: 20px;
+  text-align: center;
+}
+
+.login-copyright a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.login-copyright a:hover {
+  color: #66C8FF;
+}
+
+.login-copyright a:focus-visible {
+  border-radius: 2px;
+  outline: 2px solid #33B2FF;
+  outline-offset: 3px;
 }
 
 .login-header {
@@ -507,6 +546,12 @@ function handleCertLogin() {
 }
 
 @media (max-width: 720px) {
+  .login-copyright {
+    bottom: 14px;
+    flex-wrap: wrap;
+    gap: 4px 24px;
+  }
+
   .login-card-wrapper {
     transform: none;
   }
