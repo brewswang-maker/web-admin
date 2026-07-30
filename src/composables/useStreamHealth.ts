@@ -403,7 +403,8 @@ export function useStreamHealth(onStall?: StallCallback, onReconnectExhausted?: 
     //   导致 noDataSeconds 累加到 1，然后 console.warn 刷屏。
     //   宽限期由 evaluateHealth 统一控制，此处不再累加。
     const uptimeMs = Date.now() - ctx.createdAt
-    const startupGraceMs = ctx.type === 'hls' ? 25000 : 20000
+    // [STABILITY-FIX 2026-07-29] FLV 宽限期 20s → 25s，与 evaluateHealth 保持一致
+    const startupGraceMs = ctx.type === 'hls' ? 25000 : 25000
     const inStartupGrace = uptimeMs < startupGraceMs
 
     // 记录本次检测前的值
@@ -511,10 +512,11 @@ export function useStreamHealth(onStall?: StallCallback, onReconnectExhausted?: 
     //   HLS 有 segment 缓冲，容忍更长的无数据期（GOP 等待等）
     const isRealtime = ctx.type === 'flv' || ctx.type === 'webrtc'
 
-    // 启动宽限期：HLS 25s / FLV-WebRTC 20s
-    //   GB28181 SIP INVITE + RTP 建立 + H.265 长 GOP 解码需 15-25s
+    // [STABILITY-FIX 2026-07-29] 启动宽限期：HLS 25s / FLV-WebRTC 25s
+    //   GB28181 SIP INVITE(5s) + RTP 建立(2s) + ZLM 注册(1s) + 首 GOP 解码(2-10s) = 10-18s
+    //   之前 FLV 宽限期仅 20s，导致慢速 GB28181 设备在首帧到达前就被标记 warning
     //   参考海康 iVMS-8700 (30s) / 大华 DSS (25s)
-    const startupGraceMs = ctx.type === 'hls' ? 25000 : 20000
+    const startupGraceMs = ctx.type === 'hls' ? 25000 : 25000
     const uptimeMs = Date.now() - ctx.createdAt
     const inStartupGrace = uptimeMs < startupGraceMs
 
@@ -526,15 +528,17 @@ export function useStreamHealth(onStall?: StallCallback, onReconnectExhausted?: 
       return
     }
 
-    // [P1-2] 协议差异化 noDataSeconds 阈值
-    //   实时协议(FLV/WebRTC): warning@10s / error@20s
-    //   缓冲协议(HLS):        warning@15s / error@30s
-    //   原因：H.265 长 GOP（P 帧间隔 5-10s）+ GB28181 低帧率设备（5-10fps），
-    //         HLS 需更宽容。但 FLV/WebRTC 无 segment 缓冲，20s 足以确认网络中断。
-    const warnThreshold = isRealtime ? 10 : 15
-    const errorThreshold = isRealtime ? 20 : 30
-    //   实时协议连续确识 2 次即可（40s总），缓冲协议需 3 次（90s总）
-    const errorConfirmations = isRealtime ? 2 : 3
+    // [STABILITY-FIX 2026-07-29] 协议差异化 noDataSeconds 阈值
+    //   实时协议(FLV/WebRTC): warning@15s / error@30s
+    //   缓冲协议(HLS):        warning@20s / error@40s
+    //   原因：GB28181 低帧率设备(5-10fps) + 网络 RTP 丢包重传 + 长 GOP(5-10s)
+    //         之前 FLV errorThreshold=20s 导致周期性误判→重建→闪烁
+    //         30s 真正无数据才足以确认网络中断（对标海康 30s 超时检测）
+    const warnThreshold = isRealtime ? 15 : 20
+    const errorThreshold = isRealtime ? 30 : 40
+    //   [STABILITY-FIX] 连续确认 3 次才触发 error（FLV/WebRTC: 90s总，HLS: 120s总）
+    //   之前 2 次确认(40s)在 GOP 间隙 + 网络波动场景下容易误触发
+    const errorConfirmations = isRealtime ? 3 : 3
 
     if (ctx.noDataSeconds >= warnThreshold && ctx.noDataSeconds < errorThreshold) {
       if (state.status !== 'error') {

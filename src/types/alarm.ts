@@ -350,7 +350,19 @@ export function normalizeAlarmCore(raw: any): AlarmEvent {
   }
   const severityNum = Number(raw.severity ?? raw.level ?? 2)
   const alarmType = raw.alarm_type || raw.type || 'other'
-  const channelId = String(raw.channel_id ?? raw.channelId ?? raw.channel ?? '')
+  // [FIX PhoneCall 2026-07-29] 优先取 metadata.channel_id_str (完整 GB28181 20位 ID)
+  //   原因: phone_call 等 specialized plugin 路径的 channel_id 会被截断为 int32 hash
+  //   (e.g. "1756644621"), 弹窗查 /api/v1/streams/{id}/multi-urls 时 404, 视频流获取失败.
+  //   修复: 按 channel_id_str → metadata.channel_id_str → channel_id 顺序回退
+  const md = raw.metadata
+  const rawCh = raw.channel_id ?? raw.channelId ?? raw.channel ?? ''
+  const channelId =
+    String(raw.channel_id_str ?? '') ||
+    (md && typeof md === 'object' ? String(md.channel_id_str ?? '') : '') ||
+    (Array.isArray(md) && md[0] && typeof md[0] === 'object' ? String(md[0].channel_id_str ?? '') : '') ||
+    String(rawCh) ||
+    ''
+  const rawChStr = String(rawCh)
 
   return {
     id: raw.id || raw.alarm_id || `${raw.device_id || ''}_${channelId}_${raw.timestamp_ms || Date.now()}`,
@@ -360,7 +372,10 @@ export function normalizeAlarmCore(raw: any): AlarmEvent {
     description: raw.description || raw.title || ALARM_TYPE_CN[alarmType] || alarmType,
     channelId,
     channelName: raw.channel_name || raw.channelName || (channelId ? `通道${channelId}` : ''),
-    deviceId: raw.device_id || raw.deviceId || raw.channel_id || '',
+    deviceId:
+      (md && typeof md === 'object' ? String(md.device_id ?? '') : '') ||
+      (Array.isArray(md) && md[0] && typeof md[0] === 'object' ? String(md[0].device_id ?? '') : '') ||
+      raw.device_id || raw.deviceId || raw.channel_id || '',
     deviceName: raw.device_name || raw.deviceName || raw.zone || '',
     snapshotUrl: toAbsoluteUrl(raw.snapshot_url || raw.snapshotUrl || raw.snapshot_path),
     videoClipUrl: toAbsoluteUrl(raw.video_clip_url || raw.videoClipUrl),

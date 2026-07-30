@@ -1156,9 +1156,16 @@ function assignChannel(slotIdx: number, ch: Channel) {
       })
     } else {
       slot.loading = false
-      // 流获取失败，清除旧画面
+      // [STABILITY-FIX 2026-07-29] 流获取失败，清除旧画面 + 用户提示
       if (wasPlaying) {
         slot.playing = false
+      }
+      // 给用户明确的失败原因提示（离线设备 / INVITE 超时 / ZLM 未注册）
+      const chStatus = (ch as any).status || ''
+      if (chStatus === 'offline') {
+        ElMessage.warning(`设备"${ch.name}"离线，无法获取视频流`)
+      } else {
+        ElMessage.error(`通道"${ch.name}"视频流获取失败，请检查设备网络或稍后重试`)
       }
     }
   }).catch(() => {
@@ -1995,10 +2002,15 @@ async function fetchStreamUrls(ch: Channel): Promise<{urls: Partial<Record<Playe
       }
     }
 
-    // 2. zlmReady=false 或 start 失败时，轮询 multi-urls 等待流就绪（8×80ms=640ms）
-    //    [Fix 2026-06-23] 必须检查 streamAlive=true，防止使用幻影 URL
+    // 2. zlmReady=false 或 start 失败时，轮询 multi-urls 等待流就绪
+    //    [STABILITY-FIX 2026-07-29] 优化轮询策略：
+    //    - 间隔 80ms→300ms（给后端 SIP INVITE + ZLM 注册足够时间）
+    //    - 尝试 8→15 次（总等待 ~4.5s，覆盖 SIP INVITE 5s 超时窗口）
+    //    - 连续 5 次 streamAlive=false 提前终止（离线设备快速失败）
+    //    [FIX-RC4] 必须检查 streamAlive=true，防止使用幻影 URL
     let streamWasAlive = false  // [FIX-RC4] 追踪 multi-urls 是否检测到过活的流
-    for (let attempt = 0; attempt < 8; attempt++) {
+    let consecutiveNotAlive = 0 // [STABILITY-FIX] 连续 streamAlive=false 计数
+    for (let attempt = 0; attempt < 15; attempt++) {
       try {
         const { data } = await streamHttp.get(`/${ch.id}/multi-urls`)
         const d = data?.data || data
@@ -2013,6 +2025,16 @@ async function fetchStreamUrls(ch: Channel): Promise<{urls: Partial<Record<Playe
             },
             codec: d.codec || '',
           }
+        }
+        // [STABILITY-FIX] 连续 5 次 streamAlive=false → 设备离线/INVITE 失败，提前终止
+        if (d && d.streamAlive === false) {
+          consecutiveNotAlive++
+          if (consecutiveNotAlive >= 5) {
+            console.warn(`[LiveView] ch=${ch.id} 连续 ${consecutiveNotAlive} 次 streamAlive=false，终止轮询`)
+            break
+          }
+        } else {
+          consecutiveNotAlive = 0  // streamAlive=true 或未知，重置计数
         }
       } catch {
         try {
@@ -2031,7 +2053,7 @@ async function fetchStreamUrls(ch: Channel): Promise<{urls: Partial<Record<Playe
           }
         } catch { /* 流可能还未就绪 */ }
       }
-      await new Promise(r => setTimeout(r, 80))
+      await new Promise(r => setTimeout(r, 300))
     }
 
     // [FIX-RC4 2026-06-28] 防抖窗口内复用失败时，强制 /start 重试一次

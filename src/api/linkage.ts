@@ -6,6 +6,7 @@
 
 import { http } from './http'
 import type { ApiResponse, PageResponse, PageQuery } from '@/types/common'
+import { TEMPLATE_SCHEMA_VERSION } from './templateSchema'
 
 // ── 动作类型枚举映射 ──
 
@@ -206,6 +207,13 @@ export interface LinkageRule {
   actions: LinkageAction[]
   tags: string[]
   condition_tree?: ConditionNode
+  // [FIX P1-1] 冲突处理 + VLM 字段 (v7.1 后端已实现)
+  mutex_group?: string
+  suppress_after_rule?: string
+  suppress_lower_priority?: boolean
+  enable_vlm_verify?: boolean
+  version?: number
+  is_archived?: boolean
   created_by: string
   created_at: number
   updated_at: number
@@ -572,7 +580,7 @@ export const linkageApi = {
   async exportRuleTemplates(): Promise<Blob> {
     const resp = await http.get<ApiResponse<RuleTemplate[]>>('/linkage/rule-templates')
     const templates = resp.data?.data ?? []
-    return new Blob([JSON.stringify({ version: '1.0', exported_at: new Date().toISOString(), templates }, null, 2)], { type: 'application/json' })
+    return new Blob([JSON.stringify({ schema_version: TEMPLATE_SCHEMA_VERSION, version: TEMPLATE_SCHEMA_VERSION, exported_at: new Date().toISOString(), templates }, null, 2)], { type: 'application/json' })
   },
 
   /** 批量导入规则模板 */
@@ -697,5 +705,48 @@ export const linkageApi = {
     tags?: string[]
   }) {
     return http.post<ApiResponse<{ template_id: string; message: string }>>('/linkage/rule-templates', data)
+  },
+
+  // ── [FIX P1-2] 版本管理 API (后端已实现) ──
+
+  /** 获取规则版本历史 */
+  getRuleHistory(id: string) {
+    return http.get<ApiResponse<{ rule_id: string; versions: Array<{ version: number; name: string; enabled: boolean; priority: number; updated_at: number; created_by: string; version_comment: string }>; total: number }>>(`/linkage/rules/${id}/history`)
+  },
+
+  /** 回滚规则到指定版本 */
+  rollbackRule(id: string, targetVersion: number, reason?: string) {
+    return http.post<ApiResponse<{ message: string; rule_id: string; target_version: number }>>(`/linkage/rules/${id}/rollback`, { target_version: targetVersion, reason })
+  },
+
+  /** 获取规则变更日志 */
+  getChangeLog(params?: { rule_id?: string; limit?: number }) {
+    return http.get<ApiResponse<{ items: Array<{ rule_id: string; rule_name: string; version: number; action: string; changed_by: string; changed_at: number; change_summary: string }>; total: number }>>('/linkage/change-log', { params })
+  },
+
+  // ── [FIX P1-3] 规则复制 ──
+
+  /** 复制规则 */
+  cloneRule(id: string, newName?: string) {
+    return http.post<ApiResponse<{ message: string; id: string }>>(`/linkage/rules/${id}/clone`, { name: newName })
+  },
+
+  // ── [FIX P1-4] 批量删除 ──
+
+  /** 批量删除规则 (原子操作) */
+  batchDelete(ids: string[]) {
+    return http.post<ApiResponse<{ message: string; deleted: number }>>('/linkage/rules/batch-delete', { ids })
+  },
+
+  // ── [FIX P2-3] 归档管理 ──
+
+  /** 归档规则 (软删除, 不参与触发) */
+  archiveRule(id: string, reason?: string) {
+    return http.post<ApiResponse<{ message: string; rule_id: string }>>(`/linkage/rules/${id}/archive`, { reason })
+  },
+
+  /** 恢复归档规则 */
+  restoreRule(id: string) {
+    return http.post<ApiResponse<{ message: string; rule_id: string }>>(`/linkage/rules/${id}/restore`, {})
   },
 }

@@ -67,6 +67,11 @@ export const useChannelStore = defineStore('channel', () => {
     lastStartApiAt.value.set(channelId, Date.now())
   }
 
+  /** [STABILITY-FIX 2026-07-29] 清除指定通道的 /start 防抖记录（重试时使用） */
+  function clearStartDebounce(channelId: string) {
+    lastStartApiAt.value.delete(channelId)
+  }
+
   /** @deprecated 已拆分为 checkSkipStart + markStartCalled（向后兼容保留） */
   function shouldSkipStart(channelId: string): boolean {
     const last = lastStartApiAt.value.get(channelId) || 0
@@ -148,6 +153,7 @@ export const useChannelStore = defineStore('channel', () => {
     setFloatingChannel,
     shouldSkipStart,
     markStartCalled,
+    clearStartDebounce,
     checkSkipStart,
   }
 })

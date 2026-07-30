@@ -112,6 +112,7 @@ declare module 'vue' {
     PlanEditor: typeof import('./components/PlanEditor.vue')['default']
     Plus: typeof import('@element-plus/icons-vue')['Plus']
     Promotion: typeof import('@element-plus/icons-vue')['Promotion']
+    QuestionFilled: typeof import('@element-plus/icons-vue')['QuestionFilled']
     Refresh: typeof import('@element-plus/icons-vue')['Refresh']
     RefreshRight: typeof import('@element-plus/icons-vue')['RefreshRight']
     RoiPolygonEditor: typeof import('./components/RoiPolygonEditor.vue')['default']

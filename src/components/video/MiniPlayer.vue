@@ -12,9 +12,10 @@
       <el-icon class="is-loading" :size="28"><Loading /></el-icon>
       <span class="mini-player__hint">等待流...</span>
     </div>
-    <!-- Error -->
+    <!-- Error + Retry -->
     <div v-if="errorMsg" class="mini-player__overlay mini-player__error">
       <span>{{ errorMsg }}</span>
+      <el-button size="small" type="primary" @click="retryPlay" style="margin-top:8px">🔄 重试</el-button>
     </div>
     <!-- LIVE badge -->
     <div v-if="playing && !loading" class="mini-player__live-badge">
@@ -124,28 +125,43 @@ async function fetchStreamUrls(
   const norm = (u: string, isWs = false) =>
     isWs ? normalizeWsFlvUrl(u) : normalizeStreamUrl(u)
 
-  try {
-    // 1. 先查现有流 URL（无副作用，复用已有流，不触发 GB28181 INVITE）
-    //    [Fix 2026-06-23] 必须检查 streamAlive=true，防止使用幻影 URL
-    //    后端 getMultiProtocolUrls 无条件拼接 URL，multi-urls 之前永远返回非空 URL
-    //    修复后后端会检查 ZLM 中流是否真实存在，streamAlive=false 时 URL 为空
-    for (let attempt = 0; attempt < 3; attempt++) {
-      try {
-        const { data } = await streamHttp.get(`/${chId}/multi-urls`)
-        const d = data?.data || data
-        if (d?.streamAlive && (d?.flvUrl || d?.webrtcUrl || d?.hlsUrl)) {
-          return {
-            urls: {
-              flv: norm(d.flvUrl || ''),
-              webrtc: norm(d.webrtcUrl || ''),
-              'ws-flv': norm(d.wsFlvUrl || '', true),
-              hls: norm(d.hlsUrl || ''),
-            },
-            codec: d.codec || '',
-          }
+  // [STABILITY-FIX 2026-07-29] 提取 multi-urls 查询为可复用函数
+  const queryMultiUrls = async (): Promise<{ urls: Partial<Record<PlayerFormat, string>>, codec: string } | null> => {
+    try {
+      const { data } = await streamHttp.get(`/${chId}/multi-urls`)
+      const d = data?.data || data
+      if (d?.streamAlive && (d?.flvUrl || d?.webrtcUrl || d?.hlsUrl)) {
+        return {
+          urls: {
+            flv: norm(d.flvUrl || ''),
+            webrtc: norm(d.webrtcUrl || ''),
+            'ws-flv': norm(d.wsFlvUrl || '', true),
+            hls: norm(d.hlsUrl || ''),
+          },
+          codec: d.codec || '',
         }
-      } catch { /* */ }
-      await new Promise(r => setTimeout(r, 100))
+      }
+    } catch { /* */ }
+    return null
+  }
+
+  try {
+    // [STABILITY-FIX 2026-07-29] 统一轮询策略：
+    //   - forceSkipStart=true（防抖窗口内）: 15×300ms = 4.5s, 等待其他播放器的 INVITE 完成
+    //   - 普通模式: 8×300ms = 2.4s, 复用已有流
+    //   - 新增 consecutiveNotAlive 快速失败（5次 streamAlive=false 终止）
+    const initialAttempts = forceSkipStart ? 15 : 8
+    let consecutiveNotAlive = 0
+    for (let attempt = 0; attempt < initialAttempts; attempt++) {
+      const result = await queryMultiUrls()
+      if (result) return result
+      consecutiveNotAlive++
+      if (consecutiveNotAlive >= 5 && attempt >= 2) {
+        // 离线设备快速失败
+        console.warn(`[MiniPlayer] ch=${chId} 连续 ${consecutiveNotAlive} 次 streamAlive=false, 终止初始轮询`)
+        break
+      }
+      await new Promise(r => setTimeout(r, 300))
     }
 
     // 2. 现有流不存在时才触发拉流（有副作用：可能触发 GB28181 INVITE）
@@ -169,24 +185,17 @@ async function fetchStreamUrls(
         }
       } catch { /* 可能已在推流 */ }
 
-      // start 后等待流就绪 (GB28181 INVITE + RTP 建立需 2-5 秒，10×300ms = 3s)
-      //    [Fix 2026-06-23] 同样检查 streamAlive
-      for (let attempt = 0; attempt < 10; attempt++) {
-        try {
-          const { data } = await streamHttp.get(`/${chId}/multi-urls`)
-          const d = data?.data || data
-          if (d?.streamAlive && (d?.flvUrl || d?.webrtcUrl || d?.hlsUrl)) {
-            return {
-              urls: {
-                flv: norm(d.flvUrl || ''),
-                webrtc: norm(d.webrtcUrl || ''),
-                'ws-flv': norm(d.wsFlvUrl || '', true),
-                hls: norm(d.hlsUrl || ''),
-              },
-              codec: d.codec || '',
-            }
-          }
-        } catch { /* */ }
+      // start 后等待流就绪 (GB28181 INVITE + RTP 建立需 2-5 秒)
+      // [STABILITY-FIX] 10×300ms=3s → 15×300ms=4.5s, 覆盖完整 INVITE 超时窗口
+      consecutiveNotAlive = 0
+      for (let attempt = 0; attempt < 15; attempt++) {
+        const result = await queryMultiUrls()
+        if (result) return result
+        consecutiveNotAlive++
+        if (consecutiveNotAlive >= 5 && attempt >= 4) {
+          console.warn(`[MiniPlayer] ch=${chId} /start 后连续 ${consecutiveNotAlive} 次无流, 终止轮询`)
+          break
+        }
         await new Promise(r => setTimeout(r, 300))
       }
     }
@@ -226,6 +235,32 @@ function attachPlayer(video: HTMLVideoElement, fmt: PlayerFormat, url: string) {
           liveSyncDurationCount: 1,
           liveMaxLatencyDurationCount: 1.5,
         } as any)
+        // [STABILITY-FIX 2026-07-29] FLV 错误处理：防止静默失败导致黑屏
+        //   原因：flv.js 无 error handler → 网络抖动/流中断时静默失败 → 用户看到黑屏
+        player.on(flvjs.Events.ERROR, (errorType: string, errorDetail: string) => {
+          console.error('[MiniPlayer FLV] error:', errorType, errorDetail, 'url=', url)
+          // 网络错误且已播放过 → 静默重连一次（短暂网络抖动）
+          if (errorType === flvjs.ErrorTypes.NETWORK_ERROR && playing.value) {
+            console.warn('[MiniPlayer FLV] Network error during playback, attempting silent reconnect...')
+            return  // flv.js 内部会自动重连
+          }
+          // 其他错误 → 显示错误提示
+          errorMsg.value = `播放错误: ${errorDetail}`
+          emit('error', errorDetail)
+          destroyPlayer()
+        })
+        // [STABILITY-FIX] 加载超时检测：8秒无数据 → 报错
+        let loadTimeout: ReturnType<typeof setTimeout> | null = null
+        loadTimeout = setTimeout(() => {
+          if (!playing.value && playerInstance === player) {
+            console.warn('[MiniPlayer FLV] 8s loading timeout, url=', url)
+            errorMsg.value = '视频流加载超时'
+            destroyPlayer()
+          }
+        }, 8000)
+        video.addEventListener('playing', () => {
+          if (loadTimeout) { clearTimeout(loadTimeout); loadTimeout = null }
+        }, { once: true })
         player.attachMediaElement(video)
         player.load()
         const p = player.play()
@@ -459,6 +494,17 @@ async function startPlay() {
   attachPlayer(video, fmt, result.urls[fmt]!)
   playing.value = true
   emit('playing')
+}
+
+// [STABILITY-FIX 2026-07-29] 失败重试：清除防抖记录后重新拉流
+function retryPlay() {
+  errorMsg.value = ''
+  loading.value = true
+  // 清除全局防抖记录，允许重新调用 /start
+  channelStore.clearStartDebounce(props.channelId)
+  // 直接重试
+  destroyPlayer()
+  nextTick(() => startPlay())
 }
 
 // ── 截图 ──

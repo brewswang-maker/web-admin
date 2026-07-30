@@ -2,28 +2,19 @@
   <Teleport to="body">
     <transition name="alarm-popup">
       <div v-if="popupVisible && currentAlarm" class="alarm-popup-overlay" @click.self="closePopup">
-        <div
-          class="alarm-popup"
-          :class="{ 'alarm-flash': popupVisible }"
-          :style="{
-            borderColor: levelColor,
-            '--alarm-level-color': levelColor,
-            '--alarm-level-rgb': levelRgb,
-          }"
-        >
+        <div class="alarm-popup" :class="{ 'alarm-flash': popupVisible }" :style="{ borderColor: levelColor }">
 
           <!-- ═══ 顶栏: 告警摘要 ═══ -->
-          <div class="alarm-popup__header">
+          <div class="alarm-popup__header" :style="{ background: levelBg }">
             <div class="alarm-popup__header-left">
-              <!-- <span class="alarm-popup__blink-dot" :style="{ background: levelColor }" /> -->
+              <span class="alarm-popup__blink-dot" :style="{ background: levelColor }" />
               <span class="alarm-popup__type">{{ alarmTypeLabel }}</span>
               <el-tag v-if="targetCategoryLabel" size="small" type="info" effect="plain" class="alarm-popup__category-tag">
                 {{ targetCategoryLabel }}: {{ targetNameLabel }}
               </el-tag>
-              <!-- <div class="alarm-popup__level">
-                <div class="alarm-popup__level-dot" :style="{ backgroundColor: levelColor }" aria-hidden="true"></div>
-                <span>{{ levelLabel }}</span>
-              </div> -->
+              <el-tag :type="levelTagType" size="small" effect="dark" class="alarm-popup__level-tag">
+                {{ levelLabel }}
+              </el-tag>
               <span class="alarm-popup__device-info">
                 {{ currentAlarm.deviceName || currentAlarm.deviceId }}
                 {{ currentAlarm.channelName ? ` | ${currentAlarm.channelName}` : '' }}
@@ -46,7 +37,7 @@
             <div class="alarm-popup__left">
               <el-tabs v-model="activeTab" class="alarm-popup__tabs">
                 <!-- 实时视频（始终显示，联动规则有 WEB_SHOW_LIVE 时自动激活） -->
-                <el-tab-pane label="实时视频" name="live">
+                <el-tab-pane label="📹 实时视频" name="live">
                   <MiniPlayer
                     v-show="activeTab === 'live' && currentAlarm?.channelId"
                     :key="currentAlarm?.channelId || 'none'"
@@ -70,7 +61,7 @@
                 </el-tab-pane>
 
                 <!-- 录像回放 (WEB_SHOW_PLAYBACK 或 WEB_RECORD_EVENT 时显示) -->
-                <el-tab-pane v-if="hasAction('WEB_SHOW_PLAYBACK') || hasAction('WEB_RECORD_EVENT')" label="录像回放" name="playback">
+                <el-tab-pane v-if="hasAction('WEB_SHOW_PLAYBACK') || hasAction('WEB_RECORD_EVENT')" label="📼 录像回放" name="playback">
                   <div class="alarm-popup__tab-content">
                     <MiniPlayer
                       v-if="currentAlarm.videoClipUrl"
@@ -95,7 +86,7 @@
                         <span style="margin-left:8px">加载录像中...</span>
                       </div>
                       <div v-else-if="deviceRecordings.length === 0" class="alarm-popup__placeholder">
-                        <p><i class="iconfont1 icon1-luxianghuifang_ alarm-popup__inline-icon" aria-hidden="true"></i>录像回放</p>
+                        <p>📼 录像回放</p>
                         <p class="alarm-popup__hint">该告警暂无录像片段</p>
                         <el-button type="primary" size="small" @click="loadPlayback">加载设备录像</el-button>
                       </div>
@@ -124,7 +115,7 @@
                 </el-tab-pane>
 
                 <!-- 告警快照（始终显示） -->
-                <el-tab-pane label="告警快照" name="snapshot">
+                <el-tab-pane label="🖼️ 告警快照" name="snapshot">
                   <AlarmSnapshot
                     :key="`snap-${currentAlarm?.id || 'none'}`"
                     :image-url="snapshotImageUrl"
@@ -153,65 +144,32 @@
                 <div class="alarm-popup__info">
                   <!-- 告警基本信息 -->
                   <div class="alarm-popup__section">
-                    <div class="alarm-popup__section-title">告警信息</div>
-                    <div class="alarm-popup__info-list">
-                      <div class="alarm-popup__info-row">
-                        <span class="alarm-popup__info-key">类型：</span>
-                        <span class="alarm-popup__info-val">{{ alarmTypeLabel }}</span>
-                      </div>
-                      <div class="alarm-popup__info-row">
-                        <span class="alarm-popup__info-key">级别：</span>
-                        <div class="alarm-popup__info-val alarm-popup__level-value">
-                          <div class="alarm-popup__level-dot" :style="{ backgroundColor: levelColor }" aria-hidden="true"></div>
-                          <span>{{ levelLabel }}</span>
-                        </div>
-                      </div>
-                      <div class="alarm-popup__info-row">
-                        <span class="alarm-popup__info-key">时间：</span>
-                        <span class="alarm-popup__info-val">{{ formatTime(currentAlarm.createdAt) }}</span>
-                      </div>
-                      <div class="alarm-popup__info-row">
-                        <span class="alarm-popup__info-key">设备：</span>
-                        <span class="alarm-popup__info-val">{{ currentAlarm.deviceName || currentAlarm.deviceId || '-' }}</span>
-                      </div>
-                      <div class="alarm-popup__info-row">
-                        <span class="alarm-popup__info-key">通道：</span>
-                        <span class="alarm-popup__info-val">{{ currentAlarm.channelName || currentAlarm.channelId || '-' }}</span>
-                      </div>
-                      <div class="alarm-popup__info-row">
-                        <span class="alarm-popup__info-key">位置：</span>
-                        <span class="alarm-popup__info-val">{{ currentAlarm.location || '-' }}</span>
-                      </div>
-                      <div class="alarm-popup__info-row">
-                        <span class="alarm-popup__info-key">置信度：</span>
-                        <span class="alarm-popup__info-val" style="color:#00D4AA">{{ Math.round(currentAlarm.confidence * 100) }}%</span>
-                      </div>
-                      <div class="alarm-popup__info-row">
-                        <span class="alarm-popup__info-key">目标：</span>
-                        <span class="alarm-popup__info-val">
-                          <template v-if="targetCategoryLabel">
-                            <el-tag size="small" type="info" effect="plain" style="margin-right:6px">
-                              {{ targetCategoryLabel }}
-                            </el-tag>
-                          </template>
-                          {{ targetNameLabel }}
-                        </span>
-                      </div>
+                    <div class="alarm-popup__section-title">📋 告警信息</div>
+                    <div class="alarm-popup__info-grid">
+                      <span class="alarm-popup__info-key">类型</span>
+                      <span class="alarm-popup__info-val">{{ alarmTypeLabel }}</span>
+                      <span class="alarm-popup__info-key">级别</span>
+                      <span class="alarm-popup__info-val" :style="{ color: levelColor, fontWeight: 600 }">{{ levelLabel }}</span>
+                      <span class="alarm-popup__info-key">时间</span>
+                      <span class="alarm-popup__info-val">{{ formatTime(currentAlarm.createdAt) }}</span>
+                      <span class="alarm-popup__info-key">设备</span>
+                      <span class="alarm-popup__info-val">{{ currentAlarm.deviceName || currentAlarm.deviceId || '-' }}</span>
+                      <span class="alarm-popup__info-key">通道</span>
+                      <span class="alarm-popup__info-val">{{ currentAlarm.channelName || currentAlarm.channelId || '-' }}</span>
+                      <span class="alarm-popup__info-key">位置</span>
+                      <span class="alarm-popup__info-val">{{ currentAlarm.location || '-' }}</span>
+                      <span class="alarm-popup__info-key">置信度</span>
+                      <span class="alarm-popup__info-val" style="color:#00D4AA">{{ Math.round(currentAlarm.confidence * 100) }}%</span>
+                      <span class="alarm-popup__info-key">目标</span>
+                      <span class="alarm-popup__info-val">
+                        <template v-if="targetCategoryLabel">
+                          <el-tag size="small" type="info" effect="plain" style="margin-right:6px">
+                            {{ targetCategoryLabel }}
+                          </el-tag>
+                        </template>
+                        {{ targetNameLabel }}
+                      </span>
                     </div>
-                  </div>
-
-                  <!-- 处理备注 -->
-                  <div class="alarm-popup__section alarm-popup__note-section">
-                    <div class="alarm-popup__section-title">处理备注</div>
-                    <el-input
-                      v-model="handleNote"
-                      type="textarea"
-                      :rows="5"
-                      resize="none"
-                      aria-label="处理备注"
-                      placeholder="请输入处理备注"
-                      class="alarm-popup__note-input"
-                    />
                   </div>
 
                   <!-- AI 研判 -->
@@ -228,7 +186,7 @@
 
                   <!-- 联动执行状态 -->
                   <div v-if="linkageLogs.length" class="alarm-popup__section">
-                    <div class="alarm-popup__section-title" style="color:#00D4AA">联动执行状态</div>
+                    <div class="alarm-popup__section-title" style="color:#00D4AA">🔗 联动执行状态</div>
                     <div v-for="(log, i) in linkageLogs" :key="i" class="alarm-popup__log-item">
                       <span>{{ log.status === 'done' ? '✅' : '⏳' }}</span>
                       <span>{{ log.icon }}</span>
@@ -244,21 +202,17 @@
           <div class="alarm-popup__footer">
             <div class="alarm-popup__footer-left">
               <el-button type="primary" size="small" @click="handleAlarm('confirmed')">
-                <i class="iconfont1 icon1-duigou alarm-popup__button-icon" aria-hidden="true"></i>
-                确认告警
+                ✅ 确认告警
               </el-button>
               <el-button size="small" @click="handleAlarm('false_alarm')">
-                <i class="iconfont1 icon1-cuowu alarm-popup__button-icon" aria-hidden="true"></i>
-                误报
+                ❌ 误报
               </el-button>
               <el-button size="small" @click="closePopup">
-                <i class="iconfont1 icon1-a-5Flabajingyin-copy alarm-popup__button-icon" aria-hidden="true"></i>
-                静音
+                🔇 静音
               </el-button>
               <!-- [P2-CO3] 跳转录像回放 -->
               <el-button size="small" type="warning" @click="jumpToPlayback" :disabled="!currentAlarm?.channelId" title="跳转到该告警时刻的录像回放">
-                <i class="iconfont1 icon1-luxianghuifang_ alarm-popup__button-icon" aria-hidden="true"></i>
-                跳转回放
+                📼 跳转回放
               </el-button>
               <!-- 联动驱动按钮 -->
               <el-button
@@ -269,6 +223,14 @@
               >
                 {{ btn.icon }} {{ btn.label }}
               </el-button>
+            </div>
+            <div class="alarm-popup__footer-right">
+              <el-input
+                v-model="handleNote"
+                size="small"
+                placeholder="处理备注..."
+                class="alarm-popup__note-input"
+              />
             </div>
           </div>
 
@@ -386,8 +348,8 @@ function stopRecordingPoll() {
   }
 }
 
-// ── 自动关闭倒计时 ──
-const AUTO_CLOSE_SECONDS = 3000
+// [STABILITY-FIX 2026-07-29] 30s → 60s: GB28181 流建立需 5-10s, 30s 太短
+const AUTO_CLOSE_SECONDS = 60
 const countdown = ref(AUTO_CLOSE_SECONDS)
 let countdownTimer: ReturnType<typeof setInterval> | null = null
 
@@ -479,21 +441,30 @@ const levelColor = computed(() => {
   }
 })
 
-const levelRgb = computed(() => {
+const levelBg = computed(() => {
   switch (currentAlarm.value?.level) {
-    case 'critical': return '255, 61, 113'
-    case 'high': return '255, 107, 53'
-    case 'medium': return '255, 184, 0'
-    default: return '0, 212, 170'
+    case 'critical': return 'rgba(255,61,113,0.08)'
+    case 'high': return 'rgba(255,107,53,0.06)'
+    case 'medium': return 'rgba(255,184,0,0.06)'
+    default: return 'rgba(0,212,170,0.06)'
   }
 })
 
 const levelLabel = computed(() => {
   switch (currentAlarm.value?.level) {
-    case 'critical': return '严重'
-    case 'high': return '高'
-    case 'medium': return '中'
-    default: return '低'
+    case 'critical': return '🔴 严重'
+    case 'high': return '🟠 高'
+    case 'medium': return '🟡 中'
+    default: return '🟢 低'
+  }
+})
+
+const levelTagType = computed(() => {
+  switch (currentAlarm.value?.level) {
+    case 'critical': return 'danger'
+    case 'high': return 'warning'
+    case 'medium': return 'warning'
+    default: return 'success'
   }
 })
 
@@ -664,7 +635,7 @@ onBeforeUnmount(() => {
   min-height: 280px;
   display: flex;
   flex-direction: column;
-  background: #262626;
+  background: #000;
 }
 .alarm-popup__recording-state {
   display: flex;
@@ -673,7 +644,7 @@ onBeforeUnmount(() => {
   justify-content: center;
   height: 100%;
   min-height: 280px;
-  background: #262626;
+  background: #000;
 }
 .alarm-popup__recording-indicator {
   display: flex;
@@ -726,36 +697,33 @@ onBeforeUnmount(() => {
   inset: 0;
   z-index: 99999;
   display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 16px;
-  background: rgba(37, 52, 76, 0.72);
-  backdrop-filter: blur(1px);
+  align-items: flex-start;
+  justify-content: flex-end;
+  padding: 60px 24px 24px 24px;
+  background: rgba(0, 0, 0, 0.3);
+  backdrop-filter: blur(2px);
 }
 
 /* ── 弹窗容器 ── */
 .alarm-popup {
+  width: 860px;
+  max-height: 80vh;
   display: flex;
-  width: min(1040px, calc(100vw - 32px));
-  height: min(640px, calc(100vh - 32px));
-  max-height: calc(100vh - 32px);
   flex-direction: column;
+  background: #141720;
+  border-radius: 12px;
+  border: 2px solid #FF3D71;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.5);
   overflow: hidden;
-  border: 1px solid #F93A55;
-  border-radius: 6px 10px 6px 6px;
-  background: #F93A55;
-  box-shadow: 0 14px 42px rgba(0, 0, 0, 0.5);
 }
 
 /* ── 顶栏 ── */
 .alarm-popup__header {
   display: flex;
-  min-height: 38px;
-  flex: 0 0 38px;
   align-items: center;
   justify-content: space-between;
-  padding: 0 12px;
-  background: linear-gradient(90deg, var(--alarm-level-color) 0%, #050E30 100%);
+  padding: 10px 16px;
+  border-bottom: 1px solid #252830;
 }
 .alarm-popup__header-left,
 .alarm-popup__header-right {
@@ -763,18 +731,8 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 8px;
 }
-.alarm-popup__header-left {
-  min-width: 0;
-  overflow: hidden;
-}
-.alarm-popup__header-right {
-  flex-shrink: 0;
-}
 .alarm-popup__blink-dot {
-  width: 7px;
-  height: 7px;
-  flex: 0 0 7px;
-  border-radius: 50%;
+  width: 8px; height: 8px; border-radius: 4px;
   animation: alarm-blink 1.2s ease-in-out infinite;
 }
 @keyframes alarm-blink {
@@ -782,174 +740,67 @@ onBeforeUnmount(() => {
   50% { opacity: 0.2; }
 }
 .alarm-popup__type {
-  overflow: hidden;
-  color: #FFFFFF;
-  font-size: 16px;
-  font-weight: 600;
-  line-height: 38px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  font-size: 14px; font-weight: bold; color: #FF3D71;
 }
-.alarm-popup__category-tag {
-  flex-shrink: 0;
-  border-color: rgba(255, 255, 255, 0.38) !important;
-  color: #FFFFFF !important;
-  background:transparent !important;
-}
-.alarm-popup__level {
-  display: inline-flex;
-  flex-shrink: 0;
-  align-items: center;
-  gap: 5px;
-  margin-left: 4px;
-  color: #FFFFFF;
-  font-size: 12px;
-  font-weight: 600;
-  line-height: 1;
-}
-.alarm-popup__level-dot {
-  width: 8px;
-  height: 8px;
-  flex: 0 0 8px;
-  border: 0;
-  border-radius: 50%;
-}
-.alarm-popup__level-value {
-  display: inline-flex;
-  min-width: 0;
-  align-items: center;
-  gap: 5px;
-  font-weight: 600;
-}
-.alarm-popup__device-info {
-  min-width: 0;
-  flex: 1;
-  overflow: hidden;
-  color: #fff;
-  font-size: 12px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.alarm-popup__queue {
-  color: #AADDFF;
-  font-size: 12px;
-  white-space: nowrap;
-}
-.alarm-popup__queue :deep(.el-button) {
-  margin-left: 2px;
-  color: #AADDFF;
-}
-.alarm-popup__countdown {
-  color: #FFFFFF;
-  font-size: 12px;
-  font-weight: 600;
-}
-.alarm-popup__close-btn {
-  color: #00FFFF !important;
-  font-size: 14px;
-}
-.alarm-popup__close-btn.el-button.is-text:not(.is-disabled):hover {
-  background-color: transparent !important;
-}
+.alarm-popup__level-tag { margin-left: 4px; }
+.alarm-popup__device-info { font-size: 11px; color: #4A4D58; }
+.alarm-popup__queue { font-size: 11px; color: #8B8FA3; }
+.alarm-popup__countdown { font-size: 11px; color: #FF6B35; font-weight: bold; }
+.alarm-popup__close-btn { color: #4A4D58 !important; font-size: 16px; }
+
 /* ── 主体 ── */
 .alarm-popup__body {
   display: flex;
   flex: 1;
   min-height: 0;
   overflow: hidden;
-  background: #071B4B;
 }
 
 /* ── 左侧 Tab ── */
 .alarm-popup__left {
+  flex: 3;
   display: flex;
-  min-width: 0;
-  flex: 1 1 auto;
   flex-direction: column;
-  overflow: hidden;
-  border-right: 1px solid #2A5C8F;
-  background: #071B4B;
+  border-right: 1px solid #252830;
 }
 .alarm-popup__tabs {
-  display: flex;
-  min-height: 0;
   flex: 1;
+  display: flex;
   flex-direction: column;
-  background: #262626;
 }
 .alarm-popup__tabs :deep(.el-tabs__content) {
-  min-height: 0;
   flex: 1;
-  overflow: hidden;
   padding: 0;
-  background: #262626;
 }
 .alarm-popup__tabs :deep(.el-tab-pane) {
   height: 100%;
-  overflow: hidden;
 }
 .alarm-popup__tabs :deep(.el-tabs__header) {
-  flex: 0 0 40px;
   margin: 0;
-  padding: 0 10px;
-  background:#050E30;
-}
-.alarm-popup__tabs :deep(.el-tabs__nav-wrap::after) {
-  height: 1px;
-  background: #050E30;
-}
-.alarm-popup__tabs :deep(.el-tabs__active-bar) {
-  height: 2px;
-  background:#00FFFF;
+  padding: 0 12px;
+  background: #1a1d26;
 }
 .alarm-popup__tabs :deep(.el-tabs__item) {
-  height: 40px;
-  padding: 0 18px;
-  color: #AADDFF;
-  font-size: 13px;
-  line-height: 40px;
-  letter-spacing: 0;
+  color: #8B8FA3;
+  font-size: 12px;
 }
-.alarm-popup__tabs :deep(.el-tabs__item:hover),
 .alarm-popup__tabs :deep(.el-tabs__item.is-active) {
-  color: #00FFFF;
-}
-.alarm-popup__tabs :deep(.mini-player) {
-  height: 100%;
-  max-height: 100%;
-  aspect-ratio: auto !important;
-  border-radius: 0;
-  background: #262626;
-}
-.alarm-popup__tabs :deep(.mini-player video) {
-  border-radius: 0 !important;
-  background: #262626 !important;
+  color: #00D4AA;
 }
 .alarm-popup__tab-content {
   display: flex;
   align-items: center;
   justify-content: center;
   height: 100%;
-  min-height: 0;
-  background: #262626;
+  min-height: 280px;
+  background: #000;
 }
 .alarm-popup__placeholder {
   text-align: center;
-  color: #AADDFF;
-}
-.alarm-popup__inline-icon {
-  margin-right: 6px;
-  color: currentColor;
-  font-size: 16px;
-  vertical-align: -1px;
-}
-.alarm-popup__button-icon {
-  color: currentColor;
-  font-size: 12px;
-  margin-right:2px;
+  color: #4A4D58;
 }
 .alarm-popup__placeholder p { margin: 0 0 8px; }
-.alarm-popup__hint { color: #7397BC; font-size: 12px; }
+.alarm-popup__hint { font-size: 12px; color: #4A4D58; }
 
 /* ── 联动标签栏 ── */
 .alarm-popup__linkage-bar {
@@ -957,14 +808,14 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 4px;
   padding: 4px 12px;
-  border-top: 1px solid #1C4A7D;
-  background: #071B4B;
+  background: #1a1d26;
+  border-top: 1px solid #252830;
   overflow-x: auto;
 }
 .alarm-popup__linkage-label {
-  flex-shrink: 0;
-  color: #AADDFF;
   font-size: 10px;
+  color: #8B8FA3;
+  flex-shrink: 0;
 }
 .alarm-popup__linkage-tag {
   display: inline-flex;
@@ -972,243 +823,105 @@ onBeforeUnmount(() => {
   gap: 2px;
   padding: 2px 8px;
   font-size: 10px;
-  border: 1px solid rgba(0, 255, 255, 0.3);
-  border-radius: 2px;
-  color: #00FFFF;
-  background: rgba(0, 255, 255, 0.08);
+  color: #00D4AA;
+  background: #0a2a1a;
+  border-radius: 4px;
   white-space: nowrap;
 }
 
 /* ── 右侧信息面板 ── */
 .alarm-popup__right {
-  min-width: 250px;
-  max-width: 300px;
-  flex: 0 0 clamp(250px, 29%, 300px);
+  flex: 2;
+  min-width: 260px;
+  max-width: 320px;
   overflow: hidden;
-  color: #172333;
-  background: #fff;
-}
-.alarm-popup__right :deep(.el-scrollbar),
-.alarm-popup__right :deep(.el-scrollbar__wrap) {
-  height: 100%;
 }
 .alarm-popup__info {
-  min-height: 100%;
-  padding: 0;
+  padding: 12px;
 }
 .alarm-popup__section {
-  margin: 0;
-  padding: 6px 10px;
-  border-bottom: 0;
+  margin-bottom: 12px;
 }
 .alarm-popup__section-title {
+  font-size: 12px;
+  font-weight: bold;
+  color: #FFB800;
   margin-bottom: 8px;
-  font-size: 14px;
-  font-weight: 600;
 }
-.alarm-popup__info-list {
-  display: flex;
-  flex-direction: column;
-  font-size: 14px;
-  line-height: 1.5;
+.alarm-popup__info-grid {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 12px;
+  font-size: 11px;
 }
-.alarm-popup__info-row {
-  display: flex;
-  min-width: 0;
-  align-items: flex-start;
-  gap: 2px;
-  padding: 2px 0;
-}
-.alarm-popup__info-key {
-  flex: 0 0 auto;
-  color: #42566D;
-  font-weight: 600;
-  white-space: nowrap;
-}
-.alarm-popup__info-val {
-  min-width: 0;
-  flex: 1;
-  color: #172333;
-  overflow-wrap: anywhere;
-}
-.alarm-popup__info-val :deep(.el-tag) {
-  border-color: #91B5D8;
-  color: #245C88;
-  background: #DCEAFF;
-}
+.alarm-popup__info-key { color: #4A4D58; }
+.alarm-popup__info-val { color: #E8E8E8; }
 
 .alarm-popup__ai-box {
-  padding: 9px 10px;
-  border: 1px solid #C4D7ED;
-  border-radius: 2px;
-  color: #283C52;
-  background: #DCEAFF;
-  font-size: 12px;
-  line-height: 1.6;
+  padding: 8px;
+  background: #0a0a2a;
+  border-radius: 6px;
+  color: #B8B8FF;
+  font-size: 11px;
+  line-height: 1.5;
 }
 .alarm-popup__suggestion {
-  color: #8A5A0A;
-  font-size: 12px;
-  line-height: 1.6;
+  color: #FFB800;
+  font-size: 11px;
 }
 .alarm-popup__log-item {
   display: flex;
   align-items: center;
   gap: 4px;
-  padding: 3px 0;
-  color: #42566D;
-  font-size: 12px;
+  font-size: 10px;
+  padding: 2px 0;
 }
 
 /* ── 底栏 ── */
 .alarm-popup__footer {
   display: flex;
-  min-height: 52px;
-  flex: 0 0 auto;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
-  padding: 6px 10px;
-  background: #050E30;
+  gap: 12px;
+  padding: 8px 16px;
+  background: #1a1d26;
+  border-top: 1px solid #252830;
 }
 .alarm-popup__footer-left {
   display: flex;
-  min-width: 0;
-  flex: 1;
   align-items: center;
-  justify-content: end;
   gap: 6px;
   flex-wrap: wrap;
 }
-.alarm-popup__footer :deep(.el-button) {
-  margin-left: 0;
-  border-color: #2B78B5;
-  border-radius: 2px;
-  color: #AADDFF;
-  background: rgba(25, 87, 145, 0.28);
-}
-.alarm-popup__footer :deep(.el-button:hover),
-.alarm-popup__footer :deep(.el-button:focus-visible) {
-  border-color: #00FFFF;
-  color: #00FFFF;
-  background: rgba(0, 255, 255, 0.1);
-}
-.alarm-popup__footer :deep(.el-button--primary) {
-  border-color: #3294ED;
-  color: #FFFFFF;
-  background: #3294ED;
+.alarm-popup__footer-right {
+  flex-shrink: 0;
 }
 .alarm-popup__note-input {
-  width: 100%;
-  --el-input-bg-color: #FFFFFF;
-  --el-input-border-color: #D3DCE8;
-  --el-input-text-color: #172333;
-  --el-input-placeholder-color: #708399;
-}
-.alarm-popup__note-input :deep(.el-textarea__inner) {
-  min-height: 116px !important;
-  padding: 9px 10px;
-  border: 1px solid #D3DCE8;
-  border-radius: 2px;
-  color: #172333;
-  background: #FFFFFF;
-  box-shadow: none;
-  font-size: 12px;
-  line-height: 1.6;
-}
-.alarm-popup__note-input :deep(.el-textarea__inner:hover) {
-  border-color: #9EB7D2;
-}
-.alarm-popup__note-input :deep(.el-textarea__inner:focus) {
-  border-color: #3294ED;
-  box-shadow: 0 0 0 1px rgba(50, 148, 237, 0.16);
-}
-
-/* 右侧信息栏统一文字和分隔风格 */
-.alarm-popup__right,
-.alarm-popup__right :deep(*) {
-  color: #111111 !important;
-  text-decoration: none !important;
-}
-.alarm-popup__right .alarm-popup__section {
-  border-bottom: 0;
-}
-.alarm-popup__note-input {
-  --el-input-text-color: #111111;
-  --el-input-placeholder-color: #111111;
-}
-.alarm-popup__note-input :deep(.el-textarea__inner::placeholder) {
-  color: #111111 !important;
-  opacity: 1;
+  width: 200px;
 }
 
 /* ── 过渡动画 ── */
-/* 进入 */
 .alarm-popup-enter-active {
-  transition: opacity 0.2s ease-out, transform 0.2s ease-out;
+  transition: all 0.3s ease-out;
 }
-/* 退出 */
 .alarm-popup-leave-active {
-  transition: opacity 0.16s ease-in, transform 0.16s ease-in;
+  transition: all 0.2s ease-in;
 }
 .alarm-popup-enter-from {
   opacity: 0;
-  transform: translateY(-12px);
+  transform: translateX(60px);
 }
 .alarm-popup-leave-to {
   opacity: 0;
-  transform: translateY(-8px);
+  transform: translateX(60px);
 }
 
 /* ── 弹窗边框闪烁动画（即使没有声音也能引起注意） ── */
 @keyframes alarm-flash-border {
-  0%, 100% { box-shadow: 0 14px 42px rgba(var(--alarm-level-rgb), 0.24); }
-  50% { box-shadow: 0 14px 50px rgba(var(--alarm-level-rgb), 0.48); }
-  /*0%, 100% { border-color: #FF3D71; box-shadow: 0 8px 32px rgba(255,61,113,0.3); }*/
-    /*50% { border-color: #FFB800; box-shadow: 0 8px 40px rgba(255,184,0,0.5); }*/
+  0%, 100% { border-color: #FF3D71; box-shadow: 0 8px 32px rgba(255,61,113,0.3); }
+  50% { border-color: #FFB800; box-shadow: 0 8px 40px rgba(255,184,0,0.5); }
 }
 .alarm-flash {
-  animation: alarm-flash-border 0.5s ease infinite;
-}
-
-@media (max-width: 760px) {
-  .alarm-popup-overlay {
-    padding: 8px;
-  }
-
-  .alarm-popup {
-    width: calc(100vw - 16px);
-    height: calc(100vh - 16px);
-    max-height: none;
-  }
-
-  .alarm-popup__device-info,
-  .alarm-popup__category-tag {
-    display: none;
-  }
-
-  .alarm-popup__body {
-    flex-direction: column;
-    overflow-y: auto;
-  }
-
-  .alarm-popup__left {
-    min-height: 360px;
-    flex: 0 0 58%;
-    border-right: 0;
-    border-bottom: 1px solid #2A5C8F;
-  }
-
-  .alarm-popup__right {
-    min-width: 0;
-    max-width: none;
-    flex: 1 0 auto;
-  }
-
-  .alarm-popup__footer {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
+  animation: alarm-flash-border 0.5s ease 3;
 }
 </style>

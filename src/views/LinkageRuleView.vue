@@ -39,6 +39,7 @@
             <el-option label="创建时间" value="created_at" />
             <el-option label="更新时间" value="updated_at" />
           </el-select>
+          <el-switch v-model="showArchived" active-text="显示归档" size="small" style="margin-left: 8px" />
         </div>
         <div class="toolbar-right">
           <template v-if="selectedRows.length > 0">
@@ -181,9 +182,13 @@
             <span class="time-text">{{ formatTime(row.updated_at) }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="140" fixed="right">
+        <el-table-column label="操作" width="280" fixed="right">
           <template #default="{ row }">
             <el-button size="small" type="primary" link @click="openEditor(row)">编辑</el-button>
+            <el-button size="small" type="success" link @click="handleCloneRule(row)">复制</el-button>
+            <el-button size="small" type="info" link @click="openVersionHistory(row)">历史</el-button>
+            <el-button v-if="!row.is_archived" size="small" type="warning" link @click="handleArchiveRule(row)">归档</el-button>
+            <el-button v-else size="small" type="success" link @click="handleRestoreRule(row)">恢复</el-button>
             <el-button size="small" type="danger" link @click="handleDelete(row)">删除</el-button>
           </template>
         </el-table-column>
@@ -227,6 +232,40 @@
               <el-option v-for="tag in allTags" :key="tag" :label="tag" :value="tag" />
             </el-select>
           </el-form-item>
+
+          <!-- [FIX P1-1] 冲突处理与高级配置 -->
+          <el-collapse v-model="advancedCollapse" style="margin-bottom: 12px">
+            <el-collapse-item title="冲突处理与高级配置" name="advanced">
+              <el-row :gutter="16">
+                <el-col :span="12">
+                  <el-form-item label="互斥组">
+                    <el-input v-model="form.mutexGroup" placeholder="同组规则同一事件只触发一条" clearable />
+                  </el-form-item>
+                </el-col>
+                <el-col :span="12">
+                  <el-form-item label="被抑制于规则">
+                    <el-select v-model="form.suppressAfterRule" filterable clearable placeholder="该规则触发后本规则跳过" style="width: 100%">
+                      <el-option v-for="r in rules.filter(x => x.id !== editingRule?.id)" :key="r.id" :label="r.name" :value="r.id" />
+                    </el-select>
+                  </el-form-item>
+                </el-col>
+              </el-row>
+              <el-row :gutter="16">
+                <el-col :span="12">
+                  <el-form-item label="抑制低优先级">
+                    <el-switch v-model="form.suppressLowerPriority" />
+                    <span class="text-secondary" style="margin-left: 8px; font-size: 12px">本规则触发后，同事件中优先级更低的规则不执行</span>
+                  </el-form-item>
+                </el-col>
+                <el-col :span="12">
+                  <el-form-item label="VLM 二次验证">
+                    <el-switch v-model="form.enableVlmVerify" />
+                    <span class="text-secondary" style="margin-left: 8px; font-size: 12px">触发前用视觉大模型复核，降低误报</span>
+                  </el-form-item>
+                </el-col>
+              </el-row>
+            </el-collapse-item>
+          </el-collapse>
 
           <el-divider content-position="left">
             触发条件
@@ -583,6 +622,12 @@
           <el-form-item label="延迟执行(ms)">
             <el-input-number v-model="paramForm.delay_ms" :min="0" :max="60000" :step="100" style="width: 100%" />
           </el-form-item>
+          <el-form-item label="重复执行次数">
+            <el-input-number v-model="paramForm.repeat_count" :min="1" :max="10" :step="1" style="width: 100%" />
+          </el-form-item>
+          <el-form-item label="重复间隔(ms)">
+            <el-input-number v-model="paramForm.repeat_interval_ms" :min="0" :max="60000" :step="500" style="width: 100%" />
+          </el-form-item>
           <el-form-item label="扩展参数 (JSON)">
             <el-input v-model="paramForm.extra" type="textarea" :rows="3" placeholder='{"key": "value"}' />
           </el-form-item>
@@ -801,6 +846,35 @@
       </div>
     </el-dialog>
 
+    <!-- ===== [FIX P1-2] 版本历史对话框 ===== -->
+    <el-dialog v-model="versionHistoryVisible" :title="`版本历史 - ${versionHistoryRule?.name || ''}`" width="640px" destroy-on-close>
+      <el-table :data="versionHistoryList" v-loading="versionHistoryLoading" size="small" max-height="400">
+        <el-table-column prop="version" label="版本" width="70">
+          <template #default="{ row }"><el-tag size="small">v{{ row.version }}</el-tag></template>
+        </el-table-column>
+        <el-table-column prop="name" label="名称" min-width="120" />
+        <el-table-column label="状态" width="80">
+          <template #default="{ row }">
+            <el-tag :type="row.enabled ? 'success' : 'info'" size="small">{{ row.enabled ? '启用' : '停用' }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="priority" label="优先级" width="70" />
+        <el-table-column label="更新时间" width="150">
+          <template #default="{ row }">{{ formatTime(row.updated_at) }}</template>
+        </el-table-column>
+        <el-table-column prop="version_comment" label="备注" min-width="100" show-overflow-tooltip />
+        <el-table-column label="操作" width="80" fixed="right">
+          <template #default="{ row }">
+            <el-button size="small" link type="warning" @click="handleRollback(row.version)"
+              :disabled="row.version === (versionHistoryRule?.version || 0)">回滚</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+      <template #footer>
+        <el-button @click="versionHistoryVisible = false">关闭</el-button>
+      </template>
+    </el-dialog>
+
     <!-- ===== Dry-Run 结果对话框 ===== -->
     <el-dialog v-model="showDryRunDialog" title="规则模拟测试结果" width="680px" destroy-on-close>
       <template v-if="dryRunResult">
@@ -985,6 +1059,7 @@ import { Search, Plus, Document, Link, Bell, Setting, ArrowDown, Download, Uploa
 import { linkageApi, ACTION_TYPE_MAP, ACTION_TYPE_REVERSE_MAP, getTargetForActionType } from '@/api/linkage'
 import type { LinkageRule, LinkageAction, LinkageLog, ActionLogEntry, TimeTemplate, LinkagePlan, CEPPattern, ConditionNode, RuleConflict, RuleTriggerStat } from '@/api/linkage'
 import { useLinkageOptions } from '@/composables/useLinkageOptions'
+import { validateTemplateImport } from '@/api/templateSchema'
 import RoiPolygonEditor from '@/components/RoiPolygonEditor.vue'
 import TimeTemplateEditor from '@/components/TimeTemplateEditor.vue'
 import PlanEditor from '@/components/PlanEditor.vue'
@@ -1134,6 +1209,7 @@ const sortBy = ref('priority')
 const sortOrder = ref<'ascending' | 'descending'>('descending')
 const selectedRows = ref<LinkageRule[]>([])
 const tagFilter = ref<string[]>([])
+const showArchived = ref(false) // [FIX P2-3] 是否显示归档规则
 
 // [P2-LR2] 规则冲突检测状态
 const conflictLoading = ref(false)
@@ -1213,6 +1289,8 @@ const allTags = computed(() => {
 
 const filteredRules = computed(() => {
   let list = [...rules.value]
+  // [FIX P2-3] 默认隐藏归档规则
+  if (!showArchived.value) list = list.filter(r => !r.is_archived)
   if (searchQuery.value) {
     const q = searchQuery.value.toLowerCase()
     list = list.filter(r => r.name.toLowerCase().includes(q))
@@ -1281,8 +1359,14 @@ const form = reactive({
   enabled: true,
   tags: [] as string[],
   timeTemplateId: '',
+  // [FIX P1-1] 冲突处理与高级配置
+  mutexGroup: '',
+  suppressAfterRule: '',
+  suppressLowerPriority: false,
+  enableVlmVerify: false,
   conditions: defaultConditions(),
 })
+const advancedCollapse = ref<string[]>([])
 
 // ── 高级条件模式 ──
 const advancedConditionMode = ref(false)
@@ -1377,6 +1461,8 @@ const paramForm = reactive({
   channel_id: '',
   device_id: '',
   delay_ms: 0,
+  repeat_count: 1,
+  repeat_interval_ms: 0,
   // TTS
   tts_text: '',
   tts_repeat: 1,
@@ -1474,7 +1560,8 @@ function getActionLabel(typeStr: string): string {
 async function fetchRules() {
   loading.value = true
   try {
-    const res = await linkageApi.getRules()
+    // [FIX P0] 后端默认 page_size=20, 必须显式传大页获取全量规则 (后端读 page_size 下划线格式)
+    const res = await linkageApi.getRules({ page: 1, page_size: 500 } as any)
     const d = (res.data as any)?.data ?? res.data
     rules.value = d?.items ?? (Array.isArray(d) ? d : [])
   } catch (e: any) {
@@ -1504,6 +1591,12 @@ function openEditor(rule: LinkageRule | null) {
   form.cooldownMs = rule?.cooldown_ms ?? 5000
   form.enabled = rule?.enabled ?? true
   form.tags = rule?.tags ? [...rule.tags] : []
+  // [FIX P1-1] 恢复冲突处理字段
+  form.mutexGroup = rule?.mutex_group || ''
+  form.suppressAfterRule = rule?.suppress_after_rule || ''
+  form.suppressLowerPriority = !!rule?.suppress_lower_priority
+  form.enableVlmVerify = !!rule?.enable_vlm_verify
+  advancedCollapse.value = (form.mutexGroup || form.suppressAfterRule || form.suppressLowerPriority || form.enableVlmVerify) ? ['advanced'] : []
   // 恢复条件树
   if (rule?.condition_tree) {
     advancedConditionMode.value = true
@@ -1679,6 +1772,11 @@ async function handleSave() {
       cooldown_ms: form.cooldownMs,
       enabled: form.enabled,
       tags: form.tags,
+      // [FIX P1-1] 冲突处理字段提交
+      mutex_group: form.mutexGroup || '',
+      suppress_after_rule: form.suppressAfterRule || '',
+      suppress_lower_priority: form.suppressLowerPriority,
+      enable_vlm_verify: form.enableVlmVerify,
       ...(advancedConditionMode.value && conditionTreeValue.value ? { condition_tree: conditionTreeValue.value } : {}),
       time_cond,
       spatial_cond,
@@ -1789,6 +1887,8 @@ function openActionParams(act: any) {
   paramForm.channel_id = p.channel_id || ''
   paramForm.device_id = p.device_id || ''
   paramForm.delay_ms = p.delay_ms || 0
+  paramForm.repeat_count = p.repeat_count || 1
+  paramForm.repeat_interval_ms = p.repeat_interval_ms || 0
   paramForm.tts_text = p.tts_text || ''
   paramForm.tts_repeat = p.tts_repeat || 1
   paramForm.preset_id_start = p.preset_id_start || ''
@@ -1838,6 +1938,8 @@ function saveActionParams() {
     channel_id: paramForm.channel_id,
     device_id: paramForm.device_id,
     delay_ms: paramForm.delay_ms,
+    repeat_count: paramForm.repeat_count,
+    repeat_interval_ms: paramForm.repeat_interval_ms,
   }
 
   if (category === 'tts') {
@@ -1901,18 +2003,85 @@ async function handleBatchDelete() {
       '批量删除确认',
       { type: 'warning' }
     )
-    let success = 0
-    let failed = 0
-    for (const row of selectedRows.value) {
-      try { await linkageApi.deleteRule(row.id); success++ }
-      catch { failed++ }
-    }
-    if (failed > 0) ElMessage.warning(`已删除 ${success} 条，失败 ${failed} 条`)
-    else ElMessage.success(`已删除 ${success} 条规则`)
+    // [FIX P1-4] 使用后端原子批量删除 API, 避免逐条循环部分失败
+    const ids = selectedRows.value.map(r => r.id)
+    const res = await linkageApi.batchDelete(ids)
+    const deleted = (res as any)?.data?.data?.deleted ?? ids.length
+    ElMessage.success(`已删除 ${deleted} 条规则`)
     selectedRows.value = []
     fetchRules()
   } catch (e: any) {
-    if (e !== 'cancel') ElMessage.error('批量删除失败')
+    if (e !== 'cancel') ElMessage.error('批量删除失败: ' + (e?.response?.data?.message || e?.message || ''))
+  }
+}
+
+// ── [FIX P2-3] 归档/恢复 ──
+
+async function handleArchiveRule(row: LinkageRule) {
+  try {
+    await ElMessageBox.confirm(`归档规则「${row.name}」？归档后不参与触发，可随时恢复。`, '归档确认', { type: 'warning' })
+    await linkageApi.archiveRule(row.id, '前端手动归档')
+    ElMessage.success('规则已归档')
+    fetchRules()
+  } catch (e: any) {
+    if (e !== 'cancel') ElMessage.error('归档失败: ' + (e?.response?.data?.message || e?.message || ''))
+  }
+}
+
+async function handleRestoreRule(row: LinkageRule) {
+  try {
+    await linkageApi.restoreRule(row.id)
+    ElMessage.success('规则已恢复')
+    fetchRules()
+  } catch (e: any) {
+    ElMessage.error('恢复失败: ' + (e?.response?.data?.message || e?.message || ''))
+  }
+}
+
+// ── [FIX P1-3] 规则复制 ──
+
+async function handleCloneRule(row: LinkageRule) {
+  try {
+    await ElMessageBox.confirm(`复制规则「${row.name}」？`, '规则复制', { type: 'info', confirmButtonText: '复制' })
+    await linkageApi.cloneRule(row.id, `${row.name} (副本)`)
+    ElMessage.success('规则已复制')
+    fetchRules()
+  } catch (e: any) {
+    if (e !== 'cancel') ElMessage.error('复制失败: ' + (e?.response?.data?.message || e?.message || ''))
+  }
+}
+
+// ── [FIX P1-2] 版本历史 ──
+
+const versionHistoryVisible = ref(false)
+const versionHistoryLoading = ref(false)
+const versionHistoryRule = ref<LinkageRule | null>(null)
+const versionHistoryList = ref<Array<{ version: number; name: string; enabled: boolean; priority: number; updated_at: number; created_by: string; version_comment: string }>>([])
+
+async function openVersionHistory(row: LinkageRule) {
+  versionHistoryRule.value = row
+  versionHistoryVisible.value = true
+  versionHistoryLoading.value = true
+  try {
+    const res = await linkageApi.getRuleHistory(row.id)
+    const d = (res as any)?.data?.data ?? (res as any)?.data
+    versionHistoryList.value = d?.versions ?? []
+  } catch (e: any) {
+    ElMessage.error('加载版本历史失败: ' + (e?.message || ''))
+    versionHistoryList.value = []
+  } finally { versionHistoryLoading.value = false }
+}
+
+async function handleRollback(version: number) {
+  if (!versionHistoryRule.value) return
+  try {
+    await ElMessageBox.confirm(`确定回滚「${versionHistoryRule.value.name}」到版本 v${version}？`, '回滚确认', { type: 'warning' })
+    await linkageApi.rollbackRule(versionHistoryRule.value.id, version, '前端手动回滚')
+    ElMessage.success(`已回滚到 v${version}`)
+    versionHistoryVisible.value = false
+    fetchRules()
+  } catch (e: any) {
+    if (e !== 'cancel') ElMessage.error('回滚失败: ' + (e?.response?.data?.message || e?.message || ''))
   }
 }
 
@@ -1944,14 +2113,26 @@ async function handleImportTemplates(event: Event) {
   if (!file) return
   try {
     const text = await file.text()
-    const data = JSON.parse(text)
-    const templates = data.templates || data
-    if (!Array.isArray(templates) || templates.length === 0) {
-      ElMessage.warning('文件中未找到有效模板')
+    let data: unknown
+    try {
+      data = JSON.parse(text)
+    } catch {
+      ElMessage.error('导入失败: 文件不是有效的 JSON')
       return
     }
-    await ElMessageBox.confirm(`确定导入 ${templates.length} 个规则模板?`, '导入确认', { type: 'info' })
-    const res = await linkageApi.importRuleTemplates(templates)
+    // [FIX P3-1] 版本兼容性 + 必填字段校验
+    const v = validateTemplateImport(data)
+    if (v.errors.length > 0) {
+      ElMessageBox.alert(v.errors.join('\n'), '导入校验失败', { type: 'error', confirmButtonText: '知道了' })
+      return
+    }
+    const warnSuffix = v.warnings.length > 0 ? `\n\n注意:\n${v.warnings.join('\n')}` : ''
+    await ElMessageBox.confirm(
+      `确定导入 ${v.templates.length} 个规则模板? (文件版本 v${v.version})${warnSuffix}`,
+      '导入确认',
+      { type: v.warnings.length > 0 ? 'warning' : 'info', confirmButtonText: '导入', cancelButtonText: '取消' }
+    )
+    const res = await linkageApi.importRuleTemplates(v.templates)
     const imported = res.data?.data?.imported ?? 0
     ElMessage.success(`成功导入 ${imported} 个模板`)
   } catch (e: any) {
