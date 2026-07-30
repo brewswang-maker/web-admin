@@ -49,7 +49,12 @@ export interface SituationAlarmStream {
   description: string
   deviceName: string
   time: string
+  /** 抓拍图绝对URL (后端 /api/v1/situation/realtime-alarms v8.7 补齐) */
   snapshotUrl?: string
+  /** 兼容 snake_case 字段 (部分场景 WS 推送仍可能用 snake) */
+  snapshot_url?: string
+  /** 后端 metadata 透传: 含 snapshot_base64/snapshot_format 用于前端兜底 */
+  metadata?: Record<string, unknown>
 }
 
 /** Agent实时状态 */

@@ -137,15 +137,18 @@
                   <span class="alarm-level"><b>{{ alarmLevelText(alarm.level) }}</b></span>
                   <span class="alarm-snapshot">
                     <el-image
-                      v-if="alarm.snapshotUrl"
-                      :src="alarm.snapshotUrl"
-                      :preview-src-list="[alarm.snapshotUrl]"
+                      v-if="getSnapshotUrl(alarm)"
+                      :src="getSnapshotUrl(alarm)"
+                      :preview-src-list="getSnapshotUrl(alarm) ? [getSnapshotUrl(alarm)] : []"
                       fit="cover"
                       alt="告警抓拍"
                       preview-teleported
                       hide-on-click-modal
+                      @error="onSnapshotError"
                     />
-                    <span v-else class="alarm-snapshot-empty"></span>
+                    <span v-else class="alarm-snapshot-empty" :title="`告警 ${alarm.id} 暂无抓拍图`">
+                      <i class="iconfont1 icon1-wushuju" aria-hidden="true"></i>
+                    </span>
                   </span>
                   <span class="alarm-location" :title="alarm.location">{{ alarm.location }}</span>
                   <span class="alarm-type" :title="alarm.type">{{ alarm.type }}</span>
@@ -260,6 +263,8 @@ interface Alarm {
   level: string
   status: string
   snapshotUrl?: string
+  /** 后端 metadata 透传: 含 snapshot_base64/snapshot_format, 用于 base64 兜底 */
+  metadata?: Record<string, unknown>
 }
 const latestAlarms = ref<Alarm[]>([])
 
@@ -828,8 +833,26 @@ function toAlarm(s: SituationAlarmStream): Alarm {
     type: s.description,
     level: s.level,
     status: '未处理',
-    snapshotUrl: s.snapshotUrl,
+    // [FIX 2026-07-30] 兼容 snake/camel 双形态, 与 AlarmsView.vue 行为一致
+    snapshotUrl: s.snapshotUrl || s.snapshot_url,
+    metadata: s.metadata,
   }
+}
+
+/** 兜底函数: 返回抓拍图 URL, 优先 snapshotUrl, 其次 metadata.snapshot_base64 dataURL
+ *  与 AlarmsView.vue:995-1005 / AlarmPopup.vue:415-433 实现保持一致 */
+function getSnapshotUrl(alarm: Alarm): string {
+  if (alarm.snapshotUrl) return alarm.snapshotUrl
+  const meta = alarm.metadata as { snapshot_base64?: string; snapshot_format?: string } | undefined
+  const b64 = meta?.snapshot_base64
+  if (!b64) return ''
+  if (typeof b64 === 'string' && b64.startsWith('data:')) return b64
+  const fmt = meta?.snapshot_format || 'jpg'
+  const mime = fmt === 'raw_bgr' ? 'image/bmp' : `image/${fmt}`
+  // 补齐 base64 padding (避免 +/= 被转义后导致浏览器拒绝)
+  const cleaned = String(b64).replace(/[^A-Za-z0-9+/=]/g, '')
+  const fixed = cleaned + '='.repeat((4 - (cleaned.length % 4)) % 4)
+  return `data:${mime};base64,${fixed}`
 }
 
 /** 加载态势大屏数据（任一端点失败即置 failed 标记，UI 显式空态） */
@@ -918,6 +941,15 @@ async function fetchSituationData() {
   // 关键端点（概览/告警）全失败时给一次性提示
   if (overviewFailed.value && alarmsFailed.value) {
     ElMessage.error('态势大屏核心数据加载失败,请检查后端服务或权限')
+  }
+}
+
+/** 抓拍图加载失败时的兜底 — 自动隐藏并打印 warn, 避免列表卡顿 */
+function onSnapshotError(evt: Event) {
+  const target = evt.target as HTMLImageElement
+  if (target) {
+    console.warn(`[situation] 抓拍图加载失败: ${target.src?.slice(0, 80)}...`)
+    target.style.display = 'none'
   }
 }
 
