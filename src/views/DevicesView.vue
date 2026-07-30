@@ -186,7 +186,7 @@
         <div style="display:flex;align-items:center;gap:8px">
           <el-tag type="primary" size="small">GB/T 28181</el-tag>
           <span style="font-weight:600">SIP 服务器配置</span>
-          <el-tag v-if="(sipConfig as any).sip_server_running" type="success" size="small" effect="dark">运行中</el-tag>
+          <el-tag v-if="sipConfig.sipServerRunning" type="success" size="small" effect="dark">运行中</el-tag>
           <el-tag v-else type="danger" size="small" effect="dark">已停止</el-tag>
         </div>
       </template>
@@ -198,8 +198,8 @@
         <el-descriptions-item label="传输协议">{{ sipConfig.transportProtocol }}</el-descriptions-item>
         <el-descriptions-item label="RTP 端口范围">{{ sipConfig.rtpPortRange }}</el-descriptions-item>
         <el-descriptions-item label="Digest 鉴权">
-          <el-tag :type="(sipConfig as any).auth_enabled ? 'success' : 'info'" size="small">
-            {{ (sipConfig as any).auth_enabled ? '已启用' : '未启用' }}
+          <el-tag :type="sipConfig.authEnabled ? 'success' : 'info'" size="small">
+            {{ sipConfig.authEnabled ? '已启用' : '未启用' }}
           </el-tag>
         </el-descriptions-item>
         <el-descriptions-item label="SIP 超时">{{ sipConfig.sipTimeoutSec }} 秒</el-descriptions-item>
@@ -212,13 +212,13 @@
         </el-descriptions-item>
       </el-descriptions>
       <!-- 级联详情 -->
-      <template v-if="(sipConfig as any).cascade?.enabled">
+      <template v-if="sipConfig?.cascade?.enabled">
         <el-divider content-position="left">级联配置</el-divider>
         <el-descriptions :column="3" border size="small">
-          <el-descriptions-item label="上级 SIP IP">{{ (sipConfig.cascade as any)?.superior_sip_server_ip || '-' }}:{{ (sipConfig.cascade as any)?.superior_sip_server_port }}</el-descriptions-item>
-          <el-descriptions-item label="上级 SIP ID">{{ (sipConfig.cascade as any)?.superior_sip_id || '-' }}</el-descriptions-item>
-          <el-descriptions-item label="上级 SIP 域">{{ (sipConfig.cascade as any)?.superior_sip_domain || '-' }}</el-descriptions-item>
-          <el-descriptions-item label="本机 SIP ID">{{ (sipConfig.cascade as any)?.local_sip_id || '-' }}</el-descriptions-item>
+          <el-descriptions-item label="上级 SIP IP">{{ sipConfig.cascade?.superiorSipServerIp || '-' }}:{{ sipConfig.cascade?.superiorSipServerPort }}</el-descriptions-item>
+          <el-descriptions-item label="上级 SIP ID">{{ sipConfig.cascade?.superiorSipId || '-' }}</el-descriptions-item>
+          <el-descriptions-item label="上级 SIP 域">{{ sipConfig.cascade?.superiorSipDomain || '-' }}</el-descriptions-item>
+          <el-descriptions-item label="本机 SIP ID">{{ sipConfig.cascade?.localSipId || '-' }}</el-descriptions-item>
         </el-descriptions>
       </template>
     </el-card>
@@ -653,11 +653,45 @@ const statCards = computed(() => {
 const sipConfig = ref<GB28181Config | null>(null)
 const sipConfigLoading = ref(false)
 
+// [FIX 2026-07-30] 后端 /api/v1/system/gb28181/config 返回 snake_case 字段,
+//   全局 HTTP 客户端已禁用 snake→camel 自动转换, 直接绑定到模板字段会全部空白.
+//   在 fetchSipConfig 内手动映射为驼峰, 与 GB28181Config 类型保持一致.
 async function fetchSipConfig() {
   sipConfigLoading.value = true
   try {
     const res = await getGB28181Config() as any
-    sipConfig.value = res?.data?.data ?? res?.data ?? res
+    const data = res?.data?.data ?? res?.data ?? res
+    if (!data) {
+      sipConfig.value = null
+      return
+    }
+    // 兼容: 后端可能直接返回纯 snake_case 对象, 需映射到驼峰
+    sipConfig.value = {
+      enabled: data.enabled ?? false,
+      sipServerId: data.sip_server_id ?? '',
+      sipServerDomain: data.sip_server_domain ?? '',
+      sipServerIp: data.sip_server_ip ?? '',
+      sipServerPort: data.sip_server_port ?? 5060,
+      sipRealm: data.sip_realm ?? '',
+      transportProtocol: data.transport_protocol ?? 'UDP',
+      authEnabled: data.auth_enabled ?? false,
+      sipTimeoutSec: data.sip_timeout_sec ?? 30,
+      rtpPortRange: data.rtp_port_range ?? '',
+      sipServerRunning: data.sip_server_running ?? false,
+      registeredDevices: data.registered_devices ?? 0,
+      activeSessions: data.active_sessions ?? 0,
+      cascadeRegistered: data.cascade_registered ?? false,
+      cascade: data.cascade
+        ? {
+            enabled: data.cascade.enabled ?? false,
+            superiorSipServerIp: data.cascade.superior_sip_server_ip ?? '',
+            superiorSipServerPort: data.cascade.superior_sip_server_port ?? 5060,
+            superiorSipId: data.cascade.superior_sip_id ?? '',
+            superiorSipDomain: data.cascade.superior_sip_domain ?? '',
+            localSipId: data.cascade.local_sip_id ?? '',
+          }
+        : undefined,
+    } as GB28181Config
   } catch { /* GB28181 未启用时忽略 */ }
   finally { sipConfigLoading.value = false }
 }

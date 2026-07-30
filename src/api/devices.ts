@@ -13,6 +13,18 @@ export const discoverDevices = deviceApi.discoverOnvif
 export const discoverGB28181 = deviceApi.discoverGB28181
 
 // GB28181 配置
+// [FIX 2026-07-30] 字段命名已与 DevicesView.vue 的 snake→camel 映射对齐
+//   后端 /api/v1/system/gb28181/config 实际返回 snake_case,
+//   在 fetchSipConfig 中映射到本接口的驼峰字段.
+export interface GB28181CascadeConfig {
+  enabled?: boolean
+  superiorSipServerIp?: string
+  superiorSipServerPort?: number
+  superiorSipId?: string
+  superiorSipDomain?: string
+  localSipId?: string
+}
+
 export interface GB28181Config {
   serverId?: string
   sipServerId?: string
@@ -26,7 +38,11 @@ export interface GB28181Config {
   expires?: number
   heartbeatInterval?: number
   enabled?: boolean
-  cascade?: boolean
+  authEnabled?: boolean
+  sipServerRunning?: boolean
+  sipAdvertiseIp?: string
+  sdpIp?: string
+  cascade?: boolean | GB28181CascadeConfig
   cascadeRegistered?: boolean
   transportProtocol?: 'UDP' | 'TCP'
   rtpPortRange?: string
