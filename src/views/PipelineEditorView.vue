@@ -1043,11 +1043,21 @@ async function handleDeploy() {
   try {
     const payload = { name: pipelineName.value, nodes: nodes.map(n => ({ ...n })), connections: [...connections] }
     const { data: resp } = await deployPipeline(pipelineId.value, payload)
-    ElMessage.success('Pipeline已部署')
     dirty.value = false
     if (showMonitor.value) startMonitor()
+    // 部署成功弹框提示
+    ElMessageBox.alert(
+      `流水线「${pipelineName.value}」已成功部署并启动运行`,
+      '部署成功',
+      { confirmButtonText: '确定', type: 'success' }
+    )
   } catch (e: any) {
-    ElMessage.error('部署失败: ' + e.message)
+    // 部署失败弹框提示
+    ElMessageBox.alert(
+      `部署失败：${e.message || '未知错误'}`,
+      '部署失败',
+      { confirmButtonText: '确定', type: 'error' }
+    )
   } finally {
     deploying.value = false
   }
@@ -1058,10 +1068,20 @@ async function handleUndeploy() {
   undeploying.value = true
   try {
     await undeployPipeline(pipelineId.value)
-    ElMessage.success('Pipeline已停止')
     stopMonitor()
+    // 停止成功弹框提示
+    ElMessageBox.alert(
+      `流水线「${pipelineName.value}」已停止运行`,
+      '停止成功',
+      { confirmButtonText: '确定', type: 'success' }
+    )
   } catch (e: any) {
-    ElMessage.error('停止失败: ' + e.message)
+    // 停止失败弹框提示
+    ElMessageBox.alert(
+      `停止失败：${e.message || '未知错误'}`,
+      '停止失败',
+      { confirmButtonText: '确定', type: 'error' }
+    )
   } finally {
     undeploying.value = false
   }
