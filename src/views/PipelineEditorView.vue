@@ -943,10 +943,20 @@ async function handleSavePipeline() {
     // 从响应中获取后端分配的 ID（如果是新建）
     const returnedId = (resp as any)?.data?.pipeline_id || (resp as any)?.data?.id
     if (returnedId) pipelineId.value = returnedId
-    ElMessage.success('Pipeline已保存')
     dirty.value = false
+    // 保存成功弹框提示
+    ElMessageBox.alert(
+      `流水线「${pipelineName.value}」已保存成功`,
+      '保存成功',
+      { confirmButtonText: '确定', type: 'success' }
+    )
   } catch (e: any) {
-    ElMessage.error('保存失败: ' + e.message)
+    // 保存失败弹框提示
+    ElMessageBox.alert(
+      `保存失败：${e.message || '未知错误'}`,
+      '保存失败',
+      { confirmButtonText: '确定', type: 'error' }
+    )
   }
 }
 async function loadPipeline() {
@@ -1023,15 +1033,28 @@ async function handleValidate() {
     const { data: resp } = await validatePipeline(pipelineId.value, payload)
     const result = (resp as any)?.data || resp
     if (result.valid) {
-      ElMessage.success(`验证通过: ${result.node_count}个节点, ${result.edge_count}条边`)
+      // 验证通过弹框提示
+      const warnMsg = result.warnings?.length ? `\n\n警告：${(result.warnings as string[]).join('；')}` : ''
+      ElMessageBox.alert(
+        `流水线「${pipelineName.value}」验证通过\n节点数：${result.node_count}，边数：${result.edge_count}${warnMsg}`,
+        '验证通过',
+        { confirmButtonText: '确定', type: 'success' }
+      )
     } else {
-      ElMessage.error(`验证失败: ${(result.errors || []).join('; ')}`)
-    }
-    if (result.warnings?.length) {
-      ElMessage.warning(`警告: ${(result.warnings as string[]).join('; ')}`)
+      // 验证失败弹框提示
+      ElMessageBox.alert(
+        `验证失败：${(result.errors || []).join('；')}`,
+        '验证失败',
+        { confirmButtonText: '确定', type: 'error' }
+      )
     }
   } catch (e: any) {
-    ElMessage.error('验证请求失败: ' + e.message)
+    // 验证请求失败弹框提示
+    ElMessageBox.alert(
+      `验证请求失败：${e.message || '未知错误'}`,
+      '验证失败',
+      { confirmButtonText: '确定', type: 'error' }
+    )
   } finally {
     validating.value = false
   }
