@@ -38,6 +38,26 @@ export const channelApi = {
     return channelHttp.put<ApiResponse<ChannelItem>>(`/${id}`, data)
   },
 
+  /** 通道重命名 */
+  rename(id: string, name: string) {
+    return channelHttp.put<ApiResponse<void>>(`/${id}`, { name })
+  },
+
+  /** 删除通道 */
+  remove(id: string) {
+    return channelHttp.delete<ApiResponse<void>>(`/${id}`)
+  },
+
+  /** 批量删除通道 */
+  batchDelete(ids: string[]) {
+    return channelHttp.post<ApiResponse<{ deleted: number; failed: number }>>('/batch-delete', { ids })
+  },
+
+  /** 批量启用/禁用通道 */
+  batchEnable(ids: string[], enable: boolean) {
+    return channelHttp.post<ApiResponse<{ updated: number; failed: number }>>('/batch-enable', { ids, enable })
+  },
+
   /** 配置通道算法（单算法，已废弃） */
   setAlgo(id: string, algoPlugin: string) {
     return channelHttp.post<ApiResponse<void>>(`/${id}/algo`, { algoPlugin })

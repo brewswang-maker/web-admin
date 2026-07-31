@@ -20,6 +20,7 @@ const SettingsView = () => import('@/views/SettingsView.vue')
 const ProjectsView = () => import('@/views/ProjectsView.vue')
 const AuditCenterView = () => import('@/views/AuditCenterView.vue')
 const ChannelView = () => import('@/views/ChannelView.vue')
+const ChannelDetailView = () => import('@/views/ChannelDetailView.vue')
 const OTAUpgradeView = () => import('@/views/OTAUpgradeView.vue')
 const AIChatView = () => import('@/views/AIChatView.vue')
 const SituationScreen = () => import('@/views/SituationScreen.vue')
@@ -113,6 +114,13 @@ export const asyncRoutes: RouteRecordRaw[] = [
         name: 'Channels',
         component: ChannelView,
         meta: { title: '通道管理', icon: 'Grid', roles: ['admin', 'user'] }
+      },
+      {
+        path: 'channels/:id',
+        name: 'ChannelDetail',
+        component: ChannelDetailView,
+        meta: { title: '通道详情', hidden: true, roles: ['admin', 'user'] },
+        props: true
       },
       {
         path: 'alarms',
