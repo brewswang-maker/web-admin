@@ -1,13 +1,13 @@
 <template>
   <div class="statistics-page">
     <div class="page-title">
-      <h2>📈 数据统计分析</h2>
+      <h2>{{ t('statistics.title') }}</h2>
       <div style="display:flex;gap:8px;align-items:center">
-        <el-button size="small" @click="exportCSV"><el-icon><Download /></el-icon>导出CSV</el-button>
+        <el-button size="small" @click="exportCSV"><el-icon><Download /></el-icon>{{ t('statistics.exportCSV') }}</el-button>
         <el-radio-group v-model="timeRange" size="small" @change="loadData">
-          <el-radio-button value="7d">近7天</el-radio-button>
-          <el-radio-button value="30d">近30天</el-radio-button>
-          <el-radio-button value="90d">近90天</el-radio-button>
+          <el-radio-button value="7d">{{ t('statistics.range7d') }}</el-radio-button>
+          <el-radio-button value="30d">{{ t('statistics.range30d') }}</el-radio-button>
+          <el-radio-button value="90d">{{ t('statistics.range90d') }}</el-radio-button>
         </el-radio-group>
       </div>
     </div>
@@ -24,11 +24,11 @@
               {{ (securityScore?.trend ?? 0) >= 0 ? '↑' : '↓' }} {{ Math.abs(securityScore?.trend ?? 0) }}%
             </div>
           </div>
-          <div class="score-label">全局安全态势评分</div>
+          <div class="score-label">{{ t('statistics.globalScore') }}</div>
         </el-card>
       </el-col>
       <el-col :span="18">
-        <el-card header="安全维度分布" class="dimension-card">
+        <el-card :header="t('statistics.securityDimensions')" class="dimension-card">
           <div class="dimension-bars">
             <div v-for="d in dimensions" :key="d.label" class="dimension-item">
               <span class="dim-label">{{ d.label }}</span>
@@ -43,12 +43,12 @@
     <!-- 告警统计 -->
     <el-row :gutter="16" style="margin-bottom: 16px">
       <el-col :span="16">
-        <el-card header="告警趋势">
+        <el-card :header="t('statistics.alarmTrend')">
           <LazyChart :option="alarmTrendOption" height="320px" />
         </el-card>
       </el-col>
       <el-col :span="8">
-        <el-card header="告警分布">
+        <el-card :header="t('statistics.alarmDist')">
           <LazyChart :option="alarmPieOption" height="320px" />
         </el-card>
       </el-col>
@@ -57,12 +57,12 @@
     <!-- 设备分析 -->
     <el-row :gutter="16" style="margin-bottom: 16px">
       <el-col :span="12">
-        <el-card header="设备在线率趋势">
+        <el-card :header="t('statistics.deviceOnlineRate')">
           <LazyChart :option="onlineRateOption" height="280px" />
         </el-card>
       </el-col>
       <el-col :span="12">
-        <el-card header="平均资源使用">
+        <el-card :header="t('statistics.avgResourceUsage')">
           <LazyChart :option="resourceUsageOption" height="280px" />
         </el-card>
       </el-col>
@@ -71,34 +71,34 @@
     <!-- AI Agent 活跃度 + 项目告警统计 -->
     <el-row :gutter="16">
       <el-col :span="12">
-        <el-card header="🟣 AI Agent 活跃度">
+        <el-card :header="'🟣 ' + t('statistics.agentActivity')">
           <LazyChart :option="agentActivityOption" height="280px" />
           <div class="agent-metrics">
             <div class="agent-metric">
-              <span class="am-label">感知Agent</span>
+              <span class="am-label">{{ t('statistics.perceptionAgent') }}</span>
               <span class="am-value">{{ agentActivity?.perceptionCalls?.toLocaleString() ?? '-' }}</span>
             </div>
             <div class="agent-metric">
-              <span class="am-label">研判Agent</span>
+              <span class="am-label">{{ t('statistics.analysisAgent') }}</span>
               <span class="am-value">{{ agentActivity?.analysisCalls?.toLocaleString() ?? '-' }}</span>
             </div>
             <div class="agent-metric">
-              <span class="am-label">决策Agent</span>
+              <span class="am-label">{{ t('statistics.decisionAgent') }}</span>
               <span class="am-value">{{ agentActivity?.decisionCalls?.toLocaleString() ?? '-' }}</span>
             </div>
             <div class="agent-metric">
-              <span class="am-label">专家唤醒</span>
+              <span class="am-label">{{ t('statistics.expertInvoke') }}</span>
               <span class="am-value">{{ agentActivity?.expertInvokes ?? '-' }}</span>
             </div>
             <div class="agent-metric">
-              <span class="am-label">平均置信度</span>
+              <span class="am-label">{{ t('statistics.avgConfidence') }}</span>
               <span class="am-value">{{ agentActivity?.avgConfidence ? (agentActivity.avgConfidence * 100).toFixed(1) + '%' : '-' }}</span>
             </div>
           </div>
         </el-card>
       </el-col>
       <el-col :span="12">
-        <el-card header="各项目告警统计">
+        <el-card :header="t('statistics.projectAlarmStats')">
           <LazyChart :option="projectAlarmOption" height="280px" />
         </el-card>
       </el-col>
@@ -108,6 +108,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useCloudStore } from '@/stores/cloud'
 import LazyChart from '@/components/LazyChart.vue'
 import type { AlarmStats, SecurityScore, AgentActivity } from '@/types/analytics'
@@ -116,6 +117,7 @@ import { ElMessage } from 'element-plus'
 import { exportApi } from '@/api/export'
 
 const cloudStore = useCloudStore()
+const { t } = useI18n()
 const timeRange = ref('7d')
 const securityScore = computed(() => cloudStore.securityScore)
 const alarmStats = computed(() => cloudStore.alarmStats)
@@ -139,15 +141,15 @@ const alarmTrendOption = computed<any>(() => {
   const data = alarmStats.value?.trendData ?? []
   return {
     tooltip: { trigger: 'axis' as const },
-    legend: { data: ['严重', '高', '中', '低'] },
+    legend: { data: [t('statistics.levelCritical'), t('statistics.levelHigh'), t('statistics.levelMedium'), t('statistics.levelLow')] },
     grid: { left: '3%', right: '4%', bottom: '3%', containLabel: true },
     xAxis: { type: 'category' as const, data: data.map((d: any) => d.date.slice(5)) },
     yAxis: { type: 'value' as const },
     series: [
-      { name: '严重', type: 'line', smooth: true, data: data.map((d: any) => d.critical), itemStyle: { color: '#f5222d' }, areaStyle: { opacity: 0.1, color: '#f5222d' } },
-      { name: '高', type: 'line', smooth: true, data: data.map((d: any) => d.high), itemStyle: { color: '#fa8c16' }, areaStyle: { opacity: 0.1, color: '#fa8c16' } },
-      { name: '中', type: 'line', smooth: true, data: data.map((d: any) => d.medium), itemStyle: { color: '#1890ff' }, areaStyle: { opacity: 0.1, color: '#1890ff' } },
-      { name: '低', type: 'line', smooth: true, data: data.map((d: any) => d.low), itemStyle: { color: '#52c41a' }, areaStyle: { opacity: 0.1, color: '#52c41a' } }
+      { name: t('statistics.levelCritical'), type: 'line', smooth: true, data: data.map((d: any) => d.critical), itemStyle: { color: '#f5222d' }, areaStyle: { opacity: 0.1, color: '#f5222d' } },
+      { name: t('statistics.levelHigh'), type: 'line', smooth: true, data: data.map((d: any) => d.high), itemStyle: { color: '#fa8c16' }, areaStyle: { opacity: 0.1, color: '#fa8c16' } },
+      { name: t('statistics.levelMedium'), type: 'line', smooth: true, data: data.map((d: any) => d.medium), itemStyle: { color: '#1890ff' }, areaStyle: { opacity: 0.1, color: '#1890ff' } },
+      { name: t('statistics.levelLow'), type: 'line', smooth: true, data: data.map((d: any) => d.low), itemStyle: { color: '#52c41a' }, areaStyle: { opacity: 0.1, color: '#52c41a' } }
     ]
   }
 })
@@ -160,13 +162,13 @@ const alarmPieOption = computed<any>(() => {
     tooltip: { trigger: 'item' as const },
     legend: { orient: 'vertical' as const, right: '5%', top: 'center' },
     series: [{
-      name: '告警分布', type: 'pie', radius: ['45%', '75%'], center: ['40%', '50%'],
+      name: t('statistics.alarmDist'), type: 'pie', radius: ['45%', '75%'], center: ['40%', '50%'],
       label: { show: false },
       data: [
-        { value: s.critical, name: '严重', itemStyle: { color: '#f5222d' } },
-        { value: s.high, name: '高', itemStyle: { color: '#fa8c16' } },
-        { value: s.medium, name: '中', itemStyle: { color: '#1890ff' } },
-        { value: s.low, name: '低', itemStyle: { color: '#52c41a' } }
+        { value: s.critical, name: t('statistics.levelCritical'), itemStyle: { color: '#f5222d' } },
+        { value: s.high, name: t('statistics.levelHigh'), itemStyle: { color: '#fa8c16' } },
+        { value: s.medium, name: t('statistics.levelMedium'), itemStyle: { color: '#1890ff' } },
+        { value: s.low, name: t('statistics.levelLow'), itemStyle: { color: '#52c41a' } }
       ]
     }]
   }
@@ -181,10 +183,10 @@ const onlineRateOption = computed<any>(() => {
     xAxis: { type: 'category' as const, data: data.map((d: any) => d.date.slice(5)) },
     yAxis: { type: 'value' as const, min: 80, max: 100 },
     series: [{
-      name: '在线率', type: 'line', smooth: true, data: data.map((d: any) => d.rate),
+      name: t('statistics.onlineRate'), type: 'line', smooth: true, data: data.map((d: any) => d.rate),
       itemStyle: { color: '#52c41a' },
       areaStyle: { color: { type: 'linear', x: 0, y: 0, x2: 0, y2: 1, colorStops: [{ offset: 0, color: 'rgba(82,196,26,0.3)' }, { offset: 1, color: 'rgba(82,196,26,0)' }] } },
-      markLine: { data: [{ type: 'average', name: '均值' }] }
+      markLine: { data: [{ type: 'average', name: t('statistics.average') }] }
     }]
   }
 })
@@ -194,13 +196,13 @@ const resourceUsageOption = computed<any>(() => {
   const trend = deviceAnalytics.value?.resourceUsageTrend ?? []
   return {
     tooltip: { trigger: 'axis' as const },
-    legend: { data: ['平均CPU', '平均内存'] },
+    legend: { data: [t('statistics.avgCPU'), t('statistics.avgMemory')] },
     grid: { left: '3%', right: '4%', bottom: '3%', containLabel: true },
     xAxis: { type: 'category' as const, data: trend.map((d: any) => d.date.slice(5)) },
     yAxis: { type: 'value' as const, max: 100 },
     series: [
-      { name: '平均CPU', type: 'line', smooth: true, data: trend.map((d: any) => d.cpu), itemStyle: { color: '#1890ff' } },
-      { name: '平均内存', type: 'line', smooth: true, data: trend.map((d: any) => d.mem), itemStyle: { color: '#52c41a' } }
+      { name: t('statistics.avgCPU'), type: 'line', smooth: true, data: trend.map((d: any) => d.cpu), itemStyle: { color: '#1890ff' } },
+      { name: t('statistics.avgMemory'), type: 'line', smooth: true, data: trend.map((d: any) => d.mem), itemStyle: { color: '#52c41a' } }
     ]
   }
 })
@@ -210,14 +212,14 @@ const agentActivityOption = computed<any>(() => {
   const data = agentActivity.value?.trendData ?? []
   return {
     tooltip: { trigger: 'axis' as const },
-    legend: { data: ['感知', '研判', '决策'] },
+    legend: { data: [t('statistics.perception'), t('statistics.analysis'), t('statistics.decision')] },
     grid: { left: '3%', right: '4%', bottom: '3%', containLabel: true },
     xAxis: { type: 'category' as const, data: data.map((d: any) => d.date.slice(5)) },
     yAxis: { type: 'value' as const },
     series: [
-      { name: '感知', type: 'line', smooth: true, data: data.map((d: any) => d.calls), itemStyle: { color: '#1890ff' } },
-      { name: '研判', type: 'line', smooth: true, data: data.map((d: any) => d.calls), itemStyle: { color: '#722ed1' } },
-      { name: '决策', type: 'line', smooth: true, data: data.map((d: any) => d.calls), itemStyle: { color: '#fa8c16' } }
+      { name: t('statistics.perception'), type: 'line', smooth: true, data: data.map((d: any) => d.calls), itemStyle: { color: '#1890ff' } },
+      { name: t('statistics.analysis'), type: 'line', smooth: true, data: data.map((d: any) => d.calls), itemStyle: { color: '#722ed1' } },
+      { name: t('statistics.decision'), type: 'line', smooth: true, data: data.map((d: any) => d.calls), itemStyle: { color: '#fa8c16' } }
     ]
   }
 })
@@ -227,24 +229,23 @@ const projectAlarmOption = computed<any>(() => {
   const data = alarmStats.value?.distribution ?? []
   return {
     tooltip: { trigger: 'axis' as const },
-    legend: { data: ['告警总数', '已处理'] },
+    legend: { data: [t('statistics.alarmTotal'), t('statistics.handled')] },
     grid: { left: '3%', right: '4%', bottom: '3%', containLabel: true },
     xAxis: { type: 'category' as const, data: data.map((d: any) => d.name) },
     yAxis: { type: 'value' as const },
     series: [
-      { name: '告警总数', type: 'bar', data: data.map((d: any) => d.value), itemStyle: { color: '#f5222d', borderRadius: [4, 4, 0, 0] } },
-      { name: '已处理', type: 'bar', data: data.map((d: any) => d.value), itemStyle: { color: '#52c41a', borderRadius: [4, 4, 0, 0] } }
+      { name: t('statistics.alarmTotal'), type: 'bar', data: data.map((d: any) => d.value), itemStyle: { color: '#f5222d', borderRadius: [4, 4, 0, 0] } },
+      { name: t('statistics.handled'), type: 'bar', data: data.map((d: any) => d.value), itemStyle: { color: '#52c41a', borderRadius: [4, 4, 0, 0] } }
     ]
   }
 })
 
-async function loadData() {
-  await Promise.all([
-    cloudStore.fetchSecurityScore(),
-    cloudStore.fetchAlarmStats(),
-    cloudStore.fetchDeviceAnalytics(),
-    cloudStore.fetchAgentActivity()
-  ])
+// [v8.6] 非阻塞并行加载 — 各面板独立渲染
+function loadData() {
+  cloudStore.fetchSecurityScore()
+  cloudStore.fetchAlarmStats()
+  cloudStore.fetchDeviceAnalytics()
+  cloudStore.fetchAgentActivity()
 }
 
 onMounted(loadData)
@@ -253,42 +254,42 @@ onMounted(loadData)
 async function exportCSV() {
   const stats = cloudStore.alarmStats
   if (!stats) {
-    ElMessage.warning('暂无数据可导出')
+    ElMessage.warning(t('statistics.noDataExport'))
     return
   }
   try {
-    ElMessage.info('正在生成统计报表...')
+    ElMessage.info(t('statistics.generating'))
     const res = await exportApi.create({
       type: 'statistics',
       format: 'xlsx',
       params: { timeRange: timeRange.value },
-      fileName: `统计报表_${timeRange.value}_${new Date().toISOString().slice(0, 10)}`,
+      fileName: `${t('statistics.title')}_${timeRange.value}_${new Date().toISOString().slice(0, 10)}`,
     })
     const task = res.data?.data
     if (task?.id) {
       const poll = setInterval(async () => {
         try {
           const detail = await exportApi.getTaskDetail(task.id)
-          const t = detail.data?.data
-          if (t?.status === 'completed' && t.fileUrl) {
+          const td = detail.data?.data
+          if (td?.status === 'completed' && td.fileUrl) {
             clearInterval(poll)
             const blob = await exportApi.downloadFile(task.id)
             const url = URL.createObjectURL(blob.data as any)
             const a = document.createElement('a')
             a.href = url
-            a.download = t.fileName || `统计报表.xlsx`
+            a.download = td.fileName || `${t('statistics.title')}.xlsx`
             a.click()
             URL.revokeObjectURL(url)
-            ElMessage.success('导出完成')
-          } else if (t?.status === 'failed') {
+            ElMessage.success(t('statistics.exportComplete'))
+          } else if (td?.status === 'failed') {
             clearInterval(poll)
-            ElMessage.error(t.errorMessage || '导出失败')
+            ElMessage.error(td.errorMessage || t('statistics.exportFailed'))
           }
         } catch { clearInterval(poll) }
       }, 2000)
     }
   } catch {
-    ElMessage.error('导出请求失败')
+    ElMessage.error(t('statistics.exportRequestFailed'))
   }
 }
 </script>

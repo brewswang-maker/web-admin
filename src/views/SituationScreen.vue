@@ -16,22 +16,22 @@
         <div class="ss-panel">
           <div class="panel-title">
             <i class="iconfont1 icon1-anquanpingfen panel-title-icon" aria-hidden="true"></i>
-            <span>安全评分</span>
+            <span>{{ t('situationScreen.securityScore') }}</span>
           </div>
           <div class="score-gauge" ref="scoreGaugeRef" v-if="!overviewFailed && overview"></div>
           <div v-else-if="!overviewFailed" class="empty-state panel-empty">
             <!-- <i class="iconfont1 icon1-anquanpingfen score-empty-icon" aria-hidden="true"></i> -->
-            <span>暂无安全评分数据</span>
+            <span>{{ t('situationScreen.noScoreData') }}</span>
           </div>
           <div v-else class="empty-state error">
-            <span>概览数据加载失败</span>
-            <el-button size="small" link type="primary" @click="fetchSituationData">重试</el-button>
+            <span>{{ t('situationScreen.overviewFailed') }}</span>
+            <el-button size="small" link type="primary" @click="fetchSituationData">{{ t('situationScreen.retry') }}</el-button>
           </div>
         </div>
         <div class="ss-panel">
           <div class="panel-title">
             <i class="iconfont1 icon1-jinritongji panel-title-icon" aria-hidden="true"></i>
-            <span>今日统计</span>
+            <span>{{ t('situationScreen.todayStats') }}</span>
           </div>
           <div class="stats-grid" v-if="!overviewFailed && todayStats.length">
             <div class="stat-card" v-for="s in todayStats" :key="s.label">
@@ -44,16 +44,16 @@
               <div class="stat-label">{{ s.label }}</div>
             </div>
           </div>
-          <div v-else-if="!overviewFailed" class="empty-state panel-empty">暂无今日统计数据</div>
+          <div v-else-if="!overviewFailed" class="empty-state panel-empty">{{ t('situationScreen.noTodayStats') }}</div>
           <div v-else class="empty-state error">
-            <span>今日统计数据加载失败</span>
-            <el-button size="small" link type="primary" @click="fetchSituationData">重试</el-button>
+            <span>{{ t('situationScreen.todayStatsFailed') }}</span>
+            <el-button size="small" link type="primary" @click="fetchSituationData">{{ t('situationScreen.retry') }}</el-button>
           </div>
         </div>
         <div class="ss-panel">
           <div class="panel-title">
             <i class="iconfont1 icon1-shebeizhuangtai panel-title-icon" aria-hidden="true"></i>
-            <span>设备状态</span>
+            <span>{{ t('situationScreen.deviceStatus') }}</span>
           </div>
           <div class="device-status-list" v-if="!overviewFailed && deviceStatusGroups.length" role="list">
             <div
@@ -65,7 +65,7 @@
               <div
                 :ref="el => setDevicePieRef(el, device.key)"
                 class="device-status-pie"
-                :aria-label="`${device.label}在线率 ${deviceOnlineRate(device)}%，在线 ${device.online}，离线 ${device.offline}，故障 ${device.fault}`"
+                :aria-label="`${device.label}online rate ${deviceOnlineRate(device)}%，online ${device.online}，offline ${device.offline}，fault ${device.fault}`"
                 role="img"
               ></div>
               <div class="device-status-info">
@@ -79,17 +79,17 @@
                   <span>{{ device.label }}（{{ device.total }}）</span>
                 </div>
                 <div class="device-status-counts">
-                  <span class="device-count online"><i></i>在线：<b>{{ device.online }}</b></span>
-                  <span class="device-count offline"><i></i>离线：<b>{{ device.offline }}</b></span>
-                  <span class="device-count fault"><i></i>故障：<b>{{ device.fault }}</b></span>
+                  <span class="device-count online"><i></i>{{ t('situationScreen.onlineLabel') }}：<b>{{ device.online }}</b></span>
+                  <span class="device-count offline"><i></i>{{ t('situationScreen.offlineLabel') }}：<b>{{ device.offline }}</b></span>
+                  <span class="device-count fault"><i></i>{{ t('situationScreen.faultLabel') }}：<b>{{ device.fault }}</b></span>
                 </div>
               </div>
             </div>
           </div>
-          <div v-else-if="!overviewFailed" class="empty-state panel-empty">暂无设备数据</div>
+          <div v-else-if="!overviewFailed" class="empty-state panel-empty">{{ t('situationScreen.noDeviceData') }}</div>
           <div v-else class="empty-state error">
-            <span>设备数据加载失败</span>
-            <el-button size="small" link type="primary" @click="fetchSituationData">重试</el-button>
+            <span>{{ t('situationScreen.deviceFailed') }}</span>
+            <el-button size="small" link type="primary" @click="fetchSituationData">{{ t('situationScreen.retry') }}</el-button>
           </div>
         </div>
       </div>
@@ -99,33 +99,33 @@
         <div class="ss-panel map-panel">
           <div class="panel-title">
             <i class="iconfont1 icon1-yuanqu1 panel-title-icon" aria-hidden="true"></i>
-            <span>3D 厂区态势地图</span>
-            <span style="font-size:12px;color:#236db7;margin-left:8px">拖拽旋转 · 滚轮缩放</span>
+            <span>{{ t('situationScreen.sceneMap') }}</span>
+            <span style="font-size:12px;color:#236db7;margin-left:8px">{{ t('situationScreen.sceneHint') }}</span>
           </div>
           <Scene3D v-if="sceneDevices.length" class="scene3d-wrapper" :devices="sceneDevices" :buildings="sceneBuildings" />
           <div v-else-if="devicesFailed" class="empty-state error scene-empty">
-            <span>地图设备数据加载失败</span>
-            <el-button size="small" link type="primary" @click="fetchSituationData">重试</el-button>
+            <span>{{ t('situationScreen.mapFailed') }}</span>
+            <el-button size="small" link type="primary" @click="fetchSituationData">{{ t('situationScreen.retry') }}</el-button>
           </div>
-          <div v-else class="empty-state panel-empty scene-empty">暂无地图设备</div>
+          <div v-else class="empty-state panel-empty scene-empty">{{ t('situationScreen.noMapDevice') }}</div>
         </div>
         <div class="ss-panel">
           <div class="panel-title">
             <i class="iconfont1 icon1-gaojing panel-title-icon" aria-hidden="true"></i>
-            <span>实时告警</span>
-            <button class="alarm-more" type="button" title="进入告警中心" aria-label="进入告警中心" @click="goToAlarms">
+            <span>{{ t('situationScreen.realtimeAlarm') }}</span>
+            <button class="alarm-more" type="button" :title="t('situationScreen.moreAlarms')" :aria-label="t('situationScreen.moreAlarms')" @click="goToAlarms">
               <i class="iconfont1 icon1-zuozuo-" aria-hidden="true"></i>
             </button>
           </div>
           <div class="alarm-table" v-if="!alarmsFailed">
             <div class="alarm-table-row alarm-table-head">
-              <span>级别</span>
-              <span>抓拍缩略图</span>
-              <span>所属分组</span>
-              <span>告警类型</span>
-              <span>告警时间</span>
-              <span>处理状态</span>
-              <span>操作</span>
+              <span>{{ t('situationScreen.colLevel') }}</span>
+              <span>{{ t('situationScreen.colSnapshot') }}</span>
+              <span>{{ t('situationScreen.colGroup') }}</span>
+              <span>{{ t('situationScreen.colType') }}</span>
+              <span>{{ t('situationScreen.colTime') }}</span>
+              <span>{{ t('situationScreen.colStatus') }}</span>
+              <span>{{ t('situationScreen.colAction') }}</span>
             </div>
             <el-scrollbar class="alarm-scroll">
               <div class="alarm-table-body">
@@ -141,12 +141,12 @@
                       :src="getSnapshotUrl(alarm)"
                       :preview-src-list="getSnapshotUrl(alarm) ? [getSnapshotUrl(alarm)] : []"
                       fit="cover"
-                      alt="告警抓拍"
+                      :alt="t('situationScreen.colSnapshot')"
                       preview-teleported
                       hide-on-click-modal
                       @error="onSnapshotError"
                     />
-                    <span v-else class="alarm-snapshot-empty" :title="`告警 ${alarm.id} 暂无抓拍图`">
+                    <span v-else class="alarm-snapshot-empty" :title="t('situationScreen.noSnapshot', { id: alarm.id })">
                       <i class="iconfont1 icon1-wushuju" aria-hidden="true"></i>
                     </span>
                   </span>
@@ -155,20 +155,20 @@
                   <span class="alarm-time">{{ alarm.time }}</span>
                   <span class="alarm-status">
                     <el-tag :type="alarm.status === '已处置' ? 'success' : 'warning'" size="small" effect="dark">
-                      {{ alarm.status }}
+                      {{ alarmStatusText(alarm.status) }}
                     </el-tag>
                   </span>
                   <button class="alarm-action" type="button" @click="goToAlarms">
-                    {{ alarm.status === '已处置' ? '查看' : '去处警' }}
+                    {{ alarm.status === '已处置' ? t('situationScreen.viewDetail') : t('situationScreen.toHandle') }}
                   </button>
                 </div>
-                <div v-if="!latestAlarms.length" class="empty-state panel-empty" style="margin-top:20px;">暂无最新告警</div>
+                <div v-if="!latestAlarms.length" class="empty-state panel-empty" style="margin-top:20px;">{{ t('situationScreen.noLatestAlarm') }}</div>
               </div>
             </el-scrollbar>
           </div>
           <div v-else class="empty-state error">
-            <span>告警数据加载失败</span>
-            <el-button size="small" link type="primary" @click="fetchSituationData">重试</el-button>
+            <span>{{ t('situationScreen.alarmFailed') }}</span>
+            <el-button size="small" link type="primary" @click="fetchSituationData">{{ t('situationScreen.retry') }}</el-button>
           </div>
         </div>
       </div>
@@ -178,40 +178,40 @@
         <div class="ss-panel">
           <div class="panel-title">
             <i class="iconfont1 icon1-zhongguohangtiantubiaoheji-weizhuanlunkuo- panel-title-icon" aria-hidden="true"></i>
-            <span>告警类型分布</span>
+            <span>{{ t('situationScreen.alarmTypeDist') }}</span>
           </div>
           <div class="chart-box" ref="alarmTypeRef" v-if="!overviewFailed && overview"></div>
-          <div v-else-if="!overviewFailed" class="empty-state panel-empty">暂无告警类型数据</div>
+          <div v-else-if="!overviewFailed" class="empty-state panel-empty">{{ t('situationScreen.noAlarmType') }}</div>
           <div v-else class="empty-state error">
-            <span>告警类型数据加载失败</span>
-            <el-button size="small" link type="primary" @click="fetchSituationData">重试</el-button>
+            <span>{{ t('situationScreen.alarmTypeFailed') }}</span>
+            <el-button size="small" link type="primary" @click="fetchSituationData">{{ t('situationScreen.retry') }}</el-button>
           </div>
         </div>
         <div class="ss-panel">
           <div class="panel-title">
             <i class="iconfont1 icon1-qushi panel-title-icon" aria-hidden="true"></i>
-            <span>告警趋势</span>
+            <span>{{ t('situationScreen.alarmTrend') }}</span>
             <div class="trend-mode-switch" style="margin-left: auto">
               <button v-for="m in trendModes" :key="m.value" :class="['mode-btn', { active: alarmTrendMode === m.value }]" @click="switchAlarmTrendMode(m.value)">{{ m.label }}</button>
             </div>
           </div>
           <div class="chart-box" ref="alarmTrendRef" v-if="!hourlyFailed && (hourlyData.length || alarmTrendData.length)"></div>
-          <div v-else-if="!hourlyFailed" class="empty-state panel-empty">暂无时段数据</div>
+          <div v-else-if="!hourlyFailed" class="empty-state panel-empty">{{ t('situationScreen.noHourlyData') }}</div>
           <div v-else class="empty-state error">
-            <span>时段统计加载失败</span>
-            <el-button size="small" link type="primary" @click="fetchSituationData">重试</el-button>
+            <span>{{ t('situationScreen.hourlyFailed') }}</span>
+            <el-button size="small" link type="primary" @click="fetchSituationData">{{ t('situationScreen.retry') }}</el-button>
           </div>
         </div>
         <div class="ss-panel">
           <div class="panel-title">
             <i class="iconfont1 icon1-agent panel-title-icon" aria-hidden="true"></i>
-            <span>多盒子算力负载活跃度柱状图</span>
+            <span>{{ t('situationScreen.agentBar') }}</span>
           </div>
           <div class="chart-box" ref="agentBarRef" v-if="!agentsFailed && agentData.length"></div>
-          <div v-else-if="!agentsFailed" class="empty-state panel-empty">暂无Agent数据</div>
+          <div v-else-if="!agentsFailed" class="empty-state panel-empty">{{ t('situationScreen.noAgentData') }}</div>
           <div v-else class="empty-state error">
-            <span>Agent数据加载失败</span>
-            <el-button size="small" link type="primary" @click="fetchSituationData">重试</el-button>
+            <span>{{ t('situationScreen.agentFailed') }}</span>
+            <el-button size="small" link type="primary" @click="fetchSituationData">{{ t('situationScreen.retry') }}</el-button>
           </div>
         </div>
       </div>
@@ -220,8 +220,9 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
 import * as echarts from 'echarts/core'
 import { GaugeChart, LineChart, PieChart, BarChart } from 'echarts/charts'
@@ -237,6 +238,7 @@ import Scene3D from '@/components/Scene3D.vue'
 echarts.use([GaugeChart, LineChart, PieChart, BarChart, GraphicComponent, GridComponent, TooltipComponent, LegendComponent, TitleComponent, CanvasRenderer])
 
 const router = useRouter()
+const { t } = useI18n()
 
 // ── WebSocket实时推送 ──
 const { connected, subscribe } = useWebSocket('/ws/situation')
@@ -277,7 +279,13 @@ function goToAlarms() {
 }
 
 function alarmLevelText(level: string): string {
-  return ({ critical: '严重', high: '高', medium: '中', low: '低' } as Record<string, string>)[level] ?? level
+  return ({ critical: t('situationScreen.levelCritical'), high: t('situationScreen.levelHigh'), medium: t('situationScreen.levelMedium'), low: t('situationScreen.levelLow') } as Record<string, string>)[level] ?? level
+}
+
+function alarmStatusText(status: string): string {
+  if (status === '已处置') return t('situationScreen.handled')
+  if (status === '未处理') return t('situationScreen.unhandled')
+  return status
 }
 
 const todayStats = ref<Array<{ label: string; value: string; suffix: string; icon: string; iconColor: string }>>([])
@@ -292,11 +300,11 @@ const overview = ref<SituationOverview | null>(null)
 const hourlyData = ref<Array<{ hour: number; alarmCount: number; onlineDevices: number }>>([])
 
 // ── 告警趋势切换 (24h/7d/30d) ──
-const trendModes = [
-  { value: '24h' as const, label: '今日' },
-  { value: '7d' as const, label: '7天' },
-  { value: '30d' as const, label: '30天' },
-]
+const trendModes = computed(() => [
+  { value: '24h' as const, label: t('situationScreen.trendToday') },
+  { value: '7d' as const, label: t('situationScreen.trend7d') },
+  { value: '30d' as const, label: t('situationScreen.trend30d') },
+])
 const alarmTrendMode = ref<'24h' | '7d' | '30d'>('24h')
 const alarmTrendData = ref<Array<{ hour: string; count: number }>>([])
 const agentData = ref<SituationAgentStatus[]>([])
@@ -372,6 +380,9 @@ function mapDevicesToScene(points: MapDevicePoint[]): Device3D[] {
 let charts: echarts.ECharts[] = []
 
 function initCharts() {
+  // [v8.6] 幂等渲染: 先销毁旧实例, 避免重复创建
+  charts.forEach(c => { try { c?.dispose?.() } catch {} })
+  charts = []
   // 安全评分仪表盘
   if (scoreGaugeRef.value) {
     const c = echarts.init(scoreGaugeRef.value)
@@ -386,7 +397,7 @@ function initCharts() {
           silent: true,
           z: 10,
           style: {
-            text: '高',
+            text: t('situationScreen.levelHigh'),
             fill: '#FC4F55',
             font: '600 16px "Microsoft YaHei", sans-serif',
             textVerticalAlign: 'middle',
@@ -399,7 +410,7 @@ function initCharts() {
           silent: true,
           z: 10,
           style: {
-            text: '中',
+            text: t('situationScreen.levelMedium'),
             fill: '#FFC569',
             font: '600 16px "Microsoft YaHei", sans-serif',
             textAlign: 'center',
@@ -412,7 +423,7 @@ function initCharts() {
           silent: true,
           z: 10,
           style: {
-            text: '低',
+            text: t('situationScreen.levelLow'),
             fill: '#42B112',
             font: '600 16px "Microsoft YaHei", sans-serif',
             textVerticalAlign: 'middle',
@@ -438,7 +449,7 @@ function initCharts() {
           silent: true,
           z: 10,
           style: {
-            text: '(离线设备、未闭环告警、算法异常)',
+            text: t('situationScreen.deductionHint'),
             fill: '#00B4FF',
             font: '500 12px "Microsoft YaHei", sans-serif',
             textAlign: 'center',
@@ -514,7 +525,7 @@ function initCharts() {
           detail: {
             show: true,
             offsetCenter: [0, '5%'],
-            formatter: (value: number) => `{score|${Math.round(value)}}{unit|分}`,
+            formatter: (value: number) => `{score|${Math.round(value)}}{unit|${t('situationScreen.scoreUnit')}}`,
             rich: {
               score: { color: '#00DFFF', fontSize: 40, fontWeight: 600, lineHeight: 48 },
               unit: { color: '#00DFFF', fontSize: 16, fontWeight: 600, padding: [15, 0, 0, 2] },
@@ -580,9 +591,9 @@ function initCharts() {
         },
         data: [
           // 扇区顺序：在线、离线、故障。
-          { value: device.online, name: '在线', itemStyle: { color: '#2FC414' } },
-          { value: device.offline, name: '离线', itemStyle: { color: '#FC4F55' } },
-          { value: device.fault, name: '故障', itemStyle: { color: '#7D817B' } },
+          { value: device.online, name: t('situationScreen.onlineLabel'), itemStyle: { color: '#2FC414' } },
+          { value: device.offline, name: t('situationScreen.offlineLabel'), itemStyle: { color: '#FC4F55' } },
+          { value: device.fault, name: t('situationScreen.faultLabel'), itemStyle: { color: '#7D817B' } },
         ],
       }],
     })
@@ -620,10 +631,10 @@ function initCharts() {
     }
     const alarmTypeData = as
       ? [
-          createAlarmTypeItem(as.critical, '严重告警', '#FC1526'),
-          createAlarmTypeItem(as.high, '高级告警', '#F97141'),
-          createAlarmTypeItem(as.medium, '中级告警', '#FBB040'),
-          createAlarmTypeItem(as.low, '低级告警', '#00B4FF'),
+          createAlarmTypeItem(as.critical, t('situationScreen.criticalAlarm'), '#FC1526'),
+          createAlarmTypeItem(as.high, t('situationScreen.highAlarm'), '#F97141'),
+          createAlarmTypeItem(as.medium, t('situationScreen.mediumAlarm'), '#FBB040'),
+          createAlarmTypeItem(as.low, t('situationScreen.lowAlarm'), '#00B4FF'),
         ]
       : []
     c.setOption({
@@ -646,7 +657,7 @@ function initCharts() {
             bottom: 20,
             silent: true,
             style: {
-              text: `{label|误报率：}{value|${formatRate(alarmFalsePositiveRate.value)}%}`,
+              text: `{label|${t('situationScreen.falsePositiveRate')}{value|${formatRate(alarmFalsePositiveRate.value)}%}`,
               textAlign: 'center',
               rich: {
                 label: { fill: '#AADDFF', fontSize: 16, fontWeight: 500 },
@@ -837,10 +848,10 @@ function renderAlarmTrendChart() {
     ? levelTotals.map(value => value / levelTotal)
     : [0.15, 0.25, 0.25, 0.35]
   const levelSeries = [
-    { name: '严重', color: '#FC1526', weight: levelWeights[0] ?? 0.15 },
-    { name: '高', color: '#F97141', weight: levelWeights[1] ?? 0.25 },
-    { name: '中', color: '#FBB040', weight: levelWeights[2] ?? 0.25 },
-    { name: '低', color: '#00B4FF', weight: levelWeights[3] ?? 0.35 },
+    { name: t('situationScreen.levelCritical'), color: '#FC1526', weight: levelWeights[0] ?? 0.15 },
+    { name: t('situationScreen.levelHigh'), color: '#F97141', weight: levelWeights[1] ?? 0.25 },
+    { name: t('situationScreen.levelMedium'), color: '#FBB040', weight: levelWeights[2] ?? 0.25 },
+    { name: t('situationScreen.levelLow'), color: '#00B4FF', weight: levelWeights[3] ?? 0.35 },
   ]
   // 7d/30d 模式 X 轴标签间距自适应
   const labelInterval = alarmTrendMode.value === '30d' ? 4 : alarmTrendMode.value === '7d' ? 0 : 3
@@ -921,8 +932,8 @@ async function switchAlarmTrendMode(mode: '24h' | '7d' | '30d') {
   }
 }
 
-/** 加载态势大屏数据（任一端点失败即置 failed 标记，UI 显式空态） */
-async function fetchSituationData() {
+/** 加载态势大屏数据 — 非阻塞并行加载, 各面板独立渲染 */
+function fetchSituationData() {
   overviewLoading.value = true
   overviewFailed.value = false
   devicesFailed.value = false
@@ -930,97 +941,68 @@ async function fetchSituationData() {
   agentsFailed.value = false
   hourlyFailed.value = false
 
-  const results = await Promise.allSettled([
-    situationApi.getOverview(),
-    situationApi.getMapDevices(),
-    situationApi.getRealtimeAlarms({ limit: 20 }),
-    situationApi.getAgentStatuses(),
-    situationApi.getHourlyStats(),
-  ])
-
-  const [overviewRes, devicesRes, alarmsRes, agentsRes, hourlyRes] = results
-
-  // 概览
-  if (overviewRes.status === 'fulfilled') {
-    const d = overviewRes.value.data?.data
+  // 1. 概览 (安全评分 + 今日统计 + 设备状态 + 告警类型分布)
+  situationApi.getOverview().then(res => {
+    const d = res.data?.data
     if (d) {
       overview.value = d
       const aStats = d.alarmStats
       todayStats.value = [
-        { label: '算法启用总数', value: String(d.totalAgents ?? 0), suffix: '', icon: 'icon1-AIsuanfa', iconColor: '#01B9E7' },
-        { label: '今日告警总数', value: String(aStats?.todayTotal ?? 0), suffix: '', icon: 'icon1-gaojing', iconColor: '#D13838' },
-        // [v8.3 fix] 使用 overview 返回的真实处置率, 不再用 deviceStats.onlineRate (语义错误)
-        { label: '告警处置率', value: formatRate(d.handleRate), suffix: d.handleRate != null ? '%' : '', icon: 'icon1-anquanguanli', iconColor: '#3EB011' },
-        { label: '边缘算力调用', value: d.totalAgents > 0 ? String(d.activeAgents) : '--', suffix: '', icon: 'icon1-agent', iconColor: '#7938D1' },
+        { label: t('situationScreen.totalAgents'), value: String(d.totalAgents ?? 0), suffix: '', icon: 'icon1-AIsuanfa', iconColor: '#01B9E7' },
+        { label: t('situationScreen.todayAlarmTotal'), value: String(aStats?.todayTotal ?? 0), suffix: '', icon: 'icon1-gaojing', iconColor: '#D13838' },
+        { label: t('situationScreen.alarmHandleRate'), value: formatRate(d.handleRate), suffix: d.handleRate != null ? '%' : '', icon: 'icon1-anquanguanli', iconColor: '#3EB011' },
+        { label: t('situationScreen.edgeCompute'), value: d.totalAgents > 0 ? String(d.activeAgents) : '--', suffix: '', icon: 'icon1-agent', iconColor: '#7938D1' },
       ]
-
-      // [P1-FIX] 从 overview.deviceStats 填充设备状态分组 (之前遗漏导致“暂无设备数据”)
       const ds = d.deviceStats
       if (ds) {
         deviceStatusGroups.value = [{
           key: 'video-box',
-          label: '视频设备',
+          label: t('situationScreen.videoDevice'),
           total: ds.total ?? 0,
           online: ds.online ?? 0,
           offline: ds.offline ?? Math.max(0, (ds.total ?? 0) - (ds.online ?? 0)),
           fault: ds.maintenance ?? 0,
         }]
       }
+      // 渲染评分仪表盘 + 设备状态饼图 + 告警类型分布
+      nextTick(() => initCharts())
     } else {
       overviewFailed.value = true
     }
-  } else {
-    overviewFailed.value = true
-    const reason = (overviewRes as PromiseRejectedResult).reason
-    console.warn('[situation] overview 加载失败:', reason)
-  }
+    overviewLoading.value = false
+  }).catch(() => { overviewFailed.value = true; overviewLoading.value = false })
 
-  // 地图设备 → 3D场景
-  if (devicesRes.status === 'fulfilled') {
-    const points = devicesRes.value.data?.data
+  // 2. 地图设备 → 3D场景
+  situationApi.getMapDevices().then(res => {
+    const points = res.data?.data
     if (points?.length) sceneDevices.value = mapDevicesToScene(points)
     else devicesFailed.value = true
-  } else {
-    devicesFailed.value = true
-    console.warn('[situation] map devices 加载失败:', (devicesRes as PromiseRejectedResult).reason)
-  }
+  }).catch(() => { devicesFailed.value = true })
 
-  // 实时告警
-  if (alarmsRes.status === 'fulfilled') {
-    const alarms = alarmsRes.value.data?.data
+  // 3. 实时告警
+  situationApi.getRealtimeAlarms({ limit: 20 }).then(res => {
+    const alarms = res.data?.data
     if (alarms?.length) latestAlarms.value = alarms.map(toAlarm)
     else alarmsFailed.value = true
-  } else {
-    alarmsFailed.value = true
-    console.warn('[situation] alarms 加载失败:', (alarmsRes as PromiseRejectedResult).reason)
-  }
+  }).catch(() => { alarmsFailed.value = true })
 
-  // Agent状态
-  if (agentsRes.status === 'fulfilled') {
-    const agents = agentsRes.value.data?.data
-    if (agents?.length) agentData.value = agents
-    else agentsFailed.value = true
-  } else {
-    agentsFailed.value = true
-    console.warn('[situation] agents 加载失败:', (agentsRes as PromiseRejectedResult).reason)
-  }
+  // 4. Agent状态
+  situationApi.getAgentStatuses().then(res => {
+    const agents = res.data?.data
+    if (agents?.length) {
+      agentData.value = agents
+      nextTick(() => initCharts())
+    } else agentsFailed.value = true
+  }).catch(() => { agentsFailed.value = true })
 
-  // 时段统计
-  if (hourlyRes.status === 'fulfilled') {
-    const hourly = hourlyRes.value.data?.data
-    if (hourly?.length) hourlyData.value = hourly
-    else hourlyFailed.value = true
-  } else {
-    hourlyFailed.value = true
-    console.warn('[situation] hourly stats 加载失败:', (hourlyRes as PromiseRejectedResult).reason)
-  }
-
-  overviewLoading.value = false
-
-  // 关键端点（概览/告警）全失败时给一次性提示
-  if (overviewFailed.value && alarmsFailed.value) {
-    ElMessage.error('态势大屏核心数据加载失败,请检查后端服务或权限')
-  }
+  // 5. 时段统计 (告警趋势 24h)
+  situationApi.getHourlyStats().then(res => {
+    const hourly = res.data?.data
+    if (hourly?.length) {
+      hourlyData.value = hourly
+      nextTick(() => initCharts())
+    } else hourlyFailed.value = true
+  }).catch(() => { hourlyFailed.value = true })
 }
 
 /** 抓拍图加载失败时的兜底 — 自动隐藏并打印 warn, 避免列表卡顿 */
@@ -1051,10 +1033,10 @@ onMounted(async () => {
   // 订阅实时告警推送
   unsubAlarm = subscribe('alarm', onAlarmPush)
 
-  // 拉取API数据，完成后初始化图表
-  await fetchSituationData()
-  await nextTick()
-  initCharts()
+  // [v8.6] 非阻塞: 并行加载各面板数据, 到达即渲染
+  fetchSituationData()
+  // (各加载器完成后自行 nextTick + initCharts)
+  // initCharts removed — each loader calls it independently
 })
 
 onUnmounted(() => {

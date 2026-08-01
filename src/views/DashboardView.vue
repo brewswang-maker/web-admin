@@ -3,9 +3,9 @@
     <!-- ===== 页面标题 ===== -->
     <div class="page-header">
       <div class="page-title-wrap">
-        <h1 class="page-title">🏠 全局仪表盘</h1>
+        <h1 class="page-title">{{ t('dashboard.title') }}</h1>
         <span class="page-subtitle">
-          最后更新: {{ lastUpdated }}
+          {{ t('dashboard.lastUpdate') }}: {{ lastUpdated }}
           <el-button link type="primary" size="small" @click="refreshAll" class="refresh-btn">
             <el-icon :class="{ spinning: refreshing }"><Refresh /></el-icon>
           </el-button>
@@ -15,17 +15,17 @@
       <div class="header-actions">
         <el-select
           v-model="selectedProject"
-          placeholder="选择项目"
+          :placeholder="t('dashboard.selectProject')"
           size="default"
           style="width: 180px"
           @change="onProjectChange"
         >
-          <el-option label="全部项目" value="all" />
-          <el-option label="智慧园区" value="park" />
-          <el-option label="智慧工地" value="construction" />
-          <el-option label="停车场" value="parking" />
-          <el-option label="商场客流" value="mall" />
-          <el-option label="化工厂" value="chemical" />
+          <el-option :label="t('dashboard.allProjects')" value="all" />
+          <el-option :label="t('dashboard.projectSmartPark')" value="park" />
+          <el-option :label="t('dashboard.projectConstruction')" value="construction" />
+          <el-option :label="t('dashboard.projectParking')" value="parking" />
+          <el-option :label="t('dashboard.projectMall')" value="mall" />
+          <el-option :label="t('dashboard.projectChemical')" value="chemical" />
         </el-select>
       </div>
     </div>
@@ -63,9 +63,9 @@
         <el-card class="score-card" shadow="hover">
           <template #header>
             <div class="card-header">
-              <span class="card-header-title">🛡️ 全局安全态势</span>
+              <span class="card-header-title">{{ t('dashboard.securityPosture') }}</span>
               <el-tag v-if="securityScore" :type="scoreTagType" size="small" effect="plain">{{ scoreLabel }}</el-tag>
-              <el-tag v-else type="info" size="small" effect="plain">{{ securityScoreFailed ? '加载失败' : '加载中…' }}</el-tag>
+              <el-tag v-else type="info" size="small" effect="plain">{{ securityScoreFailed ? t('dashboard.loadFailed') : t('dashboard.loading') }}</el-tag>
             </div>
           </template>
           <div class="score-body" v-if="securityScore">
@@ -73,7 +73,7 @@
               <div class="score-ring" :style="{ '--score-deg': scoreDeg }">
                 <div class="score-ring-inner">
                   <span class="score-big">{{ securityScore?.overall ?? '--' }}</span>
-                  <span class="score-unit-label">分</span>
+                  <span class="score-unit-label">{{ t('dashboard.scoreUnitLabel') }}</span>
                 </div>
               </div>
             </div>
@@ -94,8 +94,8 @@
           </div>
           <div v-else class="dashboard-empty">
             <el-skeleton v-if="!securityScoreFailed" :rows="4" animated />
-            <el-empty v-else description="安全评分数据加载失败" :image-size="60">
-              <el-button size="small" type="primary" @click="refreshAll">重试</el-button>
+            <el-empty v-else :description="t('dashboard.securityScoreFailed')" :image-size="60">
+              <el-button size="small" type="primary" @click="refreshAll">{{ t('dashboard.retry') }}</el-button>
             </el-empty>
           </div>
         </el-card>
@@ -106,7 +106,7 @@
         <el-card class="agent-card" shadow="hover">
           <template #header>
             <div class="card-header">
-              <span class="card-header-title">🟣 AI Agent 活跃度</span>
+              <span class="card-header-title">{{ t('dashboard.agentActivity') }}</span>
               <el-tag type="primary" size="small" effect="light">Hermes</el-tag>
             </div>
           </template>
@@ -129,8 +129,8 @@
           </div>
           <div v-else class="dashboard-empty">
             <el-skeleton v-if="!agentActivityFailed" :rows="3" animated />
-            <el-empty v-else description="Agent 数据加载失败" :image-size="60">
-              <el-button size="small" type="primary" @click="refreshAll">重试</el-button>
+            <el-empty v-else :description="t('dashboard.agentActivityFailed')" :image-size="60">
+              <el-button size="small" type="primary" @click="refreshAll">{{ t('dashboard.retry') }}</el-button>
             </el-empty>
           </div>
           <div class="agent-confidence" v-if="agentActivity">
@@ -144,7 +144,7 @@
               />
             </div>
             <div class="confidence-text">
-              <span class="conf-label">平均置信度</span>
+              <span class="conf-label">{{ t('dashboard.avgConfidence') }}</span>
               <span class="conf-value">{{ agentActivity?.avgConfidence ? (agentActivity.avgConfidence * 100).toFixed(1) + '%' : '--' }}</span>
             </div>
           </div>
@@ -156,9 +156,9 @@
         <el-card class="fed-mini-card" shadow="hover">
           <template #header>
             <div class="card-header">
-              <span class="card-header-title">🧠 联邦学习状态</span>
+              <span class="card-header-title">{{ t('dashboard.federationStatus') }}</span>
               <el-button link size="small" type="primary" @click="$router.push('/federation')">
-                查看详情 →
+                {{ t('dashboard.fedDetailLink') }} →
               </el-button>
             </div>
           </template>
@@ -170,23 +170,23 @@
             <div class="fed-metrics-grid">
               <div class="fed-metric-item">
                 <span class="fed-metric-num">{{ federationStatus.participatingBoxes }}/{{ federationStatus.totalBoxes }}</span>
-                <span class="fed-metric-label">参与盒子</span>
+                <span class="fed-metric-label">{{ t('dashboard.fedParticipating') }}</span>
               </div>
               <div class="fed-metric-item">
                 <span class="fed-metric-num">R{{ federationStatus.currentRound }}</span>
-                <span class="fed-metric-label">当前轮次</span>
+                <span class="fed-metric-label">{{ t('dashboard.fedRound') }}</span>
               </div>
               <div class="fed-metric-item">
                 <span class="fed-metric-num accent">{{ fedAggregationAccuracy }}%</span>
-                <span class="fed-metric-label">聚合精度</span>
+                <span class="fed-metric-label">{{ t('dashboard.fedAccuracy') }}</span>
               </div>
               <div class="fed-metric-item">
                 <span class="fed-metric-num">{{ fedPrivacyUsed }}%</span>
-                <span class="fed-metric-label">隐私预算</span>
+                <span class="fed-metric-label">{{ t('dashboard.fedPrivacy') }}</span>
               </div>
             </div>
           </div>
-          <el-empty v-else description="联邦学习未启动" :image-size="60" />
+          <el-empty v-else :description="t('dashboard.fedNotStarted')" :image-size="60" />
         </el-card>
       </el-col>
     </el-row>
@@ -198,21 +198,21 @@
         <el-card shadow="hover">
           <template #header>
             <div class="card-header">
-              <span class="card-header-title">📈 告警趋势</span>
+              <span class="card-header-title">{{ t('dashboard.alarmTrend7d') }}</span>
               <el-radio-group v-model="alarmTrendMode" size="small" @change="fetchAlarmTrend" style="margin-left: 12px">
-                <el-radio-button value="24h">今日</el-radio-button>
-                <el-radio-button value="7d">7天</el-radio-button>
-                <el-radio-button value="30d">30天</el-radio-button>
+                <el-radio-button value="24h">{{ t('dashboard.trendToday') }}</el-radio-button>
+                <el-radio-button value="7d">{{ t('dashboard.trend7d') }}</el-radio-button>
+                <el-radio-button value="30d">{{ t('dashboard.trend30d') }}</el-radio-button>
               </el-radio-group>
               <span v-if="alarmTrendUp !== null && alarmTrendPercent !== null && alarmTrendMode !== '24h'" class="card-header-extra" :class="alarmTrendUp ? 'up' : 'down'">
-                {{ alarmTrendMode === '30d' ? '本月' : '本周' }}{{ alarmTrendUp ? '↑' : '↓' }}{{ alarmTrendPercent }}%
+                {{ alarmTrendMode === '30d' ? t('dashboard.trendThisMonth') : t('dashboard.trendThisWeekLabel') }}{{ alarmTrendUp ? '↑' : '↓' }}{{ alarmTrendPercent }}%
               </span>
             </div>
           </template>
           <LazyChart v-if="alarmTrendData.length" :option="alarmTrendOption" height="280px" />
           <el-skeleton v-else-if="!alarmTrendFailed" :rows="6" animated />
-          <el-empty v-else description="告警趋势加载失败" :image-size="60">
-            <el-button size="small" type="primary" @click="fetchAlarmTrend">重试</el-button>
+          <el-empty v-else :description="t('dashboard.alarmTrendFailed')" :image-size="60">
+            <el-button size="small" type="primary" @click="fetchAlarmTrend">{{ t('dashboard.retry') }}</el-button>
           </el-empty>
         </el-card>
       </el-col>
@@ -222,8 +222,8 @@
         <el-card shadow="hover">
           <template #header>
             <div class="card-header">
-              <span class="card-header-title">🗺️ 项目设备在线率</span>
-              <el-button link size="small" type="primary" @click="$router.push('/projects')">全部项目 →</el-button>
+              <span class="card-header-title">{{ t('dashboard.projectHeatmap') }}</span>
+              <el-button link size="small" type="primary" @click="$router.push('/projects')">{{ t('dashboard.allProjectsLink') }} →</el-button>
             </div>
           </template>
           <div v-if="projectHeatmap.length" class="project-heatmap">
@@ -252,8 +252,8 @@
             </div>
           </div>
           <el-skeleton v-else-if="!projectHeatmapFailed" :rows="4" animated />
-          <el-empty v-else description="项目在线率加载失败" :image-size="60">
-            <el-button size="small" type="primary" @click="refreshAll">重试</el-button>
+          <el-empty v-else :description="t('dashboard.projectHeatmapFailed')" :image-size="60">
+            <el-button size="small" type="primary" @click="refreshAll">{{ t('dashboard.retry') }}</el-button>
           </el-empty>
         </el-card>
       </el-col>
@@ -265,6 +265,7 @@
 import { ref, computed, reactive, onMounted, onUnmounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import {
   Odometer, Monitor, Bell, CircleCheck,
   Cpu, Refresh, TrendCharts,
@@ -276,6 +277,7 @@ import LazyChart from '@/components/LazyChart.vue'
 import type { EChartsOption } from 'echarts'
 
 const router = useRouter()
+const { t } = useI18n()
 
 // ── WebSocket 实时推送 ──
 const { connected: wsConnected, subscribe } = useWebSocket('/ws/dashboard')
@@ -294,25 +296,25 @@ function startRefreshTimer() {
   let sec = 0
   refreshTimer = setInterval(() => {
     sec++
-    lastUpdated.value = sec < 60 ? `${sec}秒前` : `${Math.floor(sec / 60)}分钟前`
+    lastUpdated.value = sec < 60 ? `${sec}${t('dashboard.secondsAgo')}` : `${Math.floor(sec / 60)}${t('dashboard.minutesAgo')}`
   }, 1000)
 }
 
 onMounted(async () => {
   startRefreshTimer()
-  await fetchDashboardData()
+  fetchDashboardData()  // [v8.6] 非阻塞并行加载
 
   // WebSocket: 告警推送 → 增量更新告警计数
   unsubAlarm = subscribe('alarm', (data: any) => {
     topStatsValues.alarmCount += 1
-    lastUpdated.value = '刚刚'
+    lastUpdated.value = t('dashboard.justNow')
     startRefreshTimer()
   })
 
   // WebSocket: 设备状态变更 → 增量刷新设备统计
   unsubDevice = subscribe('device_status', () => {
     topStatsValues.deviceOnline += 0 // trigger reactivity
-    lastUpdated.value = '刚刚'
+    lastUpdated.value = t('dashboard.justNow')
     startRefreshTimer()
   })
 
@@ -328,7 +330,8 @@ onUnmounted(() => {
 })
 
 // ── API数据获取 ──
-async function fetchDashboardData() {
+// [v8.6] 非阻塞并行加载 — 各卡片独立渲染, 不等待其他 API
+function fetchDashboardData() {
   // 清空失败标记
   securityScoreFailed.value = false
   scoreDimensionsFailed.value = false
@@ -337,141 +340,76 @@ async function fetchDashboardData() {
   projectHeatmapFailed.value = false
   federationStatusFailed.value = false
 
-  const [overviewRes, trendRes, deviceRes, fedRes, agentRes, dimsRes, heatmapRes] = await Promise.allSettled([
-    statsHttp.get('/overview', { params: { project: selectedProject.value } }),
-    statsHttp.get('/alarm-trend', { params: { project: selectedProject.value, mode: alarmTrendMode.value } }),
-    statsHttp.get('/device-status', { params: { project: selectedProject.value } }),
-    federationApi.getStatus(),
-    statsHttp.get('/agent-activity', { params: { period: '24h' } }),
-    statsHttp.get('/security-score', { params: { period: '24h' } }),
-    statsHttp.get('/project-alarms', { params: { period: '7d' } }),
-  ])
+  const proj = selectedProject.value
 
-  if (overviewRes.status === 'fulfilled' && overviewRes.value.data) {
-    const d = overviewRes.value.data?.data || overviewRes.value.data
+  // 1. 概览 (安全评分 + 顶部统计)
+  statsHttp.get('/overview', { params: { project: proj } }).then(res => {
+    const d = res.data?.data || res.data
     if (d.security_score !== undefined) {
-      securityScore.value = {
-        overall: d.security_score,
-        // [v8.3 fix] 不再用 alarm_trend 百分比作为评分变化 (语义错误: alarm_trend=288% → -289点 不合理)
-        //   评分变化需要昨日评分数据, 后端暂不提供, 所以不显示趋势
-        trend: undefined,
-      }
-    } else {
-      securityScoreFailed.value = true
-    }
+      securityScore.value = { overall: d.security_score, trend: undefined }
+    } else securityScoreFailed.value = true
     topStatsValues.deviceOnline = d.online_devices ?? 0
     topStatsValues.deviceTotal = d.total_devices ?? 0
     topStatsValues.alarmCount = d.today_alarms ?? 0
     topStatsValues.handleRate = d.handle_rate ?? 0
-    // [v8.3 fix] 存储真实告警趋势 (正=今日更多, 负=今日更少)
     topStatsValues.alarmTrend = d.alarm_trend ?? 0
-  } else {
-    securityScoreFailed.value = true
-  }
+  }).catch(() => { securityScoreFailed.value = true })
 
-  if (trendRes.status === 'fulfilled' && trendRes.value.data) {
-    const d = trendRes.value.data?.data || trendRes.value.data
+  // 2. 告警趋势
+  statsHttp.get('/alarm-trend', { params: { project: proj, mode: alarmTrendMode.value } }).then(res => {
+    const d = res.data?.data || res.data
     if (d.trend) {
       alarmTrendData.value = d.trend
-      // 计算趋势方向
       if (d.trend.length >= 2) {
         const half = Math.floor(d.trend.length / 2)
         const prev = d.trend.slice(0, half).reduce((s: number, t: any) => s + (t.count ?? 0), 0)
         const curr = d.trend.slice(half).reduce((s: number, t: any) => s + (t.count ?? 0), 0)
-        if (prev > 0) {
-          alarmTrendPercent.value = Math.round(((curr - prev) / prev) * 100)
-          alarmTrendUp.value = curr <= prev
-        }
+        if (prev > 0) { alarmTrendPercent.value = Math.round(((curr - prev) / prev) * 100); alarmTrendUp.value = curr <= prev }
       }
     }
     if (d.top_types) alarmTypes.value = d.top_types
-  } else {
-    alarmTrendFailed.value = true
-  }
+  }).catch(() => { alarmTrendFailed.value = true })
 
-  if (deviceRes.status === 'fulfilled' && deviceRes.value.data) {
-    const d = deviceRes.value.data?.data || deviceRes.value.data
-    if (d.online_count !== undefined) {
-      topStatsValues.deviceOnline = d.online_count
-      topStatsValues.deviceTotal = d.total_count
-    }
-  }
+  // 3. 设备状态
+  statsHttp.get('/device-status', { params: { project: proj } }).then(res => {
+    const d = res.data?.data || res.data
+    if (d.online_count !== undefined) { topStatsValues.deviceOnline = d.online_count; topStatsValues.deviceTotal = d.total_count }
+  }).catch(() => {})
 
-  if (fedRes.status === 'fulfilled' && fedRes.value.data?.data) {
-    const f = fedRes.value.data.data as any
-    federationStatus.value = {
-      status: f.enabled ? 'running' : 'idle',
-      participatingBoxes: f.activeNodes ?? 0,
-      totalBoxes: f.totalNodes ?? 0,
-      currentRound: f.round ?? 0,
-      aggregationAccuracy: f.accuracy ?? 0,
-      privacyBudget: 0.65,
-      privacyBudgetTotal: 1.0,
-    }
-  } else {
-    federationStatusFailed.value = true
-  }
+  // 4. 联邦学习状态
+  federationApi.getStatus().then(res => {
+    const f = res.data?.data as any
+    if (f) {
+      federationStatus.value = { status: f.enabled ? 'running' : 'idle', participatingBoxes: f.activeNodes ?? 0, totalBoxes: f.totalNodes ?? 0, currentRound: f.round ?? 0, aggregationAccuracy: f.accuracy ?? 0, privacyBudget: 0.65, privacyBudgetTotal: 1.0 }
+    } else federationStatusFailed.value = true
+  }).catch(() => { federationStatusFailed.value = true })
 
-  if (agentRes.status === 'fulfilled' && agentRes.value.data) {
-    const d = agentRes.value.data?.data || agentRes.value.data
+  // 5. Agent 活跃度
+  statsHttp.get('/agent-activity', { params: { period: '24h' } }).then(res => {
+    const d = res.data?.data || res.data
     if (d && (d.perceptionCalls !== undefined || d.calls_today !== undefined)) {
-      agentActivity.value = {
-        perceptionCalls: d.perceptionCalls ?? 0,
-        analysisCalls: d.analysisCalls ?? 0,
-        decisionCalls: d.decisionCalls ?? 0,
-        expertInvokes: d.expertInvokes ?? 0,
-        avgConfidence: d.avgConfidence ?? 0,
-      }
-    } else {
-      agentActivityFailed.value = true
-    }
-  } else {
-    agentActivityFailed.value = true
-  }
+      agentActivity.value = { perceptionCalls: d.perceptionCalls ?? 0, analysisCalls: d.analysisCalls ?? 0, decisionCalls: d.decisionCalls ?? 0, expertInvokes: d.expertInvokes ?? 0, avgConfidence: d.avgConfidence ?? 0 }
+    } else agentActivityFailed.value = true
+  }).catch(() => { agentActivityFailed.value = true })
 
-  if (dimsRes.status === 'fulfilled' && dimsRes.value.data) {
-    const d = dimsRes.value.data?.data || dimsRes.value.data
+  // 6. 安全评分维度
+  statsHttp.get('/security-score', { params: { period: '24h' } }).then(res => {
+    const d = res.data?.data || res.data
     if (Array.isArray(d?.dimensions) && d.dimensions.length) {
-      scoreDimensions.value = d.dimensions.map((x: any) => ({
-        label: x.label ?? '',
-        value: Number(x.value ?? 0),
-        color: x.color ?? '#3B82F6',
-      }))
+      scoreDimensions.value = d.dimensions.map((x: any) => ({ label: x.label ?? '', value: Number(x.value ?? 0), color: x.color ?? '#3B82F6' }))
     } else if (Array.isArray(d) && d.length) {
-      scoreDimensions.value = d.map((x: any) => ({
-        label: x.label ?? '',
-        value: Number(x.value ?? 0),
-        color: x.color ?? '#3B82F6',
-      }))
-    } else {
-      scoreDimensionsFailed.value = true
-    }
-  } else {
-    scoreDimensionsFailed.value = true
-  }
+      scoreDimensions.value = d.map((x: any) => ({ label: x.label ?? '', value: Number(x.value ?? 0), color: x.color ?? '#3B82F6' }))
+    } else scoreDimensionsFailed.value = true
+  }).catch(() => { scoreDimensionsFailed.value = true })
 
-  if (heatmapRes.status === 'fulfilled' && heatmapRes.value.data) {
-    const d = heatmapRes.value.data?.data || heatmapRes.value.data
+  // 7. 项目热力图
+  statsHttp.get('/project-alarms', { params: { period: '7d' } }).then(res => {
+    const d = res.data?.data || res.data
     const items = Array.isArray(d) ? d : (d?.items ?? [])
-    if (items.length) {
-      projectHeatmap.value = items.map((x: any) => ({
-        name: x.projectName ?? x.name ?? '',
-        rate: Number(x.onlineRate ?? x.rate ?? 0),
-      }))
-    } else {
-      projectHeatmapFailed.value = true
-    }
-  } else {
-    projectHeatmapFailed.value = true
-  }
+    if (items.length) { projectHeatmap.value = items.map((x: any) => ({ name: x.projectName ?? x.name ?? '', rate: Number(x.onlineRate ?? x.rate ?? 0) })) }
+    else projectHeatmapFailed.value = true
+  }).catch(() => { projectHeatmapFailed.value = true })
 
-  const failedCount = [
-    securityScoreFailed, scoreDimensionsFailed, agentActivityFailed,
-    alarmTrendFailed, projectHeatmapFailed, federationStatusFailed,
-  ].filter(v => v.value).length
-  if (failedCount >= 3) {
-    ElMessage.error('仪表盘关键数据加载失败,请检查后端服务或权限')
-  }
 }
 
 const topStatsValues = reactive({
@@ -486,9 +424,9 @@ let autoRefreshTimer: ReturnType<typeof setInterval> | null = null
 
 async function refreshAll() {
   refreshing.value = true
-  await fetchDashboardData()
+  fetchDashboardData()  // [v8.6] 非阻塞并行加载
   refreshing.value = false
-  lastUpdated.value = '刚刚'
+  lastUpdated.value = t('dashboard.justNow')
   startRefreshTimer()
 }
 
@@ -526,27 +464,27 @@ function onProjectChange() {
 // ── 顶部统计卡片 ──
 const topStats = computed(() => [
   {
-    label: '安全评分',
+    label: t('dashboard.securityScore'),
     value: securityScore.value?.overall ?? '--',
     unit: '',
     icon: Odometer,
     gradient: 'linear-gradient(135deg, #3B82F6, #2563EB)',
     trend: securityScore.value?.trend,
-    trendUnit: '点',
-    trendDesc: '较昨日',
+    trendUnit: t('dashboard.scorePointUnit'),
+    trendDesc: t('dashboard.vsYesterday'),
   },
   {
-    label: '设备在线',
+    label: t('dashboard.deviceOnline'),
     value: `${topStatsValues.deviceOnline}/${topStatsValues.deviceTotal}`,
     unit: '',
     icon: Monitor,
     gradient: 'linear-gradient(135deg, #10B981, #059669)',
     trend: topStatsValues.deviceTotal > 0 ? +((topStatsValues.deviceOnline / topStatsValues.deviceTotal * 100 - 96).toFixed(1)) : 0,
     trendUnit: '%',
-    trendDesc: `在线率 ${topStatsValues.deviceTotal > 0 ? (topStatsValues.deviceOnline / topStatsValues.deviceTotal * 100).toFixed(1) : '--'}%`,
+    trendDesc: `${t('dashboard.onlineRate')} ${topStatsValues.deviceTotal > 0 ? (topStatsValues.deviceOnline / topStatsValues.deviceTotal * 100).toFixed(1) : '--'}%`,
   },
   {
-    label: '今日告警',
+    label: t('dashboard.todayAlarms'),
     value: topStatsValues.alarmCount,
     unit: '',
     icon: Bell,
@@ -554,10 +492,10 @@ const topStats = computed(() => [
     // [v8.3 fix] 使用真实趋势数据, 不再硬编码 -12
     trend: Math.round(topStatsValues.alarmTrend),
     trendUnit: '%',
-    trendDesc: '较昨日',
+    trendDesc: t('dashboard.vsYesterday'),
   },
   {
-    label: '处置率',
+    label: t('dashboard.handleRate'),
     value: topStatsValues.handleRate.toFixed(1),
     unit: '%',
     icon: CircleCheck,
@@ -580,7 +518,7 @@ const scoreTagType = computed(() => {
 })
 const scoreLabel = computed(() => {
   const s = securityScore.value?.overall ?? 0
-  return s >= 90 ? '优秀' : s >= 70 ? '良好' : '需关注'
+  return s >= 90 ? t('dashboard.scoreExcellent') : s >= 70 ? t('dashboard.scoreGood') : t('dashboard.scoreWarn')
 })
 
 const scoreDimensions = ref<Array<{ label: string; value: number; color: string }>>([])
@@ -598,31 +536,31 @@ const agentStats = computed(() => {
   if (!a) return []
   return [
     {
-      label: '感知Agent',
-      desc: '视频/音频/传感器',
+      label: t('dashboard.agentPerception'),
+      desc: t('dashboard.agentDescPerception'),
       value: a.perceptionCalls.toLocaleString(),
-      unit: '次/天',
+      unit: t('dashboard.perDay'),
       color: '#3B82F6',
     },
     {
-      label: '研判Agent',
-      desc: '事件分析/推理',
+      label: t('dashboard.agentAnalysis'),
+      desc: t('dashboard.agentDescAnalysis'),
       value: a.analysisCalls.toLocaleString(),
-      unit: '次/天',
+      unit: t('dashboard.perDay'),
       color: '#7C3AED',
     },
     {
-      label: '决策Agent',
-      desc: '策略生成/调度',
+      label: t('dashboard.agentDecision'),
+      desc: t('dashboard.agentDescDecision'),
       value: a.decisionCalls.toLocaleString(),
-      unit: '次/天',
+      unit: t('dashboard.perDay'),
       color: '#F59E0B',
     },
     {
-      label: '专家唤醒',
-      desc: '领域专家调用',
+      label: t('dashboard.agentExpert'),
+      desc: t('dashboard.agentDescExpert'),
       value: a.expertInvokes.toString(),
-      unit: '次',
+      unit: t('dashboard.times'),
       color: '#10B981',
     },
   ]
@@ -646,8 +584,8 @@ const alarmTypes = ref<any[]>([])
 const alarmTrendFailed = ref(false)
 const projectHeatmapFailed = ref(false)
 const fedStatusLabel = computed(() => {
-  const m: Record<string, string> = { running: '🟢 运行中', paused: '⏸ 已暂停', idle: '⚪ 空闲' }
-  return m[federationStatus.value?.status ?? 'idle'] ?? '未知'
+  const m: Record<string, string> = { running: t('dashboard.fedRunning'), paused: t('dashboard.fedPaused'), idle: t('dashboard.fedIdle') }
+  return m[federationStatus.value?.status ?? 'idle'] ?? t('dashboard.unknown')
 })
 const fedAggregationAccuracy = computed(() =>
   ((federationStatus.value?.aggregationAccuracy ?? 0) * 100).toFixed(1)
@@ -694,14 +632,14 @@ const alarmTrendOption = computed<EChartsOption>(() => {
   },
   series: seriesData.length > 0 ? [
     {
-      name: '告警数', type: 'line', data: seriesData,
+      name: t('dashboard.alarmCount'), type: 'line', data: seriesData,
       lineStyle: { color: '#3B82F6', width: 2 },
       areaStyle: { color: { type: 'linear', x: 0, y: 0, x2: 0, y2: 1, colorStops: [{ offset: 0, color: 'rgba(59,130,246,0.3)' }, { offset: 1, color: 'rgba(59,130,246,0.02)' }] } },
       itemStyle: { color: '#3B82F6' },
       symbol: 'circle', symbolSize: 6, smooth: true,
     },
   ] : [
-    { name: '暂无数据', type: 'line', data: [] },
+    { name: t('dashboard.noData'), type: 'line', data: [] },
   ],
 }) as EChartsOption
 })
