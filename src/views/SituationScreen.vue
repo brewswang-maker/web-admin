@@ -546,8 +546,8 @@ function initCharts() {
           textAlign: 'center',
           textVerticalAlign: 'middle',
           rich: {
-            value: { fill: '#00F333', fontSize: 26, fontWeight: 700 },
-            unit: { fill: '#00F333', fontSize: 12, fontWeight: 600, padding: [8, 0, 0, 1] },
+            value: { fill: '#00F333', fontSize: 30, fontWeight: 700 },
+            unit: { fill: '#00F333', fontSize: 14, fontWeight: 600, padding: [10, 0, 0, 1] },
           },
         },
       }],
@@ -1135,22 +1135,24 @@ onUnmounted(() => {
 .device-status-list {
   flex: 1;
   min-height: 0;
-  display: grid;
-  grid-template-rows: repeat(2, minmax(0, 1fr));
-  padding: 6px 18px 8px 22px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: stretch;
+  gap: 16px;
+  padding: 10px 18px 12px 22px;
 }
 
 .device-status-row {
-  min-height: 0;
   display: grid;
-  grid-template-columns: 94px minmax(0, 1fr);
+  grid-template-columns: 110px minmax(0, 1fr);
   align-items: center;
-  column-gap: 16px;
+  column-gap: 20px;
 }
 
 .device-status-pie {
-  width: 94px;
-  height: 94px;
+  width: 110px;
+  height: 110px;
   min-width: 0;
   min-height: 0;
 }
@@ -1162,17 +1164,17 @@ onUnmounted(() => {
 .device-status-heading {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   color: #00B4FF;
-  font-size: 16px;
-  line-height: 36px;
+  font-size: 18px;
+  line-height: 42px;
   white-space: nowrap;
 }
 
 .device-status-icon {
   display: inline-flex;
-  width: 28px;
-  height: 28px;
+  width: 32px;
+  height: 32px;
   align-items: center;
   justify-content: center;
   border: 1px solid #00B4FF;
@@ -1182,14 +1184,14 @@ onUnmounted(() => {
 }
 
 .device-status-icon i {
-  font-size: 21px;
+  font-size: 24px;
 }
 
 .device-status-counts {
   display: flex;
   align-items: center;
-  gap: 12px;
-  margin-top: 8px;
+  gap: 16px;
+  margin-top: 10px;
   white-space: nowrap;
 }
 
@@ -1197,14 +1199,14 @@ onUnmounted(() => {
   display: inline-flex;
   align-items: center;
   color: #AADDFF;
-  font-size: 14px;
-  line-height: 20px;
+  font-size: 15px;
+  line-height: 24px;
 }
 
 .device-count i {
-  width: 7px;
-  height: 7px;
-  margin-right: 5px;
+  width: 8px;
+  height: 8px;
+  margin-right: 6px;
   background: currentColor;
 }
 
