@@ -190,9 +190,12 @@
         <div class="ss-panel">
           <div class="panel-title">
             <i class="iconfont1 icon1-qushi panel-title-icon" aria-hidden="true"></i>
-            <span>告警趋势 (24h)</span>
+            <span>告警趋势</span>
+            <div class="trend-mode-switch" style="margin-left: auto">
+              <button v-for="m in trendModes" :key="m.value" :class="['mode-btn', { active: alarmTrendMode === m.value }]" @click="switchAlarmTrendMode(m.value)">{{ m.label }}</button>
+            </div>
           </div>
-          <div class="chart-box" ref="alarmTrendRef" v-if="!hourlyFailed && hourlyData.length"></div>
+          <div class="chart-box" ref="alarmTrendRef" v-if="!hourlyFailed && (hourlyData.length || alarmTrendData.length)"></div>
           <div v-else-if="!hourlyFailed" class="empty-state panel-empty">暂无时段数据</div>
           <div v-else class="empty-state error">
             <span>时段统计加载失败</span>
@@ -227,6 +230,7 @@ import {
 } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
 import { situationApi, type SituationOverview, type MapDevicePoint, type SituationAlarmStream, type SituationAgentStatus } from '@/api/situation'
+import { statsHttp } from '@/api/http'
 import { useWebSocket } from '@/composables/useWebSocket'
 import Scene3D from '@/components/Scene3D.vue'
 
@@ -286,6 +290,15 @@ function formatRate(value: number | null | undefined): string {
 // ── API 返回的原始数据（用于图表更新） ──
 const overview = ref<SituationOverview | null>(null)
 const hourlyData = ref<Array<{ hour: number; alarmCount: number; onlineDevices: number }>>([])
+
+// ── 告警趋势切换 (24h/7d/30d) ──
+const trendModes = [
+  { value: '24h' as const, label: '今日' },
+  { value: '7d' as const, label: '7天' },
+  { value: '30d' as const, label: '30天' },
+]
+const alarmTrendMode = ref<'24h' | '7d' | '30d'>('24h')
+const alarmTrendData = ref<Array<{ hour: string; count: number }>>([])
 const agentData = ref<SituationAgentStatus[]>([])
 // 设备状态
 interface DeviceStatusGroup {
@@ -578,80 +591,7 @@ function initCharts() {
 
   // 告警趋势
   if (alarmTrendRef.value) {
-    const c = echarts.init(alarmTrendRef.value)
-     // 如果接口有小时数据，把每一条的hour补零成 "00:00"、"01:00" ... "23:00"
-     // 接口无数据时，自动生成完整24小时时间轴
-    const hours = hourlyData.value.length
-      ? hourlyData.value.map(item => `${String(item.hour).padStart(2, '0')}:00`)
-      : Array.from({ length: 24 }, (_, i) => `${String(i).padStart(2, '0')}:00`)
-    // 有无数据显示
-    const trendData = hourlyData.value.length
-      ? hourlyData.value.map(h => h.alarmCount)
-      : Array(24).fill(0)
-
-    const alarmStats = overview.value?.alarmStats
-    const levelTotals = [
-      alarmStats?.critical ?? 0,
-      alarmStats?.high ?? 0,
-      alarmStats?.medium ?? 0,
-      alarmStats?.low ?? 0,
-    ]
-    // 全部告警求和
-    const levelTotal = levelTotals.reduce((sum, value) => sum + value, 0)
-    // 占比权重
-    const levelWeights = levelTotal
-      ? levelTotals.map(value => value / levelTotal)
-      : [0.15, 0.25, 0.25, 0.35]
-    const levelSeries = [
-      { name: '严重', color: '#FC1526', weight: levelWeights[0] ?? 0.15 },
-      { name: '高', color: '#F97141', weight: levelWeights[1] ?? 0.25 },
-      { name: '中', color: '#FBB040', weight: levelWeights[2] ?? 0.25 },
-      { name: '低', color: '#00B4FF', weight: levelWeights[3] ?? 0.35 },
-    ]
-    c.setOption({
-      backgroundColor: 'transparent',
-      color: levelSeries.map(item => item.color),
-      legend: {
-        symbol: 'circle',
-        top: 4,
-        right: 0,
-        itemWidth: 10,    // 宽高保持一致，正圆
-        itemHeight: 10,
-        itemGap: 14,
-        textStyle: { color: '#0079AB', fontSize: 14 },
-      },
-      grid: { left: 42, right: 16, top: 42, bottom: 28 },
-      tooltip: { trigger: 'axis' },
-      xAxis: {
-        type: 'category',
-        boundaryGap: false,
-        data: hours,
-        axisLabel: { fontSize: 14, color: '#0079AB', interval: 3 },
-        axisTick: { show: false },
-        axisLine: { lineStyle: { color: '#0079AB' } },
-      },
-      yAxis: {
-        type: 'value',
-        minInterval: 1,
-        axisLabel: { fontSize: 14, color: '#0079AB' },
-        axisTick: { show: false },
-        axisLine: { show: false, lineStyle: { color: '#0079AB' } },
-        splitLine: { lineStyle: { color: '#0079AB', opacity: 0.35 } },
-      },
-      series: levelSeries.map(item => ({
-        name: item.name,
-        type: 'line',
-        data: trendData.map(value => Math.round(value * item.weight)),
-        smooth: true,
-        showSymbol: false,
-        symbol: 'circle',
-        symbolSize: 5,
-        lineStyle: { color: item.color, width: 2 },
-        itemStyle: { color: item.color },
-        emphasis: { focus: 'series' },
-      })),
-    })
-    charts.push(c)
+    renderAlarmTrendChart()
   }
 
   // 告警类型分布
@@ -853,6 +793,132 @@ function getSnapshotUrl(alarm: Alarm): string {
   const cleaned = String(b64).replace(/[^A-Za-z0-9+/=]/g, '')
   const fixed = cleaned + '='.repeat((4 - (cleaned.length % 4)) % 4)
   return `data:${mime};base64,${fixed}`
+}
+
+/** 渲染告警趋势图表 (从 renderCharts 和切换 mode 时调用) */
+function renderAlarmTrendChart() {
+  if (!alarmTrendRef.value) return
+  // 销毁旧实例并重新创建
+  const oldIdx = charts.findIndex(c => {
+    try { return c.getDom() === alarmTrendRef.value } catch { return false }
+  })
+  if (oldIdx >= 0) {
+    charts[oldIdx].dispose()
+    charts.splice(oldIdx, 1)
+  }
+  const c = echarts.init(alarmTrendRef.value)
+
+  // 根据模式选择数据源
+  let hours: string[] = []
+  let trendData: number[] = []
+  if (alarmTrendMode.value === '24h') {
+    // 今日模式：用 hourlyData (后端已截断到当前小时)
+    hours = hourlyData.value.length
+      ? hourlyData.value.map(item => `${String(item.hour).padStart(2, '0')}:00`)
+      : []
+    trendData = hourlyData.value.length
+      ? hourlyData.value.map(h => h.alarmCount)
+      : []
+  } else {
+    // 7d/30d 模式：用 alarmTrendData
+    hours = alarmTrendData.value.map(t => t.hour || '')
+    trendData = alarmTrendData.value.map(t => t.count ?? 0)
+  }
+
+  const alarmStats = overview.value?.alarmStats
+  const levelTotals = [
+    alarmStats?.critical ?? 0,
+    alarmStats?.high ?? 0,
+    alarmStats?.medium ?? 0,
+    alarmStats?.low ?? 0,
+  ]
+  const levelTotal = levelTotals.reduce((sum, value) => sum + value, 0)
+  const levelWeights = levelTotal
+    ? levelTotals.map(value => value / levelTotal)
+    : [0.15, 0.25, 0.25, 0.35]
+  const levelSeries = [
+    { name: '严重', color: '#FC1526', weight: levelWeights[0] ?? 0.15 },
+    { name: '高', color: '#F97141', weight: levelWeights[1] ?? 0.25 },
+    { name: '中', color: '#FBB040', weight: levelWeights[2] ?? 0.25 },
+    { name: '低', color: '#00B4FF', weight: levelWeights[3] ?? 0.35 },
+  ]
+  // 7d/30d 模式 X 轴标签间距自适应
+  const labelInterval = alarmTrendMode.value === '30d' ? 4 : alarmTrendMode.value === '7d' ? 0 : 3
+  c.setOption({
+    backgroundColor: 'transparent',
+    color: levelSeries.map(item => item.color),
+    legend: {
+      symbol: 'circle',
+      top: 4,
+      right: 0,
+      itemWidth: 10,
+      itemHeight: 10,
+      itemGap: 14,
+      textStyle: { color: '#0079AB', fontSize: 14 },
+    },
+    grid: { left: 42, right: 16, top: 42, bottom: 28 },
+    tooltip: { trigger: 'axis' },
+    xAxis: {
+      type: 'category',
+      boundaryGap: false,
+      data: hours,
+      axisLabel: { fontSize: 14, color: '#0079AB', interval: labelInterval },
+      axisTick: { show: false },
+      axisLine: { lineStyle: { color: '#0079AB' } },
+    },
+    yAxis: {
+      type: 'value',
+      minInterval: 1,
+      axisLabel: { fontSize: 14, color: '#0079AB' },
+      axisTick: { show: false },
+      axisLine: { show: false, lineStyle: { color: '#0079AB' } },
+      splitLine: { lineStyle: { color: '#0079AB', opacity: 0.35 } },
+    },
+    series: levelSeries.map(item => ({
+      name: item.name,
+      type: 'line',
+      data: trendData.map(value => Math.round(value * item.weight)),
+      smooth: true,
+      showSymbol: false,
+      symbol: 'circle',
+      symbolSize: 5,
+      lineStyle: { color: item.color, width: 2 },
+      itemStyle: { color: item.color },
+      emphasis: { focus: 'series' },
+    })),
+  })
+  charts.push(c)
+}
+
+/** 切换告警趋势模式 (今日/7天/30天) */
+async function switchAlarmTrendMode(mode: '24h' | '7d' | '30d') {
+  if (alarmTrendMode.value === mode) return
+  alarmTrendMode.value = mode
+  hourlyFailed.value = false
+
+  if (mode === '24h') {
+    // 今日模式用 hourlyData，如果已有数据则直接渲染
+    if (hourlyData.value.length) {
+      await nextTick()
+      renderAlarmTrendChart()
+    }
+  } else {
+    // 7d/30d 模式调用 alarm-trend API
+    alarmTrendData.value = []
+    try {
+      const res = await statsHttp.get('/alarm-trend', { params: { mode } })
+      const d = res.data?.data || res.data
+      if (d.trend && Array.isArray(d.trend)) {
+        alarmTrendData.value = d.trend
+        await nextTick()
+        renderAlarmTrendChart()
+      } else {
+        hourlyFailed.value = true
+      }
+    } catch {
+      hourlyFailed.value = true
+    }
+  }
 }
 
 /** 加载态势大屏数据（任一端点失败即置 failed 标记，UI 显式空态） */
@@ -1403,4 +1469,8 @@ onUnmounted(() => {
 }
 .empty-state.error { color: #ef4444; }
 .scene-empty { min-height: 200px; }
+.trend-mode-switch { display: inline-flex; gap: 2px; }
+.mode-btn { padding: 2px 10px; font-size: 12px; color: #0079AB; background: rgba(0,180,255,0.1); border: 1px solid rgba(0,180,255,0.3); border-radius: 3px; cursor: pointer; transition: all .2s; }
+.mode-btn:hover { background: rgba(0,180,255,0.25); }
+.mode-btn.active { color: #fff; background: linear-gradient(135deg, #00B4FF, #0079AB); border-color: #00B4FF; }
 </style>
