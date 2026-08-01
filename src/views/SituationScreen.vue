@@ -887,6 +887,19 @@ async function fetchSituationData() {
         { label: '告警处置率', value: formatRate(d.handleRate), suffix: d.handleRate != null ? '%' : '', icon: 'icon1-anquanguanli', iconColor: '#3EB011' },
         { label: '边缘算力调用', value: d.totalAgents > 0 ? String(d.activeAgents) : '--', suffix: '', icon: 'icon1-agent', iconColor: '#7938D1' },
       ]
+
+      // [P1-FIX] 从 overview.deviceStats 填充设备状态分组 (之前遗漏导致“暂无设备数据”)
+      const ds = d.deviceStats
+      if (ds) {
+        deviceStatusGroups.value = [{
+          key: 'video-box',
+          label: '视频设备',
+          total: ds.total ?? 0,
+          online: ds.online ?? 0,
+          offline: ds.offline ?? Math.max(0, (ds.total ?? 0) - (ds.online ?? 0)),
+          fault: ds.maintenance ?? 0,
+        }]
+      }
     } else {
       overviewFailed.value = true
     }
