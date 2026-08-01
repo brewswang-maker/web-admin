@@ -193,22 +193,26 @@
 
     <!-- ===== 底部行: 告警趋势图 + 项目热力图 ===== -->
     <el-row :gutter="16" class="bottom-row">
-      <!-- 7日告警趋势 -->
+      <!-- 告警趋势 -->
       <el-col :span="12">
         <el-card shadow="hover">
           <template #header>
             <div class="card-header">
-              <span class="card-header-title">📈 7日告警趋势</span>
-              <span v-if="alarmTrendUp !== null && alarmTrendPercent !== null" class="card-header-extra" :class="alarmTrendUp ? 'up' : 'down'">
-                本周{{ alarmTrendUp ? '↑' : '↓' }}{{ alarmTrendPercent }}%
+              <span class="card-header-title">📈 告警趋势</span>
+              <el-radio-group v-model="alarmTrendMode" size="small" @change="fetchAlarmTrend" style="margin-left: 12px">
+                <el-radio-button value="24h">今日</el-radio-button>
+                <el-radio-button value="7d">7天</el-radio-button>
+                <el-radio-button value="30d">30天</el-radio-button>
+              </el-radio-group>
+              <span v-if="alarmTrendUp !== null && alarmTrendPercent !== null && alarmTrendMode !== '24h'" class="card-header-extra" :class="alarmTrendUp ? 'up' : 'down'">
+                {{ alarmTrendMode === '30d' ? '本月' : '本周' }}{{ alarmTrendUp ? '↑' : '↓' }}{{ alarmTrendPercent }}%
               </span>
-              <span v-else class="card-header-extra">{{ alarmTrendFailed ? '加载失败' : '加载中…' }}</span>
             </div>
           </template>
           <LazyChart v-if="alarmTrendData.length" :option="alarmTrendOption" height="280px" />
           <el-skeleton v-else-if="!alarmTrendFailed" :rows="6" animated />
           <el-empty v-else description="告警趋势加载失败" :image-size="60">
-            <el-button size="small" type="primary" @click="refreshAll">重试</el-button>
+            <el-button size="small" type="primary" @click="fetchAlarmTrend">重试</el-button>
           </el-empty>
         </el-card>
       </el-col>
@@ -335,7 +339,7 @@ async function fetchDashboardData() {
 
   const [overviewRes, trendRes, deviceRes, fedRes, agentRes, dimsRes, heatmapRes] = await Promise.allSettled([
     statsHttp.get('/overview', { params: { project: selectedProject.value } }),
-    statsHttp.get('/alarm-trend', { params: { project: selectedProject.value, hours: 168 } }),
+    statsHttp.get('/alarm-trend', { params: { project: selectedProject.value, mode: alarmTrendMode.value } }),
     statsHttp.get('/device-status', { params: { project: selectedProject.value } }),
     federationApi.getStatus(),
     statsHttp.get('/agent-activity', { params: { period: '24h' } }),
@@ -488,6 +492,33 @@ async function refreshAll() {
   startRefreshTimer()
 }
 
+/** 独立拉取告警趋势 (切换 mode 时调用, 不重新拉取其他数据) */
+async function fetchAlarmTrend() {
+  alarmTrendFailed.value = false
+  alarmTrendData.value = []
+  alarmTrendUp.value = null
+  alarmTrendPercent.value = null
+  try {
+    const res = await statsHttp.get('/alarm-trend', { params: { project: selectedProject.value, mode: alarmTrendMode.value } })
+    const d = res.data?.data || res.data
+    if (d.trend) {
+      alarmTrendData.value = d.trend
+      if (alarmTrendMode.value !== '24h' && d.trend.length >= 2) {
+        const half = Math.floor(d.trend.length / 2)
+        const prev = d.trend.slice(0, half).reduce((s: number, t: any) => s + (t.count ?? 0), 0)
+        const curr = d.trend.slice(half).reduce((s: number, t: any) => s + (t.count ?? 0), 0)
+        if (prev > 0) {
+          alarmTrendPercent.value = Math.round(((curr - prev) / prev) * 100)
+          alarmTrendUp.value = curr <= prev
+        }
+      }
+    }
+    if (d.top_types) alarmTypes.value = d.top_types
+  } catch {
+    alarmTrendFailed.value = true
+  }
+}
+
 function onProjectChange() {
   refreshAll()
 }
@@ -627,7 +658,8 @@ const fedPrivacyUsed = computed(() => {
   return Math.round((f.privacyBudget / f.privacyBudgetTotal) * 100)
 })
 
-// ── 7日告警趋势 ──
+// ── 告警趋势 ──
+const alarmTrendMode = ref<'24h' | '7d' | '30d'>('24h')
 const alarmTrendUp = ref<boolean | null>(null)
 const alarmTrendPercent = ref<number | null>(null)
 const alarmTrendOption = computed<EChartsOption>(() => {
