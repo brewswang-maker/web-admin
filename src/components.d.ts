@@ -17,6 +17,8 @@ declare module 'vue' {
     Camera: typeof import('@element-plus/icons-vue')['Camera']
     CEPPatternEditor: typeof import('./components/CEPPatternEditor.vue')['default']
     ChatDotRound: typeof import('@element-plus/icons-vue')['ChatDotRound']
+    CircleCheck: typeof import('@element-plus/icons-vue')['CircleCheck']
+    CircleClose: typeof import('@element-plus/icons-vue')['CircleClose']
     Clock: typeof import('@element-plus/icons-vue')['Clock']
     Close: typeof import('@element-plus/icons-vue')['Close']
     ConditionTreeEditor: typeof import('./components/ConditionTreeEditor.vue')['default']
@@ -29,6 +31,7 @@ declare module 'vue' {
     Delete: typeof import('@element-plus/icons-vue')['Delete']
     Download: typeof import('@element-plus/icons-vue')['Download']
     Edit: typeof import('@element-plus/icons-vue')['Edit']
+    EditPen: typeof import('@element-plus/icons-vue')['EditPen']
     ElAlert: typeof import('element-plus/es')['ElAlert']
     ElAside: typeof import('element-plus/es')['ElAside']
     ElAvatar: typeof import('element-plus/es')['ElAvatar']
@@ -101,6 +104,7 @@ declare module 'vue' {
     ImageUpload: typeof import('./components/ImageUpload.vue')['default']
     LazyChart: typeof import('./components/LazyChart.vue')['default']
     LinkageFlowDiagram: typeof import('./components/LinkageFlowDiagram.vue')['default']
+    List: typeof import('@element-plus/icons-vue')['List']
     Loading: typeof import('@element-plus/icons-vue')['Loading']
     Location: typeof import('@element-plus/icons-vue')['Location']
     Microphone: typeof import('@element-plus/icons-vue')['Microphone']
@@ -130,6 +134,7 @@ declare module 'vue' {
     User: typeof import('@element-plus/icons-vue')['User']
     VideoCamera: typeof import('@element-plus/icons-vue')['VideoCamera']
     VideoPlay: typeof import('@element-plus/icons-vue')['VideoPlay']
+    View: typeof import('@element-plus/icons-vue')['View']
     VlmResultCard: typeof import('./components/VlmResultCard.vue')['default']
   }
   export interface ComponentCustomProperties {
