@@ -99,15 +99,121 @@
         <div class="ss-panel map-panel">
           <div class="panel-title">
             <i class="iconfont1 icon1-yuanqu1 panel-title-icon" aria-hidden="true"></i>
-            <span>{{ t('situationScreen.sceneMap') }}</span>
-            <span style="font-size:12px;color:#236db7;margin-left:8px">{{ t('situationScreen.sceneHint') }}</span>
+            <!-- 标题位置直接用下拉选择器替代 -->
+            <el-tooltip :content="centerView === '3d' ? t('situationScreen.sceneHint') : ''" placement="bottom" :disabled="centerView !== '3d'">
+              <el-select
+                v-model="centerView"
+                class="title-view-select"
+                popper-class="title-view-popper"
+                size="small"
+                @change="onViewSelectChange"
+              >
+                <el-option label="园区态势图" value="3d" />
+                <el-option label="视频监控" value="video" />
+              </el-select>
+            </el-tooltip>
+            <span v-if="sceneIsDemo && centerView === '3d'" style="font-size:11px;color:#F4B400;border:1px solid rgba(244,180,0,0.6);border-radius:3px;padding:1px 6px;margin-left:4px;">演示数据</span>
+            <!-- 3D视图操作按钮 -->
+            <template v-if="centerView === '3d'">
+              <el-select
+                v-if="availableScenes.length > 1"
+                v-model="currentSceneId"
+                size="small"
+                style="width: 110px"
+                @change="onSceneSwitch"
+              >
+                <el-option v-for="s in availableScenes" :key="s.id" :label="s.name" :value="s.id" />
+              </el-select>
+              <button v-if="!sceneEditActive && sceneDevices.length && !sceneIsDemo" class="scene-edit-btn" @click="enterEditMode">编辑布局</button>
+              <span v-if="sceneEditActive" style="font-size:11px;color:#F4B400;margin-left:4px;">编辑模式</span>
+              <button v-if="sceneDevices.length" class="scene-edit-btn" @click="togglePatrol">{{ patrolActive ? '停止巡视' : '自动巡视' }}</button>
+              <el-dropdown v-if="sceneDevices.length" trigger="click" @command="runPresetPlan">
+                <button class="scene-edit-btn">预案演练 ▾</button>
+                <template #dropdown>
+                  <el-dropdown-menu>
+                    <el-dropdown-item v-for="(p, i) in presetPlans" :key="i" :command="i">{{ p.name }}</el-dropdown-item>
+                    <el-dropdown-item divided @click="stopPresetPlan" v-if="sequenceActive">停止演练</el-dropdown-item>
+                  </el-dropdown-menu>
+                </template>
+              </el-dropdown>
+              <button v-if="sceneDevices.length" class="scene-edit-btn" @click="showMiniMap = !showMiniMap">{{ showMiniMap ? '隐藏小地图' : '显示小地图' }}</button>
+            </template>
+            <!-- 视频监控视图操作按钮 -->
+            <template v-if="centerView === 'video'">
+              <button class="scene-edit-btn" :class="{active: videoLayout === 1}" @click="setVideoLayout(1)">1分屏</button>
+              <button class="scene-edit-btn" :class="{active: videoLayout === 4}" @click="setVideoLayout(4)">4分屏</button>
+              <button class="scene-edit-btn" :class="{active: videoPollingActive}" @click="toggleVideoPolling">{{ videoPollingActive ? '停止轮巡' : '开始轮巡' }}</button>
+              <span style="font-size:11px;color:#236db7;">{{ videoDeviceList.length }}个通道</span>
+            </template>
+            <!-- 全屏按钮（推至右侧） -->
+            <div class="title-right-controls">
+              <el-tooltip content="全屏" placement="bottom">
+                <button class="scene-edit-btn fullscreen-btn" type="button" @click="toggleFullscreen">
+                  <i class="iconfont1 icon1-fangda" aria-hidden="true"></i>
+                </button>
+              </el-tooltip>
+            </div>
           </div>
-          <Scene3D v-if="sceneDevices.length" class="scene3d-wrapper" :devices="sceneDevices" :buildings="sceneBuildings" />
+          <!-- 视图切换容器 -->
+          <div class="swipe-container">
+          <transition :name="slideDirection" mode="out-in">
+          <div v-if="centerView === '3d'" key="3d" class="center-view-3d">
+          <div class="scene-container-with-panel" v-if="sceneDevices.length">
+            <Scene3D
+              ref="scene3dRef"
+              class="scene3d-wrapper"
+              :devices="sceneDevices"
+              :buildings="sceneBuildings"
+              :edit-mode="sceneEditActive"
+              :selected-device-id="selectedDeviceId"
+              :show-mini-map="showMiniMap"
+              @device-drag="onDeviceDrag"
+              @device-select="onDeviceSelect"
+              @building-hover="onBuildingHover"
+              @minimap-select="onMinimapSelect"
+              @device-video="onDeviceVideo"
+            />
+            <div class="building-hover-overlay" v-if="hoveredBuilding">
+              <div class="building-hover-name">{{ hoveredBuilding.name }}</div>
+              <div class="building-hover-stats">
+                <span>设备 {{ hoveredBuilding.deviceCount }}</span>
+                <span style="color:#0F9D58">在线 {{ hoveredBuilding.online }}</span>
+                <span v-if="hoveredBuilding.alarm" style="color:#DB4437">告警 {{ hoveredBuilding.alarm }}</span>
+              </div>
+            </div>
+            <SceneEditPanel
+              v-if="sceneEditActive"
+              :selected-device="selectedEditDevice"
+              :buildings="sceneBuildings"
+              @device-updated="onDeviceUpdated"
+              @device-cleared="onDeviceCleared"
+              @exit="exitEditMode"
+            />
+          </div>
           <div v-else-if="devicesFailed" class="empty-state error scene-empty">
             <span>{{ t('situationScreen.mapFailed') }}</span>
             <el-button size="small" link type="primary" @click="fetchSituationData">{{ t('situationScreen.retry') }}</el-button>
           </div>
           <div v-else class="empty-state panel-empty scene-empty">{{ t('situationScreen.noMapDevice') }}</div>
+          </div>
+          </transition>
+          <transition :name="slideDirection" mode="out-in">
+          <div v-if="centerView === 'video' && !isFullscreen" key="video" class="center-view-video">
+            <div class="video-monitor-grid" :class="'vm-grid-' + videoLayout">
+              <div v-for="(slot, idx) in videoDisplaySlots" :key="idx" class="vm-cell">
+                <video :ref="(el: any) => setVideoSlotRef(el, idx)" class="vm-video" muted autoplay playsinline
+                  :style="{ display: slot.playing ? 'block' : 'none' }" />
+                <div v-if="slot.loading" class="vm-loading">连接中...</div>
+                <div v-if="!slot.playing && !slot.loading" class="vm-empty">
+                  <i class="iconfont1 icon1-yingyanshexiangtou" style="font-size:32px;opacity:0.3"></i>
+                  <span>{{ videoDeviceList.length ? '等待轮巡' : '无可用通道' }}</span>
+                </div>
+                <div v-if="slot.playing" class="vm-label">{{ slot.deviceName }}</div>
+              </div>
+            </div>
+          </div>
+          </transition>
+          </div><!-- /swipe-container -->
         </div>
         <div class="ss-panel">
           <div class="panel-title">
@@ -217,10 +323,81 @@
       </div>
     </div>
   </div>
+
+  <!-- 全屏覆盖层 -->
+  <Teleport to="body">
+    <div v-if="isFullscreen" class="fullscreen-overlay" @keydown.esc="exitFullscreen" tabindex="0">
+      <button class="fullscreen-exit-btn" type="button" @click="exitFullscreen" title="退出全屏 (ESC)">
+        <i class="iconfont1 icon1-suoxiao" aria-hidden="true"></i>
+      </button>
+      <div class="fullscreen-content">
+        <div class="fullscreen-inner">
+          <!-- 全屏：3D视图 -->
+          <template v-if="centerView === '3d'">
+            <div class="fullscreen-3d-scene" v-if="sceneDevices.length">
+              <Scene3D
+                ref="fullscreenScene3dRef"
+                class="scene3d-wrapper"
+                :devices="sceneDevices"
+                :buildings="sceneBuildings"
+                :show-mini-map="showMiniMap"
+                @device-drag="onDeviceDrag"
+                @device-select="onDeviceSelect"
+                @building-hover="onBuildingHover"
+                @minimap-select="onMinimapSelect"
+                @device-video="onDeviceVideo"
+              />
+            </div>
+            <div v-else class="fullscreen-empty">{{ t('situationScreen.noMapDevice') }}</div>
+          </template>
+          <!-- 全屏：视频监控 -->
+          <template v-if="centerView === 'video'">
+            <div class="fullscreen-video-area">
+              <div class="fullscreen-video-toolbar">
+                <button class="scene-edit-btn" :class="{active: videoLayout === 1}" @click="setVideoLayout(1)">1分屏</button>
+                <button class="scene-edit-btn" :class="{active: videoLayout === 4}" @click="setVideoLayout(4)">4分屏</button>
+                <button class="scene-edit-btn" :class="{active: videoPollingActive}" @click="toggleVideoPolling">{{ videoPollingActive ? '停止轮巡' : '开始轮巡' }}</button>
+                <span style="font-size:12px;color:#236db7;margin-left:auto">{{ videoDeviceList.length }}个通道</span>
+              </div>
+              <div class="fullscreen-video-grid" :class="'vm-grid-' + videoLayout">
+                <div v-for="(slot, idx) in videoDisplaySlots" :key="idx" class="vm-cell">
+                  <video :ref="(el: any) => setVideoSlotRef(el, idx)" class="vm-video" muted autoplay playsinline
+                    :style="{ display: slot.playing ? 'block' : 'none' }" />
+                  <div v-if="slot.loading" class="vm-loading">连接中...</div>
+                  <div v-if="!slot.playing && !slot.loading" class="vm-empty">
+                    <i class="iconfont1 icon1-yingyanshexiangtou" style="font-size:32px;opacity:0.3"></i>
+                    <span>{{ videoDeviceList.length ? '等待轮巡' : '无可用通道' }}</span>
+                  </div>
+                  <div v-if="slot.playing" class="vm-label">{{ slot.deviceName }}</div>
+                </div>
+              </div>
+            </div>
+          </template>
+        </div>
+      </div>
+    </div>
+  </Teleport>
+
+  <el-dialog
+    v-model="videoPreviewVisible"
+    :title="'\u5b9e\u65f6\u9884\u89c8 - ' + (videoPreviewDevice?.name || '')"
+    width="680px"
+    append-to-body
+    destroy-on-close
+    @close="closeVideoPreview"
+    class="video-preview-dialog"
+  >
+    <div class="video-preview-container">
+      <div v-if="videoPreviewLoading" style="height:200px;display:flex;align-items:center;justify-content:center;color:#00B4FF">
+        <span>\u89c6\u9891\u8fde\u63a5\u4e2d...</span>
+      </div>
+      <video ref="previewVideoRef" muted autoplay playsinline style="width:100%;max-height:420px;background:#000;display:block" />
+    </div>
+  </el-dialog>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
@@ -230,10 +407,28 @@ import {
   GraphicComponent, GridComponent, TooltipComponent, LegendComponent, TitleComponent,
 } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
-import { situationApi, type SituationOverview, type MapDevicePoint, type SituationAlarmStream, type SituationAgentStatus } from '@/api/situation'
-import { statsHttp } from '@/api/http'
+import { situationApi, type SituationOverview, type SituationAlarmStream, type SituationAgentStatus } from '@/api/situation'
+import { statsHttp, streamHttp } from '@/api/http'
+import { normalizeStreamUrl } from '@/utils/streamUrl'
+import { locationApi } from '@/api/location'
+import { sceneApi } from '@/api/scene'
 import { useWebSocket } from '@/composables/useWebSocket'
 import Scene3D from '@/components/Scene3D.vue'
+import SceneEditPanel from '@/components/SceneEditPanel.vue'
+import flvjs from 'flv.js'
+import { channelApi } from '@/api/channel'
+import { useChannelStore } from '@/stores/channel'
+import {
+  normalizeMapDevicePoint,
+  normalizeGb28181Location,
+  normalizePlacement,
+  mergeDeviceLocations,
+  mergePlacements,
+  mapDevicesToScene,
+  DEMO_SCENE_DEVICES,
+  type SceneDevice3D,
+  type RawMapDevicePoint,
+} from '@/utils/sceneDeviceMapper'
 
 echarts.use([GaugeChart, LineChart, PieChart, BarChart, GraphicComponent, GridComponent, TooltipComponent, LegendComponent, TitleComponent, CanvasRenderer])
 
@@ -334,7 +529,7 @@ const agentsFailed = ref(false)
 const hourlyFailed = ref(false)
 
 // ── 3D场景数据 ──
-const sceneBuildings = [
+const DEFAULT_SCENE_BUILDINGS = [
   { name: '1号车间', x: -20, z: -15, w: 24, d: 16, h: 8, color: '#1A73E8' },
   { name: '2号车间', x: 15, z: -15, w: 20, d: 14, h: 7, color: '#0F9D58' },
   { name: '仓库', x: -25, z: 15, w: 18, d: 12, h: 6, color: '#F4B400' },
@@ -342,39 +537,716 @@ const sceneBuildings = [
   { name: '配电房', x: 35, z: -5, w: 8, d: 8, h: 4, color: '#666666' },
   { name: '门卫室', x: 0, z: 42, w: 6, d: 4, h: 3, color: '#888888' },
 ]
+const sceneBuildings = ref(DEFAULT_SCENE_BUILDINGS)
 
-interface Device3D {
-  id: string; name: string; x: number; y: number; z: number
-  status: 'online' | 'offline' | 'alarm' | 'maintenance'
-  location: string; fov?: number; rotation?: number; alarmType?: string
+// ── 编辑模式状态 ──
+const sceneEditActive = ref(false)
+const selectedDeviceId = ref<string | undefined>(undefined)
+const selectedEditDevice = ref<{
+  id: string
+  name: string
+  businessId?: string
+  x: number; y: number; z: number
+  rotation: number; fov: number
+  buildingId?: string
+  isManual?: boolean
+} | null>(null)
+
+// P1-6: 场景切换
+const availableScenes = ref<Array<{ id: string; name: string }>>([])
+const currentSceneId = ref('default')
+function onSceneSwitch(sceneId: string) {
+  void loadSceneDevices()
 }
-const sceneDevices = ref<Device3D[]>([])
 
-/** 将经纬度映射到3D场景坐标（bounding box 归一化到 [-40, 40]） */
-function mapDevicesToScene(points: MapDevicePoint[]): Device3D[] {
-  if (!points.length) return []
-  let minLat = Infinity, maxLat = -Infinity, minLng = Infinity, maxLng = -Infinity
-  for (const p of points) {
-    if (p.lat < minLat) minLat = p.lat
-    if (p.lat > maxLat) maxLat = p.lat
-    if (p.lng < minLng) minLng = p.lng
-    if (p.lng > maxLng) maxLng = p.lng
+const sceneDevices = ref<SceneDevice3D[]>([])
+/** 当前 3D 场景是否使用演示数据兜底（真实设备为空/接口失败时） */
+const sceneIsDemo = ref(false)
+
+// P2: Scene3D 组件引用（用于调用 exposed 方法）
+const scene3dRef = ref<InstanceType<typeof Scene3D> | null>(null)
+
+// P2-4: 巡视路线
+const patrolActive = ref(false)
+function togglePatrol() {
+  if (!scene3dRef.value) return
+  if (patrolActive.value) {
+    scene3dRef.value.stopPatrol()
+    patrolActive.value = false
+  } else {
+    // 预定义巡视路径（环绕厂区）
+    const waypoints = [
+      { x: 55, y: 35, z: 45 },
+      { x: 0, y: 40, z: 55 },
+      { x: -55, y: 35, z: 45 },
+      { x: -60, y: 30, z: 0 },
+      { x: -55, y: 35, z: -45 },
+      { x: 0, y: 40, z: -55 },
+      { x: 55, y: 35, z: -45 },
+      { x: 60, y: 30, z: 0 },
+    ]
+    scene3dRef.value.startPatrol(waypoints, 0.0003)
+    patrolActive.value = true
   }
-  const latRange = maxLat - minLat || 1
-  const lngRange = maxLng - minLng || 1
-  const SCALE = 40
-  return points.map(p => ({
-    id: p.id,
-    name: p.name,
-    x: ((p.lng - minLng) / lngRange - 0.5) * 2 * SCALE,
-    y: 4 + (p.status === 'alarming' ? 1 : 0),
-    z: ((p.lat - minLat) / latRange - 0.5) * 2 * SCALE,
-    status: p.status === 'alarming' ? 'alarm' : p.status,
-    location: p.projectName,
-    fov: 65,
-    rotation: 0,
-    alarmType: p.lastAlarmType,
-  }))
+}
+
+// P2-5: 预案演练
+const presetPlans = [
+  {
+    name: '入侵告警演练',
+    actions: [
+      { time: 0, type: 'camera' as const, params: { x: 25, y: 15, z: 10, lookX: 35, lookY: 4, lookZ: 25 } },
+      { time: 1, type: 'highlight' as const, target: 'cam4' },
+      { time: 1, type: 'particle' as const, target: 'intrusion', params: { x: 35, y: 4, z: 25 } },
+      { time: 4, type: 'camera' as const, params: { x: 0, y: 50, z: 70, lookX: 0, lookY: 0, lookZ: 0 } },
+    ],
+  },
+  {
+    name: '设备巡检',
+    actions: [
+      { time: 0, type: 'camera' as const, params: { x: -40, y: 10, z: -35, lookX: -40, lookY: 4, lookZ: -35 } },
+      { time: 2, type: 'camera' as const, params: { x: 20, y: 10, z: -38, lookX: 20, lookY: 4, lookZ: -38 } },
+      { time: 4, type: 'camera' as const, params: { x: -15, y: 10, z: 5, lookX: -15, lookY: 5, lookZ: 5 } },
+      { time: 6, type: 'camera' as const, params: { x: 0, y: 50, z: 70, lookX: 0, lookY: 0, lookZ: 0 } },
+    ],
+  },
+]
+const sequenceActive = ref(false)
+function runPresetPlan(planIndex: number) {
+  if (!scene3dRef.value) return
+  scene3dRef.value.stopSequence()
+  scene3dRef.value.playSequence(presetPlans[planIndex].actions)
+  sequenceActive.value = true
+  ElMessage.success('开始演练: ' + presetPlans[planIndex].name)
+}
+function stopPresetPlan() {
+  if (!scene3dRef.value) return
+  scene3dRef.value.stopSequence()
+  sequenceActive.value = false
+}
+
+// P2-6: 小地图
+const showMiniMap = ref(true)
+function onMinimapSelect(deviceId: string) {
+  selectedDeviceId.value = deviceId
+  const dev = sceneDevices.value.find(d => d.id === deviceId)
+  if (dev) {
+    ElMessage.info('已定位: ' + dev.name)
+  }
+}
+
+// ── T2: 中间面板 3D/视频 手动切换 ──
+const centerView = ref<'3d' | 'video'>('3d')
+const slideDirection = ref<'slide-left' | 'slide-right'>('slide-left')
+
+// 全屏状态
+const isFullscreen = ref(false)
+const fullscreenScene3dRef = ref<InstanceType<typeof Scene3D> | null>(null)
+
+function setCenterView(view: '3d' | 'video') {
+  slideDirection.value = view === '3d' ? 'slide-right' : 'slide-left'
+  centerView.value = view
+}
+
+function onViewSelectChange(val: '3d' | 'video') {
+  slideDirection.value = val === '3d' ? 'slide-right' : 'slide-left'
+}
+
+// 视图切换: 进入视频视图自动开始轮巡，离开则停止
+let centerViewTimer: ReturnType<typeof setTimeout> | null = null
+watch(centerView, (newView) => {
+  // 清除上一次的延迟启动（防止快速切换 3D↔视频 时竞态）
+  if (centerViewTimer) { clearTimeout(centerViewTimer); centerViewTimer = null }
+  if (newView === 'video') {
+    // 等待 transition (out-in 模式: 先离开 0.35s + 后进入 0.35s) 完成
+    // 确保 video DOM 元素已创建后再开始轮巡
+    centerViewTimer = setTimeout(() => {
+      centerViewTimer = null
+      if (centerView.value !== 'video') return
+      if (!videoDeviceList.value.length) {
+        loadVideoDeviceList().then(() => {
+          if (videoDeviceList.value.length && centerView.value === 'video') startVideoPolling()
+        })
+      } else if (!videoPollingActive.value) {
+        startVideoPolling()
+      }
+    }, 800)
+  } else {
+    stopVideoPolling()
+  }
+})
+
+// 全屏切换: 仅重建 flv.js 播放器，不 teardown/start 流（避免 SIP INVITE/BYE 风暴）
+// 原因: v-if 互斥渲染导致 video DOM 元素重建，旧 flv.js player 绑定在已移除的元素上。
+//       解决方案: 销毁旧 player → 等待新 DOM → 用存储的 flvUrl 重新 attach（不调 /start）
+let fullscreenTimer: ReturnType<typeof setTimeout> | null = null
+watch(isFullscreen, () => {
+  if (fullscreenTimer) { clearTimeout(fullscreenTimer); fullscreenTimer = null }
+  if (centerView.value !== 'video') return
+  // 先销毁所有旧播放器（不调 stopStream，保留服务端推流）
+  for (let i = 0; i < 4; i++) {
+    const slot = videoSlots[i]
+    if (slot.flvPlayer) { try { slot.flvPlayer.destroy() } catch {} slot.flvPlayer = null }
+  }
+  // 暂停轮巡定时器（防止 reattach 期间定时器触发新拉流）
+  if (videoPollTimer) { clearInterval(videoPollTimer); videoPollTimer = null }
+  // 等待 transition leave 完成(~350ms) + 新 video DOM 挂载后重新绑定播放器
+  fullscreenTimer = setTimeout(() => {
+    fullscreenTimer = null
+    if (centerView.value !== 'video') return
+    for (let i = 0; i < 4; i++) reattachPlayer(i)
+    // 恢复轮巡定时器
+    if (videoPollingActive.value) {
+      videoPollTimer = setInterval(() => pollVideoBatch(), videoPollIntervalSec.value * 1000)
+    }
+  }, 500)
+})
+
+// 全屏功能
+function toggleFullscreen() {
+  if (isFullscreen.value) exitFullscreen()
+  else enterFullscreen()
+}
+
+function enterFullscreen() {
+  isFullscreen.value = true
+  nextTick(() => {
+    const overlay = document.querySelector('.fullscreen-overlay') as HTMLElement
+    overlay?.focus()
+    // 全屏3D需要重新初始化场景
+    if (centerView.value === '3d') {
+      setTimeout(() => {
+        fullscreenScene3dRef.value?.resetCamera?.()
+      }, 200)
+    }
+  })
+}
+
+function exitFullscreen() {
+  isFullscreen.value = false
+}
+
+// ── T3: 视频监控布局 + 轮巡 (完整 GB28181 推流实现) ──
+const videoLayout = ref<1 | 4>(4)
+interface VideoSlot {
+  channelId: string
+  deviceName: string
+  playing: boolean
+  loading: boolean
+  flvPlayer: flvjs.Player | null
+  flvUrl: string  // 最近一次成功拉取的 FLV URL（全屏切换时复用，避免重新 SIP INVITE）
+  _gen: number  // 异步取消计数器，每次新拉流递增
+}
+const videoSlots = reactive<VideoSlot[]>(
+  Array.from({ length: 4 }, () => ({ channelId: '', deviceName: '', playing: false, loading: false, flvPlayer: null, flvUrl: '', _gen: 0 }))
+)
+// 全局防抖 store: 防止短时间内对同一通道重复 SIP INVITE (与 MiniPlayer/LiveView 共享)
+const channelStore = useChannelStore()
+const videoDisplaySlots = computed(() => videoLayout.value === 1 ? [videoSlots[0]] : videoSlots)
+const videoSlotRefs = ref<Record<number, HTMLVideoElement>>({})
+const videoPollingActive = ref(false)
+let videoPollTimer: ReturnType<typeof setInterval> | null = null
+const videoDeviceList = ref<Array<{ channelId: string; deviceName: string }>>([])
+const videoPollOffset = ref(0)
+// GB28181 设备需要 BYE 冷却(~5s) + SIP INVITE + RTP 建立(~5s) = ~10s 开销
+// 30s 间隔确保至少 20s 实际观看时间，避免设备频繁断连
+const videoPollIntervalSec = ref(30)
+
+function setVideoSlotRef(el: any, idx: number) {
+  if (el) videoSlotRefs.value[idx] = el as HTMLVideoElement
+  else delete videoSlotRefs.value[idx]
+}
+
+async function loadVideoDeviceList() {
+  try {
+    const res = await channelApi.getList({ pageSize: 100 })
+    const raw = res.data?.data as any
+    // PageResponse<ChannelItem> 结构: { items, total, ... }
+    const channels = Array.isArray(raw) ? raw : (raw?.items || raw?.list || raw?.channels || [])
+    if (Array.isArray(channels) && channels.length) {
+      videoDeviceList.value = channels.map((ch: any) => ({
+        channelId: ch.id || ch.channel_id || ch.deviceId || '',
+        deviceName: ch.name || ch.channel_name || ch.deviceName || '未命名通道',
+      })).filter((c: any) => c.channelId)
+    }
+  } catch { /* ignore */ }
+  if (!videoDeviceList.value.length && sceneDevices.value.length) {
+    videoDeviceList.value = sceneDevices.value
+      .filter(d => d.businessId || d.deviceType === 'camera')
+      .map(d => ({ channelId: d.id, deviceName: d.name }))
+  }
+}
+
+/**
+ * 获取可播放的 FLV URL（含全局防抖保护，防止 SIP INVITE 风暴）。
+ *
+ * 策略 (对齐 MiniPlayer.vue):
+ * 1. 先查 multi-urls 复用已有流（避免不必要的 SIP INVITE）
+ * 2. 流不存活时，检查全局防抖窗口（5s 内同通道只允许一次 /start）
+ * 3. 防抖窗口内: 等待其他调用者的 INVITE 完成
+ * 4. 防抖窗口外: 触发 SIP INVITE 后轮询等待就绪
+ */
+async function startStreamAndGetFlvUrl(channelId: string): Promise<string> {
+  // 查询 multi-urls 的可复用辅助函数（返回 URL 或空串，附带 streamAlive 状态）
+  const queryMultiUrls = async (): Promise<{ url: string; alive: boolean | null }> => {
+    try {
+      const { data } = await streamHttp.get(`/${channelId}/multi-urls`)
+      const d = data?.data || data
+      if (d?.streamAlive && d?.flvUrl) {
+        return { url: normalizeStreamUrl(d.flvUrl), alive: true }
+      }
+      return { url: '', alive: d ? d.streamAlive === false ? false : null : null }
+    } catch { return { url: '', alive: null } }
+  }
+
+  // 1. 先查 multi-urls 复用已有流 (3 次 × 300ms = 0.9s)
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const { url } = await queryMultiUrls()
+    if (url) return url
+    await new Promise(r => setTimeout(r, 300))
+  }
+
+  // 2. 流不存活 → 检查全局防抖
+  const inDebounce = channelStore.checkSkipStart(channelId)
+  if (inDebounce) {
+    // 防抖窗口内: 其他调用者最近调过 /start，等待其流就绪
+    console.debug(`[SituationScreen] ch=${channelId} 全局防抖窗口内，跳过 SIP INVITE，等待复用`)
+    for (let attempt = 0; attempt < 15; attempt++) {
+      const { url } = await queryMultiUrls()
+      if (url) return url
+      await new Promise(r => setTimeout(r, 300))
+    }
+    return ''
+  }
+
+  // 3. 防抖窗口外 → 触发 SIP INVITE
+  channelStore.markStartCalled(channelId)
+  let startData: any = null
+  try {
+    const { data: startResp } = await streamHttp.post(`/${channelId}/start`)
+    startData = startResp?.data || startResp
+  } catch (e: any) {
+    console.warn(`[SituationScreen] /streams/${channelId}/start failed (may already be streaming):`, e?.message || e)
+  }
+
+  // /start 响应中 zlmReady=true 时直接有 URL
+  if (startData && startData.flvUrl && startData.zlmReady) {
+    return normalizeStreamUrl(startData.flvUrl)
+  }
+
+  // 4. 轮询 multi-urls 等待流就绪 (最多 ~4.5s)
+  let consecutiveNotAlive = 0
+  for (let attempt = 0; attempt < 15; attempt++) {
+    const { url, alive } = await queryMultiUrls()
+    if (url) return url
+    // 连续 5 次 streamAlive=false → 设备可能离线，提前终止
+    if (alive === false) {
+      consecutiveNotAlive++
+      if (consecutiveNotAlive >= 5) break
+    } else {
+      consecutiveNotAlive = 0
+    }
+    await new Promise(r => setTimeout(r, 300))
+  }
+
+  return ''
+}
+
+/** 停止服务端推流 (释放 SIP 会话) */
+async function stopStream(channelId: string) {
+  if (!channelId) return
+  try { await streamHttp.post(`/${channelId}/stop`) } catch { /* ignore */ }
+}
+
+async function playVideoInSlot(slotIdx: number, channelId: string, deviceName: string) {
+  const slot = videoSlots[slotIdx]
+  // 递增 generation，使旧异步操作的结果失效
+  slot._gen++
+  const myGen = slot._gen
+
+  // 记住旧通道 ID，稍后用于停止推流
+  const oldChannelId = slot.channelId
+
+  // 先清理旧播放器（但不停止服务端推流——延迟到新流就绪后）
+  if (slot.flvPlayer) { try { slot.flvPlayer.destroy() } catch {} slot.flvPlayer = null }
+
+  slot.channelId = channelId
+  slot.deviceName = deviceName
+  slot.loading = true
+  slot.playing = false
+
+  try {
+    // 启动 GB28181 推流并等待就绪
+    const flvUrl = await startStreamAndGetFlvUrl(channelId)
+    // 如果在等待期间又有新的拉流请求，放弃这次结果
+    if (myGen !== slot._gen) return
+
+    // 新流已就绪，现在安全地停止旧通道推流（减少空窗期）
+    if (oldChannelId && oldChannelId !== channelId) {
+      stopStream(oldChannelId)
+    }
+
+    if (!flvUrl) {
+      slot.loading = false
+      console.warn(`[SituationScreen] 无法获取通道 ${channelId} 的视频流`)
+      return
+    }
+
+    // 保存 URL 供全屏切换时复用（避免重新 SIP INVITE）
+    slot.flvUrl = flvUrl
+    // video 元素已常驻 DOM（v-show 模式），直接获取
+    slot.playing = true
+    slot.loading = false
+    await nextTick()
+
+    // 再次检查 generation
+    if (myGen !== slot._gen) return
+
+    const video = videoSlotRefs.value[slotIdx]
+    if (!video) { slot.playing = false; return }
+
+    // 清理 video 元素旧状态
+    try { video.pause() } catch {}
+    video.removeAttribute('src')
+    try { video.load() } catch {}
+
+    if (flvjs.isSupported()) {
+      const player = flvjs.createPlayer(
+        { type: 'flv', url: flvUrl, isLive: true, hasAudio: false, hasVideo: true },
+        {
+          enableStashBuffer: false,
+          stashInitialSize: 128,
+          autoCleanupSourceBuffer: false,  // GB28181 PS 封装流时间戳可能不连续
+          lazyLoad: false,
+          liveBufferLatencyChasing: true,
+          liveBufferLatencyChasingOnPaused: true,
+          liveSyncDurationCount: 1,
+          liveMaxLatencyDurationCount: 1.5,
+        } as any
+      )
+      player.attachMediaElement(video)
+      player.load()
+      // 显式设 muted=true 满足浏览器自动播放策略
+      video.muted = true
+      player.play().catch(() => {
+        // 自动播放可能被浏览器策略阻止（异步等待 SIP INVITE 后丢失用户手势上下文）
+        // 延迟重试：此时 MSE 数据已填充，video.play() 通常可以成功
+        setTimeout(() => {
+          if (myGen !== slot._gen) return
+          video.muted = true
+          video.play().catch(() => {})
+        }, 200)
+      })
+      // 最终检查：如果又被取消了，销毁刚创建的 player
+      if (myGen !== slot._gen) {
+        try { player.destroy() } catch {}
+        return
+      }
+      slot.flvPlayer = player
+    } else {
+      slot.playing = false
+      slot.loading = false
+      console.warn('[SituationScreen] 浏览器不支持 flv.js')
+    }
+  } catch (e: any) {
+    if (myGen === slot._gen) {
+      slot.loading = false
+      console.error(`[SituationScreen] 播放通道 ${channelId} 失败:`, e?.message || e)
+    }
+  }
+}
+
+function stopVideoSlot(slotIdx: number) {
+  const slot = videoSlots[slotIdx]
+  slot._gen++  // 使任何在途的异步拉流失效
+  if (slot.flvPlayer) { try { slot.flvPlayer.destroy() } catch {} slot.flvPlayer = null }
+  // 清理 video 元素
+  const video = videoSlotRefs.value[slotIdx]
+  if (video) { try { video.pause() } catch {} video.removeAttribute('src') }
+  // 停止服务端推流
+  if (slot.channelId) {
+    stopStream(slot.channelId)
+  }
+  slot.playing = false; slot.loading = false; slot.channelId = ''; slot.deviceName = ''; slot.flvUrl = ''
+}
+
+/**
+ * 仅重建 flv.js 播放器（不调 /start 或 /stop），用于全屏切换时 DOM 重建后重新绑定。
+ * 关键: 不触发 SIP INVITE/teardown，避免设备压力。
+ */
+function reattachPlayer(slotIdx: number) {
+  const slot = videoSlots[slotIdx]
+  if (!slot.flvUrl || !slot.playing) return
+  let video = videoSlotRefs.value[slotIdx]
+  // 回退: transition leave 动画可能清空了 ref，从 DOM 直接查询当前可见的 video
+  if (!video) {
+    const grid = document.querySelector(isFullscreen.value ? '.fullscreen-video-grid' : '.video-monitor-grid')
+    const videos = grid?.querySelectorAll('video.vm-video')
+    if (videos && videos[slotIdx]) {
+      video = videos[slotIdx] as HTMLVideoElement
+      videoSlotRefs.value[slotIdx] = video
+    }
+  }
+  if (!video) return
+
+  // 清理旧播放器
+  if (slot.flvPlayer) { try { slot.flvPlayer.destroy() } catch {} slot.flvPlayer = null }
+  try { video.pause() } catch {}
+  video.removeAttribute('src')
+  try { video.load() } catch {}
+
+  if (flvjs.isSupported()) {
+    const player = flvjs.createPlayer(
+      { type: 'flv', url: slot.flvUrl, isLive: true, hasAudio: false, hasVideo: true },
+      {
+        enableStashBuffer: false,
+        stashInitialSize: 128,
+        autoCleanupSourceBuffer: false,
+        lazyLoad: false,
+        liveBufferLatencyChasing: true,
+        liveBufferLatencyChasingOnPaused: true,
+        liveSyncDurationCount: 1,
+        liveMaxLatencyDurationCount: 1.5,
+      } as any
+    )
+    player.attachMediaElement(video)
+    player.load()
+    video.muted = true
+    player.play().catch(() => {
+      setTimeout(() => { video.muted = true; video.play().catch(() => {}) }, 200)
+    })
+    slot.flvPlayer = player
+  }
+}
+
+function stopAllVideoSlots() { for (let i = 0; i < 4; i++) stopVideoSlot(i) }
+
+function setVideoLayout(layout: 1 | 4) {
+  videoLayout.value = layout
+  if (videoPollingActive.value) { stopAllVideoSlots(); pollVideoBatch() }
+}
+
+function pollVideoBatch() {
+  if (!videoDeviceList.value.length) return
+  const step = videoLayout.value
+  const total = videoDeviceList.value.length
+  for (let i = 0; i < step; i++) {
+    const idx = (videoPollOffset.value + i) % total
+    const dev = videoDeviceList.value[idx]
+    const slot = videoSlots[i]
+    // 跳过: 正在加载中（上一次拉流还在进行，防止重叠 SIP INVITE）
+    if (slot.loading) continue
+    // 跳过: 已在播放同一通道（无需重新拉流）
+    if (slot.channelId === dev.channelId && slot.playing && slot.flvPlayer) {
+      continue
+    }
+    playVideoInSlot(i, dev.channelId, dev.deviceName)
+  }
+  // 只有通道数 > 分屏数时才有轮巡意义
+  if (total > step) {
+    videoPollOffset.value = (videoPollOffset.value + step) % total
+  }
+}
+
+function startVideoPolling() {
+  if (videoPollingActive.value) return
+  if (!videoDeviceList.value.length) {
+    loadVideoDeviceList().then(() => { if (videoDeviceList.value.length) startVideoPolling() })
+    return
+  }
+  videoPollingActive.value = true
+  videoPollOffset.value = 0
+  pollVideoBatch()
+  videoPollTimer = setInterval(() => pollVideoBatch(), videoPollIntervalSec.value * 1000)
+}
+
+function stopVideoPolling() {
+  videoPollingActive.value = false
+  if (videoPollTimer) { clearInterval(videoPollTimer); videoPollTimer = null }
+  stopAllVideoSlots()
+}
+
+function toggleVideoPolling() {
+  if (videoPollingActive.value) stopVideoPolling()
+  else startVideoPolling()
+}
+
+// ── T4: 设备视频预览弹窗 ──
+const videoPreviewVisible = ref(false)
+const videoPreviewDevice = ref<{ id: string; name: string } | null>(null)
+const videoPreviewLoading = ref(false)
+let previewFlvPlayer: flvjs.Player | null = null
+const previewVideoRef = ref<HTMLVideoElement>()
+
+let previewChannelId = ''
+
+async function onDeviceVideo(device: { id: string; name: string; businessId?: string }) {
+  videoPreviewDevice.value = device
+  videoPreviewVisible.value = true
+  videoPreviewLoading.value = true
+  await nextTick()
+  try {
+    let channelId = device.id
+    if (device.businessId) {
+      try {
+        const chRes = await channelApi.getDeviceChannels(device.businessId)
+        const channels = (chRes.data?.data as any) || []
+        if (Array.isArray(channels) && channels.length) {
+          channelId = channels[0].id || channels[0].channel_id || device.id
+        }
+      } catch {}
+    }
+    // 启动 GB28181 推流并等待流就绪
+    const flvUrl = await startStreamAndGetFlvUrl(channelId)
+    if (!flvUrl) { videoPreviewLoading.value = false; ElMessage.warning('无法获取视频流地址'); return }
+    previewChannelId = channelId
+    const video = previewVideoRef.value
+    if (!video) { videoPreviewLoading.value = false; return }
+    if (previewFlvPlayer) { try { previewFlvPlayer.destroy() } catch {} previewFlvPlayer = null }
+    if (flvjs.isSupported()) {
+      const player = flvjs.createPlayer(
+        { type: 'flv', url: flvUrl, isLive: true, hasAudio: false, hasVideo: true },
+        {
+          enableStashBuffer: false,
+          stashInitialSize: 128,
+          autoCleanupSourceBuffer: false,
+          lazyLoad: false,
+          liveBufferLatencyChasing: true,
+          liveBufferLatencyChasingOnPaused: true,
+          liveSyncDurationCount: 1,
+          liveMaxLatencyDurationCount: 1.5,
+        } as any
+      )
+      player.attachMediaElement(video)
+      player.load()
+      player.play().catch(() => {})
+      previewFlvPlayer = player
+      videoPreviewLoading.value = false
+    }
+  } catch { videoPreviewLoading.value = false; ElMessage.warning('视频连接失败') }
+}
+
+function closeVideoPreview() {
+  if (previewFlvPlayer) { try { previewFlvPlayer.destroy() } catch {} previewFlvPlayer = null }
+  if (previewChannelId) { stopStream(previewChannelId); previewChannelId = '' }
+  videoPreviewVisible.value = false
+  videoPreviewDevice.value = null
+  videoPreviewLoading.value = false
+}
+
+/**
+ * 加载 3D 场景设备（真实设备数据驱动，三路合并）。
+ * 1. 场景配置 API (buildings/fences) 替换硬编码；
+ * 2. 态势点位 + gb28181选点 + 手动放置(scene_*) 三路合并；
+ * 3. 优先级: 手动放置 > GB28181坐标 > 周界兜底；
+ * 4. 无有效设备时使用演示数据兜底。
+ */
+async function loadSceneDevices() {
+  devicesFailed.value = false
+  const [mapRes, gbRes] = await Promise.allSettled([
+    situationApi.getMapDevices(),
+    locationApi.getDeviceLocations(),
+  ])
+
+  const rawPoints = mapRes.status === 'fulfilled'
+    ? ((mapRes.value.data?.data as unknown as RawMapDevicePoint[]) ?? [])
+    : []
+  const normalized = rawPoints
+    .map(p => normalizeMapDevicePoint(p))
+    .filter((d): d is NonNullable<typeof d> => d !== null)
+
+  const gbLocations = gbRes.status === 'fulfilled'
+    ? ((gbRes.value.data?.data as unknown as Record<string, unknown>[]) ?? [])
+        .map(l => normalizeGb28181Location(l))
+        .filter((l): l is NonNullable<typeof l> => l !== null)
+    : []
+
+  let merged = mergeDeviceLocations(normalized, gbLocations)
+  let sceneNodes = mapDevicesToScene(merged)
+
+  if (sceneNodes.length) {
+    sceneDevices.value = sceneNodes
+    sceneIsDemo.value = false
+  } else {
+    sceneDevices.value = DEMO_SCENE_DEVICES
+    sceneIsDemo.value = true
+  }
+}
+
+// ── 编辑模式事件处理 ──
+function enterEditMode() {
+  sceneEditActive.value = true
+  selectedEditDevice.value = null
+}
+
+function exitEditMode() {
+  sceneEditActive.value = false
+  selectedDeviceId.value = undefined
+  selectedEditDevice.value = null
+  void loadSceneDevices()
+}
+
+function onDeviceDrag(payload: { deviceId: string; x: number; y: number; z: number; buildingId?: string }) {
+  const dev = sceneDevices.value.find(d => d.id === payload.deviceId)
+  if (dev) {
+    dev.x = payload.x
+    dev.y = payload.y
+    dev.z = payload.z
+    if (payload.buildingId) {
+      dev.location = payload.buildingId + ' - ' + dev.location.split(' - ').pop()
+    }
+    selectedDeviceId.value = payload.deviceId
+    selectedEditDevice.value = {
+      id: dev.id, name: dev.name, businessId: dev.businessId,
+      x: dev.x, y: dev.y, z: dev.z,
+      rotation: dev.rotation || 0, fov: dev.fov || 65,
+      buildingId: payload.buildingId, isManual: true,
+    }
+  }
+}
+
+// P1-2: building hover handler
+const hoveredBuilding = ref<{ name: string; deviceCount: number; online: number; alarm: number } | null>(null)
+function onBuildingHover(payload: { buildingName: string | null; deviceCount: number; x: number; z: number }) {
+  if (!payload.buildingName) {
+    hoveredBuilding.value = null
+    return
+  }
+  // count devices associated with this building
+  const devices = sceneDevices.value.filter(d => d.location?.startsWith(payload.buildingName!))
+  const online = devices.filter(d => d.status === 'online').length
+  const alarm = devices.filter(d => d.status === 'alarm').length
+  hoveredBuilding.value = {
+    name: payload.buildingName,
+    deviceCount: devices.length,
+    online,
+    alarm,
+  }
+}
+
+function onDeviceSelect(deviceId: string) {
+  const dev = sceneDevices.value.find(d => d.id === deviceId)
+  if (!dev) return
+  selectedDeviceId.value = deviceId
+  selectedEditDevice.value = {
+    id: dev.id, name: dev.name, businessId: dev.businessId,
+    x: dev.x, y: dev.y, z: dev.z,
+    rotation: dev.rotation || 0, fov: dev.fov || 65, isManual: false,
+  }
+}
+
+function onDeviceUpdated(deviceId: string, data: { x: number; y: number; z: number; rotation: number; fov: number }) {
+  const dev = sceneDevices.value.find(d => d.id === deviceId)
+  if (dev) {
+    dev.x = data.x; dev.y = data.y; dev.z = data.z
+    dev.rotation = data.rotation; dev.fov = data.fov
+  }
+}
+
+function onDeviceCleared(_deviceId: string) {
+  void loadSceneDevices()
+  selectedDeviceId.value = undefined
+  selectedEditDevice.value = null
 }
 
 let charts: echarts.ECharts[] = []
@@ -972,12 +1844,8 @@ function fetchSituationData() {
     overviewLoading.value = false
   }).catch(() => { overviewFailed.value = true; overviewLoading.value = false })
 
-  // 2. 地图设备 → 3D场景
-  situationApi.getMapDevices().then(res => {
-    const points = res.data?.data
-    if (points?.length) sceneDevices.value = mapDevicesToScene(points)
-    else devicesFailed.value = true
-  }).catch(() => { devicesFailed.value = true })
+  // 2. 地图设备 → 3D场景（真实设备数据 + 选点坐标合并 + 演示兜底）
+  loadSceneDevices()
 
   // 3. 实时告警
   situationApi.getRealtimeAlarms({ limit: 20 }).then(res => {
@@ -1023,6 +1891,10 @@ function onAlarmPush(data: unknown) {
   }
 }
 
+function onFullscreenEsc(e: KeyboardEvent) {
+  if (e.key === 'Escape' && isFullscreen.value) exitFullscreen()
+}
+
 onMounted(async () => {
   const updateClock = () => {
     currentTime.value = new Date().toLocaleString('zh-CN', { hour12: false, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' })
@@ -1035,8 +1907,11 @@ onMounted(async () => {
 
   // [v8.6] 非阻塞: 并行加载各面板数据, 到达即渲染
   fetchSituationData()
-  // (各加载器完成后自行 nextTick + initCharts)
-  // initCharts removed — each loader calls it independently
+
+  // T3: 预加载视频通道列表
+  loadVideoDeviceList()
+  // 全屏ESC退出
+  window.addEventListener('keydown', onFullscreenEsc)
 })
 
 onUnmounted(() => {
@@ -1045,6 +1920,14 @@ onUnmounted(() => {
   charts.forEach(c => c?.dispose?.())
   charts = []
   window.removeEventListener('resize', handleResize)
+  // 清理延迟定时器
+  if (centerViewTimer) { clearTimeout(centerViewTimer); centerViewTimer = null }
+  if (fullscreenTimer) { clearTimeout(fullscreenTimer); fullscreenTimer = null }
+  // T3/T4 cleanup
+  stopVideoPolling()
+  closeVideoPreview()
+  isFullscreen.value = false
+  window.removeEventListener('keydown', onFullscreenEsc)
 })
 </script>
 
@@ -1129,6 +2012,28 @@ onUnmounted(() => {
   overflow: hidden;
   padding:4px;
   box-shadow: inset 0 0 17px 0px #061e79;
+}
+
+.map-panel .panel-title {
+  flex-wrap: wrap;
+  gap: 4px 6px;
+  min-height: 32px;
+  height: auto;
+  padding: 4px 10px;
+  line-height: 1.5;
+}
+
+/* 3D 标题栏提示文字不缩滘 */
+.map-panel .panel-title > span {
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* 标题栏内所有按钮、下拉不压缩 */
+.map-panel .panel-title .scene-edit-btn,
+.map-panel .panel-title .el-select,
+.map-panel .panel-title .el-dropdown {
+  flex-shrink: 0;
 }
 
 .panel-title {
@@ -1270,6 +2175,37 @@ onUnmounted(() => {
 
 .map-panel { display: flex; flex-direction: column; min-height: 0; }
 .scene3d-wrapper { flex: 1; min-height: 0; position: relative; overflow: hidden; }
+
+.scene-edit-btn {
+  padding: 2px 10px;
+  font-size: 12px;
+  color: #00B4FF;
+  background: rgba(0, 180, 255, 0.1);
+  border: 1px solid rgba(0, 180, 255, 0.3);
+  border-radius: 3px;
+  cursor: pointer;
+  transition: all 0.2s;
+  white-space: nowrap;
+}
+.scene-edit-btn:hover { background: rgba(0, 180, 255, 0.25); }
+.scene-edit-btn.active {
+  background: rgba(0, 180, 255, 0.25);
+  color: #00E4FF;
+  border-color: rgba(0, 228, 255, 0.5);
+}
+
+.scene-container-with-panel {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  gap: 8px;
+  overflow: hidden;
+}
+.scene-container-with-panel .scene3d-wrapper { flex: 1; }
+.scene-container-with-panel > :deep(.scene-edit-panel) {
+  flex-shrink: 0;
+  align-self: flex-start;
+}
 
 /* 告警列表 */
 .alarm-scroll {
@@ -1451,8 +2387,349 @@ onUnmounted(() => {
 }
 .empty-state.error { color: #ef4444; }
 .scene-empty { min-height: 200px; }
+
+.building-hover-overlay {
+  position: absolute;
+  top: 50px;
+  right: 16px;
+  background: rgba(15, 20, 35, 0.92);
+  border: 1px solid rgba(100, 150, 255, 0.3);
+  border-radius: 6px;
+  padding: 10px 14px;
+  z-index: 5;
+  pointer-events: none;
+  min-width: 140px;
+}
+.building-hover-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: #8ab4f8;
+  margin-bottom: 4px;
+}
+.building-hover-stats {
+  display: flex;
+  gap: 12px;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.7);
+}
 .trend-mode-switch { display: inline-flex; gap: 2px; }
 .mode-btn { padding: 2px 10px; font-size: 12px; color: #0079AB; background: rgba(0,180,255,0.1); border: 1px solid rgba(0,180,255,0.3); border-radius: 3px; cursor: pointer; transition: all .2s; }
 .mode-btn:hover { background: rgba(0,180,255,0.25); }
 .mode-btn.active { color: #fff; background: linear-gradient(135deg, #00B4FF, #0079AB); border-color: #00B4FF; }
+
+/* 标题栏右侧控件（推到最右） */
+.title-right-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.fullscreen-btn {
+  padding: 2px 8px !important;
+  font-size: 16px;
+}
+
+/* 深色主题 el-select — 标题栏视图选择器 */
+.title-view-select {
+  width: auto !important;
+  min-width: 150px;
+  flex-shrink: 0;
+}
+.title-view-select :deep(.el-select__wrapper) {
+  background: transparent !important;
+  box-shadow: 0 0 0 1px rgba(0, 180, 255, 0.3) inset !important;
+  border-radius: 4px;
+  min-height: 28px;
+}
+.title-view-select :deep(.el-select__wrapper:hover) {
+  box-shadow: 0 0 0 1px rgba(0, 180, 255, 0.6) inset !important;
+}
+.title-view-select :deep(.el-select__wrapper.is-focused) {
+  box-shadow: 0 0 0 1px rgba(0, 228, 255, 0.7) inset !important;
+}
+.title-view-select :deep(.el-select__selected-item),
+.title-view-select :deep(.el-select__placeholder) {
+  color: #00E4FF !important;
+  font-size: 14px !important;
+  font-weight: 600 !important;
+}
+.title-view-select :deep(.el-select__caret) {
+  color: #00B4FF !important;
+}
+.title-view-select :deep(.el-select__suffix) {
+  color: #00B4FF !important;
+}
+
+/* 滑动容器 */
+.swipe-container {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  position: relative;
+  user-select: none;
+}
+
+.center-view-3d {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.center-view-video {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* 滑动过渡动画 */
+.slide-left-enter-active,
+.slide-left-leave-active,
+.slide-right-enter-active,
+.slide-right-leave-active {
+  transition: transform 0.35s cubic-bezier(0.25, 0.46, 0.45, 0.94), opacity 0.35s ease;
+}
+
+.slide-left-enter-from {
+  transform: translateX(100%);
+  opacity: 0;
+}
+
+.slide-left-leave-to {
+  transform: translateX(-100%);
+  opacity: 0;
+}
+
+.slide-right-enter-from {
+  transform: translateX(-100%);
+  opacity: 0;
+}
+
+.slide-right-leave-to {
+  transform: translateX(100%);
+  opacity: 0;
+}
+
+/* 全屏覆盖层 */
+.fullscreen-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 10000;
+  background: #040C2B;
+  display: flex;
+  flex-direction: column;
+  outline: none;
+}
+
+.fullscreen-exit-btn {
+  position: absolute;
+  top: 12px;
+  right: 16px;
+  z-index: 10001;
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(0, 180, 255, 0.4);
+  border-radius: 8px;
+  background: rgba(3, 27, 78, 0.9);
+  color: #00B4FF;
+  font-size: 20px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.fullscreen-exit-btn:hover {
+  background: rgba(0, 180, 255, 0.2);
+  color: #00E4FF;
+}
+
+.fullscreen-content {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.fullscreen-inner {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.fullscreen-3d-scene {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+}
+
+.fullscreen-empty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #236db7;
+  font-size: 16px;
+}
+
+.fullscreen-video-area {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.fullscreen-video-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  height: 48px;
+  flex-shrink: 0;
+}
+
+.fullscreen-video-toolbar .scene-edit-btn.active {
+  background: rgba(0, 180, 255, 0.25);
+  color: #00E4FF;
+  border-color: rgba(0, 228, 255, 0.5);
+}
+
+.fullscreen-video-grid {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  gap: 4px;
+  padding: 8px;
+  overflow: hidden;
+}
+
+/* T3: 视频监控 */
+.video-monitor-grid {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  gap: 2px;
+  padding: 4px;
+  overflow: hidden;
+}
+
+.vm-grid-1 {
+  grid-template-columns: 1fr;
+  grid-template-rows: 1fr;
+}
+
+.vm-grid-4 {
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr 1fr;
+}
+
+.vm-cell {
+  position: relative;
+  background: #000;
+  border: 1px solid #05357C;
+  overflow: hidden;
+  min-height: 0;
+}
+
+.vm-video {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.vm-loading {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  color: #00B4FF;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.vm-empty {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  color: #236db7;
+  font-size: 13px;
+}
+
+.vm-label {
+  position: absolute;
+  bottom: 4px;
+  left: 4px;
+  padding: 2px 8px;
+  background: rgba(0, 0, 0, 0.65);
+  color: #fff;
+  font-size: 12px;
+  border-radius: 3px;
+  max-width: calc(100% - 8px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* T4: 视频预览弹窗 */
+.video-preview-container {
+  background: #000;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* Center view transition */
+.center-view-3d, .center-view-video {
+  width: 100%;
+  flex: 1;
+}
+</style>
+
+<!-- 全局样式：深色主题下拉弹出面板（popper teleport 到 body） -->
+<style>
+.el-select__popper.title-view-popper {
+  background: rgba(3, 27, 78, 0.97) !important;
+  border: 1px solid rgba(0, 180, 255, 0.35) !important;
+}
+.el-select__popper.title-view-popper .el-select-dropdown__item {
+  color: #AADDFF !important;
+}
+.el-select__popper.title-view-popper .el-select-dropdown__item.is-hovering,
+.el-select__popper.title-view-popper .el-select-dropdown__item:hover {
+  background: rgba(0, 180, 255, 0.15) !important;
+  color: #00E4FF !important;
+}
+.el-select__popper.title-view-popper .el-select-dropdown__item.is-selected {
+  color: #00E4FF !important;
+  font-weight: 600 !important;
+}
+.el-select__popper.title-view-popper .el-popper__arrow::before {
+  background: rgba(3, 27, 78, 0.97) !important;
+  border-color: rgba(0, 180, 255, 0.35) !important;
+}
 </style>

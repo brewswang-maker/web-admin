@@ -24,6 +24,7 @@ const ChannelDetailView = () => import('@/views/ChannelDetailView.vue')
 const OTAUpgradeView = () => import('@/views/OTAUpgradeView.vue')
 const AIChatView = () => import('@/views/AIChatView.vue')
 const SituationScreen = () => import('@/views/SituationScreen.vue')
+const SceneManagementView = () => import('@/views/SceneManagement.vue')
 const OpenPlatformView = () => import('@/views/OpenPlatformView.vue')
 const TeamListView = () => import('@/views/team/TeamListView.vue')
 const TeamDetailView = () => import('@/views/team/TeamDetailView.vue')
@@ -176,6 +177,12 @@ export const asyncRoutes: RouteRecordRaw[] = [
         name: 'Situation',
         component: SituationScreen,
         meta: { title: '态势大屏', icon: 'DataBoard', roles: ['admin'] }
+      },
+      {
+        path: 'scene-management',
+        name: 'SceneManagement',
+        component: SceneManagementView,
+        meta: { title: '3D场景管理', icon: 'MapLocation', roles: ['admin'] }
       },
       {
         path: 'open-platform',

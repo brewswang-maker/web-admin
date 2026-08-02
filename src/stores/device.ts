@@ -9,6 +9,7 @@ import { deviceApi } from '@/api/device'
 import { http } from '@/api/http'
 import type { DeviceItem, DeviceStats, DeviceQuery, DeviceForm, DiscoveredDevice, DeviceConfig, DeviceDetail, DeviceMetrics, DeviceSyncRecord } from '@/types/device'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { normalizeDeviceMetrics } from '@/utils/deviceMetrics'
 
 export const useDeviceStore = defineStore('device', () => {
   // ===== 状态 =====
@@ -160,7 +161,8 @@ export const useDeviceStore = defineStore('device', () => {
   async function fetchDeviceMetrics(id: string) {
     try {
       const res = await deviceApi.getDetail(id) as any
-      deviceMetrics.value = res?.data?.data?.latestMetrics ?? res?.data?.data?.metrics ?? []
+      const payload = res?.data?.data ?? res?.data ?? res
+      deviceMetrics.value = normalizeDeviceMetrics(payload)
     } catch { deviceMetrics.value = [] }
   }
 

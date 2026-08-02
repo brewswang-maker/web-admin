@@ -46,9 +46,15 @@
             <span class="label">所属项目</span>
             <span class="value">{{ device.projectName }}</span>
           </div>
-          <div class="info-row">
+          <div class="info-row location-row">
             <span class="label">安装位置</span>
             <span class="value">{{ device.location || '-' }}</span>
+            <el-button size="small" type="primary" link @click="openLocationPicker">
+              <el-icon><LocationFilled /></el-icon>地图选点
+            </el-button>
+            <el-button size="small" type="success" link @click="goTo3DMap">
+              <el-icon><Aim /></el-icon>3D地图定位
+            </el-button>
           </div>
         </el-card>
       </el-col>
@@ -216,6 +222,17 @@
         </el-form-item>
       </el-form>
     </el-drawer>
+    <!-- 位置选点 -->
+    <LocationPickerDialog
+      v-if="pickerDevice"
+      v-model="showLocationPicker"
+      :device-id="pickerDevice.id"
+      :device-name="pickerDevice.name"
+      :longitude="pickerDevice.longitude"
+      :latitude="pickerDevice.latitude"
+      :address="pickerDevice.address"
+      @saved="onLocationSaved"
+    />
   </div>
 </template>
 
@@ -228,6 +245,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import LazyChart from '@/components/LazyChart.vue'
 import { PROTOCOL_OPTIONS } from '@/types/device'
 import type { DeviceDetail, DeviceSyncRecord, DeviceMetrics } from '@/types/device'
+import LocationPickerDialog from '@/components/LocationPickerDialog.vue'
 
 // ---- 算法列表 ----
 const modelList = ref<any[]>([])
@@ -251,6 +269,8 @@ const syncing = ref(false)
 const syncingTime = ref(false)
 const saving = ref(false)
 const showConfigDrawer = ref(false)
+const showLocationPicker = ref(false)
+const pickerDevice = ref<{ id: string; name: string; longitude?: number; latitude?: number; address?: string } | null>(null)
 
 const configForm = ref({
   algoPlugins: [] as string[],
@@ -268,6 +288,34 @@ const protocolLabel = computed(() => {
   return opt?.label ?? proto
 })
 
+// P1-7: 3D地图定位
+function goTo3DMap() {
+  if (!device.value) return
+  router.push({ path: '/situation', query: { focusDevice: (device.value as any).id } })
+}
+
+// ---- 地图选点 ----
+function openLocationPicker() {
+  if (!device.value) return
+  const current = device.value as any
+  pickerDevice.value = {
+    id: current.id,
+    name: current.name || current.id,
+    longitude: current.longitude ?? current.metadata?.longitude,
+    latitude: current.latitude ?? current.metadata?.latitude,
+    address: current.location || current.metadata?.location || '',
+  }
+  showLocationPicker.value = true
+}
+
+function onLocationSaved(data: { longitude: number; latitude: number; address: string }) {
+  if (device.value) {
+    const current = device.value as any
+    current.location = data.address
+    current.longitude = data.longitude
+    current.latitude = data.latitude
+  }
+}
 // ---- 实时指标 ----
 const metricItems = computed(() => {
   const m = deviceStore.latestMetrics
@@ -405,7 +453,6 @@ async function loadData() {
     await Promise.all([
       deviceStore.fetchDeviceDetail(deviceId),
       deviceStore.fetchDeviceMetrics(deviceId),
-      deviceStore.fetchLatestMetrics(deviceId),
       deviceStore.fetchSyncRecords(deviceId)
     ])
     metricsHistory.value = deviceStore.deviceMetrics
@@ -424,6 +471,7 @@ watch(() => route.params.id, loadData)
 .page-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
 .header-actions { display: flex; gap: 8px; }
 .info-card .info-row { display: flex; justify-content: space-between; align-items: center; padding: 6px 0; border-bottom: 1px solid #f0f0f0; }
+.location-row .value { flex: 1; margin: 0 8px; }
 .info-card .info-row:last-child { border-bottom: none; }
 .info-row .label { color: #8c8c8c; font-size: 13px; }
 .info-row .value { font-weight: 500; font-size: 13px; }

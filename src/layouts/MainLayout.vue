@@ -475,7 +475,7 @@ import {
   DocumentChecked, Link, User, Avatar, Lock, Search,
   Sunny, Moon, Cpu, ArrowDown, SwitchButton,
   DArrowLeft, DArrowRight, VideoPlay, Film, VideoPause, Camera, SetUp,
-  Location, Share, ShoppingCart, Wallet, Position, Aim,
+  Location, Share, ShoppingCart, Wallet, Position, Aim, MapLocation,
 } from '@element-plus/icons-vue'
 import logoUrl from '@/assets/logo.png'
 import userAvatarUrl from '@/assets/photo2.jpg'
@@ -553,6 +553,7 @@ const primaryMenus = computed<PrimaryMenu[]>(() => [
     label: t('menuPrimary.platform'),
     items: [
       { path: '/devices', label: t('menu.devices'), icon: Monitor },
+      { path: '/scene-management', label: '3D场景管理', icon: MapLocation },
       { path: '/topology', label: t('menu.topology'), icon: Share },
       { path: '/linkage', label: t('menu.linkage'), icon: Connection },
       { path: '/projects', label: t('menu.projects'), icon: FolderOpened },

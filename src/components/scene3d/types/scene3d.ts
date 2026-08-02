@@ -62,6 +62,8 @@ export interface Device3DLegacy {
 
 /** 3D场景中的建筑节点 */
 export interface Building3DNode {
+  /** 建筑唯一标识 */
+  id?: string
   name: string
   /** 建筑中心位置 [x, z] */
   x: number
@@ -76,6 +78,29 @@ export interface Building3DNode {
   buildingType?: 'workshop' | 'warehouse' | 'office' | 'guardhouse' | 'powerhouse'
   /** 关联的项目/区域ID */
   projectId?: string
+  /** 关联设备数（只读，由后端统计） */
+  deviceCount?: number
+}
+
+/** 设备3D放置信息（后端 device_attributes scene_* 键的聚合） */
+export interface DevicePlacement {
+  deviceId: string
+  sceneX?: number | string
+  sceneY?: number | string
+  sceneZ?: number | string
+  rotation?: number | string
+  fov?: number | string
+  buildingId?: string
+  manual?: boolean
+}
+
+/** 场景方案（对应后端 scene_config.json） */
+export interface SceneScheme {
+  id: string
+  name: string
+  buildings: Building3DNode[]
+  fences?: Fence3DSegment[]
+  ground?: { width: number; height: number }
 }
 
 /** 3D场景中的围墙段 */

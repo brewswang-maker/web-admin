@@ -148,11 +148,14 @@
           </template>
         </el-table-column>
         <el-table-column prop="location" label="位置" width="100" show-overflow-tooltip />
-        <el-table-column label="操作" width="300" fixed="right">
+        <el-table-column label="操作" width="360" fixed="right">
           <template #default="{ row }">
             <el-button size="small" link type="primary" @click="$router.push(`/devices/${row.id}`)">详情</el-button>
             <el-button size="small" link type="warning" @click="openEditDialog(row)">编辑</el-button>
             <el-button size="small" link type="success" @click="handleLive(row)">预览</el-button>
+            <el-button size="small" link type="info" @click="openLocationPicker(row)">
+              <el-icon><LocationFilled /></el-icon>选点
+            </el-button>
             <el-button size="small" link @click="handleSync(row)">同步</el-button>
             <el-button size="small" link type="info" @click="handleSyncTime(row)">校时</el-button>
             <el-button size="small" link type="danger" @click="handleDelete(row)">删除</el-button>
@@ -419,7 +422,12 @@
           </el-select>
         </el-form-item>
         <el-form-item label="安装位置">
-          <el-input v-model="addForm.location" placeholder="e.g. 南门岗亭" />
+          <div style="display: flex; gap: 8px; width: 100%;">
+            <el-input v-model="addForm.location" placeholder="e.g. 南门岗亭" style="flex: 1" />
+            <el-button size="small" type="primary" plain @click="openLocationPickerForAdd">
+              <el-icon><LocationFilled /></el-icon>地图选点
+            </el-button>
+          </div>
         </el-form-item>
         <el-form-item label="算法插件">
           <el-select v-model="addForm.algoPlugins" multiple placeholder="请选择算法（可多选）" style="width:100%">
@@ -472,7 +480,12 @@
           </el-select>
         </el-form-item>
         <el-form-item label="安装位置">
-          <el-input v-model="editForm.location" placeholder="e.g. 南门岗亭" />
+          <div style="display: flex; gap: 8px; width: 100%;">
+            <el-input v-model="editForm.location" placeholder="e.g. 南门岗亭" style="flex: 1" />
+            <el-button size="small" type="primary" plain @click="openLocationPickerForEdit">
+              <el-icon><LocationFilled /></el-icon>地图选点
+            </el-button>
+          </div>
         </el-form-item>
         <el-form-item label="算法插件">
           <el-select v-model="editForm.algoPlugins" multiple placeholder="请选择算法（可多选）" style="width:100%">
@@ -486,6 +499,18 @@
         <el-button type="primary" :loading="editLoading" @click="confirmEdit">保存修改</el-button>
       </template>
     </el-dialog>
+
+    <!-- 地图选点对话框（复用组件） -->
+    <LocationPickerDialog
+      v-if="pickerDevice"
+      v-model="showLocationPicker"
+      :device-id="pickerDevice.id"
+      :device-name="pickerDevice.name"
+      :longitude="pickerDevice.longitude"
+      :latitude="pickerDevice.latitude"
+      :address="pickerDevice.address"
+      @saved="onLocationSaved"
+    />
   </div>
 </template>
 
@@ -500,6 +525,63 @@ import { deviceApi } from '@/api/device'
 import type { DeviceItem, ProtocolType, DiscoveredDevice } from '@/types/device'
 import type { GB28181Config } from '@/api/devices'
 import { PROTOCOL_OPTIONS } from '@/types/device'
+import LocationPickerDialog from '@/components/LocationPickerDialog.vue'
+
+// ---- 地图选点对话框 ----
+const showLocationPicker = ref(false)
+const pickerDevice = ref<{ id: string; name: string; longitude?: number; latitude?: number; address?: string } | null>(null)
+
+function openLocationPicker(row: DeviceItem) {
+  const meta = (row.metadata as any) || {}
+  pickerDevice.value = {
+    id: row.id,
+    name: row.name,
+    longitude: row.longitude ?? meta.longitude,
+    latitude: row.latitude ?? meta.latitude,
+    address: row.location ?? meta.location ?? '',
+  }
+  showLocationPicker.value = true
+}
+
+function onLocationSaved(data: { longitude: number; latitude: number; address: string }) {
+  ElMessage.success('设备位置已更新')
+  // 同步更新编辑表单中的位置字段（如果编辑弹窗打开中）
+  if (editForm.value.deviceId === pickerDevice.value?.id) {
+    editForm.value.location = data.address
+  }
+  // 添加设备场景：picker 只本地同步
+  if (pickerDevice.value?.id?.startsWith('add_')) {
+    addForm.value.location = data.address
+    return
+  }
+  fetchData()
+}
+
+function openLocationPickerForEdit() {
+  if (!editForm.value.deviceId) return
+  pickerDevice.value = {
+    id: editForm.value.deviceId,
+    name: editForm.value.name || editForm.value.deviceId,
+    longitude: undefined,
+    latitude: undefined,
+    address: editForm.value.location || '',
+  }
+  showLocationPicker.value = true
+}
+
+function openLocationPickerForAdd() {
+  // 添加设备时还未创建 device_id，使用临时 id 让 picker 只更新本地表单
+  const tempId = addForm.value.deviceId || `add_${Date.now()}`
+  pickerDevice.value = {
+    id: tempId,
+    name: addForm.value.name || tempId,
+    longitude: undefined,
+    latitude: undefined,
+    address: addForm.value.location || '',
+  }
+  // 添加设备场景下，需要将 picker 保存结果同步到 addForm
+  showLocationPicker.value = true
+}
 
 // ---- 算法列表 ----
 const modelList = ref<any[]>([])

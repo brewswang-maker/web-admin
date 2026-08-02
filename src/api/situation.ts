@@ -19,17 +19,24 @@ export interface SituationOverview {
   handleRate?: number  // [v8.3 fix] 真实处置率 (0~100)
 }
 
-/** 地图设备点位 */
+/** 地图设备点位（后端原始形态，宽松类型以兼容字段差异）
+ * - 后端实际返回 `type` 而非 `deviceType`，两者都保留。
+ * - 坐标可能为 number 或 string，由 sceneDeviceMapper 统一解析。
+ */
 export interface MapDevicePoint {
   id: string
   name: string
-  lat: number
-  lng: number
+  lat: number | string
+  lng: number | string
   status: 'online' | 'offline' | 'alarming'
-  deviceType: string
+  /** 后端实际返回的设备类型字段 */
+  type?: string
+  /** 兼容旧调用的设备类型字段 */
+  deviceType?: string
   alarmCount: number
   projectName: string
   lastAlarmType?: string
+  address?: string
 }
 
 /** 区域聚合数据 */

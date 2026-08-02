@@ -158,35 +158,6 @@ a {
   opacity: 0;
 }
 
-/* =========================================
-   SW 更新提示条
-   ========================================= */
-.sw-update-banner {
-  position: fixed;
-  bottom: 20px;
-  right: 20px;
-  padding: 12px 20px;
-  background: var(--color-primary);
-  color: white;
-  border-radius: var(--border-radius-base);
-  box-shadow: var(--box-shadow-base);
-  z-index: 9999;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.sw-update-slide-enter-active,
-.sw-update-slide-leave-active {
-  transition: transform 0.3s ease, opacity 0.3s ease;
-}
-
-.sw-update-slide-enter-from,
-.sw-update-slide-leave-to {
-  transform: translateY(100%);
-  opacity: 0;
-}
-
 /* ElNotification 定位修复：确保告警弹窗在右上角显示 */
 .el-notification {
   position: fixed !important;

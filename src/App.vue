@@ -14,24 +14,6 @@
       </transition>
     </router-view>
 
-    <!-- =============================================
-         SW 更新提示条
-         当检测到新版本 SW 时，显示可关闭的提示
-         ============================================= -->
-    <Teleport to="body">
-      <transition name="sw-update-slide">
-        <div v-if="swUpdateAvailable" class="sw-update-banner">
-          <span>🎉 {{ $t('common.info') }}</span>
-          <el-button type="primary" size="small" @click="applySWUpdate">
-            {{ $t('common.refresh') }}
-          </el-button>
-          <el-button text size="small" @click="swUpdateAvailable = false">
-            {{ $t('common.close') }}
-          </el-button>
-        </div>
-      </transition>
-    </Teleport>
-
     <!-- 全局告警弹窗（海康威视风格） -->
     <Alarm-popup />
 
@@ -47,8 +29,7 @@
  * 职责:
  *  1. 全局配置提供 (Element Plus Locale + i18n 联动)
  *  2. 路由级 Suspense + 过渡动画
- *  3. Service Worker 更新提示
- *  4. Auth 初始化 (在路由守卫中完成)
+ *  3. Auth 初始化 (在路由守卫中完成)
  *  5. 首次用户交互时解锁音频/语音合成 (autoplay policy)
  */
 import { ref, computed, onMounted, onUnmounted } from 'vue'
@@ -67,21 +48,6 @@ const prefStore = usePreferenceStore()
 const currentElementPlusLocale = computed(() => {
   return prefStore.language === 'en-US' ? en : zhCn
 })
-
-// ── SW 更新提示 ──
-const swUpdateAvailable = ref(false)
-
-function onSWUpdate() {
-  swUpdateAvailable.value = true
-}
-
-function applySWUpdate() {
-  // 向 SW 发送 skipWaiting 消息
-  if (navigator.serviceWorker.controller) {
-    navigator.serviceWorker.controller.postMessage({ type: 'SKIP_WAITING' })
-  }
-  window.location.reload()
-}
 
 // ── 首次用户交互 → 解锁音频 + 预热 SpeechSynthesis ──
 // 浏览器 autoplay policy: 未交互前 Audio.play() / speechSynthesis.speak() 静默失败.
@@ -118,7 +84,6 @@ function unlockMediaOnFirstGesture() {
 }
 
 onMounted(() => {
-  window.addEventListener('sw-update-available', onSWUpdate)
   // 启动全局告警 WebSocket（全页面共用，弹窗不依赖 LiveView）
   startGlobalAlarm()
   // 注册首次交互解锁监听器 (passive, 不阻塞)
@@ -128,7 +93,6 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
-  window.removeEventListener('sw-update-available', onSWUpdate)
   document.removeEventListener('click', unlockMediaOnFirstGesture)
   document.removeEventListener('keydown', unlockMediaOnFirstGesture)
   document.removeEventListener('touchstart', unlockMediaOnFirstGesture)
@@ -174,33 +138,4 @@ function isDashboard(route: RouteLocationNormalized) {
   transform: translateY(-6px);
 }
 
-/* =========================================
-   SW 更新提示条
-   ========================================= */
-.sw-update-banner {
-  position: fixed;
-  bottom: 20px;
-  right: 20px;
-  z-index: 9999;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 12px 20px;
-  background: var(--el-color-primary-light-9, #ecf5ff);
-  border: 1px solid var(--el-color-primary, #409eff);
-  border-radius: 8px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-  font-size: 14px;
-}
-
-.sw-update-slide-enter-active,
-.sw-update-slide-leave-active {
-  transition: all 0.3s ease;
-}
-
-.sw-update-slide-enter-from,
-.sw-update-slide-leave-to {
-  opacity: 0;
-  transform: translateY(20px);
-}
 </style>

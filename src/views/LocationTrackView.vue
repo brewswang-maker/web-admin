@@ -136,9 +136,6 @@
             <el-button size="small" @click="goToLive(selectedDevice.deviceId)">
               实时预览
             </el-button>
-            <el-button size="small" @click="openLocationDialog(selectedDevice)">
-              {{ selectedDevice.longitude ? '修改位置' : '设置位置' }}
-            </el-button>
           </div>
         </div>
       </div>
@@ -211,46 +208,30 @@
         <el-button type="primary" @click="queryTrack" :loading="trackLoading">查询</el-button>
       </template>
     </el-dialog>
-
-    <!-- 设置位置对话框 -->
-    <el-dialog v-model="showLocationDialog" title="设置设备位置" width="420px" :close-on-click-modal="false">
-      <el-form label-width="80px">
-        <el-form-item label="设备">
-          <el-input :value="locationDevice?.deviceId" disabled />
-        </el-form-item>
-        <el-form-item label="经度">
-          <el-input v-model="locationForm.longitude" placeholder="如 108.908623" />
-        </el-form-item>
-        <el-form-item label="纬度">
-          <el-input v-model="locationForm.latitude" placeholder="如 34.260803" />
-        </el-form-item>
-        <el-form-item label="地址">
-          <el-input v-model="locationForm.address" placeholder="如 西安市雁塔区" />
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="showLocationDialog = false">取消</el-button>
-        <el-button type="primary" @click="saveLocation" :loading="locationSaving">保存</el-button>
-      </template>
-    </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
-import L from 'leaflet'
-import 'leaflet/dist/leaflet.css'
-import { locationApi, type DeviceLocation, type TrackPoint } from '@/api/location'
-import { http } from '@/api/http'
 
-// ── 修复 Leaflet 默认图标路径问题 ──
-delete (L.Icon.Default.prototype as any)._getIconUrl
-L.Icon.Default.mergeOptions({
-  iconRetinaUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png',
-  iconUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',
-  shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
-})
+import { locationApi, type DeviceLocation, type TrackPoint } from '@/api/location'
+import { http as _unused } from '@/api/http' // 保留以便后续需要
+
+// ── 高德地图 JS SDK ──
+const AMAP_KEY = '7fe207317aeae03b556a6cfa10e9ceb8'
+declare global { interface Window { AMap: any } }
+
+function loadAMap(): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if ((window as any).AMap) return resolve()
+    const s = document.createElement('script')
+    s.src = `https://webapi.amap.com/maps?v=2.0&key=${AMAP_KEY}`
+    s.onload = () => resolve()
+    s.onerror = () => reject(new Error('AMap SDK load failed'))
+    document.head.appendChild(s)
+  })
+}
 
 const router = useRouter()
 
@@ -274,16 +255,12 @@ const playProgress = ref(0)
 const playSpeed = ref(1)
 const isPlaying = ref(false)
 
-// 位置设置
-const showLocationDialog = ref(false)
-const locationDevice = ref<DeviceLocation | null>(null)
-const locationSaving = ref(false)
-const locationForm = ref({ longitude: '', latitude: '', address: '' })
-
-let map: L.Map | null = null
-let deviceMarkers: Map<string, L.Marker> = new Map()
-let trackPolyline: L.Polyline | null = null
-let trackMarker: L.Marker | null = null
+let map: any = null
+let deviceMarkers: Map<string, any> = new Map()
+let trackPolyline: any = null
+let trackMarker: any = null
+let trackStartMarker: any = null
+let trackEndMarker: any = null
 let playTimer: ReturnType<typeof setInterval> | null = null
 
 // ── 计算属性 ──
@@ -321,62 +298,71 @@ const totalTrackTime = computed(() => {
   return formatTimestamp(trackPoints.value[trackPoints.value.length - 1]?.timestamp)
 })
 
-// ── 地图初始化 ──
+// ── 地图初始化（高德地图 JS SDK v2.0） ──
 function initMap() {
   if (map) return
-  map = L.map('location-map', {
-    center: [34.3, 108.9],
+  const AMap = (window as any).AMap
+  if (!AMap) { console.error('[LocationTrack] AMap SDK 未加载'); return }
+
+  map = new AMap.Map('location-map', {
+    center: [108.9, 34.3],   // [lng, lat]
     zoom: 13,
-    zoomControl: true,
-    attributionControl: false,
+    resizeEnable: true,
+    viewMode: '2D',
   })
 
-  // OpenStreetMap 瓦片
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    maxZoom: 19,
-  }).addTo(map)
+  // 图层切换（矢量/卫星）— 右上角
+  map.addControl(new AMap.MapType({
+    defaultType: 0,          // 0=矢量 1=卫星
+    showTraffic: false,
+    showRoad: false,
+  }))
 
-  // 点击地图空白处关闭浮窗
-  map.on('click', () => { showDeviceInfo.value = false })
+  // AMap 插件按需加载（位置设置功能已迁移到设备管理页）
+
+  // 点击地图：关闭浮窗
+  map.on('click', () => {
+    showDeviceInfo.value = false
+  })
 }
 
-// ── 设备标记 ──
+// ── 设备标记（高德 Marker） ──
 function updateMarkers() {
   if (!map) return
+  const AMap = (window as any).AMap
 
   // 清除旧标记
-  deviceMarkers.forEach(m => m.remove())
+  deviceMarkers.forEach(m => map!.remove(m))
   deviceMarkers.clear()
 
   devicesWithLocation.value.forEach(d => {
     const isOnline = d.status === 'online'
-    const icon = L.divIcon({
-      className: 'custom-device-marker',
-      html: `<div class="marker-pin ${isOnline ? 'online' : 'offline'}">
+    const markerContent = `<div class="custom-device-marker">
+      <div class="marker-pin ${isOnline ? 'online' : 'offline'}">
         <svg viewBox="0 0 24 24" width="28" height="28">
           <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z" fill="${isOnline ? '#10B981' : '#6B7280'}"/>
           <circle cx="12" cy="9" r="2.5" fill="white"/>
         </svg>
-      </div>`,
-      iconSize: [28, 36],
-      iconAnchor: [14, 36],
+      </div>
+    </div>`
+
+    const marker = new AMap.Marker({
+      position: [d.longitude, d.latitude],
+      content: markerContent,
+      offset: new AMap.Pixel(-14, -36),
     })
-
-    const marker = L.marker([d.latitude, d.longitude], { icon })
-      .addTo(map!)
-      .on('click', () => {
-        selectedDeviceId.value = d.deviceId
-        showDeviceInfo.value = true
-        map?.panTo([d.latitude, d.longitude])
-      })
-
+    marker.on('click', () => {
+      selectedDeviceId.value = d.deviceId
+      showDeviceInfo.value = true
+      map?.setCenter([d.longitude, d.latitude])
+    })
+    map.add(marker)
     deviceMarkers.set(d.deviceId, marker)
   })
 
   // 自动适配地图范围
   if (devicesWithLocation.value.length > 0) {
-    const group = L.featureGroup(Array.from(deviceMarkers.values()))
-    map.fitBounds(group.getBounds().pad(0.1))
+    map.setFitView(Array.from(deviceMarkers.values()), false, [60, 60, 60, 60])
   }
 }
 
@@ -425,7 +411,7 @@ function handleDeviceSelect(deviceId: string | number) {
 
   const d = devicesWithLocation.value.find(x => x.deviceId === id)
   if (d && map) {
-    map.flyTo([d.latitude, d.longitude], 16, { duration: 0.8 })
+    map.setZoomAndCenter(16, [d.longitude, d.latitude])
   }
 }
 
@@ -499,57 +485,61 @@ function generateSimulatedTrack(d: DeviceLocation): TrackPoint[] {
 
 function renderTrack() {
   if (!map || trackPoints.value.length === 0) return
+  const AMap = (window as any).AMap
 
   // 清除设备标记
-  deviceMarkers.forEach(m => m.remove())
+  deviceMarkers.forEach(m => map!.remove(m))
   deviceMarkers.clear()
 
   // 清除旧轨迹
   clearTrack()
 
+  // 高德坐标系 [lng, lat]
+  const path = trackPoints.value.map(p => [p.longitude, p.latitude])
+
   // 绘制轨迹线
-  const latlngs = trackPoints.value.map(p => [p.latitude, p.longitude] as [number, number])
-  trackPolyline = L.polyline(latlngs, {
-    color: '#3B82F6',
-    weight: 4,
-    opacity: 0.8,
-    smoothFactor: 1,
-  }).addTo(map!)
+  trackPolyline = new AMap.Polyline({
+    path,
+    strokeColor: '#3B82F6',
+    strokeWeight: 4,
+    strokeOpacity: 0.8,
+    lineJoin: 'round',
+  })
+  map.add(trackPolyline)
 
   // 起点标记
-  const startIcon = L.divIcon({
-    className: 'track-start-icon',
-    html: '<div class="track-marker start">起</div>',
-    iconSize: [24, 24],
-    iconAnchor: [12, 12],
+  trackStartMarker = new AMap.Marker({
+    position: path[0],
+    content: '<div class="track-marker start">起</div>',
+    offset: new AMap.Pixel(-12, -12),
   })
-  L.marker(latlngs[0], { icon: startIcon }).addTo(map!)
+  map.add(trackStartMarker)
 
   // 终点标记
-  const endIcon = L.divIcon({
-    className: 'track-end-icon',
-    html: '<div class="track-marker end">终</div>',
-    iconSize: [24, 24],
-    iconAnchor: [12, 12],
+  trackEndMarker = new AMap.Marker({
+    position: path[path.length - 1],
+    content: '<div class="track-marker end">终</div>',
+    offset: new AMap.Pixel(-12, -12),
   })
-  L.marker(latlngs[latlngs.length - 1], { icon: endIcon }).addTo(map!)
+  map.add(trackEndMarker)
 
   // 移动标记
-  const movingIcon = L.divIcon({
-    className: 'track-moving-icon',
-    html: '<div class="track-marker moving"></div>',
-    iconSize: [20, 20],
-    iconAnchor: [10, 10],
+  trackMarker = new AMap.Marker({
+    position: path[0],
+    content: '<div class="track-marker moving"></div>',
+    offset: new AMap.Pixel(-10, -10),
   })
-  trackMarker = L.marker(latlngs[0], { icon: movingIcon }).addTo(map!)
+  map.add(trackMarker)
 
-  map.fitBounds(trackPolyline.getBounds().pad(0.1))
+  map.setFitView([trackPolyline], false, [60, 60, 60, 60])
   playProgress.value = 0
 }
 
 function clearTrack() {
-  if (trackPolyline) { trackPolyline.remove(); trackPolyline = null }
-  if (trackMarker) { trackMarker.remove(); trackMarker = null }
+  if (trackPolyline && map) { map.remove(trackPolyline); trackPolyline = null }
+  if (trackMarker && map) { map.remove(trackMarker); trackMarker = null }
+  if (trackStartMarker && map) { map.remove(trackStartMarker); trackStartMarker = null }
+  if (trackEndMarker && map) { map.remove(trackEndMarker); trackEndMarker = null }
   if (playTimer) { clearInterval(playTimer); playTimer = null }
   isPlaying.value = false
   trackPoints.value = []
@@ -576,7 +566,7 @@ function togglePlayback() {
 function moveTrackMarker() {
   if (!trackMarker || !map || trackPoints.value.length === 0) return
   const p = trackPoints.value[Math.min(playProgress.value, trackPoints.value.length - 1)]
-  trackMarker.setLatLng([p.latitude, p.longitude])
+  trackMarker.setPosition([p.longitude, p.latitude])
 }
 
 function handleProgressChange(val: number) {
@@ -608,45 +598,17 @@ function goToLive(deviceId: string) {
   router.push({ path: '/live', query: { device: deviceId } })
 }
 
-// ── 位置设置 ──
-function openLocationDialog(d: DeviceLocation) {
-  locationDevice.value = d
-  locationForm.value = {
-    longitude: d.longitude ? String(d.longitude) : '',
-    latitude: d.latitude ? String(d.latitude) : '',
-    address: (d as any).address || '',
-  }
-  showLocationDialog.value = true
-}
-
-async function saveLocation() {
-  if (!locationDevice.value) return
-  locationSaving.value = true
-  try {
-    await http.put(`/system/gb28181/devices/${locationDevice.value.deviceId}/location`, {
-      longitude: locationForm.value.longitude,
-      latitude: locationForm.value.latitude,
-      address: locationForm.value.address,
-    })
-    showLocationDialog.value = false
-    await refreshLocations()
-  } catch (e) {
-    console.error('[LocationTrack] 保存位置失败:', e)
-  } finally {
-    locationSaving.value = false
-  }
-}
-
 // ── [Audit-Add] 实时告警地图标记 (CLIENT_SHOW_MAP 联动) ──
 // 对标海康 iVMS-8700 电子地图: 告警触发时在地图上闪烁标记 + 弹出详情
-const alarmMarkers = ref<L.Marker[]>([])
-const alarmPopupLayer = ref<L.LayerGroup | null>(null)
+const alarmMarkers = ref<any[]>([])
+const alarmPopupLayer = ref<any | null>(null)
 
 function onAlarmMapMarker(e: Event) {
   const detail = (e as CustomEvent).detail
   if (!detail || !map) return
   if (!detail.has_gps || (!detail.latitude && !detail.longitude)) return
 
+  const AMap = (window as any).AMap
   const lat = detail.latitude as number
   const lng = detail.longitude as number
 
@@ -660,10 +622,9 @@ function onAlarmMapMarker(e: Event) {
   }
   const color = sevColors[detail.severity] || '#FF3D71'
 
-  // 创建闪烁告警标记 (海康标准: 圆形脉冲动画)
-  const icon = L.divIcon({
-    className: 'alarm-map-marker',
-    html: `<div style="
+  const marker = new AMap.Marker({
+    position: [lng, lat],
+    content: `<div style="
       width: 24px; height: 24px;
       border-radius: 50%;
       background: ${color};
@@ -671,11 +632,9 @@ function onAlarmMapMarker(e: Event) {
       box-shadow: 0 0 12px ${color};
       animation: alarm-pulse 1s infinite;
     "></div>`,
-    iconSize: [24, 24],
-    iconAnchor: [12, 12],
+    offset: new AMap.Pixel(-12, -12),
   })
-
-  const marker = L.marker([lat, lng], { icon }).addTo(map)
+  map.add(marker)
 
   // 弹出详情 (对标海康: 点击标记显示告警详情)
   const alarmTypeCnMap: Record<string, string> = {
@@ -684,8 +643,10 @@ function onAlarmMapMarker(e: Event) {
     fall: '倒地检测', fighting: '打架斗殴', ppe_violation: '安全防护违规',
   }
   const alarmText = alarmTypeCnMap[detail.alarm_type] || detail.alarm_type || '告警'
-  marker.bindPopup(`
-    <div style="min-width: 200px;">
+
+  // 自动打开弹窗
+  const infoWin = new AMap.InfoWindow({
+    content: `<div style="min-width: 200px;">
       <div style="font-weight: bold; color: ${color}; font-size: 14px; margin-bottom: 4px;">
         ${alarmText}
       </div>
@@ -696,14 +657,13 @@ function onAlarmMapMarker(e: Event) {
         时间: ${new Date(detail.timestamp_ms).toLocaleString()}<br/>
         ${detail.snapshot_url ? `<img src="${detail.snapshot_url}" style="width:100%;margin-top:4px;border-radius:4px;"/>` : ''}
       </div>
-    </div>
-  `)
-
-  // 自动打开弹窗
-  marker.openPopup()
+    </div>`,
+    offset: new AMap.Pixel(0, -20),
+  })
+  infoWin.open(map, [lng, lat])
 
   // 地图飞到告警位置
-  map.flyTo([lat, lng], Math.max(map.getZoom(), 15), { duration: 1.0 })
+  map.setZoomAndCenter(Math.max(map.getZoom(), 15), [lng, lat])
 
   // 加入告警标记列表
   alarmMarkers.value.push(marker)
@@ -711,14 +671,14 @@ function onAlarmMapMarker(e: Event) {
   // 限制最多 50 个告警标记 (防止内存泄漏)
   if (alarmMarkers.value.length > 50) {
     const old = alarmMarkers.value.shift()
-    if (old && map) map.removeLayer(old as unknown as L.Layer)
+    if (old && map) map.remove(old)
   }
 
   // 30 秒后自动移除标记 (除非鼠标 hover)
   setTimeout(() => {
     const idx = alarmMarkers.value.indexOf(marker)
     if (idx >= 0 && map) {
-      map.removeLayer(marker as unknown as L.Layer)
+      map.remove(marker)
       alarmMarkers.value.splice(idx, 1)
     }
   }, 30000)
@@ -727,7 +687,12 @@ function onAlarmMapMarker(e: Event) {
 // ── 生命周期 ──
 onMounted(async () => {
   await nextTick()
-  initMap()
+  try {
+    await loadAMap()
+    initMap()
+  } catch (e) {
+    console.error('[LocationTrack] 高德地图 SDK 加载失败:', e)
+  }
   await refreshLocations()
   // [Audit-Add] 监听 alarm_map_marker 事件
   window.addEventListener('alarm-map-marker', onAlarmMapMarker as EventListener)
@@ -738,10 +703,10 @@ onUnmounted(() => {
   // [Audit-Add] 清理告警标记
   window.removeEventListener('alarm-map-marker', onAlarmMapMarker as EventListener)
   if (map) {
-    alarmMarkers.value.forEach(m => { map!.removeLayer(m as unknown as L.Layer) })
+    alarmMarkers.value.forEach(m => map!.remove(m))
   }
   alarmMarkers.value = []
-  if (map) { map.remove(); map = null }
+  if (map) { map.destroy(); map = null }
 })
 </script>
 
@@ -808,6 +773,7 @@ onUnmounted(() => {
 .map-canvas {
   width: 100%;
   height: 100%;
+  min-height: 400px;
 }
 
 /* 地图叠加控件 */
@@ -1102,17 +1068,17 @@ onUnmounted(() => {
   100% { transform: scale(1);   opacity: 1; }
 }
 
-/* 覆盖 Leaflet 控件样式适配暗色主题 */
-:deep(.leaflet-control-zoom) {
-  border: 1px solid var(--app-border, rgba(255,255,255,0.1)) !important;
+/* 高德地图控件适配 */
+:deep(.amap-controls) {
+  z-index: 100;
 }
-:deep(.leaflet-control-zoom a) {
+:deep(.amap-maptype-control) {
   background: var(--app-card-bg, #161b22) !important;
-  color: var(--app-text, #e6edf3) !important;
-  border-color: var(--app-border, rgba(255,255,255,0.1)) !important;
+  border-radius: 6px;
+  overflow: hidden;
 }
-:deep(.leaflet-control-zoom a:hover) {
-  background: rgba(59,130,246,0.2) !important;
+:deep(.amap-maptype-list) {
+  background: var(--app-card-bg, #161b22) !important;
 }
 
 /* 滑块样式 */

@@ -92,19 +92,46 @@
       <div class="device-tooltip">
         <div class="tooltip-name">{{ hoveredDevice.name }}</div>
         <div class="tooltip-status" :class="hoveredDevice.status">{{ statusLabel(hoveredDevice.status) }}</div>
-        <div class="tooltip-info">{{ hoveredDevice.location }}</div>
+        <div class="tooltip-info">位置: {{ hoveredDevice.location }}</div>
+        <div class="tooltip-info" v-if="hoveredDevice.projectName">项目: {{ hoveredDevice.projectName }}</div>
         <div class="tooltip-info" v-if="hoveredDevice.alarmType">告警: {{ hoveredDevice.alarmType }}</div>
+        <div class="tooltip-hint" v-if="hoveredDevice.businessId">点击查看设备详情 →</div>
       </div>
     </div>
+    <!-- T4: 设备操作上下文菜单 -->
+    <Teleport to="body">
+      <div
+        v-if="contextMenu.visible"
+        class="device-context-menu"
+        :style="{ left: contextMenu.x + 'px', top: contextMenu.y + 'px' }"
+        @click.stop
+      >
+        <div class="context-menu-header">{{ contextMenu.device?.name || '未知设备' }}</div>
+        <button class="context-menu-item" type="button" @click="onDeviceLivePreview">
+          <i class="iconfont1 icon1-yingyanshexiangtou" aria-hidden="true"></i>
+          <span>实时预览</span>
+        </button>
+        <button class="context-menu-item" type="button" @click="onDevicePlayback">
+          <i class="iconfont1 icon1-gaojing" aria-hidden="true"></i>
+          <span>录像回放</span>
+        </button>
+        <button v-if="contextMenu.device?.businessId" class="context-menu-item" type="button" @click="onDeviceDetailNav">
+          <i class="iconfont1 icon1-shebeizhuangtai" aria-hidden="true"></i>
+          <span>设备详情</span>
+        </button>
+      </div>
+      <div v-if="contextMenu.visible" class="context-menu-backdrop" @click="closeContextMenu" @contextmenu.prevent="closeContextMenu"></div>
+    </Teleport>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, watch, computed } from 'vue'
+import { ref, reactive, onMounted, onUnmounted, watch, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { CSS2DRenderer, CSS2DObject } from 'three/examples/jsm/renderers/CSS2DRenderer.js'
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import {
   PerformanceCollector,
   formatPerformanceReport,
@@ -123,6 +150,12 @@ interface Device3D {
   alarmType?: string
   fov?: number
   rotation?: number
+  /** 所属项目（悬停展示） */
+  projectName?: string
+  /** 设备业务 ID（点击跳转设备详情；演示数据无此字段） */
+  businessId?: string
+  /** 设备类型 */
+  deviceType?: string
 }
 const props = defineProps<{
   devices?: Device3D[]
@@ -133,11 +166,35 @@ const props = defineProps<{
   lowFpsThreshold?: number
   /** 是否启用模型懒加载优化，默认 false */
   enableLazyLoad?: boolean
+  /** 编辑模式：启用设备拖拽编辑 */
+  editMode?: boolean
+  /** 选中的设备ID — 高亮显示 */
+  selectedDeviceId?: string
+  /** P2-1: CAD 底图 URL（叠加到地面） */
+  groundImageUrl?: string
+  /** P2-2: 建筑绘制模式（在2D底图上画矩形拉伸为建筑） */
+  drawBuildingMode?: boolean
+  /** P2-3: 建筑模型映射 { buildingName: modelUrl } */
+  buildingModels?: Record<string, string>
+  /** P2-6: 是否显示2D俯视小地图 */
+  showMiniMap?: boolean
 }>()
 
 const emit = defineEmits<{
   /** 性能报告就绪事件（可由外部触发导出） */
   'performance-report': [report: PerformanceReport]
+  /** 设备拖拽事件（编辑模式下拖拽设备后触发） */
+  'device-drag': [payload: { deviceId: string; x: number; y: number; z: number; buildingId?: string }]
+  /** 编辑模式下点击设备选中 */
+  'device-select': [deviceId: string]
+  /** P1-2: 建筑悬停事件 */
+  'building-hover': [payload: { buildingName: string | null; deviceCount: number; x: number; z: number }]
+  /** P2-2: 建筑绘制完成事件（画矩形拉伸后） */
+  'building-create': [payload: { x: number; z: number; w: number; d: number }]
+  /** P2-6: 2D小地图设备点击 */
+  'minimap-select': [deviceId: string]
+  /** T4: 设备视频操作 — 实时预览请求 */
+  'device-video': [device: { id: string; name: string; businessId?: string; deviceType?: string }]
 }>()
 
 const router = useRouter()
@@ -147,6 +204,14 @@ const alarmPulse = ref(true)
 const showLabels = ref(true)
 const showPerfPanel = ref(props.showPerformance ?? false)
 const hoveredDevice = ref<Device3D | null>(null)
+
+// T4: 设备右键/点击上下文菜单
+const contextMenu = reactive({
+  visible: false,
+  x: 0,
+  y: 0,
+  device: null as Device3D | null,
+})
 const perfSnapshot = ref<PerformanceSnapshot | null>(null)
 const aiDragging = ref(false)
 const aiMessagePlacement = ref<'left' | 'right'>('left')
@@ -171,7 +236,7 @@ let labelRenderer: CSS2DRenderer
 let controls: OrbitControls
 let animationId: number
 let startTime = 0
-let deviceMeshes: Map<string, { mesh: THREE.Mesh; cone: THREE.Mesh; pulse?: THREE.Mesh; label?: CSS2DObject }> = new Map()
+let deviceMeshes: Map<string, { mesh: THREE.Mesh; cone: THREE.Mesh; lens?: THREE.Mesh; pulse?: THREE.Mesh; label?: CSS2DObject }> = new Map()
 let raycaster: THREE.Raycaster
 let mouse: THREE.Vector2
 let resizeObserver: ResizeObserver | null = null
@@ -188,6 +253,443 @@ const lazyDeviceCache = new Map<string, Device3D>()
 let lowFpsFrames = 0
 /** 上次 FPS 状态（用于判断是否需要恢复） */
 let wasLowFps = false
+
+// ── 编辑模式拖拽状态 ──
+let isDragging = false
+let dragDeviceId: string | null = null
+let dragFixedY = 0
+let dragPlane: THREE.Plane = new THREE.Plane()
+let dragIntersect: THREE.Vector3 = new THREE.Vector3()
+
+/** P1-1: detect if a point falls within a building bounding box */
+function detectBuilding(x: number, z: number, buildings: Array<{ name: string; x: number; z: number; w: number; d: number; h: number; color?: string }>): { name: string; x: number; z: number; w: number; d: number; h: number; color?: string } | null {
+  for (const b of buildings) {
+    const halfW = b.w / 2
+    const halfD = b.d / 2
+    if (x >= b.x - halfW && x <= b.x + halfW && z >= b.z - halfD && z <= b.z + halfD) {
+      return b
+    }
+  }
+  return null
+}
+
+/** P1-2: pick building at pointer position */
+function pickBuilding(event: MouseEvent): { name: string; x: number; z: number } | null {
+  if (!containerRef.value) return null
+  const rect = containerRef.value.getBoundingClientRect()
+  const w = rect.width || 1
+  const h = rect.height || 1
+  mouse.x = ((event.clientX - rect.left) / w) * 2 - 1
+  mouse.y = -((event.clientY - rect.top) / h) * 2 + 1
+  raycaster.setFromCamera(mouse, camera)
+  const groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0)
+  const hit = new THREE.Vector3()
+  raycaster.ray.intersectPlane(groundPlane, hit)
+  if (!hit) return null
+  const buildings = (props.buildings || defaultBuildings) as Array<{ name: string; x: number; z: number; w: number; d: number; h: number; color?: string }>
+  const found = detectBuilding(hit.x, hit.z, buildings)
+  return found ? { name: found.name, x: found.x, z: found.z } : null
+}
+
+// P1-3: building base rings (同色底座) and connection lines
+let buildingRings: THREE.Mesh[] = []
+let connectionLines: THREE.Line[] = []
+
+// ── P2-1: CAD 底图叠加 ──
+let groundImageMesh: THREE.Mesh | null = null
+let gltfLoader: GLTFLoader | null = null
+
+// ── P2-2: 2D 建筑绘制模式 ──
+let drawStartPoint: THREE.Vector3 | null = null
+let drawPreviewMesh: THREE.Mesh | null = null
+
+// ── P2-3: GLB 模型缓存 ──
+const loadedModels: Map<string, THREE.Group> = new Map()
+const buildingGroups: Map<string, THREE.Group> = new Map()
+
+// ── P2-4: 3D 巡视路线 ──
+let patrolCurve: THREE.CatmullRomCurve3 | null = null
+let patrolProgress = 0
+let patrolSpeed = 0.0002
+let isPatrolling = false
+let patrolLookTargets: THREE.Vector3[] = []
+
+// ── P2-5: 预案演练动作序列 ──
+interface SceneAction {
+  time: number
+  type: 'camera' | 'visibility' | 'highlight' | 'particle'
+  target?: string
+  params?: Record<string, number | string | boolean | undefined>
+}
+let sequenceActions: SceneAction[] = []
+let sequenceStartTime = 0
+let isPlayingSequence = false
+let sequenceFiredIndices = new Set<number>()
+let particleSystems: Map<string, THREE.Points> = new Map()
+
+// ── P2-6: 2D 小地图 ──
+let miniMapCanvas: HTMLCanvasElement | null = null
+let miniMapCtx: CanvasRenderingContext2D | null = null
+
+function updateBuildingAssociations(buildings: any[]) {
+  // Remove old rings
+  buildingRings.forEach(r => { scene.remove(r); r.geometry.dispose(); (r.material as THREE.Material).dispose() })
+  buildingRings = []
+  // Remove old lines
+  connectionLines.forEach(l => { scene.remove(l); l.geometry.dispose(); (l.material as THREE.Material).dispose() })
+  connectionLines = []
+
+  if (!buildings.length) return
+
+  // For each building, draw a colored ring on the ground
+  for (const b of buildings) {
+    const color = b.color ? parseHexColor(b.color) : 0x1A73E8
+    const ringGeo = new THREE.RingGeometry(
+      Math.max(b.w, b.d) / 2 + 0.5,
+      Math.max(b.w, b.d) / 2 + 1.0,
+      32
+    )
+    const ringMat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.3, side: THREE.DoubleSide, depthWrite: false })
+    const ring = new THREE.Mesh(ringGeo, ringMat)
+    ring.rotation.x = -Math.PI / 2
+    ring.position.set(b.x, 0.05, b.z)
+    scene.add(ring)
+    buildingRings.push(ring)
+  }
+
+  // Draw connection lines from devices to their buildings (edit mode only)
+  if (props.editMode) {
+    const devices = props.devices || defaultDevices
+    for (const dev of devices) {
+      const bld = detectBuilding(dev.x, dev.z, buildings)
+      if (!bld) continue
+      const points = [
+        new THREE.Vector3(dev.x, dev.y - 0.5, dev.z),
+        new THREE.Vector3(bld.x, bld.h / 2, bld.z),
+      ]
+      const lineGeo = new THREE.BufferGeometry().setFromPoints(points)
+      const lineMat = new THREE.LineBasicMaterial({ color: 0x4488ff, transparent: true, opacity: 0.3 })
+      const line = new THREE.Line(lineGeo, lineMat)
+      scene.add(line)
+      connectionLines.push(line)
+    }
+  }
+}
+
+// ── P2-1: CAD 底图叠加 ──
+/** 加载 CAD/参考底图并叠加到地面 */
+function loadGroundImage(url: string) {
+  if (!scene) return
+  // 移除旧底图
+  if (groundImageMesh) {
+    scene.remove(groundImageMesh)
+    groundImageMesh.geometry.dispose()
+    ;(groundImageMesh.material as THREE.Material).dispose()
+    groundImageMesh = null
+  }
+  if (!url) return
+  const loader = new THREE.TextureLoader()
+  loader.load(url, (texture) => {
+    texture.colorSpace = THREE.SRGBColorSpace
+    const aspect = texture.image.width / texture.image.height
+    const planeW = 120
+    const planeH = planeW / aspect
+    const geo = new THREE.PlaneGeometry(planeW, planeH)
+    const mat = new THREE.MeshBasicMaterial({ map: texture, transparent: true, opacity: 0.6, depthWrite: false })
+    groundImageMesh = new THREE.Mesh(geo, mat)
+    groundImageMesh.rotation.x = -Math.PI / 2
+    groundImageMesh.position.y = 0.02
+    scene.add(groundImageMesh)
+  })
+}
+
+// ── P2-2: 2D 建筑绘制 ──
+/** 在地面上获取鼠标投影坐标 */
+function getGroundIntersect(event: MouseEvent): THREE.Vector3 | null {
+  if (!containerRef.value || !camera) return null
+  const rect = containerRef.value.getBoundingClientRect()
+  mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1
+  mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1
+  raycaster.setFromCamera(mouse, camera)
+  const groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0)
+  const hit = new THREE.Vector3()
+  const result = raycaster.ray.intersectPlane(groundPlane, hit)
+  return result ? hit : null
+}
+
+/** 更新建筑绘制预览 */
+function updateDrawPreview(start: THREE.Vector3, end: THREE.Vector3) {
+  if (drawPreviewMesh) {
+    scene.remove(drawPreviewMesh)
+    drawPreviewMesh.geometry.dispose()
+    ;(drawPreviewMesh.material as THREE.Material).dispose()
+  }
+  const w = Math.abs(end.x - start.x)
+  const d = Math.abs(end.z - start.z)
+  const cx = (start.x + end.x) / 2
+  const cz = (start.z + end.z) / 2
+  if (w < 1 || d < 1) return
+  const geo = new THREE.BoxGeometry(w, 0.1, d)
+  const mat = new THREE.MeshBasicMaterial({ color: 0x00B4FF, transparent: true, opacity: 0.3 })
+  drawPreviewMesh = new THREE.Mesh(geo, mat)
+  drawPreviewMesh.position.set(cx, 0.2, cz)
+  scene.add(drawPreviewMesh)
+}
+
+// ── P2-3: GLB 模型加载 ──
+/** 为建筑加载 GLB 模型替换程序化几何体 */
+function loadBuildingModel(buildingName: string, modelUrl: string) {
+  if (!scene || !modelUrl) return
+  if (!gltfLoader) gltfLoader = new GLTFLoader()
+  // 检查缓存
+  if (loadedModels.has(modelUrl)) {
+    const cached = loadedModels.get(modelUrl)!.clone()
+    applyModelToBuilding(buildingName, cached)
+    return
+  }
+  gltfLoader.load(modelUrl, (gltf) => {
+    loadedModels.set(modelUrl, gltf.scene)
+    applyModelToBuilding(buildingName, gltf.scene.clone())
+  }, undefined, (err) => {
+    console.warn('[Scene3D] GLB load failed:', modelUrl, err)
+  })
+}
+
+/** 将 GLB 模型应用到建筑（隐藏原 box 几何体） */
+function applyModelToBuilding(buildingName: string, model: THREE.Group) {
+  // 移除旧 group
+  const old = buildingGroups.get(buildingName)
+  if (old) { scene.remove(old); buildingGroups.delete(buildingName) }
+  // 记录新 group
+  buildingGroups.set(buildingName, model)
+  scene.add(model)
+}
+
+// ── P2-4: 3D 巡视路线 ──
+/** 开始自动巡视（沿路径点飞行） */
+function startPatrol(waypoints: Array<{ x: number; y: number; z: number }>, speed?: number) {
+  if (waypoints.length < 2 || !camera || !controls) return
+  const points = waypoints.map(wp => new THREE.Vector3(wp.x, wp.y, wp.z))
+  patrolCurve = new THREE.CatmullRomCurve3(points, true)
+  patrolProgress = 0
+  patrolSpeed = speed ?? 0.0002
+  isPatrolling = true
+  controls.enabled = false
+}
+
+/** 停止巡视 */
+function stopPatrol() {
+  isPatrolling = false
+  patrolCurve = null
+  if (controls) controls.enabled = true
+}
+
+/** 巡视动画帧更新 */
+function updatePatrol() {
+  if (!isPatrolling || !patrolCurve || !camera) return
+  patrolProgress += patrolSpeed
+  if (patrolProgress > 1) patrolProgress = 0
+  const pos = patrolCurve.getPointAt(patrolProgress)
+  camera.position.copy(pos)
+  const lookAhead = patrolCurve.getPointAt((patrolProgress + 0.05) % 1)
+  camera.lookAt(lookAhead)
+}
+
+// ── P2-5: 预案演练动作序列 ──
+/** 播放动作序列 */
+function playSequence(actions: SceneAction[]) {
+  sequenceActions = actions.sort((a, b) => a.time - b.time)
+  sequenceStartTime = performance.now()
+  isPlayingSequence = true
+  sequenceFiredIndices.clear()
+}
+
+/** 停止动作序列 */
+function stopSequence() {
+  isPlayingSequence = false
+  sequenceActions = []
+  sequenceFiredIndices.clear()
+  // 清理粒子效果
+  particleSystems.forEach((ps) => {
+    scene.remove(ps)
+    ps.geometry.dispose()
+    ;(ps.material as THREE.Material).dispose()
+  })
+  particleSystems.clear()
+}
+
+/** 动作序列帧更新 */
+function updateSequence() {
+  if (!isPlayingSequence || !sequenceActions.length) return
+  const elapsed = (performance.now() - sequenceStartTime) / 1000
+  for (let i = 0; i < sequenceActions.length; i++) {
+    if (sequenceFiredIndices.has(i)) continue
+    const action = sequenceActions[i]
+    if (elapsed >= action.time) {
+      executeAction(action)
+      sequenceFiredIndices.add(i)
+    }
+  }
+  // 全部执行完毕
+  if (sequenceFiredIndices.size >= sequenceActions.length) {
+    isPlayingSequence = false
+  }
+}
+
+/** 执行单个动作 */
+function executeAction(action: SceneAction) {
+  switch (action.type) {
+    case 'camera': {
+      if (camera && action.params) {
+        const tx = Number(action.params.x ?? 0)
+        const ty = Number(action.params.y ?? 30)
+        const tz = Number(action.params.z ?? 0)
+        camera.position.set(tx, ty, tz)
+        if (controls && action.params.lookX !== undefined) {
+          controls.target.set(Number(action.params.lookX), Number(action.params.lookY ?? 0), Number(action.params.lookZ ?? 0))
+          controls.update()
+        }
+      }
+      break
+    }
+    case 'visibility': {
+      if (action.target) {
+        const group = buildingGroups.get(action.target)
+        if (group) group.visible = action.params?.visible !== false
+      }
+      break
+    }
+    case 'highlight': {
+      if (action.target) {
+        const entry = deviceMeshes.get(action.target)
+        if (entry?.mesh) {
+          const mat = entry.mesh.material as THREE.MeshStandardMaterial
+          if (mat.emissive) {
+            mat.emissive.setHex(0xFF6600)
+            mat.emissiveIntensity = 1.0
+          }
+        }
+      }
+      break
+    }
+    case 'particle': {
+      if (action.target && action.params) {
+        createParticleSystem(
+          action.target,
+          Number(action.params.x ?? 0),
+          Number(action.params.y ?? 5),
+          Number(action.params.z ?? 0),
+        )
+      }
+      break
+    }
+  }
+}
+
+/** 创建简易粒子效果 */
+function createParticleSystem(id: string, x: number, y: number, z: number) {
+  if (particleSystems.has(id)) return
+  const count = 100
+  const positions = new Float32Array(count * 3)
+  for (let i = 0; i < count; i++) {
+    positions[i * 3] = x + (Math.random() - 0.5) * 4
+    positions[i * 3 + 1] = y + Math.random() * 6
+    positions[i * 3 + 2] = z + (Math.random() - 0.5) * 4
+  }
+  const geo = new THREE.BufferGeometry()
+  geo.setAttribute('position', new THREE.BufferAttribute(positions, 3))
+  const mat = new THREE.PointsMaterial({ color: 0xFF6600, size: 0.5, transparent: true, opacity: 0.7 })
+  const points = new THREE.Points(geo, mat)
+  scene.add(points)
+  particleSystems.set(id, points)
+}
+
+// ── P2-6: 2D 俯视小地图 ──
+/** 初始化小地图 canvas */
+function initMiniMap() {
+  if (!containerRef.value) return
+  // 移除旧 canvas
+  if (miniMapCanvas) { miniMapCanvas.remove(); miniMapCanvas = null }
+  miniMapCanvas = document.createElement('canvas')
+  miniMapCanvas.width = 180
+  miniMapCanvas.height = 150
+  miniMapCanvas.style.cssText = 'position:absolute;bottom:8px;right:8px;z-index:10;border:1px solid rgba(0,180,255,0.3);border-radius:6px;background:rgba(10,12,16,0.8);pointer-events:auto;cursor:crosshair;'
+  miniMapCanvas.addEventListener('click', onMiniMapClick)
+  containerRef.value.appendChild(miniMapCanvas)
+  miniMapCtx = miniMapCanvas.getContext('2d')
+}
+
+/** 小地图点击 → 拾取设备 */
+function onMiniMapClick(event: MouseEvent) {
+  if (!miniMapCanvas) return
+  const rect = miniMapCanvas.getBoundingClientRect()
+  const mx = event.clientX - rect.left
+  const my = event.clientY - rect.top
+  // 转换为场景坐标 (180x150 → 120x100)
+  const sceneX = (mx / 180) * 120 - 60
+  const sceneZ = (my / 150) * 100 - 50
+  // 找最近的设备
+  const devices = props.devices || defaultDevices
+  let nearest: Device3D | null = null
+  let minDist = Infinity
+  for (const d of devices) {
+    const dist = Math.hypot(d.x - sceneX, d.z - sceneZ)
+    if (dist < minDist) { minDist = dist; nearest = d }
+  }
+  if (nearest && minDist < 10) {
+    emit('minimap-select', nearest.id)
+  }
+}
+
+/** 渲染小地图帧 */
+function drawMiniMapFrame() {
+  if (!miniMapCtx || !miniMapCanvas) return
+  const ctx = miniMapCtx
+  ctx.clearRect(0, 0, 180, 150)
+  // 网格
+  ctx.strokeStyle = 'rgba(255,255,255,0.05)'
+  ctx.lineWidth = 0.5
+  for (let i = 0; i <= 180; i += 18) { ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, 150); ctx.stroke() }
+  for (let i = 0; i <= 150; i += 15) { ctx.beginPath(); ctx.moveTo(0, i); ctx.lineTo(180, i); ctx.stroke() }
+  // 建筑
+  const buildings = props.buildings || defaultBuildings
+  ctx.lineWidth = 1
+  for (const b of buildings) {
+    const bx = ((b.x + 60) / 120) * 180
+    const bz = ((b.z + 50) / 100) * 150
+    const bw = (b.w / 120) * 180
+    const bd = (b.d / 100) * 150
+    ctx.fillStyle = (b.color || '#1A73E8') + '33'
+    ctx.strokeStyle = b.color || '#1A73E8'
+    ctx.fillRect(bx - bw / 2, bz - bd / 2, bw, bd)
+    ctx.strokeRect(bx - bw / 2, bz - bd / 2, bw, bd)
+  }
+  // 设备
+  const devices = props.devices || defaultDevices
+  for (const d of devices) {
+    const dx = ((d.x + 60) / 120) * 180
+    const dz = ((d.z + 50) / 100) * 150
+    const colorMap: Record<string, string> = { online: '#0F9D58', alarm: '#DB4437', offline: '#666', maintenance: '#F4B400' }
+    ctx.fillStyle = colorMap[d.status] || '#0F9D58'
+    ctx.beginPath()
+    ctx.arc(dx, dz, d.id === props.selectedDeviceId ? 4 : 2.5, 0, Math.PI * 2)
+    ctx.fill()
+    if (d.id === props.selectedDeviceId) {
+      ctx.strokeStyle = '#FFF'
+      ctx.lineWidth = 1
+      ctx.stroke()
+    }
+  }
+  // 相机位置指示器
+  if (camera) {
+    const cx = ((camera.position.x + 60) / 120) * 180
+    const cz = ((camera.position.z + 50) / 100) * 150
+    ctx.fillStyle = 'rgba(0,180,255,0.8)'
+    ctx.beginPath()
+    ctx.arc(cx, cz, 3, 0, Math.PI * 2)
+    ctx.fill()
+  }
+}
 
 // ── 工具函数 ──
 
@@ -421,6 +923,11 @@ function init() {
   const gridHelper = new THREE.GridHelper(120, 30, 0x1a1d23, 0x111318)
   scene.add(gridHelper)
 
+  // P2-1: 加载 CAD 底图（如果 prop 提供）
+  if (props.groundImageUrl) {
+    loadGroundImage(props.groundImageUrl)
+  }
+
   // 围墙（四面）
   createWall(-55, 0, 0, 0.3, 3, 100, 0x1a2040)   // 左
   createWall(55, 0, 0, 0.3, 3, 100, 0x1a2040)    // 右
@@ -430,6 +937,21 @@ function init() {
   // ── 建筑 ──
   const buildings = props.buildings || defaultBuildings
   buildings.forEach(b => createBuilding(b))
+
+  // P2-3: 为有模型映射的建筑加载 GLB
+  if (props.buildingModels) {
+    for (const [name, url] of Object.entries(props.buildingModels)) {
+      loadBuildingModel(name, url)
+    }
+  }
+
+  // P2-6: 初始化小地图
+  if (props.showMiniMap) {
+    initMiniMap()
+  }
+
+  // P1-3: Draw building rings
+  updateBuildingAssociations(buildings)
 
   // ── 设备（懒加载模式下延迟创建） ──
   const devices = props.devices || defaultDevices
@@ -451,6 +973,8 @@ function init() {
 
   // ── 事件 ──
   renderer.domElement.addEventListener('mousemove', onMouseMove)
+  renderer.domElement.addEventListener('pointerdown', onPointerDown)
+  renderer.domElement.addEventListener('pointerup', onPointerUp)
   window.addEventListener('resize', onResize)
 
   // ── ResizeObserver: 监听容器尺寸变化（侧边栏折叠/展开等） ──
@@ -586,6 +1110,9 @@ function createBuilding(b: { name: string; x: number; z: number; w: number; d: n
   const label = new CSS2DObject(labelDiv)
   label.position.set(b.x, b.h + 1, b.z)
   scene.add(label)
+
+  // P2-5: 记录建筑 mesh 到 buildingGroups 以支持 visibility 动作
+  buildingGroups.set(b.name, mesh as unknown as THREE.Group)
 }
 
 function createDevice(d: Device3D) {
@@ -626,7 +1153,7 @@ function createDevice(d: Device3D) {
   cone.translateY(-dist / 2)
   scene.add(cone)
 
-  const entry = { mesh: body, cone } as any
+  const entry = { mesh: body, cone, lens } as any
 
   // 告警脉冲球
   if (d.status === 'alarm') {
@@ -670,8 +1197,9 @@ function removeDeviceEntry(entry: { mesh: THREE.Mesh; cone: THREE.Mesh; pulse?: 
   }
 }
 
-function onMouseMove(event: MouseEvent) {
-  if (!containerRef.value) return
+/** 根据指针事件拾取设备（raycast 按位置邻近匹配） */
+function pickDevice(event: MouseEvent): Device3D | null {
+  if (!containerRef.value) return null
   const rect = containerRef.value.getBoundingClientRect()
   const w = rect.width || 1
   const h = rect.height || 1
@@ -681,15 +1209,205 @@ function onMouseMove(event: MouseEvent) {
   raycaster.setFromCamera(mouse, camera)
   const meshes = Array.from(deviceMeshes.values()).map(e => e.mesh)
   const intersects = raycaster.intersectObjects(meshes)
-  if (intersects.length > 0) {
-    const hit = intersects[0].object
-    const found = (props.devices || defaultDevices).find(d =>
-      Math.abs(d.x - hit.position.x) < 0.1 && Math.abs(d.z - hit.position.z) < 0.1
-    )
-    hoveredDevice.value = found || null
-  } else {
-    hoveredDevice.value = null
+  if (intersects.length === 0) return null
+  const hit = intersects[0].object
+  return (props.devices || defaultDevices).find(d =>
+    Math.abs(d.x - hit.position.x) < 0.1 && Math.abs(d.z - hit.position.z) < 0.1
+  ) || null
+}
+
+function onMouseMove(event: MouseEvent) {
+  // P2-2: 建筑绘制模式 — 实时预览矩形
+  if (props.drawBuildingMode && drawStartPoint) {
+    const hit = getGroundIntersect(event)
+    if (hit) updateDrawPreview(drawStartPoint, hit)
+    return
   }
+  // 编辑模式拖拽中：实时更新设备位置
+  if (isDragging && dragDeviceId) {
+    doDeviceDrag(event)
+    return
+  }
+  const found = pickDevice(event)
+  hoveredDevice.value = found
+  if (containerRef.value) {
+    if (props.editMode && found) {
+      containerRef.value.style.cursor = 'move'
+    } else {
+      containerRef.value.style.cursor = found?.businessId ? 'pointer' : ''
+    }
+  }
+  // P1-2: building hover detection (only when no device hovered)
+  if (!found) {
+    const bld = pickBuilding(event)
+    if (bld) {
+      const buildings = props.buildings || defaultBuildings
+      emit('building-hover', {
+        buildingName: bld.name,
+        deviceCount: 0,
+        x: bld.x,
+        z: bld.z,
+      })
+    } else {
+      emit('building-hover', { buildingName: null, deviceCount: 0, x: 0, z: 0 })
+    }
+  }
+}
+
+/** 编辑模式拖拽中：将设备 mesh 投影到水平面并更新所有子对象 */
+function doDeviceDrag(event: MouseEvent) {
+  if (!containerRef.value || !camera || !dragDeviceId) return
+  const rect = containerRef.value.getBoundingClientRect()
+  mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1
+  mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1
+  raycaster.setFromCamera(mouse, camera)
+  // 水平面 Y = dragFixedY
+  dragPlane.setFromNormalAndCoplanarPoint(new THREE.Vector3(0, 1, 0), new THREE.Vector3(0, dragFixedY, 0))
+  raycaster.ray.intersectPlane(dragPlane, dragIntersect)
+  if (!dragIntersect) return
+
+  const entry = deviceMeshes.get(dragDeviceId)
+  if (!entry) return
+  const nx = dragIntersect.x
+  const nz = dragIntersect.z
+  // 更新主体 + 镜头 + 视锥 + 脉冲球 + 标签
+  entry.mesh.position.x = nx
+  entry.mesh.position.z = nz
+  if (entry.lens) { entry.lens.position.x = nx; entry.lens.position.z = nz }
+  if (entry.cone) { entry.cone.position.x = nx; entry.cone.position.z = nz }
+  if (entry.pulse) { entry.pulse.position.x = nx; entry.pulse.position.z = nz }
+  if (entry.label) { entry.label.position.x = nx; entry.label.position.z = nz }
+}
+
+// ── 点击跳转设备详情 ──
+let pointerDownX = 0
+let pointerDownY = 0
+let pointerDownTime = 0
+
+function onPointerDown(event: MouseEvent) {
+  pointerDownX = event.clientX
+  pointerDownY = event.clientY
+  pointerDownTime = performance.now()
+
+  // P2-2: 建筑绘制模式 — 记录起始点
+  if (props.drawBuildingMode) {
+    const hit = getGroundIntersect(event)
+    if (hit) {
+      drawStartPoint = hit.clone()
+      event.preventDefault()
+    }
+    return
+  }
+
+  // 编辑模式：开始拖拽设备
+  if (props.editMode) {
+    const dev = pickDevice(event)
+    if (dev) {
+      isDragging = true
+      dragDeviceId = dev.id
+      dragFixedY = dev.y
+      controls.enabled = false
+      event.preventDefault()
+    }
+  }
+}
+
+function onPointerUp(event: MouseEvent) {
+  // P2-2: 建筑绘制模式 — 完成绘制
+  if (props.drawBuildingMode && drawStartPoint) {
+    const end = getGroundIntersect(event)
+    if (end) {
+      const w = Math.abs(end.x - drawStartPoint.x)
+      const d = Math.abs(end.z - drawStartPoint.z)
+      if (w >= 3 && d >= 3) {
+        const cx = (drawStartPoint.x + end.x) / 2
+        const cz = (drawStartPoint.z + end.z) / 2
+        emit('building-create', { x: cx, z: cz, w, d })
+      }
+    }
+    drawStartPoint = null
+    if (drawPreviewMesh) {
+      scene.remove(drawPreviewMesh)
+      drawPreviewMesh.geometry.dispose()
+      ;(drawPreviewMesh.material as THREE.Material).dispose()
+      drawPreviewMesh = null
+    }
+    return
+  }
+
+  // 编辑模式：结束拖拽并 emit
+  if (isDragging && dragDeviceId) {
+    const entry = deviceMeshes.get(dragDeviceId)
+    isDragging = false
+    controls.enabled = true
+    if (entry) {
+      const buildings = (props.buildings || defaultBuildings) as Array<{ name: string; x: number; z: number; w: number; d: number; h: number; color?: string }>
+      const detectedBuilding = detectBuilding(entry.mesh.position.x, entry.mesh.position.z, buildings)
+      emit('device-drag', {
+        deviceId: dragDeviceId,
+        x: entry.mesh.position.x,
+        y: dragFixedY,
+        z: entry.mesh.position.z,
+        buildingId: detectedBuilding?.name,
+      })
+    }
+    dragDeviceId = null
+    return
+  }
+
+  const dx = event.clientX - pointerDownX
+  const dy = event.clientY - pointerDownY
+  const dt = performance.now() - pointerDownTime
+  // 位移小且时间短 → 判定为点击（排除拖拽旋转视角）
+  if (Math.hypot(dx, dy) > 6 || dt > 400) return
+  const dev = pickDevice(event)
+
+  // 编辑模式：点击选中设备
+  if (props.editMode) {
+    if (dev) emit('device-select', dev.id)
+    return
+  }
+
+  // T4: 非编辑/非绘制模式下，点击设备弹出操作菜单
+  if (dev) {
+    contextMenu.visible = true
+    contextMenu.x = event.clientX
+    contextMenu.y = event.clientY
+    contextMenu.device = dev
+    event.preventDefault()
+    return
+  }
+}
+
+// T4: 关闭上下文菜单
+function closeContextMenu() {
+  contextMenu.visible = false
+  contextMenu.device = null
+}
+
+// T4: 实时预览 — emit 给父组件打开视频弹窗
+function onDeviceLivePreview() {
+  const dev = contextMenu.device
+  if (!dev) return
+  emit('device-video', { id: dev.id, name: dev.name, businessId: dev.businessId, deviceType: dev.deviceType })
+  closeContextMenu()
+}
+
+// T4: 录像回放 — 跳转到录像页面
+function onDevicePlayback() {
+  const dev = contextMenu.device
+  if (!dev) return
+  closeContextMenu()
+  const q = dev.businessId ? `?deviceId=${dev.businessId}` : ''
+  void router.push(`/recordings${q}`)
+}
+
+// T4: 设备详情 — 跳转到设备详情页
+function onDeviceDetailNav() {
+  const dev = contextMenu.device
+  if (!dev || !dev.businessId) return
+  closeContextMenu()
+  void router.push(`/devices/${dev.businessId}`)
 }
 
 function animate() {
@@ -739,6 +1457,17 @@ function animate() {
 
   // 懒卸载检查
   checkLazyUnload()
+
+  // P2-4: 巡视路线更新
+  updatePatrol()
+
+  // P2-5: 动作序列更新
+  updateSequence()
+
+  // P2-6: 小地图渲染（每帧更新）
+  if (props.showMiniMap) {
+    drawMiniMapFrame()
+  }
 }
 
 /**
@@ -799,6 +1528,19 @@ function exportPerformanceReport(): PerformanceReport | null {
 defineExpose({
   exportPerformanceReport,
   perfCollector: () => perfCollector,
+  resetCamera,
+  // P2-1
+  loadGroundImage,
+  // P2-3
+  loadBuildingModel,
+  // P2-4
+  startPatrol,
+  stopPatrol,
+  // P2-5
+  playSequence,
+  stopSequence,
+  // P2-6
+  initMiniMap,
 })
 
 // ── Watch devices prop ──
@@ -822,12 +1564,80 @@ watch(() => props.devices, (newDevices) => {
   }
 }, { deep: true })
 
+// Watch editMode: toggle OrbitControls
+watch(() => props.editMode, (isEdit) => {
+  if (!controls) return
+  controls.enableRotate = !isEdit
+  controls.enablePan = !isEdit
+  // P1-3: Update connection lines visibility on edit mode toggle
+  const buildings = (props.buildings || defaultBuildings) as any[]
+  updateBuildingAssociations(buildings)
+})
+
+// P2-1: Watch groundImageUrl
+watch(() => props.groundImageUrl, (url) => {
+  if (url !== undefined) loadGroundImage(url || '')
+})
+
+// P2-2: Watch drawBuildingMode — 更改光标样式
+watch(() => props.drawBuildingMode, (isDraw) => {
+  if (containerRef.value) {
+    containerRef.value.style.cursor = isDraw ? 'crosshair' : ''
+  }
+  if (!isDraw && drawStartPoint) {
+    drawStartPoint = null
+    if (drawPreviewMesh) {
+      scene.remove(drawPreviewMesh)
+      drawPreviewMesh = null
+    }
+  }
+})
+
+// P2-3: Watch buildingModels — 新增映射时加载 GLB
+watch(() => props.buildingModels, (models) => {
+  if (!models || !scene) return
+  for (const [name, url] of Object.entries(models)) {
+    if (!loadedModels.has(url)) {
+      loadBuildingModel(name, url)
+    }
+  }
+}, { deep: true })
+
+// P2-6: Watch showMiniMap
+watch(() => props.showMiniMap, (show) => {
+  if (show && !miniMapCanvas) {
+    initMiniMap()
+  } else if (!show && miniMapCanvas) {
+    miniMapCanvas.remove()
+    miniMapCanvas = null
+    miniMapCtx = null
+  }
+})
+
 onMounted(() => {
   init()
   animate()
 })
 
 onUnmounted(() => {
+  // 停止巡视/序列
+  stopPatrol()
+  stopSequence()
+
+  // P2-1: 清理底图
+  if (groundImageMesh) {
+    groundImageMesh.geometry.dispose()
+    ;(groundImageMesh.material as THREE.Material).dispose()
+    groundImageMesh = null
+  }
+
+  // P2-6: 清理小地图
+  if (miniMapCanvas) {
+    miniMapCanvas.remove()
+    miniMapCanvas = null
+    miniMapCtx = null
+  }
+
   // 停止性能采集
   perfCollector?.dispose()
   perfCollector = null
@@ -835,6 +1645,8 @@ onUnmounted(() => {
   cancelAnimationFrame(animationId)
   window.removeEventListener('resize', onResize)
   renderer?.domElement.removeEventListener('mousemove', onMouseMove)
+  renderer?.domElement.removeEventListener('pointerdown', onPointerDown)
+  renderer?.domElement.removeEventListener('pointerup', onPointerUp)
 
   // 断开 ResizeObserver
   if (resizeObserver) {
@@ -1106,4 +1918,67 @@ onUnmounted(() => {
 .tooltip-status.offline { color: #666; }
 .tooltip-status.maintenance { color: #F4B400; }
 .tooltip-info { font-size: 11px; color: #9AA0A6; }
+.tooltip-hint { font-size: 10px; color: #1A73E8; margin-top: 6px; border-top: 1px solid #1E2028; padding-top: 4px; }
+
+/* T4: 设备操作上下文菜单 */
+.context-menu-backdrop {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 9998;
+  background: transparent;
+}
+
+.device-context-menu {
+  position: fixed;
+  z-index: 9999;
+  min-width: 160px;
+  background: rgba(3, 27, 78, 0.96);
+  border: 1px solid rgba(0, 180, 255, 0.5);
+  border-radius: 8px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5), 0 0 16px rgba(0, 180, 255, 0.15);
+  padding: 4px 0;
+  backdrop-filter: blur(8px);
+}
+
+.context-menu-header {
+  padding: 8px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #00E4FF;
+  border-bottom: 1px solid rgba(0, 180, 255, 0.2);
+  margin-bottom: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 200px;
+}
+
+.context-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 16px;
+  border: 0;
+  background: transparent;
+  color: #AADDFF;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  text-align: left;
+}
+
+.context-menu-item:hover {
+  background: rgba(0, 180, 255, 0.15);
+  color: #00E4FF;
+}
+
+.context-menu-item i {
+  font-size: 16px;
+  width: 18px;
+  text-align: center;
+}
 </style>

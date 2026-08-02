@@ -27,6 +27,31 @@
     /* 最小重置，避免元素跳动 */
     html, body { margin: 0; padding: 0; height: 100%; }
   </style>
+
+  <!-- =============================================
+       Service Worker 彻底清除（在内联脚本中最早执行）
+       原因：旧版代码注册了 SW，现已在所有代码中移除注册逻辑。
+       此脚本确保用户浏览器中的僵尸 SW 被永久注销。
+       ============================================= -->
+  <script>
+    (function() {
+      if ('serviceWorker' in navigator) {
+        // 清除所有缓存
+        if (window.caches) {
+          caches.keys().then(function(names) {
+            names.forEach(function(n) { caches.delete(n) })
+          }).catch(function() {})
+        }
+        // 注销所有 Service Worker
+        navigator.serviceWorker.getRegistrations().then(function(regs) {
+          regs.forEach(function(r) {
+            r.unregister()
+            console.log('[SW-CLEAN] Unregistered:', r.scope)
+          })
+        }).catch(function() {})
+      }
+    })()
+  </script>
 </head>
 <body>
   <div id="app"></div>
