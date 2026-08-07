@@ -9,31 +9,17 @@
       </el-button-group> -->
       <div class="legend-bar">
         <span class="legend-item">
-          <i class="iconfont1 icon1-yingyanshexiangtou legend-icon online" aria-hidden="true"></i>
+          <i class="iconfont1 icon1-monitor-camera-full legend-icon online" aria-hidden="true"></i>
           在线设备
         </span>
         <span class="legend-item">
-          <i class="iconfont1 icon1-yingyanshexiangtou legend-icon alarm" aria-hidden="true"></i>
+          <i class="iconfont1 icon1-monitor-camera-full legend-icon alarm" aria-hidden="true"></i>
           告警点位
         </span>
         <span class="legend-item">
-          <i class="iconfont1 icon1-yingyanshexiangtou legend-icon offline" aria-hidden="true"></i>
+          <i class="iconfont1 icon1-monitor-camera-full legend-icon offline" aria-hidden="true"></i>
           离线设备
         </span>
-        <button class="scene-tool-button" type="button" aria-label="复位视角" @click="resetCamera">
-          <i class="iconfont1 icon1-fuwei" aria-hidden="true"></i>
-          <span>复位</span>
-        </button>
-        <button
-          class="scene-tool-button"
-          type="button"
-          :aria-label="showLabels ? '隐藏标签' : '显示标签'"
-          :aria-pressed="!showLabels"
-          @click="toggleLabels"
-        >
-          <i class="iconfont1 icon1-xianshiyincangbiaoqian" aria-hidden="true"></i>
-          <span>{{ showLabels ? '隐藏标签' : '显示标签' }}</span>
-        </button>
       </div>
     </div>
     <Teleport to="body">
@@ -1529,6 +1515,7 @@ defineExpose({
   exportPerformanceReport,
   perfCollector: () => perfCollector,
   resetCamera,
+  toggleLabels,
   // P2-1
   loadGroundImage,
   // P2-3
@@ -1689,20 +1676,28 @@ onUnmounted(() => {
   /* 防止工具栏超出容器 */
   max-width: calc(100% - 16px);
   width: 100%;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
 }
 
 .legend-bar {
+  position: absolute;
+  top: 0;
+  right: 0;
   display: flex;
-  margin-left: auto;
+  align-items: center;
   gap: 10px;
-  font-size: 14px;
-  color:#AADDFF;
   padding: 4px 10px;
-  border-radius: 4px;
+  color: #AADDFF;
+  font-size: 14px;
+  line-height: 1;
 }
 
-.legend-item { display: flex; align-items: center; gap: 4px; }
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
 .legend-icon {
   display: inline-flex;
   align-items: center;

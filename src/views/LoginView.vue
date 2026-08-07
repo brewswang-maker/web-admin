@@ -211,7 +211,7 @@ function handleCertLogin() {
   width: min(800px, calc(100vw - 32px));
   flex-direction: column;
   align-items: center;
-  transform: translateY(-20px);
+  transform: translateY(-60px);
 }
 
 .login-copyright {

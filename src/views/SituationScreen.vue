@@ -72,16 +72,16 @@
                 <div class="device-status-heading">
                   <span class="device-status-icon">
                     <i
-                      :class="['iconfont1', device.key === 'video-box' ? 'icon1-neicun' : 'icon1-shexiangtou2']"
+                      :class="['iconfont1', device.key === 'video-box' ? 'icon1-shexiangtou2':'icon1-neicun']"
                       aria-hidden="true"
                     ></i>
                   </span>
                   <span>{{ device.label }}（{{ device.total }}）</span>
                 </div>
                 <div class="device-status-counts">
-                  <span class="device-count online"><i></i>{{ t('situationScreen.onlineLabel') }}：<b>{{ device.online }}</b></span>
-                  <span class="device-count offline"><i></i>{{ t('situationScreen.offlineLabel') }}：<b>{{ device.offline }}</b></span>
-                  <span class="device-count fault"><i></i>{{ t('situationScreen.faultLabel') }}：<b>{{ device.fault }}</b></span>
+                  <span class="device-count online"><i></i>{{ t('situationScreen.onlineLabel') }}: <b>{{ device.online }}</b></span>
+                  <span class="device-count offline"><i></i>{{ t('situationScreen.offlineLabel') }}: <b>{{ device.offline }}</b></span>
+                  <span class="device-count fault"><i></i>{{ t('situationScreen.faultLabel') }}: <b>{{ device.fault }}</b></span>
                 </div>
               </div>
             </div>
@@ -98,23 +98,14 @@
       <div class="ss-col center-col">
         <div class="ss-panel map-panel">
           <div class="panel-title">
-            <i class="iconfont1 icon1-yuanqu1 panel-title-icon" aria-hidden="true"></i>
-            <!-- 标题位置直接用下拉选择器替代 -->
-            <el-tooltip :content="centerView === '3d' ? t('situationScreen.sceneHint') : ''" placement="bottom" :disabled="centerView !== '3d'">
-              <el-select
-                v-model="centerView"
-                class="title-view-select"
-                popper-class="title-view-popper"
-                size="small"
-                @change="onViewSelectChange"
-              >
-                <el-option label="园区态势图" value="3d" />
-                <el-option label="视频监控" value="video" />
-              </el-select>
-            </el-tooltip>
+            <!-- <i class="iconfont1 icon1-yuanqu1 panel-title-icon" aria-hidden="true"></i> -->
+            <div class="view-switcher" role="tablist" aria-label="中心视图切换">
+              <button class="view-switch-btn" :class="{ active: centerView === '3d' }" type="button" role="tab" :aria-selected="centerView === '3d'" @click="setCenterView('3d')">园区态势图</button>
+              <button class="view-switch-btn" :class="{ active: centerView === 'video' }" type="button" role="tab" :aria-selected="centerView === 'video'" @click="setCenterView('video')">视频监控</button>
+            </div>
             <span v-if="sceneIsDemo && centerView === '3d'" style="font-size:11px;color:#F4B400;border:1px solid rgba(244,180,0,0.6);border-radius:3px;padding:1px 6px;margin-left:4px;">演示数据</span>
             <!-- 3D视图操作按钮 -->
-            <template v-if="centerView === '3d'">
+            <div v-if="centerView === '3d'" class="scene-actions">
               <el-select
                 v-if="availableScenes.length > 1"
                 v-model="currentSceneId"
@@ -124,6 +115,8 @@
               >
                 <el-option v-for="s in availableScenes" :key="s.id" :label="s.name" :value="s.id" />
               </el-select>
+              <button v-if="sceneDevices.length" class="scene-edit-btn" @click="resetSceneCamera">复位</button>
+              <button v-if="sceneDevices.length" class="scene-edit-btn" @click="toggleSceneLabels">{{ sceneLabelsVisible ? '隐藏标签' : '显示标签' }}</button>
               <button v-if="!sceneEditActive && sceneDevices.length && !sceneIsDemo" class="scene-edit-btn" @click="enterEditMode">编辑布局</button>
               <span v-if="sceneEditActive" style="font-size:11px;color:#F4B400;margin-left:4px;">编辑模式</span>
               <button v-if="sceneDevices.length" class="scene-edit-btn" @click="togglePatrol">{{ patrolActive ? '停止巡视' : '自动巡视' }}</button>
@@ -137,21 +130,17 @@
                 </template>
               </el-dropdown>
               <button v-if="sceneDevices.length" class="scene-edit-btn" @click="showMiniMap = !showMiniMap">{{ showMiniMap ? '隐藏小地图' : '显示小地图' }}</button>
-            </template>
+            </div>
             <!-- 视频监控视图操作按钮 -->
-            <template v-if="centerView === 'video'">
+            <div v-if="centerView === 'video'" class="scene-actions">
               <button class="scene-edit-btn" :class="{active: videoLayout === 1}" @click="setVideoLayout(1)">1分屏</button>
               <button class="scene-edit-btn" :class="{active: videoLayout === 4}" @click="setVideoLayout(4)">4分屏</button>
               <button class="scene-edit-btn" :class="{active: videoPollingActive}" @click="toggleVideoPolling">{{ videoPollingActive ? '停止轮巡' : '开始轮巡' }}</button>
               <span style="font-size:11px;color:#236db7;">{{ videoDeviceList.length }}个通道</span>
-            </template>
+            </div>
             <!-- 全屏按钮（推至右侧） -->
             <div class="title-right-controls">
-              <el-tooltip content="全屏" placement="bottom">
-                <button class="scene-edit-btn fullscreen-btn" type="button" @click="toggleFullscreen">
-                  <i class="iconfont1 icon1-fangda" aria-hidden="true"></i>
-                </button>
-              </el-tooltip>
+              <button class="scene-edit-btn" type="button" @click="toggleFullscreen">全屏</button>
             </div>
           </div>
           <!-- 视图切换容器 -->
@@ -565,6 +554,16 @@ const sceneIsDemo = ref(false)
 
 // P2: Scene3D 组件引用（用于调用 exposed 方法）
 const scene3dRef = ref<InstanceType<typeof Scene3D> | null>(null)
+const sceneLabelsVisible = ref(true)
+
+function resetSceneCamera() {
+  scene3dRef.value?.resetCamera()
+}
+
+function toggleSceneLabels() {
+  scene3dRef.value?.toggleLabels()
+  sceneLabelsVisible.value = !sceneLabelsVisible.value
+}
 
 // P2-4: 巡视路线
 const patrolActive = ref(false)
@@ -1399,8 +1398,8 @@ function initCharts() {
             offsetCenter: [0, '5%'],
             formatter: (value: number) => `{score|${Math.round(value)}}{unit|${t('situationScreen.scoreUnit')}}`,
             rich: {
-              score: { color: '#00DFFF', fontSize: 40, fontWeight: 600, lineHeight: 48 },
-              unit: { color: '#00DFFF', fontSize: 16, fontWeight: 600, padding: [15, 0, 0, 2] },
+              score: { color: '#00DFFF', fontSize: 30, fontWeight: 600, lineHeight: 48 },
+              unit: { color: '#00DFFF', fontSize: 16, fontWeight: 600, padding: [0, 0, 0, 2], verticalAlign: 'middle' },
             },
           },
           data: [{ value: score }],
@@ -1413,6 +1412,7 @@ function initCharts() {
 
   // 设备状态环形饼图
   deviceStatusGroups.value.forEach(device => {
+    console.log(device)
     const chartEl = devicePieRefs.get(device.key)
     if (!chartEl) return
 
@@ -1442,7 +1442,7 @@ function initCharts() {
           textAlign: 'center',
           textVerticalAlign: 'middle',
           rich: {
-            value: { fill: '#00F333', fontSize: 30, fontWeight: 700 },
+            value: { fill: '#00F333', fontSize: 22, fontWeight: 700 },
             unit: { fill: '#00F333', fontSize: 14, fontWeight: 600, padding: [10, 0, 0, 1] },
           },
         },
@@ -1494,13 +1494,14 @@ function initCharts() {
         label: {
           formatter: `{name|${name}}\n{percent|${percentText}%}`,
           rich: {
-            name: { color: '#AADDFF', fontSize: 14, lineHeight: 26 },
-            percent: { color, fontSize: 16, fontWeight: 600, lineHeight: 26 },
+            name: { color: '#AADDFF', fontSize: 12, lineHeight: 32 },
+            percent: { color, fontSize: 16, fontWeight: 600, lineHeight: 20 },
           },
         },
         labelLine: { lineStyle: { color, width: 1.5 } },
       }
     }
+
     const alarmTypeData = as
       ? [
           createAlarmTypeItem(as.critical, t('situationScreen.criticalAlarm'), '#FC1526'),
@@ -1521,19 +1522,17 @@ function initCharts() {
         textStyle: { color: '#AADDFF', fontSize: 13 },
         extraCssText: 'z-index: 9999;',
       },
-      graphic: alarmFalsePositiveRate.value == null
-        ? []
-        : [{
+      graphic: [{
             type: 'text',
             left: 'center',
             bottom: 20,
             silent: true,
             style: {
-              text: `{label|${t('situationScreen.falsePositiveRate')}{value|${formatRate(alarmFalsePositiveRate.value)}%}`,
+              text: `{label|${t('situationScreen.falsePositiveRate')}}{value|${alarmFalsePositiveRate.value == null ? '0' : `${formatRate(alarmFalsePositiveRate.value)}%`}}`,
               textAlign: 'center',
               rich: {
-                label: { fill: '#AADDFF', fontSize: 16, fontWeight: 500 },
-                value: { fill: '#00B4FF', fontSize: 18, fontWeight: 600 },
+                label: { fill: '#AADDFF', fontSize: 14, fontWeight: 400 },
+                value: { fill: '#00B4FF', fontSize: 16, fontWeight: 400 },
               },
             },
           }],
@@ -1818,6 +1817,9 @@ function fetchSituationData() {
     const d = res.data?.data
     if (d) {
       overview.value = d
+      // 处理是否能读取到误报率的问题
+      const rawFalsePositiveRate = (d as SituationOverview & { falsePositiveRate?: unknown }).falsePositiveRate
+      alarmFalsePositiveRate.value = typeof rawFalsePositiveRate === 'number' ? rawFalsePositiveRate : null
       const aStats = d.alarmStats
       todayStats.value = [
         { label: t('situationScreen.totalAgents'), value: String(d.totalAgents ?? 0), suffix: '', icon: 'icon1-AIsuanfa', iconColor: '#01B9E7' },
@@ -2015,13 +2017,18 @@ onUnmounted(() => {
 }
 
 .map-panel .panel-title {
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 4px 6px;
   min-height: 32px;
-  height: auto;
-  padding: 4px 10px;
-  line-height: 1.5;
+  height: 32px;
+  padding: 0 10px;
+  line-height: 32px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
 }
+
+.map-panel .panel-title::-webkit-scrollbar { display: none; }
 
 /* 3D 标题栏提示文字不缩滘 */
 .map-panel .panel-title > span {
@@ -2093,19 +2100,19 @@ onUnmounted(() => {
   justify-content: center;
   align-items: stretch;
   gap: 16px;
-  padding: 10px 18px 12px 22px;
+  padding: 10px 18px 12px 10px;
 }
 
 .device-status-row {
   display: grid;
   grid-template-columns: 110px minmax(0, 1fr);
   align-items: center;
-  column-gap: 20px;
+  column-gap: 0px;
 }
 
 .device-status-pie {
-  width: 110px;
-  height: 110px;
+  width: 100px;
+  height: 100px;
   min-width: 0;
   min-height: 0;
 }
@@ -2137,13 +2144,13 @@ onUnmounted(() => {
 }
 
 .device-status-icon i {
-  font-size: 24px;
+  font-size: 20px;
 }
 
 .device-status-counts {
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: 12px;
   margin-top: 10px;
   white-space: nowrap;
 }
@@ -2152,7 +2159,7 @@ onUnmounted(() => {
   display: inline-flex;
   align-items: center;
   color: #AADDFF;
-  font-size: 15px;
+  font-size: 16px;
   line-height: 24px;
 }
 
@@ -2415,20 +2422,56 @@ onUnmounted(() => {
 .trend-mode-switch { display: inline-flex; gap: 2px; }
 .mode-btn { padding: 2px 10px; font-size: 12px; color: #0079AB; background: rgba(0,180,255,0.1); border: 1px solid rgba(0,180,255,0.3); border-radius: 3px; cursor: pointer; transition: all .2s; }
 .mode-btn:hover { background: rgba(0,180,255,0.25); }
-.mode-btn.active { color: #fff; background: linear-gradient(135deg, #00B4FF, #0079AB); border-color: #00B4FF; }
+.mode-btn.active { color: #00B6FF; background:#051743;  }
 
 /* 标题栏右侧控件（推到最右） */
 .title-right-controls {
   display: inline-flex;
   align-items: center;
   gap: 8px;
+  margin-left: 0;
+}
+
+.scene-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
   margin-left: auto;
+  flex-shrink: 0;
 }
 
 .fullscreen-btn {
   padding: 2px 8px !important;
   font-size: 16px;
 }
+
+.view-switcher {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  overflow: hidden;
+  border: 1px solid rgba(0, 180, 255, 0.32);
+  border-radius: 3px;
+}
+
+.view-switch-btn {
+  height: 24px;
+  padding: 0 13px;
+  border: 0;
+  border-right: 1px solid rgba(0, 180, 255, 0.24);
+  background: rgba(0, 47, 117, 0.18);
+  color: #00B4FF;
+  font: inherit;
+  font-size: 13px;
+  line-height: 24px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.view-switch-btn:last-child { border-right: 0; }
+.view-switch-btn:hover { background: rgba(0, 180, 255, 0.12); color: #00E4FF; }
+.view-switch-btn.active { color:#00E4FF; }
 
 /* 深色主题 el-select — 标题栏视图选择器 */
 .title-view-select {

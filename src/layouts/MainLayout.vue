@@ -114,8 +114,9 @@
               <span v-if="!isCollapsed">{{ activePrimaryMenu.label }}</span>
             </span>
           </template>
-          <el-menu-item v-for="item in activePrimaryMenu.items" :key="item.path" :index="item.path">
-            <el-icon><component :is="item.icon" /></el-icon>
+          <el-menu-item v-for="item in activePrimaryMenu.items" :key="item.path" :index="item.path" :class="{ 'role-menu-item': item.path === '/roles' }">
+            <i v-if="item.iconFont" :class="['iconfont1', 'sidebar-iconfont', item.iconFont]" aria-hidden="true"></i>
+            <el-icon v-else><component :is="item.icon" /></el-icon>
             <template #title>
               <span v-if="item.path === '/alarms'" class="alarm-menu-label">{{ item.label }}</span>
               <span v-else>{{ item.label }}</span>
@@ -498,6 +499,7 @@ type SidebarItem = {
   path: string
   label: string
   icon: Component
+  iconFont?: string
 }
 type PrimaryMenu = {
   key: PrimaryMenuKey
@@ -541,7 +543,7 @@ const primaryMenus = computed<PrimaryMenu[]>(() => [
       { path: '/pipelines', label: t('menu.pipelineEditor'), icon: SetUp },
       { path: '/models', label: t('menu.models'), icon: Cpu },
       { path: '/ai-chat', label: t('menu.aiChat'), icon: ChatDotRound },
-      { path: '/statistics', label: t('menu.statistics'), icon: TrendCharts },
+      { path: '/statistics', label: t('menu.statistics'), icon: TrendCharts, iconFont: 'icon1-jinritongji' },
       { path: '/federation', label: t('menu.federation'), icon: Connection },
       { path: '/algorithm-store', label: t('menu.algorithms'), icon: ShoppingCart },
       { path: '/face-database', label: t('menu.face'), icon: User },
@@ -563,7 +565,7 @@ const primaryMenus = computed<PrimaryMenu[]>(() => [
       { path: '/audit', label: t('menu.audit'), icon: DocumentChecked },
       { path: '/open-platform', label: t('menu.openPlatform'), icon: Link },
       { path: '/users', label: t('menu.user'), icon: User },
-      { path: '/roles', label: t('menu.role'), icon: Avatar },
+      { path: '/roles', label: t('menu.role'), icon: Avatar, iconFont: 'icon1-jiaoseguanli' },
       { path: '/permissions', label: t('menu.permission'), icon: Lock },
       { path: '/billing', label: t('menu.billing'), icon: Wallet },
     ].filter(item => item.path !== '/projects' || auth.can('projects', 'read')),
@@ -916,18 +918,22 @@ function handleUserCommand(command: string) {
   height: 42px;
   padding-left: 45px;
   font-size: 18px;
-  color: #8ff7ff;
+  /*color: #8ff7ff;*/
   font-weight: 700;
   letter-spacing: 0;
-  text-shadow: 0 0 8px rgba(0, 228, 255, 0.65);
+  /*text-shadow: 0 0 8px rgba(0, 228, 255, 0.65);*/
+  background: linear-gradient(to bottom, #0EC5EC, #00D8F4, #FFFFFF);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
 }
 
 .group-title::before {
   position: absolute;
   top: 50%;
-  left: 10px;
-  width: 24px;
-  height: 24px;
+  left: 14px;
+  width: 32px;
+  height: 32px;
   background-image: url('../assets/siderbar1.png');
   background-position: center;
   background-repeat: no-repeat;
@@ -1002,6 +1008,30 @@ function handleUserCommand(command: string) {
 .sidebar-menu :deep(.el-menu-item .el-icon) {
   font-size: 18px;
 }
+
+.sidebar-iconfont {
+  width: 18px;
+  margin-right:8px;
+  margin-left: 2px;
+  color: inherit;
+  font-size: 17px;
+  line-height: 1;
+  text-align: center;
+}
+
+.sidebar.collapsed .sidebar-iconfont { margin-right: 0; }
+
+.role-menu-item .sidebar-iconfont {
+  width: 18px;
+  margin-left: 2px;
+  margin-right: 8px;
+  color: inherit;
+  font-size: 16px;
+  line-height: 1;
+  text-align: center;
+}
+
+.sidebar.collapsed .role-menu-item .sidebar-iconfont { margin-right: 0; }
 
 .alarm-menu-label {
   display: inline;
