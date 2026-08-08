@@ -17,8 +17,11 @@ import { showAlarmPopup, pushLinkageLog, normalizeAlarmPayload, playAlarmSound }
 let ws: WebSocket | null = null
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null
 let reconnectAttempts = 0
-const maxReconnectAttempts = 10
-const reconnectDelay = 3000
+// [FIX 2026-08-03] 重连不再设上限 (原 10 次后永久放弃, 后台标签页被节流时
+//   重连窗口内全部失败 → 告警推送永久断流)。改为指数退避封顶 30s 无限重连,
+//   并在页面重新可见时立即尝试恢复。
+const reconnectBaseDelay = 3000
+const reconnectMaxDelay = 30000
 
 export const connected = ref(false)
 
@@ -103,10 +106,19 @@ const alarmTypeCn: Record<string, string> = {
 // ── 内部方法 ──
 
 function attemptReconnect() {
-  if (reconnectAttempts >= maxReconnectAttempts) return
   reconnectAttempts++
-  const delay = reconnectDelay * reconnectAttempts
+  const delay = Math.min(reconnectBaseDelay * Math.pow(2, reconnectAttempts - 1), reconnectMaxDelay)
+  if (reconnectTimer) clearTimeout(reconnectTimer)
   reconnectTimer = setTimeout(() => doConnect(), delay)
+}
+
+// [FIX 2026-08-03] 标签页从后台恢复时: 若连接已断, 立即重连 (不等退避定时器)
+function onVisibilityChange() {
+  if (document.hidden || !started) return
+  if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return
+  if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null }
+  reconnectAttempts = 0
+  doConnect()
 }
 
 function doConnect() {
@@ -354,12 +366,14 @@ export function startGlobalAlarm() {
   started = true
   console.log('[useGlobalAlarm] starting WS connection...')
   loadAlarmConfig()  // 异步加载弹窗防抖配置
+  document.addEventListener('visibilitychange', onVisibilityChange)
   doConnect()
 }
 
 /** 停止全局告警 WebSocket（由 App.vue onUnmounted 调用） */
 export function stopGlobalAlarm() {
   started = false
+  document.removeEventListener('visibilitychange', onVisibilityChange)
   if (reconnectTimer) {
     clearTimeout(reconnectTimer)
     reconnectTimer = null

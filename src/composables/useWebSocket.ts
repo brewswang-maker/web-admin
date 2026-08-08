@@ -21,11 +21,29 @@ export function useWebSocket(path?: string) {
 
   let ws: WebSocket | null = null
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null
+  let heartbeatTimer: ReturnType<typeof setInterval> | null = null
   let reconnectAttempts = 0
-  const maxReconnectAttempts = 5
-  const reconnectDelay = 3000
+  let disposed = false
+  // [FIX 2026-08-03] 重连不再设上限 (原 5 次后永久放弃, 后台标签页被节流时
+  //   45s 内 5 次重连全部失败 → 数据永久断流)。改为指数退避封顶 30s 无限重连。
+  const reconnectBaseDelay = 3000
+  const reconnectMaxDelay = 30000
+
+  function startHeartbeat() {
+    stopHeartbeat()
+    heartbeatTimer = setInterval(() => {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        try { ws.send(JSON.stringify({ type: 'ping', timestamp: new Date().toISOString() })) } catch { /* ignore */ }
+      }
+    }, 30000)
+  }
+
+  function stopHeartbeat() {
+    if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null }
+  }
 
   function connect(wsPath: string) {
+    if (disposed) return
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
     const url = `${protocol}//${window.location.host}${wsPath}`
 
@@ -34,6 +52,7 @@ export function useWebSocket(path?: string) {
     ws.onopen = () => {
       connected.value = true
       reconnectAttempts = 0
+      startHeartbeat()
     }
 
     ws.onmessage = (event) => {
@@ -70,9 +89,26 @@ export function useWebSocket(path?: string) {
   }
 
   function attemptReconnect() {
-    if (reconnectAttempts >= maxReconnectAttempts) return
+    if (disposed) return
+    if (reconnectTimer) return
     reconnectAttempts++
-    reconnectTimer = setTimeout(() => connect(path || '/ws'), reconnectDelay * reconnectAttempts)
+    const delay = Math.min(reconnectBaseDelay * Math.pow(2, reconnectAttempts - 1), reconnectMaxDelay)
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = null
+      connect(path || '/ws')
+    }, delay)
+  }
+
+  // [FIX 2026-08-03] 标签页重新可见时立即检查连接: 后台节流期间重连定时器
+  //   可能被压滞, 回来后若连接已死则立即重建, 不等退避周期。
+  function onVisibilityChange() {
+    if (document.hidden || disposed) return
+    const state = ws ? ws.readyState : WebSocket.CLOSED
+    if (state === WebSocket.CLOSED || state === WebSocket.CLOSING) {
+      if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null }
+      reconnectAttempts = 0
+      connect(path || '/ws')
+    }
   }
 
   function send(data: unknown) {
@@ -82,7 +118,11 @@ export function useWebSocket(path?: string) {
   }
 
   function disconnect() {
+    disposed = true
     if (reconnectTimer) clearTimeout(reconnectTimer)
+    reconnectTimer = null
+    stopHeartbeat()
+    document.removeEventListener('visibilitychange', onVisibilityChange)
     if (ws) ws.close()
     ws = null
     connected.value = false
@@ -103,6 +143,7 @@ export function useWebSocket(path?: string) {
   // Auto-connect if path provided
   if (path) {
     connect(path)
+    document.addEventListener('visibilitychange', onVisibilityChange)
     onUnmounted(disconnect)
   } else {
     onUnmounted(() => {

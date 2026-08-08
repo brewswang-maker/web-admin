@@ -20,6 +20,14 @@ export const WS_TOPICS = {
   ALARM_RESOLVED: 'alarm.resolved',
   ALARM_MAP_MARKER: 'alarm_map_marker',  // [Audit-Add] 地图联动告警标记
 
+  // [P1-3 FIX 2026-07-14] 联动引擎推送主题
+  //   后端 BoxService 执行器通过 pushSystemEvent("linkage_action", ...) 推送
+  //   和 pushAlarm({type:"linkage_alarm",...}) 推送.
+  //   前端必须订阅这两个主题才能接收联动弹窗/动作执行通知.
+  LINKAGE_ALARM: 'linkage_alarm',      // 联动规则触发的告警弹窗 (WEB_POPUP 执行器)
+  LINKAGE_ACTION: 'linkage_action',    // 联动动作执行通知 (所有执行器通用)
+  DASHBOARD_ALERT: 'dashboard_alert',  // Dashboard 嵌入告警 (WEB_DASHBOARD_ALERT)
+
   // 设备
   DEVICE_STATUS: 'device.status',
   DEVICE_ONLINE: 'device.online',

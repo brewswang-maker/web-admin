@@ -405,6 +405,7 @@ import { useWebSocket } from '@/composables/useWebSocket'
 import Scene3D from '@/components/Scene3D.vue'
 import SceneEditPanel from '@/components/SceneEditPanel.vue'
 import flvjs from 'flv.js'
+import Hls from 'hls.js'
 import { channelApi } from '@/api/channel'
 import { useChannelStore } from '@/stores/channel'
 import {
@@ -684,8 +685,7 @@ watch(isFullscreen, () => {
   if (centerView.value !== 'video') return
   // 先销毁所有旧播放器（不调 stopStream，保留服务端推流）
   for (let i = 0; i < 4; i++) {
-    const slot = videoSlots[i]
-    if (slot.flvPlayer) { try { slot.flvPlayer.destroy() } catch {} slot.flvPlayer = null }
+    destroySlotPlayers(videoSlots[i])
   }
   // 暂停轮巡定时器（防止 reattach 期间定时器触发新拉流）
   if (videoPollTimer) { clearInterval(videoPollTimer); videoPollTimer = null }
@@ -733,11 +733,14 @@ interface VideoSlot {
   playing: boolean
   loading: boolean
   flvPlayer: flvjs.Player | null
-  flvUrl: string  // 最近一次成功拉取的 FLV URL（全屏切换时复用，避免重新 SIP INVITE）
+  hlsPlayer: any | null  // Hls.js 实例（用 any 避免 reactive 类型推断不兼容）
+  mediaUrl: string  // 最近一次成功拉取的播放 URL（全屏切换时复用，避免重新 SIP INVITE）
+  mediaFormat: 'flv' | 'hls'  // 当前播放格式
+  codec: string  // 流编码（H264/H265）
   _gen: number  // 异步取消计数器，每次新拉流递增
 }
 const videoSlots = reactive<VideoSlot[]>(
-  Array.from({ length: 4 }, () => ({ channelId: '', deviceName: '', playing: false, loading: false, flvPlayer: null, flvUrl: '', _gen: 0 }))
+  Array.from({ length: 4 }, () => ({ channelId: '', deviceName: '', playing: false, loading: false, flvPlayer: null, hlsPlayer: null, mediaUrl: '', mediaFormat: 'flv' as const, codec: '', _gen: 0 }))
 )
 // 全局防抖 store: 防止短时间内对同一通道重复 SIP INVITE (与 MiniPlayer/LiveView 共享)
 const channelStore = useChannelStore()
@@ -777,45 +780,63 @@ async function loadVideoDeviceList() {
 }
 
 /**
- * 获取可播放的 FLV URL（含全局防抖保护，防止 SIP INVITE 风暴）。
+ * 获取可播放的流 URL + 编码信息（含全局防抖保护，防止 SIP INVITE 风暴）。
  *
- * 策略 (对齐 MiniPlayer.vue):
+ * 策略 (对齐 LiveView.vue):
  * 1. 先查 multi-urls 复用已有流（避免不必要的 SIP INVITE）
  * 2. 流不存活时，检查全局防抖窗口（5s 内同通道只允许一次 /start）
  * 3. 防抖窗口内: 等待其他调用者的 INVITE 完成
  * 4. 防抖窗口外: 触发 SIP INVITE 后轮询等待就绪
+ *
+ * 返回: { url, codec } 或 null。H265 优先返回 HLS URL，H264 返回 FLV URL。
  */
-async function startStreamAndGetFlvUrl(channelId: string): Promise<string> {
-  // 查询 multi-urls 的可复用辅助函数（返回 URL 或空串，附带 streamAlive 状态）
-  const queryMultiUrls = async (): Promise<{ url: string; alive: boolean | null }> => {
+async function startStreamAndGetMediaUrl(channelId: string): Promise<{ url: string; codec: string } | null> {
+  const isH265 = (c: string) => !!(c && (c.toUpperCase().includes('H265') || c.toUpperCase().includes('HEVC')))
+  // 根据 codec 选择最合适的 URL（H265 → HLS, H264 → FLV）
+  const pickUrl = (d: any): { url: string; codec: string } | null => {
+    const codec = d?.codec || ''
+    if (isH265(codec)) {
+      if (d?.hlsUrl) return { url: normalizeStreamUrl(d.hlsUrl), codec }
+      if (d?.webrtcUrl) return { url: normalizeStreamUrl(d.webrtcUrl), codec }
+    } else {
+      if (d?.flvUrl) return { url: normalizeStreamUrl(d.flvUrl), codec }
+    }
+    // 未知编码或无首选：回退到任意可用 URL
+    if (d?.flvUrl) return { url: normalizeStreamUrl(d.flvUrl), codec }
+    if (d?.hlsUrl) return { url: normalizeStreamUrl(d.hlsUrl), codec }
+    return null
+  }
+
+  // 查询 multi-urls 的可复用辅助函数
+  const queryMultiUrls = async (): Promise<{ result: { url: string; codec: string } | null; alive: boolean | null }> => {
     try {
       const { data } = await streamHttp.get(`/${channelId}/multi-urls`)
       const d = data?.data || data
-      if (d?.streamAlive && d?.flvUrl) {
-        return { url: normalizeStreamUrl(d.flvUrl), alive: true }
+      if (d?.streamAlive) {
+        const picked = pickUrl(d)
+        if (picked) return { result: picked, alive: true }
       }
-      return { url: '', alive: d ? d.streamAlive === false ? false : null : null }
-    } catch { return { url: '', alive: null } }
+      return { result: null, alive: d ? d.streamAlive === false ? false : null : null }
+    } catch { return { result: null, alive: null } }
   }
 
   // 1. 先查 multi-urls 复用已有流 (3 次 × 300ms = 0.9s)
   for (let attempt = 0; attempt < 3; attempt++) {
-    const { url } = await queryMultiUrls()
-    if (url) return url
+    const { result } = await queryMultiUrls()
+    if (result) return result
     await new Promise(r => setTimeout(r, 300))
   }
 
   // 2. 流不存活 → 检查全局防抖
   const inDebounce = channelStore.checkSkipStart(channelId)
   if (inDebounce) {
-    // 防抖窗口内: 其他调用者最近调过 /start，等待其流就绪
     console.debug(`[SituationScreen] ch=${channelId} 全局防抖窗口内，跳过 SIP INVITE，等待复用`)
     for (let attempt = 0; attempt < 15; attempt++) {
-      const { url } = await queryMultiUrls()
-      if (url) return url
+      const { result } = await queryMultiUrls()
+      if (result) return result
       await new Promise(r => setTimeout(r, 300))
     }
-    return ''
+    return null
   }
 
   // 3. 防抖窗口外 → 触发 SIP INVITE
@@ -829,16 +850,16 @@ async function startStreamAndGetFlvUrl(channelId: string): Promise<string> {
   }
 
   // /start 响应中 zlmReady=true 时直接有 URL
-  if (startData && startData.flvUrl && startData.zlmReady) {
-    return normalizeStreamUrl(startData.flvUrl)
+  if (startData && startData.zlmReady) {
+    const picked = pickUrl(startData)
+    if (picked) return picked
   }
 
   // 4. 轮询 multi-urls 等待流就绪 (最多 ~4.5s)
   let consecutiveNotAlive = 0
   for (let attempt = 0; attempt < 15; attempt++) {
-    const { url, alive } = await queryMultiUrls()
-    if (url) return url
-    // 连续 5 次 streamAlive=false → 设备可能离线，提前终止
+    const { result, alive } = await queryMultiUrls()
+    if (result) return result
     if (alive === false) {
       consecutiveNotAlive++
       if (consecutiveNotAlive >= 5) break
@@ -848,13 +869,19 @@ async function startStreamAndGetFlvUrl(channelId: string): Promise<string> {
     await new Promise(r => setTimeout(r, 300))
   }
 
-  return ''
+  return null
 }
 
 /** 停止服务端推流 (释放 SIP 会话) */
 async function stopStream(channelId: string) {
   if (!channelId) return
   try { await streamHttp.post(`/${channelId}/stop`) } catch { /* ignore */ }
+}
+
+/** 内部辅助：销毁 slot 上的所有播放器实例 */
+function destroySlotPlayers(slot: VideoSlot) {
+  if (slot.flvPlayer) { try { slot.flvPlayer.destroy() } catch {} slot.flvPlayer = null }
+  if (slot.hlsPlayer) { try { slot.hlsPlayer.destroy() } catch {} slot.hlsPlayer = null }
 }
 
 async function playVideoInSlot(slotIdx: number, channelId: string, deviceName: string) {
@@ -867,16 +894,28 @@ async function playVideoInSlot(slotIdx: number, channelId: string, deviceName: s
   const oldChannelId = slot.channelId
 
   // 先清理旧播放器（但不停止服务端推流——延迟到新流就绪后）
-  if (slot.flvPlayer) { try { slot.flvPlayer.destroy() } catch {} slot.flvPlayer = null }
+  destroySlotPlayers(slot)
 
   slot.channelId = channelId
   slot.deviceName = deviceName
   slot.loading = true
   slot.playing = false
 
+  // 注册到全局 channelStore，使 AlarmPopup 等组件能检测到码流复用
+  channelStore.registerSlot(slotIdx, {
+    channelId,
+    deviceId: '',
+    name: deviceName,
+    urls: {},
+    codec: '',
+    format: 'flv',
+    inferenceEnabled: false,
+    registeredAt: Date.now(),
+  })
+
   try {
     // 启动 GB28181 推流并等待就绪
-    const flvUrl = await startStreamAndGetFlvUrl(channelId)
+    const mediaInfo = await startStreamAndGetMediaUrl(channelId)
     // 如果在等待期间又有新的拉流请求，放弃这次结果
     if (myGen !== slot._gen) return
 
@@ -885,15 +924,18 @@ async function playVideoInSlot(slotIdx: number, channelId: string, deviceName: s
       stopStream(oldChannelId)
     }
 
-    if (!flvUrl) {
+    if (!mediaInfo || !mediaInfo.url) {
       slot.loading = false
       console.warn(`[SituationScreen] 无法获取通道 ${channelId} 的视频流`)
       return
     }
 
-    // 保存 URL 供全屏切换时复用（避免重新 SIP INVITE）
-    slot.flvUrl = flvUrl
-    // video 元素已常驻 DOM（v-show 模式），直接获取
+    // 保存 URL + codec 供全屏切换时复用（避免重新 SIP INVITE）
+    const isH265 = !!(mediaInfo.codec && (mediaInfo.codec.toUpperCase().includes('H265') || mediaInfo.codec.toUpperCase().includes('HEVC')))
+    const useHls = isH265 || mediaInfo.url.includes('.m3u8')
+    slot.mediaUrl = mediaInfo.url
+    slot.codec = mediaInfo.codec
+    slot.mediaFormat = useHls ? 'hls' : 'flv'
     slot.playing = true
     slot.loading = false
     await nextTick()
@@ -909,43 +951,76 @@ async function playVideoInSlot(slotIdx: number, channelId: string, deviceName: s
     video.removeAttribute('src')
     try { video.load() } catch {}
 
-    if (flvjs.isSupported()) {
-      const player = flvjs.createPlayer(
-        { type: 'flv', url: flvUrl, isLive: true, hasAudio: false, hasVideo: true },
-        {
-          enableStashBuffer: false,
-          stashInitialSize: 128,
-          autoCleanupSourceBuffer: false,  // GB28181 PS 封装流时间戳可能不连续
-          lazyLoad: false,
-          liveBufferLatencyChasing: true,
-          liveBufferLatencyChasingOnPaused: true,
-          liveSyncDurationCount: 1,
-          liveMaxLatencyDurationCount: 1.5,
-        } as any
-      )
-      player.attachMediaElement(video)
-      player.load()
-      // 显式设 muted=true 满足浏览器自动播放策略
+    const autoplayRetry = () => {
       video.muted = true
-      player.play().catch(() => {
-        // 自动播放可能被浏览器策略阻止（异步等待 SIP INVITE 后丢失用户手势上下文）
-        // 延迟重试：此时 MSE 数据已填充，video.play() 通常可以成功
+      video.play().catch(() => {
         setTimeout(() => {
           if (myGen !== slot._gen) return
           video.muted = true
           video.play().catch(() => {})
         }, 200)
       })
-      // 最终检查：如果又被取消了，销毁刚创建的 player
-      if (myGen !== slot._gen) {
-        try { player.destroy() } catch {}
-        return
+    }
+
+    if (useHls) {
+      // H265 → 使用 HLS 播放器（MSE 不支持 H265 FLV）
+      if (Hls.isSupported()) {
+        const hls = new Hls({
+          enableWorker: true,
+          lowLatencyMode: true,
+          liveSyncDurationCount: 1,
+          liveMaxLatencyDurationCount: 2,
+          maxBufferLength: 5,
+        })
+        hls.loadSource(mediaInfo.url)
+        hls.attachMedia(video)
+        hls.on(Hls.Events.MANIFEST_PARSED, () => {
+          if (myGen !== slot._gen) { try { hls.destroy() } catch {} return }
+          autoplayRetry()
+        })
+        if (myGen !== slot._gen) {
+          try { hls.destroy() } catch {}
+          return
+        }
+        slot.hlsPlayer = hls
+      } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+        // Safari 原生 HLS 支持
+        video.src = mediaInfo.url
+        autoplayRetry()
+      } else {
+        slot.playing = false
+        slot.loading = false
+        console.warn('[SituationScreen] 浏览器不支持 HLS')
       }
-      slot.flvPlayer = player
     } else {
-      slot.playing = false
-      slot.loading = false
-      console.warn('[SituationScreen] 浏览器不支持 flv.js')
+      // H264 → 使用 FLV 播放器（低延迟）
+      if (flvjs.isSupported()) {
+        const player = flvjs.createPlayer(
+          { type: 'flv', url: mediaInfo.url, isLive: true, hasAudio: false, hasVideo: true },
+          {
+            enableStashBuffer: false,
+            stashInitialSize: 128,
+            autoCleanupSourceBuffer: false,  // GB28181 PS 封装流时间戳可能不连续
+            lazyLoad: false,
+            liveBufferLatencyChasing: true,
+            liveBufferLatencyChasingOnPaused: true,
+            liveSyncDurationCount: 1,
+            liveMaxLatencyDurationCount: 1.5,
+          } as any
+        )
+        player.attachMediaElement(video)
+        player.load()
+        autoplayRetry()
+        if (myGen !== slot._gen) {
+          try { player.destroy() } catch {}
+          return
+        }
+        slot.flvPlayer = player
+      } else {
+        slot.playing = false
+        slot.loading = false
+        console.warn('[SituationScreen] 浏览器不支持 flv.js')
+      }
     }
   } catch (e: any) {
     if (myGen === slot._gen) {
@@ -958,7 +1033,7 @@ async function playVideoInSlot(slotIdx: number, channelId: string, deviceName: s
 function stopVideoSlot(slotIdx: number) {
   const slot = videoSlots[slotIdx]
   slot._gen++  // 使任何在途的异步拉流失效
-  if (slot.flvPlayer) { try { slot.flvPlayer.destroy() } catch {} slot.flvPlayer = null }
+  destroySlotPlayers(slot)
   // 清理 video 元素
   const video = videoSlotRefs.value[slotIdx]
   if (video) { try { video.pause() } catch {} video.removeAttribute('src') }
@@ -966,16 +1041,18 @@ function stopVideoSlot(slotIdx: number) {
   if (slot.channelId) {
     stopStream(slot.channelId)
   }
-  slot.playing = false; slot.loading = false; slot.channelId = ''; slot.deviceName = ''; slot.flvUrl = ''
+  // 注销全局 channelStore 中的 slot
+  channelStore.unregisterSlot(slotIdx)
+  slot.playing = false; slot.loading = false; slot.channelId = ''; slot.deviceName = ''; slot.mediaUrl = ''; slot.codec = ''; slot.mediaFormat = 'flv'
 }
 
 /**
- * 仅重建 flv.js 播放器（不调 /start 或 /stop），用于全屏切换时 DOM 重建后重新绑定。
- * 关键: 不触发 SIP INVITE/teardown，避免设备压力。
+ * 仅重建播放器（不调 /start 或 /stop），用于全屏切换时 DOM 重建后重新绑定。
+ * 支持 FLV (H264) 和 HLS (H265) 两种格式。关键: 不触发 SIP INVITE/teardown，避免设备压力。
  */
 function reattachPlayer(slotIdx: number) {
   const slot = videoSlots[slotIdx]
-  if (!slot.flvUrl || !slot.playing) return
+  if (!slot.mediaUrl || !slot.playing) return
   let video = videoSlotRefs.value[slotIdx]
   // 回退: transition leave 动画可能清空了 ref，从 DOM 直接查询当前可见的 video
   if (!video) {
@@ -989,32 +1066,57 @@ function reattachPlayer(slotIdx: number) {
   if (!video) return
 
   // 清理旧播放器
-  if (slot.flvPlayer) { try { slot.flvPlayer.destroy() } catch {} slot.flvPlayer = null }
+  destroySlotPlayers(slot)
   try { video.pause() } catch {}
   video.removeAttribute('src')
   try { video.load() } catch {}
 
-  if (flvjs.isSupported()) {
-    const player = flvjs.createPlayer(
-      { type: 'flv', url: slot.flvUrl, isLive: true, hasAudio: false, hasVideo: true },
-      {
-        enableStashBuffer: false,
-        stashInitialSize: 128,
-        autoCleanupSourceBuffer: false,
-        lazyLoad: false,
-        liveBufferLatencyChasing: true,
-        liveBufferLatencyChasingOnPaused: true,
-        liveSyncDurationCount: 1,
-        liveMaxLatencyDurationCount: 1.5,
-      } as any
-    )
-    player.attachMediaElement(video)
-    player.load()
+  const autoplayRetry = () => {
     video.muted = true
-    player.play().catch(() => {
+    video.play().catch(() => {
       setTimeout(() => { video.muted = true; video.play().catch(() => {}) }, 200)
     })
-    slot.flvPlayer = player
+  }
+
+  if (slot.mediaFormat === 'hls') {
+    // HLS 路径 (H265)
+    if (Hls.isSupported()) {
+      const hls = new Hls({
+        enableWorker: true,
+        lowLatencyMode: true,
+        liveSyncDurationCount: 1,
+        liveMaxLatencyDurationCount: 2,
+        maxBufferLength: 5,
+      })
+      hls.loadSource(slot.mediaUrl)
+      hls.attachMedia(video)
+      hls.on(Hls.Events.MANIFEST_PARSED, () => autoplayRetry())
+      slot.hlsPlayer = hls
+    } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+      video.src = slot.mediaUrl
+      autoplayRetry()
+    }
+  } else {
+    // FLV 路径 (H264)
+    if (flvjs.isSupported()) {
+      const player = flvjs.createPlayer(
+        { type: 'flv', url: slot.mediaUrl, isLive: true, hasAudio: false, hasVideo: true },
+        {
+          enableStashBuffer: false,
+          stashInitialSize: 128,
+          autoCleanupSourceBuffer: false,
+          lazyLoad: false,
+          liveBufferLatencyChasing: true,
+          liveBufferLatencyChasingOnPaused: true,
+          liveSyncDurationCount: 1,
+          liveMaxLatencyDurationCount: 1.5,
+        } as any
+      )
+      player.attachMediaElement(video)
+      player.load()
+      autoplayRetry()
+      slot.flvPlayer = player
+    }
   }
 }
 
@@ -1036,7 +1138,7 @@ function pollVideoBatch() {
     // 跳过: 正在加载中（上一次拉流还在进行，防止重叠 SIP INVITE）
     if (slot.loading) continue
     // 跳过: 已在播放同一通道（无需重新拉流）
-    if (slot.channelId === dev.channelId && slot.playing && slot.flvPlayer) {
+    if (slot.channelId === dev.channelId && slot.playing && (slot.flvPlayer || slot.hlsPlayer)) {
       continue
     }
     playVideoInSlot(i, dev.channelId, dev.deviceName)
@@ -1075,6 +1177,7 @@ const videoPreviewVisible = ref(false)
 const videoPreviewDevice = ref<{ id: string; name: string } | null>(null)
 const videoPreviewLoading = ref(false)
 let previewFlvPlayer: flvjs.Player | null = null
+let previewHlsPlayer: Hls | null = null
 const previewVideoRef = ref<HTMLVideoElement>()
 
 let previewChannelId = ''
@@ -1096,37 +1199,62 @@ async function onDeviceVideo(device: { id: string; name: string; businessId?: st
       } catch {}
     }
     // 启动 GB28181 推流并等待流就绪
-    const flvUrl = await startStreamAndGetFlvUrl(channelId)
-    if (!flvUrl) { videoPreviewLoading.value = false; ElMessage.warning('无法获取视频流地址'); return }
+    const mediaInfo = await startStreamAndGetMediaUrl(channelId)
+    if (!mediaInfo || !mediaInfo.url) { videoPreviewLoading.value = false; ElMessage.warning('无法获取视频流地址'); return }
     previewChannelId = channelId
     const video = previewVideoRef.value
     if (!video) { videoPreviewLoading.value = false; return }
     if (previewFlvPlayer) { try { previewFlvPlayer.destroy() } catch {} previewFlvPlayer = null }
-    if (flvjs.isSupported()) {
-      const player = flvjs.createPlayer(
-        { type: 'flv', url: flvUrl, isLive: true, hasAudio: false, hasVideo: true },
-        {
-          enableStashBuffer: false,
-          stashInitialSize: 128,
-          autoCleanupSourceBuffer: false,
-          lazyLoad: false,
-          liveBufferLatencyChasing: true,
-          liveBufferLatencyChasingOnPaused: true,
-          liveSyncDurationCount: 1,
-          liveMaxLatencyDurationCount: 1.5,
-        } as any
-      )
-      player.attachMediaElement(video)
-      player.load()
-      player.play().catch(() => {})
-      previewFlvPlayer = player
-      videoPreviewLoading.value = false
+    if (previewHlsPlayer) { try { previewHlsPlayer.destroy() } catch {} previewHlsPlayer = null }
+
+    const isH265 = !!(mediaInfo.codec && (mediaInfo.codec.toUpperCase().includes('H265') || mediaInfo.codec.toUpperCase().includes('HEVC')))
+    const useHls = isH265 || mediaInfo.url.includes('.m3u8')
+
+    if (useHls) {
+      if (Hls.isSupported()) {
+        const hls = new Hls({ enableWorker: true, lowLatencyMode: true, liveSyncDurationCount: 1, liveMaxLatencyDurationCount: 2, maxBufferLength: 5 })
+        hls.loadSource(mediaInfo.url)
+        hls.attachMedia(video)
+        hls.on(Hls.Events.MANIFEST_PARSED, () => { video.muted = true; video.play().catch(() => {}) })
+        previewHlsPlayer = hls
+        videoPreviewLoading.value = false
+      } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+        video.src = mediaInfo.url
+        video.muted = true
+        video.play().catch(() => {})
+        videoPreviewLoading.value = false
+      } else {
+        videoPreviewLoading.value = false
+        ElMessage.warning('浏览器不支持 HLS 播放')
+      }
+    } else {
+      if (flvjs.isSupported()) {
+        const player = flvjs.createPlayer(
+          { type: 'flv', url: mediaInfo.url, isLive: true, hasAudio: false, hasVideo: true },
+          {
+            enableStashBuffer: false,
+            stashInitialSize: 128,
+            autoCleanupSourceBuffer: false,
+            lazyLoad: false,
+            liveBufferLatencyChasing: true,
+            liveBufferLatencyChasingOnPaused: true,
+            liveSyncDurationCount: 1,
+            liveMaxLatencyDurationCount: 1.5,
+          } as any
+        )
+        player.attachMediaElement(video)
+        player.load()
+        Promise.resolve(player.play()).catch(() => {})
+        previewFlvPlayer = player
+        videoPreviewLoading.value = false
+      }
     }
   } catch { videoPreviewLoading.value = false; ElMessage.warning('视频连接失败') }
 }
 
 function closeVideoPreview() {
   if (previewFlvPlayer) { try { previewFlvPlayer.destroy() } catch {} previewFlvPlayer = null }
+  if (previewHlsPlayer) { try { previewHlsPlayer.destroy() } catch {} previewHlsPlayer = null }
   if (previewChannelId) { stopStream(previewChannelId); previewChannelId = '' }
   videoPreviewVisible.value = false
   videoPreviewDevice.value = null

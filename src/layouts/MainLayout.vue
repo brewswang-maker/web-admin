@@ -422,10 +422,12 @@
         class="main-content"
         element-loading-background="rgba(3, 43, 104, 0.18)"
       >
+        <!-- [FIX 2026-07-14] 移除 transition mode="out-in" — SituationScreen 卸载时
+             three.js/echarts/flv.js 的重量级清理干扰 transitionend 监听，导致
+             out-in 模式下 leave 完成后 enter 永不触发，router-view 渲染空注释 → 白屏。
+             App.vue 已有顶层路由过渡动画，内层无需重复。 -->
         <router-view v-slot="{ Component, route }">
-          <transition name="page-fade" mode="out-in">
-            <component :is="Component" :key="route.fullPath" />
-          </transition>
+          <component :is="Component" :key="route.fullPath" />
         </router-view>
       </el-main>
     </el-container>

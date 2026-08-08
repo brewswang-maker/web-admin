@@ -53,8 +53,8 @@
                     @snapshot="onPlayerSnapshot"
                   />
                   <!-- [P1-CO2] 码流复用提示 -->
-                  <div v-if="isChannelInLiveView" class="alarm-popup__stream-reused">
-                    🔗 复用 LiveView 实时流
+                  <div v-if="isChannelStreaming" class="alarm-popup__stream-reused">
+                    🔗 复用现有视频流
                   </div>
                   <div v-if="activeTab === 'live' && !currentAlarm?.channelId" class="alarm-popup__tab-content">
                     <div class="alarm-popup__placeholder">
@@ -303,15 +303,15 @@ import { useRouter } from 'vue-router'
 // 🆕 v6.3: 多类别检测标签翻译 (集中走 i18n + 后端 metadata 兜底)
 const { getCategoryName, getTargetName, getAlarmTypeName } = useObjectLabel()
 
-// [P1-CO2] 弹窗码流协调: 检测告警通道是否已在 LiveView 播放
+// [P1-CO2] 弹窗码流协调: 检测告警通道是否已在其他组件播放（LiveView / SituationScreen 轮巡）
 const channelStore = useChannelStore()
-const isChannelInLiveView = computed(() => {
+const isChannelStreaming = computed(() => {
   const chId = currentAlarm.value?.channelId
   if (!chId) return false
   return channelStore.activeChannelIds.includes(String(chId))
 })
-// 如果通道已在 LiveView 播放，弹窗复用现有流，跳过 /start 调用
-const popupSkipStartApi = computed(() => isChannelInLiveView.value)
+// 如果通道已在其他组件播放，弹窗复用现有流，跳过 /start 调用
+const popupSkipStartApi = computed(() => isChannelStreaming.value)
 
 // [P2-CO3] 告警 → 录像回放跳转
 const router = useRouter()

@@ -437,4 +437,24 @@ router.afterEach((to) => {
   console.debug('[Router] 导航至:', to.path, to.meta.title)
 })
 
+// [FIX 2026-08-03] 懒加载 chunk 失败自动恢复 (长时间挂机后白屏根因)
+//   场景: 页面开着期间前端重新部署 (vite hash 变化, 旧 chunk 被替换),
+//   回来后切路由 import() 失败 → router-view 渲染空 → 白屏。
+//   处理: 捕获 chunk 加载错误 → 强制整页重载拿最新 index.html。
+//   用 sessionStorage 做 10s 防抖, 避免资源真缺失时无限刷新循环。
+const CHUNK_ERR_RE = /Failed to fetch dynamically imported module|Loading chunk [^\s]+ failed|error loading dynamically imported module|Unable to preload CSS/i
+router.onError((error) => {
+  const msg = String(error?.message || '')
+  if (!CHUNK_ERR_RE.test(msg)) return
+  const KEY = 'shieldbox_chunk_reload_ts'
+  const last = Number(sessionStorage.getItem(KEY) || 0)
+  if (Date.now() - last < 10000) {
+    console.error('[Router] chunk 加载持续失败, 跳过自动重载:', msg)
+    return
+  }
+  sessionStorage.setItem(KEY, String(Date.now()))
+  console.warn('[Router] chunk 版本失效, 自动重载页面:', msg)
+  window.location.reload()
+})
+
 export default router

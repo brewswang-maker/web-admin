@@ -164,40 +164,44 @@ async function fetchStreamUrls(
       await new Promise(r => setTimeout(r, 300))
     }
 
-    // 2. 现有流不存在时才触发拉流（有副作用：可能触发 GB28181 INVITE）
-    //    forceSkipStart=true 时跳过（防抖窗口内复用现有流）
-    if (!props.skipStartApi && !forceSkipStart) {
-      try {
-        const { data: startResp } = await streamHttp.post(`/${chId}/start`, {
-          stream_type: props.streamType,
-        })
-        const startData = startResp?.data || startResp
-        if (startData && (startData.flvUrl || startData.webrtcUrl) && startData.zlmReady) {
-          return {
-            urls: {
-              flv: norm(startData.flvUrl || ''),
-              webrtc: norm(startData.webrtcUrl || ''),
-              'ws-flv': norm(startData.wsFlvUrl || '', true),
-              hls: norm(startData.hlsUrl || ''),
-            },
-            codec: startData.codec || '',
-          }
+    // 2. multi-urls 未找到流 → 回退到 /start 触发拉流
+    //    [STABILITY-FIX 2026-08-02] skipStartApi/forceSkipStart 只是"优先复用"提示,
+    //    当 multi-urls 查不到流时必须回退到 /start, 否则弹窗永远打不开已断开的流
+    if (props.skipStartApi || forceSkipStart) {
+      console.warn(`[MiniPlayer] ch=${chId} skipStart=true 但 multi-urls 无流, 回退到 /start`)
+    }
+    // 标记全局防抖，使并发调用者复用本次拉流
+    channelStore.markStartCalled(chId)
+    try {
+      const { data: startResp } = await streamHttp.post(`/${chId}/start`, {
+        stream_type: props.streamType,
+      })
+      const startData = startResp?.data || startResp
+      if (startData && (startData.flvUrl || startData.webrtcUrl) && startData.zlmReady) {
+        return {
+          urls: {
+            flv: norm(startData.flvUrl || ''),
+            webrtc: norm(startData.webrtcUrl || ''),
+            'ws-flv': norm(startData.wsFlvUrl || '', true),
+            hls: norm(startData.hlsUrl || ''),
+          },
+          codec: startData.codec || '',
         }
-      } catch { /* 可能已在推流 */ }
-
-      // start 后等待流就绪 (GB28181 INVITE + RTP 建立需 2-5 秒)
-      // [STABILITY-FIX] 10×300ms=3s → 15×300ms=4.5s, 覆盖完整 INVITE 超时窗口
-      consecutiveNotAlive = 0
-      for (let attempt = 0; attempt < 15; attempt++) {
-        const result = await queryMultiUrls()
-        if (result) return result
-        consecutiveNotAlive++
-        if (consecutiveNotAlive >= 5 && attempt >= 4) {
-          console.warn(`[MiniPlayer] ch=${chId} /start 后连续 ${consecutiveNotAlive} 次无流, 终止轮询`)
-          break
-        }
-        await new Promise(r => setTimeout(r, 300))
       }
+    } catch { /* 可能已在推流 */ }
+
+    // start 后等待流就绪 (GB28181 INVITE + RTP 建立需 2-5 秒)
+    // [STABILITY-FIX] 10×300ms=3s → 15×300ms=4.5s, 覆盖完整 INVITE 超时窗口
+    consecutiveNotAlive = 0
+    for (let attempt = 0; attempt < 15; attempt++) {
+      const result = await queryMultiUrls()
+      if (result) return result
+      consecutiveNotAlive++
+      if (consecutiveNotAlive >= 5 && attempt >= 4) {
+        console.warn(`[MiniPlayer] ch=${chId} /start 后连续 ${consecutiveNotAlive} 次无流, 终止轮询`)
+        break
+      }
+      await new Promise(r => setTimeout(r, 300))
     }
     return null
   } catch {
@@ -464,7 +468,8 @@ async function startPlay() {
   if (!video) return
 
   // 全局防抖检查：同通道 5s 内复用已有流，跳过 /start（防止 SIP INVITE 风暴）
-  const inDebounce = channelStore.shouldSkipStart(props.channelId)
+  // [STABILITY-FIX] 使用 checkSkipStart (纯查询) 替换废弃的 shouldSkipStart (有副作用)
+  const inDebounce = channelStore.checkSkipStart(props.channelId)
   if (inDebounce) {
     console.debug(`[MiniPlayer] ch=${props.channelId} /start 全局防抖窗口内，跳过 SIP INVITE`)
   }

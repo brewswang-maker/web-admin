@@ -181,28 +181,66 @@ const TreeNode: FunctionalComponent<{ node: ConditionNode; depth: number; onUpda
     ])
   }
 
-  // P0-4: CASE 节点渲染 (v8.0)
+  // P0-4 + P2-5: CASE 节点渲染 (v8.0) — 含分支编辑功能
   if (node.type === 'CASE') {
     const caseNode = node as any
-    const branches = caseNode.case_branches || []
+    const branches: any[] = caseNode.case_branches || []
+    const caseFieldOptions = ['alarm_type', 'severity', 'region_id', 'device_id', 'confidence']
+    const opOptions = ['eq', 'neq', 'contains', 'gt', 'lt']
+
+    const updateCase = (patch: Record<string, any>) => {
+      emit('update', { ...caseNode, ...patch } as ConditionNode)
+    }
+    const updateBranch = (idx: number, patch: Record<string, any>) => {
+      const newBranches = branches.map((b: any, i: number) => i === idx ? { ...b, ...patch } : b)
+      updateCase({ case_branches: newBranches })
+    }
+    const removeBranch = (idx: number) => {
+      updateCase({ case_branches: branches.filter((_: any, i: number) => i !== idx) })
+    }
+    const addBranch = () => {
+      updateCase({ case_branches: [...branches, { op: 'eq', value: '', actions: [] }] })
+    }
+
     return h('div', { class: 'tree-node branch case-node', style: { marginLeft: indent } }, [
       h('div', { class: 'branch-header' }, [
-        h('span', { class: 'node-badge', style: { background: nodeColors.CASE } }, `CASE: ${caseNode.case_field || 'field'}`),
-        h('span', { class: 'child-count' }, `(${branches.length} branches)`),
+        h('span', { class: 'node-badge', style: { background: nodeColors.CASE } }, 'CASE'),
+        // [P2-5] case_field 可编辑下拉
+        h('select', {
+          class: 'case-field-select',
+          value: caseNode.case_field || 'alarm_type',
+          onChange: (e: Event) => updateCase({ case_field: (e.target as HTMLSelectElement).value }),
+        }, caseFieldOptions.map(f => h('option', { value: f, selected: f === caseNode.case_field }, f))),
+        h('span', { class: 'child-count' }, `(${branches.length} 分支)`),
+        h('el-button', { size: 'small', type: 'primary', link: true, onClick: addBranch }, () => '+ 分支'),
         depth === 0
           ? h('el-button', { size: 'small', type: 'danger', link: true, onClick: () => emit('remove') }, () => '清空')
           : h('el-button', { size: 'small', type: 'danger', link: true, onClick: () => emit('remove') }, () => '删除'),
       ]),
+      // [P2-5] 每个分支: op 下拉 + value 输入 + 删除按钮
       ...branches.map((branch: any, i: number) =>
-        h('div', { class: 'case-branch', style: { marginLeft: '20px' } }, [
-          h('span', { class: 'node-badge', style: { background: '#8B5CF6', opacity: 0.7 } }, `${branch.op || 'eq'}: ${branch.value || ''}`),
+        h('div', { class: 'case-branch', style: { marginLeft: '20px', display: 'flex', alignItems: 'center', gap: '6px', padding: '2px 0' } }, [
+          h('span', { style: { fontSize: '12px', color: '#8B5CF6', fontWeight: 600 } }, `IF ${caseNode.case_field || 'field'}`),
+          h('select', {
+            class: 'case-op-select',
+            value: branch.op || 'eq',
+            onChange: (e: Event) => updateBranch(i, { op: (e.target as HTMLSelectElement).value }),
+          }, opOptions.map(op => h('option', { value: op, selected: op === branch.op }, op))),
+          h('input', {
+            class: 'case-value-input',
+            value: branch.value || '',
+            placeholder: '匹配值 (e.g. intrusion)',
+            onInput: (e: Event) => updateBranch(i, { value: (e.target as HTMLInputElement).value }),
+          }),
+          h('span', { style: { fontSize: '11px', color: '#909399' } }, `→ ${(branch.actions || []).length} 动作`),
+          h('el-button', { size: 'small', type: 'danger', link: true, onClick: () => removeBranch(i) }, () => '×'),
         ])
       ),
-      caseNode.default_actions && caseNode.default_actions.length > 0
-        ? h('div', { class: 'case-default', style: { marginLeft: '20px' } }, [
-            h('span', { class: 'node-badge', style: { background: '#6B7280' } }, 'default'),
-          ])
-        : null,
+      // [P2-5] default 分支
+      h('div', { class: 'case-default', style: { marginLeft: '20px', display: 'flex', alignItems: 'center', gap: '6px' } }, [
+        h('span', { class: 'node-badge', style: { background: '#6B7280', fontSize: '11px' } }, 'DEFAULT'),
+        h('span', { style: { fontSize: '11px', color: '#909399' } }, `→ ${(caseNode.default_actions || []).length} 动作`),
+      ]),
     ])
   }
 
@@ -281,5 +319,31 @@ const TreeNode: FunctionalComponent<{ node: ConditionNode; depth: number; onUpda
   display: flex;
   align-items: center;
   gap: 8px;
+}
+/* [P2-5] CASE 节点编辑器样式 */
+.case-field-select,
+.case-op-select {
+  padding: 1px 4px;
+  border: 1px solid var(--el-border-color);
+  border-radius: 4px;
+  font-size: 12px;
+  background: #fff;
+}
+.case-value-input {
+  padding: 1px 6px;
+  border: 1px solid var(--el-border-color);
+  border-radius: 4px;
+  font-size: 12px;
+  width: 160px;
+}
+.case-branch {
+  border-left: 2px solid #8B5CF6;
+  padding-left: 8px;
+  margin-top: 2px;
+}
+.case-default {
+  border-left: 2px solid #6B7280;
+  padding-left: 8px;
+  margin-top: 2px;
 }
 </style>

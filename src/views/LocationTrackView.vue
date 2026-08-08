@@ -217,6 +217,7 @@ import { useRouter } from 'vue-router'
 
 import { locationApi, type DeviceLocation, type TrackPoint } from '@/api/location'
 import { http as _unused } from '@/api/http' // 保留以便后续需要
+import { useEventTypeNames } from '@/composables/useEventTypeNames'  // [P3-3] SSOT 事件类型名称
 
 // ── 高德地图 JS SDK ──
 const AMAP_KEY = '7fe207317aeae03b556a6cfa10e9ceb8'
@@ -636,13 +637,9 @@ function onAlarmMapMarker(e: Event) {
   })
   map.add(marker)
 
-  // 弹出详情 (对标海康: 点击标记显示告警详情)
-  const alarmTypeCnMap: Record<string, string> = {
-    face_blacklist: '黑名单告警', face_stranger: '陌生人告警',
-    intrusion: '区域入侵', fire: '烟火检测', smoke: '烟雾检测',
-    fall: '倒地检测', fighting: '打架斗殴', ppe_violation: '安全防护违规',
-  }
-  const alarmText = alarmTypeCnMap[detail.alarm_type] || detail.alarm_type || '告警'
+  // [P3-3 FIX] 硬编码 alarmTypeCnMap → SSOT API 缓存
+  const { getAlarmTypeName } = useEventTypeNames()
+  const alarmText = getAlarmTypeName(detail.alarm_type) || '告警'
 
   // 自动打开弹窗
   const infoWin = new AMap.InfoWindow({

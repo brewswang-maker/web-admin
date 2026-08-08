@@ -934,7 +934,7 @@
           <div v-for="(group, cat) in filteredTemplatesByCategory" :key="cat" style="margin-bottom: 20px">
             <div style="font-size: 15px; font-weight: 600; margin-bottom: 10px; color: #303133; border-left: 3px solid #6366F1; padding-left: 8px">{{ cat }}</div>
             <el-row :gutter="12">
-              <el-col :span="8" v-for="tmpl in group" :key="tmpl.template_id">
+              <el-col :span="8" v-for="tmpl in group" :key="tmpl.template_id || tmpl.id">
                 <el-card shadow="hover" class="template-card" :body-style="{ padding: '14px' }">
                   <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px">
                     <div style="font-weight: 600; font-size: 14px">{{ tmpl.name }}</div>
@@ -1652,14 +1652,19 @@ function openEditor(rule: LinkageRule | null) {
   }
 
   // 恢复动作: 后端格式 → actionState + actionParams
+  // Legacy 简化编号兼容 (模板库旧编号 1-10 → 标准 100+)
+  const legacyActionMap: Record<number, number> = {
+    1: 115, 2: 122, 3: 123, 4: 111, 5: 114,
+    6: 105, 7: 104, 8: 203, 9: 200, 10: 202,
+  }
   Object.keys(actionState).forEach(k => delete actionState[k])
   Object.keys(actionParams).forEach(k => delete actionParams[k])
   if (rule?.actions) {
     for (const a of rule.actions) {
-      const typeStr = ACTION_TYPE_REVERSE_MAP[a.type]
+      const normalizedType = legacyActionMap[a.type] ?? a.type
+      const typeStr = ACTION_TYPE_REVERSE_MAP[normalizedType]
       if (typeStr) {
         actionState[typeStr] = a.enabled
-        // 提取参数 (排除 type/target/name/enabled 等元数据字段)
         const { type: _t, target: _tg, name: _n, enabled: _e, ...rest } = a
         actionParams[typeStr] = rest || {}
       }
@@ -1841,8 +1846,13 @@ async function openTemplateLibrary() {
 
 async function applyTemplate(tmpl: any) {
   try {
+    const tplId = tmpl.template_id || tmpl.id
+    if (!tplId) {
+      ElMessage.error('模板ID缺失，无法应用')
+      return
+    }
     await ElMessageBox.confirm(`确定从模板「${tmpl.name}」创建新规则?`, '应用模板', { type: 'info' })
-    const res = await linkageApi.applyRuleTemplate(tmpl.template_id, tmpl.name)
+    const res = await linkageApi.applyRuleTemplate(tplId, tmpl.name)
     ElMessage.success('规则已从模板创建')
     showTemplateDialog.value = false
     fetchRules()
