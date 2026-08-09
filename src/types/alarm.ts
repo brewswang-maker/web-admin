@@ -78,7 +78,19 @@ export type AlarmType =
   | 'other'
 
 /** 告警状态 */
-export type AlarmStatus = 'unhandled' | 'confirmed' | 'false_alarm' | 'forwarded' | 'auto_resolved'
+// [P0-3] 完整工单流转: new → acknowledged → disposed → closed (或 escalated/reassigned/false_alarm/resolved)
+export type AlarmStatus =
+  | 'unhandled'        // new - 新告警
+  | 'acknowledged'     // 已确认收到 (非终态)
+  | 'disposed'         // 处置中 (非终态)
+  | 'escalated'        // 已升级 (非终态)
+  | 'reassigned'       // 已转派 (非终态)
+  | 'confirmed'        // [兼容] 旧版已确认
+  | 'false_alarm'      // 误报 (终态)
+  | 'forwarded'        // [兼容] 旧版已转发
+  | 'resolved'         // 已解决 (终态)
+  | 'closed'           // 已关闭 (终态)
+  | 'auto_resolved'
 
 /** 告警事件 */
 export interface AlarmEvent {
@@ -121,10 +133,15 @@ export interface AlarmStats {
 }
 
 /** 告警处理表单 */
+// [P0-3] 扩展工单流转动作
 export interface AlarmHandleForm {
-  status: 'confirmed' | 'false_alarm' | 'forwarded' | 'ignored'
+  status: 'acknowledged' | 'disposed' | 'closed' | 'escalated' | 'reassigned'
+        | 'confirmed' | 'false_alarm' | 'forwarded' | 'ignored'
   note?: string
   forwardTo?: string
+  assignee?: string        // [P0-3] 指派/转派目标人
+  ticketId?: string        // [P0-3] 关联工单号
+  disposition?: string     // [P0-3] 处置结果说明
 }
 
 /** 告警查询参数 */

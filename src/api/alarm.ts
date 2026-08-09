@@ -83,6 +83,32 @@ export const alarmApi = {
     return alarmApi.handle(id, { status: 'forwarded', forwardTo, note })
   },
 
+  // [P0-3] 工单流转便捷方法
+  /** 确认收到告警 (ack) */
+  acknowledge(id: string, note?: string) {
+    return alarmApi.handle(id, { status: 'acknowledged', note })
+  },
+
+  /** 处置告警 (dispose) */
+  dispose(id: string, disposition: string, assignee?: string) {
+    return alarmApi.handle(id, { status: 'disposed', disposition, assignee })
+  },
+
+  /** 关闭告警 (close) */
+  close(id: string, disposition?: string) {
+    return alarmApi.handle(id, { status: 'closed', disposition })
+  },
+
+  /** 升级告警 (escalate) */
+  escalate(id: string, note?: string) {
+    return alarmApi.handle(id, { status: 'escalated', note })
+  },
+
+  /** 转派告警 (reassign) */
+  reassign(id: string, assignee: string, note?: string) {
+    return alarmApi.handle(id, { status: 'reassigned', assignee, note })
+  },
+
   /** 获取告警证据链(快照+视频+AI分析+关联录像) */
   // §13 Fix E: 后端实际响应是 ApiResponse<{snapshot:{url,available}, video_clip:{url,available}, ...}>,
   // 前端 AlarmEvidence 是扁平结构, 这里做映射 (nested → flat) 后再返回

@@ -44,8 +44,13 @@
           <el-select v-model="statusFilter" placeholder="处理状态" style="width: 130px" clearable @change="handleFilterChange">
             <el-option label="全部" value="" />
             <el-option label="未处理" value="unhandled" />
+            <el-option label="已确认收到" value="acknowledged" />
+            <el-option label="处置中" value="disposed" />
+            <el-option label="已升级" value="escalated" />
             <el-option label="已确认" value="confirmed" />
             <el-option label="误报" value="false_alarm" />
+            <el-option label="已关闭" value="closed" />
+            <el-option label="已解决" value="resolved" />
           </el-select>
 
           <!-- 时间范围 -->
@@ -300,34 +305,49 @@
         </el-table-column>
 
         <!-- 操作 -->
-        <el-table-column label="操作" width="260" fixed="right">
+        <el-table-column label="操作" width="340" fixed="right">
           <template #default="{ row }">
             <div class="action-btns">
               <el-button
                 size="small"
                 type="primary"
                 link
-                @click="handleConfirm(row)"
-                :disabled="row.status !== 'unhandled'"
+                @click="handleAck(row)"
+                v-if="row.status === 'unhandled'"
               >
                 确认
               </el-button>
               <el-button
                 size="small"
+                type="success"
+                link
+                @click="handleDispose(row)"
+                v-if="row.status === 'unhandled' || row.status === 'acknowledged' || row.status === 'escalated'"
+              >
+                处置
+              </el-button>
+              <el-button
+                size="small"
                 type="warning"
                 link
-                @click="handleFalse(row)"
-                :disabled="row.status !== 'unhandled'"
+                @click="handleCloseAlarm(row)"
+                v-if="row.status === 'acknowledged' || row.status === 'disposed' || row.status === 'escalated' || row.status === 'reassigned'"
               >
-                误报
+                关闭
               </el-button>
-              <el-button size="small" link @click="handleIgnore(row)">忽略</el-button>
-              <el-button size="small" type="primary" link @click="showEvidence(row)">
-                证据链
-              </el-button>
-              <el-button size="small" type="info" link @click="handleDetail(row)">
-                详情
-              </el-button>
+              <el-dropdown @command="(cmd: string) => handleLifecycleCommand(cmd, row)" trigger="click">
+                <el-button size="small" type="info" link>更多<el-icon class="el-icon--right"><ArrowDown /></el-icon></el-button>
+                <template #dropdown>
+                  <el-dropdown-menu>
+                    <el-dropdown-item command="escalate" v-if="row.status !== 'closed' && row.status !== 'false_alarm'">升级告警</el-dropdown-item>
+                    <el-dropdown-item command="reassign" v-if="row.status !== 'closed'">转派处理</el-dropdown-item>
+                    <el-dropdown-item command="false_alarm" :disabled="row.status === 'closed'">标记误报</el-dropdown-item>
+                    <el-dropdown-item command="ignore" :disabled="row.status === 'closed'">忽略</el-dropdown-item>
+                    <el-dropdown-item command="evidence" divided>证据链</el-dropdown-item>
+                    <el-dropdown-item command="detail">详情</el-dropdown-item>
+                  </el-dropdown-menu>
+                </template>
+              </el-dropdown>
             </div>
           </template>
         </el-table-column>
@@ -579,7 +599,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   Bell, Warning, CircleCheck, Clock,
   Search, Refresh, Download, WarningFilled,
-  Picture, VideoPlay, Position,
+  Picture, VideoPlay, Position, ArrowDown,
 } from '@element-plus/icons-vue'
 import { alarmApi } from '@/api/alarm'
 import { exportApi } from '@/api/export'
@@ -1076,12 +1096,26 @@ function levelTagType(level: string): 'primary' | 'success' | 'warning' | 'info'
 }
 
 function statusLabel(status: string) {
-  const map: Record<string, string> = { unhandled: '未处理', handling: '处理中', handled: '已处理', confirmed: '已确认', false_alarm: '误报', ignored: '已忽略' }
+  const map: Record<string, string> = {
+    unhandled: '未处理', handling: '处理中', handled: '已处理',
+    confirmed: '已确认', false_alarm: '误报', ignored: '已忽略',
+    // [P0-3] 工单流转状态
+    acknowledged: '已确认收到', disposed: '处置中',
+    escalated: '已升级', reassigned: '已转派',
+    resolved: '已解决', closed: '已关闭'
+  }
   return map[status] || status
 }
 
 function statusTagType(status: string): 'primary' | 'success' | 'warning' | 'info' | 'danger' {
-  const map: Record<string, 'primary' | 'success' | 'warning' | 'info' | 'danger'> = { unhandled: 'danger', handling: 'warning', handled: 'success', confirmed: 'success', false_alarm: 'warning', ignored: 'info' }
+  const map: Record<string, 'primary' | 'success' | 'warning' | 'info' | 'danger'> = {
+    unhandled: 'danger', handling: 'warning', handled: 'success',
+    confirmed: 'success', false_alarm: 'warning', ignored: 'info',
+    // [P0-3] 工单流转状态
+    acknowledged: 'primary', disposed: 'warning',
+    escalated: 'danger', reassigned: 'info',
+    resolved: 'success', closed: 'success'
+  }
   return map[status] || 'info'
 }
 
@@ -1132,21 +1166,108 @@ function handlePageChange() {
 
 // 确认告警
 async function handleConfirm(row: any) {
-  ElMessageBox.confirm(`确认告警：「${row.description || row.title}」?`, '确认告警', {
-    confirmButtonText: '确认为真实告警',
+  // [P0-3] 保留旧版兼容, 映射到 acknowledge
+  handleAck(row)
+}
+
+// [P0-3] 工单流转 handler 函数
+async function handleAck(row: any) {
+  ElMessageBox.confirm(`确认收到告警：「${row.description || row.title}」?`, '确认告警', {
+    confirmButtonText: '确认收到',
     cancelButtonText: '取消',
     type: 'warning',
   }).then(async () => {
     try {
-      await alarmApi.handle(row.id, { status: 'confirmed', note: '' })
-      row.status = 'handled'
-      row.handledBy = useAuthStore().user?.name || '当前用户'
-      ElMessage.success('已确认')
+      await alarmApi.acknowledge(row.id)
+      row.status = 'acknowledged'
+      ElMessage.success('已确认收到')
+      fetchAlarms()  // 刷新列表
     } catch (err) {
       ElMessage.error('操作失败')
     }
   }).catch(() => {})
 }
+
+async function handleDispose(row: any) {
+  ElMessageBox.prompt('请输入处置结果说明', `处置告警：${row.description || row.title}`, {
+    confirmButtonText: '提交处置',
+    cancelButtonText: '取消',
+    inputPlaceholder: '处置结果说明...',
+    inputType: 'textarea',
+  }).then(async ({ value }) => {
+    try {
+      await alarmApi.dispose(row.id, value || '已处置')
+      row.status = 'disposed'
+      ElMessage.success('已提交处置')
+      fetchAlarms()
+    } catch (err) {
+      ElMessage.error('操作失败')
+    }
+  }).catch(() => {})
+}
+
+async function handleCloseAlarm(row: any) {
+  ElMessageBox.confirm(`确认关闭告警：「${row.description || row.title}」?`, '关闭告警', {
+    confirmButtonText: '确认关闭',
+    cancelButtonText: '取消',
+    type: 'success',
+  }).then(async () => {
+    try {
+      await alarmApi.close(row.id, '人工关闭')
+      row.status = 'closed'
+      ElMessage.success('已关闭')
+      fetchAlarms()
+    } catch (err) {
+      ElMessage.error('操作失败')
+    }
+  }).catch(() => {})
+}
+
+async function handleLifecycleCommand(cmd: string, row: any) {
+  switch (cmd) {
+    case 'escalate':
+      ElMessageBox.confirm(`升级此告警到更高优先级?`, '升级告警', {
+        confirmButtonText: '升级',
+        cancelButtonText: '取消',
+        type: 'warning',
+      }).then(async () => {
+        try {
+          await alarmApi.escalate(row.id)
+          row.status = 'escalated'
+          ElMessage.success('已升级')
+          fetchAlarms()
+        } catch { ElMessage.error('操作失败') }
+      }).catch(() => {})
+      break
+    case 'reassign':
+      ElMessageBox.prompt('请输入转派目标人', '转派告警', {
+        confirmButtonText: '转派',
+        cancelButtonText: '取消',
+        inputPlaceholder: '处理人用户名...',
+      }).then(async ({ value }) => {
+        try {
+          await alarmApi.reassign(row.id, value)
+          row.status = 'reassigned'
+          ElMessage.success(`已转派给 ${value}`)
+          fetchAlarms()
+        } catch { ElMessage.error('操作失败') }
+      }).catch(() => {})
+      break
+    case 'false_alarm':
+      handleFalse(row)
+      break
+    case 'ignore':
+      handleIgnore(row)
+      break
+    case 'evidence':
+      showEvidence(row)
+      break
+    case 'detail':
+      handleDetail(row)
+      break
+  }
+}
+
 
 // 标记误报
 async function handleFalse(row: any) {
