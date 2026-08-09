@@ -142,7 +142,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onBeforeUnmount } from 'vue'
 import { ElMessage } from 'element-plus'
 import { UploadFilled, InfoFilled } from '@element-plus/icons-vue'
 import { testApi } from '@/api/test'
@@ -211,13 +211,29 @@ function onImageChange(file: any) {
     ElMessage.error('图片大小不能超过 4MB')
     return
   }
+  // 释放旧的 Object URL 避免内存泄漏
+  if (previewUrl.value) {
+    URL.revokeObjectURL(previewUrl.value)
+  }
   previewUrl.value = URL.createObjectURL(raw)
   testApi.fileToBase64(raw).then(b64 => {
     imageBase64.value = b64
   }).catch(() => {
     ElMessage.error('图片读取失败')
+    if (previewUrl.value) {
+      URL.revokeObjectURL(previewUrl.value)
+      previewUrl.value = ''
+    }
   })
 }
+
+// 组件卸载时释放 Object URL
+onBeforeUnmount(() => {
+  if (previewUrl.value) {
+    URL.revokeObjectURL(previewUrl.value)
+    previewUrl.value = ''
+  }
+})
 
 async function runTest() {
   testing.value = true
