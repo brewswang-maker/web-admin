@@ -39,10 +39,10 @@
           <div v-else class="upload-placeholder">
             <el-icon class="el-icon--upload"><UploadFilled /></el-icon>
             <div class="el-upload__text">拖拽图片到此处或 <em>点击上传</em></div>
-            <template #tip>
-              <div class="el-upload__tip">支持 JPEG / PNG，最大 4MB</div>
-            </template>
           </div>
+          <template #tip>
+            <div class="el-upload__tip">支持 JPEG / PNG，最大 4MB</div>
+          </template>
         </el-upload>
       </div>
 

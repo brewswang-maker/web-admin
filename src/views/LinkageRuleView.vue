@@ -945,7 +945,12 @@
                     <el-tag v-for="t in (tmpl.tags || []).slice(0, 3)" :key="t" size="small" effect="plain" style="margin: 1px">{{ t }}</el-tag>
                   </div>
                   <div style="font-size: 12px; color: #909399; margin-bottom: 10px">优先级: {{ tmpl.priority }} | 动作: {{ (tmpl.actions || []).length }}项</div>
-                  <el-button type="primary" size="small" @click="applyTemplate(tmpl)" style="width: 100%">一键应用</el-button>
+                  <div style="display: flex; gap: 8px">
+                                      <el-button type="primary" size="small" @click="applyTemplate(tmpl)" style="flex: 1">一键应用</el-button>
+                                      <el-button type="warning" size="small" @click="openEventTest(tmpl)" plain>
+                                        🧪 测试
+                                      </el-button>
+                                    </div>
                 </el-card>
               </el-col>
             </el-row>
@@ -954,6 +959,14 @@
         </div>
       </div>
     </el-dialog>
+
+    <!-- ===== 事件模板全链路测试抽屉 ===== -->
+    <EventTestDrawer
+      v-model="showEventTestDrawer"
+      :event-name="eventTestTarget?.name || ''"
+      :event-type="eventTestTarget?.eventType || ''"
+      :coverage-info="eventTestCoverage"
+    />
 
     <!-- ===== 时段模板管理对话框 ===== -->
     <el-dialog v-model="showTimeTemplateDialog" title="布防时段模板管理" width="600px" destroy-on-close>
@@ -1062,6 +1075,9 @@ import { useLinkageOptions } from '@/composables/useLinkageOptions'
 import { validateTemplateImport } from '@/api/templateSchema'
 import RoiPolygonEditor from '@/components/RoiPolygonEditor.vue'
 import TimeTemplateEditor from '@/components/TimeTemplateEditor.vue'
+import EventTestDrawer from '@/components/EventTestDrawer.vue'
+import { testApi } from '@/api/test'
+import type { EventCoverageItem } from '@/api/test'
 import PlanEditor from '@/components/PlanEditor.vue'
 import CEPPatternEditor from '@/components/CEPPatternEditor.vue'
 import ConditionTreeEditor from '@/components/ConditionTreeEditor.vue'
@@ -1391,6 +1407,46 @@ const templatesByCategory = computed(() => {
   }
   return map
 })
+
+// ── 事件测试状态 ──
+const showEventTestDrawer = ref(false)
+const eventTestTarget = ref<{ name: string; eventType: string } | null>(null)
+const eventTestCoverage = ref<EventCoverageItem | null>(null)
+const eventCoverageMap = ref<Record<string, EventCoverageItem>>({})
+
+// 加载事件可测性矩阵
+async function loadEventCoverage() {
+  if (Object.keys(eventCoverageMap.value).length > 0) return
+  try {
+    const res = await testApi.getEventCoverage()
+    const data = (res as any)?.data?.data
+    if (data?.coverage) {
+      eventCoverageMap.value = data.coverage
+    }
+  } catch {
+    // 静默失败，不影响主页面
+  }
+}
+
+// 打开事件测试抽屉
+async function openEventTest(tmpl: any) {
+  const eventType = tmpl.source_cond?.event_types?.[0] ||
+                    (tmpl.tags && tmpl.tags[0]) || 'test_alarm'
+
+  eventTestTarget.value = {
+    name: tmpl.name,
+    eventType,
+  }
+
+  await loadEventCoverage()
+  eventTestCoverage.value = eventCoverageMap.value[eventType] || {
+    test_mode: 'synthesis' as const,
+    algo_id: null,
+    reason: '未找到关联信息，使用合成事件模式',
+  }
+
+  showEventTestDrawer.value = true
+}
 
 // [P1-LR1] 模板分类导航
 const tmplSearchKeyword = ref('')
@@ -1835,6 +1891,7 @@ async function handleDryRun() {
 async function openTemplateLibrary() {
   showTemplateDialog.value = true
   templateLoading.value = true
+  loadEventCoverage() // 预加载事件可测性矩阵
   try {
     const res = await linkageApi.getRuleTemplates()
     const data = (res as any)?.data?.data ?? (res as any)?.data ?? []
