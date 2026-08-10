@@ -239,9 +239,10 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, reactive } from 'vue'
+import { ref, computed, watch, reactive, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Plus, Delete, Rank } from '@element-plus/icons-vue'
+import { http } from '@/api/http'
 import { linkageApi, ACTION_TYPE_REVERSE_MAP } from '@/api/linkage'
 import type { LinkageRule } from '@/api/linkage'
 
@@ -300,7 +301,11 @@ const validation = reactive({ errors: [] as string[], warnings: [] as string[] }
 
 // ---- 选项 ----
 const suggestedTags = ['高危', '监控', '安防', '消防', '周界', '人流', '生产安全']
-const eventTypeOptions = [
+// [P1-1 v7.8 2026-08-09] 事件类型由硬编码静态列表改为动态从 SSOT API 加载.
+//   后端: GET /api/v1/event-types/canonical (RestApiHandlers.cpp kCanonical SSOT, 与 P0-2 扩展同步)
+//   加载失败时回退到 fallback 静态列表, 保证离线/网络异常下可用.
+//   升级路径: 增删事件类型只需改后端 kCanonical, 前端自动同步.
+const FALLBACK_EVENT_TYPE_OPTIONS = [
   { value: 'intrusion', label: '入侵检测' },
   { value: 'fire', label: '火灾/烟雾' },
   { value: 'fighting', label: '打架斗殴' },
@@ -317,6 +322,29 @@ const eventTypeOptions = [
   { value: 'face', label: '人脸识别' },
   { value: 'vehicle', label: '车辆检测' },
 ]
+const eventTypeOptions = ref<Array<{ value: string; label: string }>>([...FALLBACK_EVENT_TYPE_OPTIONS])
+const eventTypesLoading = ref(false)
+
+async function loadEventTypes() {
+  eventTypesLoading.value = true
+  try {
+    const resp = await http.get<{ code: number; data: { types: Array<{ key: string; name_zh: string }>; count: number }; message?: string }>('/api/v1/event-types/canonical')
+    if (resp?.code === 0 && resp.data?.types?.length) {
+      eventTypeOptions.value = resp.data.types.map(t => ({ value: t.key, label: t.name_zh }))
+      console.info(`[RuleGuiEditor] 动态加载 ${resp.data.count} 个事件类型`)
+    } else {
+      console.warn('[RuleGuiEditor] SSOT 返回为空, 使用 fallback 静态列表')
+    }
+  } catch (err) {
+    console.warn('[RuleGuiEditor] 加载事件类型失败, 使用 fallback:', err)
+  } finally {
+    eventTypesLoading.value = false
+  }
+}
+
+onMounted(() => {
+  loadEventTypes()
+})
 const weekdayOptions = [
   { value: 1, label: '一' }, { value: 2, label: '二' }, { value: 3, label: '三' },
   { value: 4, label: '四' }, { value: 5, label: '五' }, { value: 6, label: '六' },
