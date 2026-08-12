@@ -11,7 +11,7 @@
       <div class="section">
         <div class="section-title">测试模式</div>
         <el-radio-group v-model="testMode" :disabled="testing">
-          <el-radio value="image" :disabled="!canImageTest">📷 图片推理</el-radio>
+          <el-radio value="image">📷 图片推理</el-radio>
           <el-radio value="synthesis">⚡ 合成事件</el-radio>
         </el-radio-group>
         <div v-if="coverageInfo" class="mode-hint">
@@ -44,6 +44,31 @@
             <div class="el-upload__tip">支持 JPEG / PNG，最大 4MB</div>
           </template>
         </el-upload>
+      </div>
+
+      <!-- 算法选择 (仅 image 模式) -->
+      <div v-if="testMode === 'image'" class="section">
+        <div class="section-title">
+          推理算法
+          <span v-if="algoLoadingStatus" style="font-size: 12px; font-weight: normal; color: #909399; margin-left: 8px">{{ algoLoadingStatus }}</span>
+          <el-button v-if="availableAlgorithms.length === 0 && !algoLoading" size="small" text type="primary" @click="loadAlgorithms(true)" style="margin-left: 8px">重新加载</el-button>
+        </div>
+        <el-select v-model="selectedAlgoId" placeholder="选择算法" style="width: 100%" :disabled="testing || algoLoading" filterable>
+          <el-option
+            v-for="algo in availableAlgorithms"
+            :key="algo.algo_id || algo.id"
+            :label="`${algo.name_zh || algo.name} (${algo.algo_id || algo.id})`"
+            :value="algo.algo_id || algo.id"
+          />
+        </el-select>
+        <div v-if="availableAlgorithms.length === 0 && !algoLoading && algoLoadError" class="mode-hint" style="color: #F56C6C">
+          <el-icon><InfoFilled /></el-icon>
+          算法列表加载失败: {{ algoLoadError }}
+        </div>
+        <div v-if="!selectedAlgoId && availableAlgorithms.length > 0" class="mode-hint" style="color: #E6A23C">
+          <el-icon><InfoFilled /></el-icon>
+          请选择推理算法，检测结果将触发事件弹窗
+        </div>
       </div>
 
       <!-- 参数配置 -->
@@ -146,6 +171,9 @@ import { ref, computed, watch, onBeforeUnmount } from 'vue'
 import { ElMessage } from 'element-plus'
 import { UploadFilled, InfoFilled } from '@element-plus/icons-vue'
 import { testApi } from '@/api/test'
+import { getAuthToken } from '@/utils/auth'
+import algorithmsApi from '@/api/algorithms'
+import type { AlgorithmInfo } from '@/api/algorithms'
 import type { InferImageResult, TestTriggerResult, EventCoverageItem, MatchedRule } from '@/api/test'
 
 const props = defineProps<{
@@ -165,7 +193,7 @@ const visible = computed({
 })
 
 // ── 状态 ──
-const testMode = ref<'image' | 'synthesis'>('synthesis')
+const testMode = ref<'image' | 'synthesis'>('image')
 const imageBase64 = ref('')
 const previewUrl = ref('')
 const alarmType = ref(props.eventType)
@@ -173,6 +201,17 @@ const confidenceThreshold = ref(0.4)
 const severity = ref(4)
 const testing = ref(false)
 const errorMsg = ref('')
+
+// 算法选择
+const selectedAlgoId = ref('')
+const availableAlgorithms = ref<AlgorithmInfo[]>([])
+const algoLoading = ref(false)
+const algoLoadError = ref('')
+const algoLoadingStatus = computed(() => {
+  if (algoLoading.value) return '(加载中...)'
+  if (availableAlgorithms.value.length > 0) return `(${availableAlgorithms.value.length} 个算法)`
+  return ''
+})
 
 // 结果
 const inferResult = ref<InferImageResult | null>(null)
@@ -183,7 +222,7 @@ const result = ref(false)
 const steps = ref<Record<string, string>>({})
 
 // ── 计算属性 ──
-const canImageTest = computed(() => props.coverageInfo?.test_mode === 'image')
+// 图片推理始终可用（去掉覆盖率矩阵限制，用户可手动选择算法）
 
 const allMatchedRules = computed<MatchedRule[]>(() => {
   if (inferResult.value?.matched_rules) return inferResult.value.matched_rules
@@ -194,9 +233,154 @@ const allMatchedRules = computed<MatchedRule[]>(() => {
 const matchedRuleCount = computed(() => allMatchedRules.value.filter(r => r.matched).length)
 
 // ── 事件处理 ──
+// 加载算法列表 — 使用原生 fetch 绕过 axios 拦截器可能的干扰
+// 后端 GET /api/v1/algorithms?pageSize=200 返回 { code: 0, data: { algorithms: [...] } }
+async function loadAlgorithms(force = false) {
+  if (algoLoading.value && !force) return
+  algoLoading.value = true
+  algoLoadError.value = ''
+  try {
+    // 方案1: 优先用 algorithmsApi (axios)
+    let list: any[] = []
+    try {
+      const res = await algorithmsApi.list()
+      const raw = (res as any)?.data
+      list = raw?.data?.algorithms ?? raw?.data?.items ?? raw?.algorithms ?? []
+      console.log('[EventTestDrawer] algorithmsApi.list() raw keys:', Object.keys(raw || {}), 'data keys:', raw?.data ? Object.keys(raw.data) : 'N/A', 'list length:', Array.isArray(list) ? list.length : 'NOT_ARRAY')
+    } catch (e1) {
+      console.warn('[EventTestDrawer] algorithmsApi.list() failed, trying fetch fallback:', e1)
+      // 方案2: fetch fallback — token 存在 Cookie 中 (shieldai_token)
+      const token = getAuthToken() || ''
+      const resp = await fetch('/api/v1/algorithms?pageSize=200', {
+        headers: token ? { 'Authorization': `Bearer ${token}` } : {},
+      })
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
+      const json = await resp.json()
+      list = json?.data?.algorithms ?? json?.data?.items ?? json?.algorithms ?? []
+      console.log('[EventTestDrawer] fetch fallback list length:', Array.isArray(list) ? list.length : 'NOT_ARRAY')
+    }
+    if (!Array.isArray(list)) list = []
+    availableAlgorithms.value = list.filter((a: any) => a.enabled !== false)
+    console.log('[EventTestDrawer] loaded algorithms:', availableAlgorithms.value.length, 'eventType:', props.eventType, 'covAlgoId:', props.coverageInfo?.algo_id)
+    if (availableAlgorithms.value.length === 0) {
+      algoLoadError.value = 'API 返回空列表'
+    }
+    // 算法列表加载后尝试自动选中
+    autoSelectAlgorithm()
+  } catch (e: any) {
+    console.error('[EventTestDrawer] loadAlgorithms failed:', e)
+    algoLoadError.value = e?.message || String(e)
+    availableAlgorithms.value = []
+  } finally {
+    algoLoading.value = false
+  }
+}
+
+// 智能匹配算法：按优先级尝试多种匹配策略
+// 规则的 source_cond.algorithm_ids 存的是事件类型字符串（如 "intrusion"），不是插件 ID
+// 需要通过事件类型反查到对应的算法插件
+function autoSelectAlgorithm() {
+  if (selectedAlgoId.value) return // 用户已手动选择
+  const algos = availableAlgorithms.value
+  if (algos.length === 0) return
+
+  const evtType = (props.eventType || '').toLowerCase()
+  const covAlgoId = props.coverageInfo?.algo_id || ''
+  console.log('[EventTestDrawer] autoSelectAlgorithm: evtType=', evtType, 'covAlgoId=', covAlgoId, 'algos=', algos.length)
+
+  // 策略1: coverageInfo.algo_id 直接匹配（覆盖率矩阵返回的是完整插件 ID）
+  if (covAlgoId) {
+    const match = algos.find(a => (a.algo_id || a.id) === covAlgoId)
+    if (match) {
+      selectedAlgoId.value = match.algo_id || match.id
+      console.log('[EventTestDrawer] ✅ 策略1匹配(coverage):', selectedAlgoId.value)
+      return
+    }
+  }
+
+  // 策略2: 事件类型精确匹配算法的 alarm_type
+  if (evtType) {
+    const match = algos.find(a => (a.alarm_type || '').toLowerCase() === evtType)
+    if (match) {
+      selectedAlgoId.value = match.algo_id || match.id
+      console.log('[EventTestDrawer] ✅ 策略2匹配(alarm_type):', selectedAlgoId.value)
+      return
+    }
+  }
+
+  // 策略3: 事件类型是插件 algo_id 的末尾段
+  // 如 intrusion → shield.algo.perimeter.intrusion
+  if (evtType) {
+    const match = algos.find(a => {
+      const aid = (a.algo_id || a.id || '').toLowerCase()
+      return aid.endsWith('.' + evtType) || aid === evtType
+    })
+    if (match) {
+      selectedAlgoId.value = match.algo_id || match.id
+      console.log('[EventTestDrawer] ✅ 策略3匹配(algo_id后缀):', selectedAlgoId.value)
+      return
+    }
+  }
+
+  // 策略4: 反向匹配 — 算法 alarm_type 是事件类型的前缀或子串
+  // 如 blacklist_person → 算法 alarm_type="face_detect" 不匹配，但可以用前缀 "face" 匹配
+  if (evtType) {
+    const prefix = evtType.split('_')[0] // blacklist_person → blacklist
+    if (prefix.length >= 4) {
+      const match = algos.find(a => {
+        const atype = (a.alarm_type || '').toLowerCase()
+        const aid = (a.algo_id || a.id || '').toLowerCase()
+        return (atype && (atype.startsWith(prefix) || prefix.startsWith(atype))) ||
+               aid.includes('.' + prefix + '.')
+      })
+      if (match) {
+        selectedAlgoId.value = match.algo_id || match.id
+        console.log('[EventTestDrawer] ✅ 策略4匹配(前缀):', selectedAlgoId.value)
+        return
+      }
+    }
+  }
+
+  // 策略5: 按事件类型关键词模糊匹配算法名称/中文名
+  if (evtType) {
+    const keyword = evtType.replace(/[_-]/g, '').toLowerCase()
+    const match = algos.find(a => {
+      const nameZh = (a.name_zh || '').toLowerCase()
+      const name = (a.name || '').toLowerCase()
+      const aid = (a.algo_id || a.id || '').toLowerCase().replace(/[-.]/g, '')
+      return nameZh.includes(keyword) || name.includes(keyword) || aid.includes(keyword)
+    })
+    if (match) {
+      selectedAlgoId.value = match.algo_id || match.id
+      console.log('[EventTestDrawer] ✅ 策略5匹配(模糊):', selectedAlgoId.value)
+      return
+    }
+  }
+
+  console.log('[EventTestDrawer] ⚠️ 未找到匹配算法，eventType=', evtType)
+}
+
+// 组件在 LinkageRuleView 中无 v-if，页面加载时就挂载
+// onMounted 时 token 可能尚未就绪导致 API 失败
+// 所以每次 drawer 打开时都要确保算法列表已加载
+watch(visible, (v) => {
+  if (v) {
+    loadAlgorithms()
+  }
+})
+
 watch(() => props.coverageInfo, (info) => {
   if (info) {
-    testMode.value = info.test_mode === 'image' ? 'image' : 'synthesis'
+    // 始终默认图片推理模式
+    testMode.value = 'image'
+    // 重置已选算法，触发 autoSelectAlgorithm 重新匹配
+    selectedAlgoId.value = ''
+    // 如果算法列表已加载，立即尝试匹配；否则触发加载
+    if (availableAlgorithms.value.length > 0) {
+      autoSelectAlgorithm()
+    } else {
+      loadAlgorithms()
+    }
   }
 }, { immediate: true })
 
@@ -246,9 +430,9 @@ async function runTest() {
   try {
     if (testMode.value === 'image') {
       // 通道 A: 图片推理
-      const algoId = props.coverageInfo?.algo_id || ''
+      const algoId = selectedAlgoId.value || props.coverageInfo?.algo_id || ''
       if (!algoId) {
-        throw new Error('未找到关联算法，请切换到合成事件模式')
+        throw new Error('请选择推理算法')
       }
       if (!imageBase64.value) {
         throw new Error('请先上传测试图片')

@@ -182,9 +182,10 @@
             <span class="time-text">{{ formatTime(row.updated_at) }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="280" fixed="right">
+        <el-table-column label="操作" width="320" fixed="right">
           <template #default="{ row }">
             <el-button size="small" type="primary" link @click="openEditor(row)">编辑</el-button>
+            <el-button size="small" type="success" link @click="openRuleTest(row)">🧪 测试</el-button>
             <el-button size="small" type="success" link @click="handleCloneRule(row)">复制</el-button>
             <el-button size="small" type="info" link @click="openVersionHistory(row)">历史</el-button>
             <el-button v-if="!row.is_archived" size="small" type="warning" link @click="handleArchiveRule(row)">归档</el-button>
@@ -1444,6 +1445,62 @@ async function openEventTest(tmpl: any) {
     algo_id: null,
     reason: '未找到关联信息，使用合成事件模式',
   }
+
+  showEventTestDrawer.value = true
+}
+
+// 从联动规则列表打开测试抽屉
+// 规则的 source_cond.algorithm_ids 存的是事件类型字符串（如 "intrusion"），不是插件 ID
+// 需要通过覆盖率矩阵或算法列表反查到完整插件 ID
+async function openRuleTest(rule: LinkageRule) {
+  const eventTypes = rule.source_cond?.event_types || []
+  const eventType = eventTypes[0] || 'test_alarm'
+
+  eventTestTarget.value = {
+    name: rule.name,
+    eventType,
+  }
+
+  // 强制重新加载覆盖率矩阵（清除缓存）
+  eventCoverageMap.value = {}
+  await loadEventCoverage()
+
+  console.log('[openRuleTest] rule:', rule.name, 'eventTypes:', eventTypes, 'coverageMap keys:', Object.keys(eventCoverageMap.value).length)
+
+  // 遍历规则的所有事件类型，找到第一个在覆盖率矩阵中有 algo_id 的
+  let coverage: EventCoverageItem | null = null
+  for (const et of eventTypes) {
+    const c = eventCoverageMap.value[et]
+    if (c?.algo_id) {
+      coverage = c
+      eventTestTarget.value.eventType = et
+      console.log('[openRuleTest] found coverage for', et, '→ algo_id:', c.algo_id)
+      break
+    }
+  }
+
+  // 如果覆盖率矩阵没找到，尝试用 algorithm_ids 字段（可能存的是事件类型）
+  if (!coverage) {
+    // 查找覆盖率矩阵中所有有 algo_id 的条目，匹配任意事件类型
+    for (const et of eventTypes) {
+      if (eventCoverageMap.value[et]) {
+        coverage = eventCoverageMap.value[et]
+        eventTestTarget.value.eventType = et
+        break
+      }
+    }
+  }
+
+  if (!coverage) {
+    coverage = {
+      test_mode: 'image' as const,
+      algo_id: null,
+      reason: '图片推理模式（请在下拉中手动选择算法）',
+    }
+  }
+
+  console.log('[openRuleTest] final coverage:', JSON.stringify(coverage))
+  eventTestCoverage.value = coverage
 
   showEventTestDrawer.value = true
 }
