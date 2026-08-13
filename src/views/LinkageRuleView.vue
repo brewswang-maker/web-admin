@@ -1798,6 +1798,17 @@ async function handleSave() {
   const enabledActions = Object.entries(actionState).filter(([, v]) => v)
   if (enabledActions.length === 0) { ElMessage.warning('请至少选择一个联动动作'); return }
 
+  // [v7.9 FIX BUG-3] 事件类型为空时提醒用户规则将匹配所有事件 (通配模式)
+  if (form.conditions.eventType.config.types.length === 0) {
+    try {
+      await ElMessageBox.confirm(
+        '未选择任何事件类型，此规则将匹配【所有事件】（通配模式）。\n是否继续？',
+        '通配规则确认',
+        { confirmButtonText: '继续保存', cancelButtonText: '返回选择事件', type: 'warning' }
+      )
+    } catch { return }
+  }
+
   saving.value = true
   try {
     // 构建 conditions: 内部 6 条件 → 后端 4 条件
