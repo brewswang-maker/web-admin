@@ -43,7 +43,7 @@
                 <!-- 实时视频（始终显示，联动规则有 WEB_SHOW_LIVE 时自动激活） -->
                 <el-tab-pane label="实时视频" name="live">
                   <MiniPlayer
-                    v-show="activeTab === 'live' && currentAlarm?.channelId"
+                    v-show="activeTab === 'live' && currentAlarm?.channelId && !playerError"
                     :key="currentAlarm?.channelId || 'none'"
                     :channel-id="currentAlarm?.channelId || ''"
                     :show-controls="true"
@@ -51,12 +51,24 @@
                     :visible="activeTab === 'live'"
                     :skip-start-api="popupSkipStartApi"
                     @snapshot="onPlayerSnapshot"
+                    @error="onPlayerError"
+                    @playing="onPlayerPlaying"
                   />
                   <!-- [P1-CO2] 码流复用提示 -->
                   <div v-if="isChannelStreaming" class="alarm-popup__stream-reused">
                     🔗 复用现有视频流
                   </div>
-                  <div v-if="activeTab === 'live' && !currentAlarm?.channelId" class="alarm-popup__tab-content">
+                  <!-- [FIX 2026-08-17] 视频流加载失败时提示，避免黑屏无反馈 -->
+                  <div v-if="activeTab === 'live' && playerError" class="alarm-popup__tab-content">
+                    <div class="alarm-popup__placeholder">
+                      <p>⚠️ 实时视频不可用</p>
+                      <p class="alarm-popup__hint">{{ playerError }}</p>
+                      <p class="alarm-popup__hint alarm-popup__hint--small">
+                        可查看“告警快照” 或 “录像回放”
+                      </p>
+                    </div>
+                  </div>
+                  <div v-else-if="activeTab === 'live' && !currentAlarm?.channelId" class="alarm-popup__tab-content">
                     <div class="alarm-popup__placeholder">
                       <p>⚠️ 无通道信息</p>
                       <p class="alarm-popup__hint">该告警未关联视频通道</p>
@@ -312,6 +324,21 @@ const isChannelStreaming = computed(() => {
 })
 // 如果通道已在其他组件播放，弹窗复用现有流，跳过 /start 调用
 const popupSkipStartApi = computed(() => isChannelStreaming.value)
+
+// [FIX 2026-08-17] MiniPlayer 流加载失败时提示，避免黑屏无反馈
+//   跟 MiniPlayer 的 @error/@playing 事件联动:
+//   - error: 加载/播放失败（连续 streamAlive=false + /start 失败 + 协议错误等）
+//   - playing: 重新成功播放时清除错误信息
+const playerError = ref('')
+function onPlayerError(msg: string) {
+  playerError.value = msg || '视频流加载失败'
+}
+function onPlayerPlaying() {
+  playerError.value = ''
+}
+// 切换告警或关闭弹窗时重置错误状态
+watch(() => currentAlarm.value?.id, () => { playerError.value = '' })
+watch(popupVisible, (v) => { if (!v) playerError.value = '' })
 
 // [P2-CO3] 告警 → 录像回放跳转
 const router = useRouter()
