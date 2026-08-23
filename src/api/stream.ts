@@ -88,6 +88,20 @@ export function stopStream(id: string) {
   return streamHttp.post<ApiResponse<void>>(`/${id}/stop`)
 }
 
+/** [P0-4-c] 流存活探活（弹窗 streamAliveHeartbeat 专用, 轻量单次 ZLM 查询） */
+export function checkStreamAlive(id: string) {
+  return streamHttp.get<ApiResponse<{
+    channelId: string
+    streamId: string
+    alive: boolean
+    matchedStreamId?: string
+    readerCount?: number
+    schema?: string
+    videoCodec?: string
+    reason?: string
+  }>>(`/${id}/alive`)
+}
+
 /** 添加代理流 */
 export function addProxy(data: { url: string; app: string; stream: string }) {
   return streamHttp.post<ApiResponse<StreamInfo>>('/proxy', data)

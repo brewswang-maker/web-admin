@@ -7,7 +7,7 @@ import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useAlarmStore } from '@/stores/alarm'
 import { useWebSocket } from '@/composables/useWebSocket'
 import type { AlarmEvent, AlarmQuery, AlarmLevel, AlarmType, AlarmStatus } from '@/types/alarm'
-// [v6.2 2026-06-21] AlarmType 联合扩到 70+ 后, typeLabel 需要从 ALARM_TYPE_CN 兑底查中文
+// [v6.2 2026-06-21] AlarmType 联合扩到 70+ 后, typeLabel 需要从 ALARM_TYPE_CN 兜底查中文
 import { ALARM_TYPE_CN } from '@/types/alarm'
 
 /** 告警列表页数据 */
@@ -108,7 +108,7 @@ export function useAlarmRealtime() {
 /** 告警标签辅助 */
 export function useAlarmLabels() {
   // [v6.2 2026-06-21] AlarmLevel 扩到 5 级 (含 'info'), 对标大华 1 严重 / 2 一般 / 3 轻微 + 状态 / 提示
-  //   使用 Partial<Record> + 默认值兑底, 避免联合类型扩位时要补 5 个字段
+  //   使用 Partial<Record> + 默认值兜底, 避免联合类型扩位时要补 5 个字段
   function levelTagType(level: AlarmLevel): string {
     const map: Partial<Record<AlarmLevel, string>> = {
       critical: 'danger',
@@ -153,7 +153,7 @@ export function useAlarmLabels() {
     return map[status] || status
   }
 
-  // [v6.2 2026-06-21] AlarmType 扩到 70+ 后, typeLabel 不可能枚举完, 改为告警分类中文表 ALARM_TYPE_CN 兑底
+  // [v6.2 2026-06-21] AlarmType 扩到 70+ 后, typeLabel 不可能枚举完, 改为告警分类中文表 ALARM_TYPE_CN 兜底
   //   保留重点告警的独中文文案 (与 alibi/3rd-party 集成), 未列出的返回 ALARM_TYPE_CN[type] 或 type 本身
   function typeLabel(type: AlarmType): string {
     const map: Partial<Record<AlarmType, string>> = {
@@ -169,7 +169,7 @@ export function useAlarmLabels() {
       other: '其他'
     }
     if (map[type]) return map[type]!
-    // 兑底: 从 alarm.ts 的 ALARM_TYPE_CN 查
+    // 兜底: 从 alarm.ts 的 ALARM_TYPE_CN 查
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const cn = (ALARM_TYPE_CN as any)[type]
     return typeof cn === 'string' ? cn : (type as string)

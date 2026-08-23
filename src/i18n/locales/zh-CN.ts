@@ -858,7 +858,7 @@ const zhCN = {
     alarmTrend: '告警趋势',
     agentBar: '多盒子算力负载活跃度柱状图',
     realtimeAlarm: '实时告警',
-    sceneMap: '3D 厂区态势地图',
+    sceneMap: '体育场态势图',
     sceneHint: '拖拽旋转 · 滚轮缩放',
     // 统计卡片
     totalAgents: '算法启用总数',

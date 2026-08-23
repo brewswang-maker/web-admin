@@ -41,7 +41,7 @@
             <div class="el-upload__text">拖拽图片到此处或 <em>点击上传</em></div>
           </div>
           <template #tip>
-            <div class="el-upload__tip">支持 JPEG / PNG，最大 4MB</div>
+            <div class="el-upload__tip">支持 JPEG / PNG，最大 16MB</div>
           </template>
         </el-upload>
       </div>
@@ -81,8 +81,11 @@
           <el-form-item v-if="testMode === 'image'" label="置信度阈值">
             <el-slider v-model="confidenceThreshold" :min="0" :max="1" :step="0.05" show-input />
           </el-form-item>
-          <el-form-item v-if="testMode === 'synthesis'" label="严重度">
+          <!-- [FIX 2026-08-18] 严重度控件对 image 模式开放: infer-image 新增 severity 参数,
+               用于 dryRun 规则匹配演练 (min_severity=5 的规则模板默认 severity=4 永不命中) -->
+          <el-form-item label="严重度">
             <el-input-number v-model="severity" :min="1" :max="5" />
+            <span v-if="testMode === 'image'" class="severity-hint">影响规则匹配演练</span>
           </el-form-item>
         </el-form>
       </div>
@@ -110,6 +113,7 @@
           <span class="step-label">{{ testMode === 'image' ? '算法推理' : '事件注入' }}</span>
           <span v-if="testMode === 'image' && inferResult" class="step-detail">
             {{ inferResult.detection_count }} 个检测框 · {{ inferResult.inference_ms.toFixed(1) }}ms
+            <el-tag v-if="inferResult.infer_backend" size="small" type="info" style="margin-left: 4px">{{ inferResult.infer_backend }}</el-tag>
           </span>
           <span v-if="testMode === 'synthesis' && triggerResult" class="step-detail">
             类型: {{ triggerResult.alarm_type }}
@@ -125,16 +129,24 @@
           </div>
         </div>
 
+        <!-- [FIX 2026-08-15] 0 检出根因说明 (后端 helper 层诊断透传) -->
+        <div v-if="testMode === 'image' && inferResult?.zero_detection_reason" class="detection-viz">
+          <span class="zero-reason">⚠️ {{ inferResult.zero_detection_reason }}</span>
+        </div>
+
         <!-- 步骤 2: 规则匹配 -->
         <div class="result-step" :class="stepStatus('match')">
           <span class="step-icon">{{ stepIcon('match') }}</span>
           <span class="step-label">规则匹配</span>
-          <span class="step-detail">{{ matchedRuleCount }} 条规则命中</span>
+          <span class="step-detail">{{ steps.match === 'skipped' ? '未执行 (推理 0 框)' : matchedRuleCount + ' 条规则命中' }}</span>
         </div>
         <div v-if="allMatchedRules.length > 0" class="matched-rules-list">
           <div v-for="r in allMatchedRules" :key="r.rule_id" class="matched-rule-item">
             <el-tag :type="r.matched ? 'success' : 'info'" size="small">{{ r.matched ? '✓' : '—' }}</el-tag>
             <span>{{ r.rule_name || r.rule_id }}</span>
+            <el-tag v-if="r.cooldown_active" type="warning" size="small">冷却中</el-tag>
+            <!-- [FIX 2026-08-18] 未命中具体原因直接展示 (如 "严重度 4 < 规则 min_severity 5"), 免去查日志 -->
+            <span v-if="!r.matched && r.match_reason" class="match-reason">{{ r.match_reason }}</span>
           </div>
         </div>
 
@@ -142,23 +154,37 @@
         <div class="result-step" :class="stepStatus('action')">
           <span class="step-icon">{{ stepIcon('action') }}</span>
           <span class="step-label">联动动作执行</span>
-          <span v-if="triggerResult" class="step-detail">{{ triggerResult.simulated_actions.length }} 个动作</span>
+          <span v-if="steps.action === 'skipped'" class="step-detail">未执行 (推理 0 框)</span>
+          <span v-else-if="triggerResult" class="step-detail">{{ triggerResult.simulated_actions.length }} 个动作</span>
         </div>
 
         <!-- 步骤 4: 告警落库 -->
         <div class="result-step" :class="stepStatus('alarm')">
           <span class="step-icon">{{ stepIcon('alarm') }}</span>
           <span class="step-label">告警落库</span>
-          <span v-if="inferResult?.alarm_triggered" class="step-detail">alarm_type: {{ inferResult.alarm_type }}</span>
+          <span v-if="steps.alarm === 'skipped'" class="step-detail">未执行 (推理 0 框)</span>
+          <span v-else-if="inferResult?.alarm_rejected" class="step-detail reject-detail">未触发 (图片与事件类型不符)</span>
+          <span v-else-if="inferResult?.alarm_triggered" class="step-detail">alarm_type: {{ inferResult.alarm_type }}</span>
         </div>
 
         <!-- 步骤 5: WebSocket 弹窗 -->
         <div class="result-step" :class="stepStatus('ws')">
           <span class="step-icon">{{ stepIcon('ws') }}</span>
           <span class="step-label">WebSocket 推送</span>
-          <span v-if="inferResult?.ws_pushed" class="step-detail">linkage_alarm 已推送</span>
+          <span v-if="steps.ws === 'skipped'" class="step-detail">未执行 (推理 0 框)</span>
+          <span v-else-if="inferResult?.ws_pushed" class="step-detail">linkage_alarm 已推送</span>
+          <span v-else-if="inferResult?.alarm_triggered" class="step-detail">未推送 (规则未命中/冷却中/无 Web弹窗动作)</span>
         </div>
       </div>
+
+      <!-- 语义校验拒绝说明 -->
+      <el-alert
+        v-if="inferResult?.alarm_rejected"
+        type="warning"
+        :title="inferResult.reject_reason || '图片内容与事件类型不一致，未触发告警'"
+        :closable="false"
+        style="margin-top: 12px"
+      />
 
       <!-- 错误信息 -->
       <el-alert v-if="errorMsg" type="error" :title="errorMsg" :closable="true" @close="errorMsg = ''" style="margin-top: 12px" />
@@ -218,7 +244,7 @@ const inferResult = ref<InferImageResult | null>(null)
 const triggerResult = ref<TestTriggerResult | null>(null)
 const result = ref(false)
 
-// 步骤状态: pending | success | fail
+// 步骤状态: pending | success | fail | rejected (语义校验拒绝)
 const steps = ref<Record<string, string>>({})
 
 // ── 计算属性 ──
@@ -234,24 +260,26 @@ const matchedRuleCount = computed(() => allMatchedRules.value.filter(r => r.matc
 
 // ── 事件处理 ──
 // 加载算法列表 — 使用原生 fetch 绕过 axios 拦截器可能的干扰
-// 后端 GET /api/v1/algorithms?pageSize=200 返回 { code: 0, data: { algorithms: [...] } }
+// [FIX 2026-08-15] 改用 /algorithms/all 全量接口:
+//   原 /algorithms 默认 pageSize=50, 65 个算法只显示前 50 个
+//   (睡岗/危险物品/OCR 等后 15 个不可见)
 async function loadAlgorithms(force = false) {
   if (algoLoading.value && !force) return
   algoLoading.value = true
   algoLoadError.value = ''
   try {
-    // 方案1: 优先用 algorithmsApi (axios)
+    // 方案1: 优先用 algorithmsApi (axios) — 全量接口
     let list: any[] = []
     try {
-      const res = await algorithmsApi.list()
+      const res = await algorithmsApi.listAll()
       const raw = (res as any)?.data
       list = raw?.data?.algorithms ?? raw?.data?.items ?? raw?.algorithms ?? []
-      console.log('[EventTestDrawer] algorithmsApi.list() raw keys:', Object.keys(raw || {}), 'data keys:', raw?.data ? Object.keys(raw.data) : 'N/A', 'list length:', Array.isArray(list) ? list.length : 'NOT_ARRAY')
+      console.log('[EventTestDrawer] algorithmsApi.listAll() raw keys:', Object.keys(raw || {}), 'data keys:', raw?.data ? Object.keys(raw.data) : 'N/A', 'list length:', Array.isArray(list) ? list.length : 'NOT_ARRAY')
     } catch (e1) {
-      console.warn('[EventTestDrawer] algorithmsApi.list() failed, trying fetch fallback:', e1)
+      console.warn('[EventTestDrawer] algorithmsApi.listAll() failed, trying fetch fallback:', e1)
       // 方案2: fetch fallback — token 存在 Cookie 中 (shieldai_token)
       const token = getAuthToken() || ''
-      const resp = await fetch('/api/v1/algorithms?pageSize=200', {
+      const resp = await fetch('/api/v1/algorithms/all', {
         headers: token ? { 'Authorization': `Bearer ${token}` } : {},
       })
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
@@ -391,8 +419,9 @@ watch(() => props.eventType, (t) => {
 function onImageChange(file: any) {
   const raw = file.raw || file
   if (!raw) return
-  if (raw.size > 4 * 1024 * 1024) {
-    ElMessage.error('图片大小不能超过 4MB')
+  // [FIX 2026-08-18] 后端 infer-image 限制已由 4MB 放宽到 16MB (P2-Bug-5), 前端同步
+  if (raw.size > 16 * 1024 * 1024) {
+    ElMessage.error('图片大小不能超过 16MB')
     return
   }
   // 释放旧的 Object URL 避免内存泄漏
@@ -444,6 +473,7 @@ async function runTest() {
         confidence_threshold: confidenceThreshold.value,
         trigger_alarm: true,
         alarm_type: alarmType.value,
+        severity: severity.value,
       })
 
       const data = (res as any)?.data?.data ?? (res as any)?.data
@@ -452,19 +482,39 @@ async function runTest() {
       inferResult.value = data
 
       // 步骤 1: 推理
-      steps.value.inject = data.detection_count > 0 ? 'success' : 'fail'
+      // [FIX 2026-08-15] 0 框不再笼统 'fail': 后端透传 zero_detection_reason
+      //   区分真实路径 (质量快检跳过/TPU 无检出/白名单过滤/CPU 回退),
+      //   推理已执行但无目标属 'skipped' 警告态, 非链路故障。
+      const zeroDetected = data.detection_count === 0
+      steps.value.inject = data.detection_count > 0 ? 'success'
+        : (data.zero_detection_reason ? 'skipped' : 'fail')
 
-      // 步骤 2: 规则匹配
-      steps.value.match = (data.matched_rules || []).some((r: MatchedRule) => r.matched) ? 'success' : 'fail'
+      if (data.alarm_rejected) {
+        // 语义校验拒绝: 图片检出类别与事件类型不一致, 后端已拒绝触发告警
+        steps.value.match = 'rejected'
+        steps.value.action = 'rejected'
+        steps.value.alarm = 'rejected'
+        steps.value.ws = 'rejected'
+      } else if (zeroDetected) {
+        // [FIX 2026-08-15] 推理 0 框: 告警链入口条件不满足, 后续步骤
+        //   属"未执行"而非连锁失败
+        steps.value.match = 'skipped'
+        steps.value.action = 'skipped'
+        steps.value.alarm = 'skipped'
+        steps.value.ws = 'skipped'
+      } else {
+        // 步骤 2: 规则匹配
+        steps.value.match = (data.matched_rules || []).some((r: MatchedRule) => r.matched) ? 'success' : 'fail'
 
-      // 步骤 3: 动作 (infer-image 不直接返回动作列表，通过 alarm_triggered 推断)
-      steps.value.action = data.alarm_triggered ? 'success' : 'pending'
+        // 步骤 3: 动作 (infer-image 不直接返回动作列表，通过 alarm_triggered 推断)
+        steps.value.action = data.alarm_triggered ? 'success' : 'pending'
 
-      // 步骤 4: 告警落库
-      steps.value.alarm = data.alarm_triggered ? 'success' : 'fail'
+        // 步骤 4: 告警落库
+        steps.value.alarm = data.alarm_triggered ? 'success' : 'fail'
 
-      // 步骤 5: WS 推送
-      steps.value.ws = data.ws_pushed ? 'success' : 'fail'
+        // 步骤 5: WS 推送
+        steps.value.ws = data.ws_pushed ? 'success' : 'fail'
+      }
 
     } else {
       // 通道 B: 合成事件注入
@@ -499,10 +549,19 @@ async function runTest() {
 
     result.value = true
 
-    const allSuccess = Object.values(steps.value).every(s => s === 'success')
-    ElMessage[allSuccess ? 'success' : 'warning'](
-      allSuccess ? '测试通过 ✓' : '测试完成，部分步骤异常'
-    )
+    if (inferResult.value?.alarm_rejected) {
+      ElMessage.warning('图片内容与事件类型不一致，已拒绝触发告警')
+    } else {
+      const statuses = Object.values(steps.value)
+      const allSuccess = statuses.every(s => s === 'success')
+      // [FIX 2026-08-15] skipped (0 框未检出) 与真实失败提示区分
+      const hasSkipped = statuses.some(s => s === 'skipped')
+      ElMessage[allSuccess ? 'success' : 'warning'](
+        allSuccess ? '测试通过 ✓'
+          : hasSkipped ? '推理完成但未检出目标，后续链路未执行'
+          : '测试完成，部分步骤异常'
+      )
+    }
 
   } catch (e: any) {
     errorMsg.value = e?.message || String(e)
@@ -521,6 +580,8 @@ function stepIcon(key: string) {
   const s = steps.value[key]
   if (s === 'success') return '✅'
   if (s === 'fail') return '❌'
+  if (s === 'rejected') return '⛔'
+  if (s === 'skipped') return '⚠️'
   return '⏳'
 }
 </script>
@@ -540,10 +601,14 @@ function stepIcon(key: string) {
 .step-icon { font-size: 18px; }
 .step-label { font-weight: 500; min-width: 100px; }
 .step-detail { color: #606266; font-size: 12px; }
+.reject-detail { color: #e6a23c; }
 .detection-viz { background: #f5f7fa; border-radius: 8px; padding: 8px; margin-left: 26px; margin-bottom: 8px; }
 .det-item { display: flex; align-items: center; gap: 8px; padding: 2px 0; font-size: 12px; }
 .det-conf { color: #67c23a; font-weight: 600; }
 .det-box { color: #909399; font-family: monospace; }
 .matched-rules-list { margin-left: 26px; margin-bottom: 8px; }
 .matched-rule-item { display: flex; align-items: center; gap: 6px; padding: 2px 0; font-size: 12px; }
+.match-reason { color: #909399; font-size: 12px; }
+.severity-hint { color: #909399; font-size: 12px; margin-left: 8px; }
+.zero-reason { color: #e6a23c; font-size: 12px; }
 </style>

@@ -68,10 +68,10 @@ export interface Building3DNode {
   /** 建筑中心位置 [x, z] */
   x: number
   z: number
-  /** 建筑尺寸 [宽度, 高度, 深度] */
-  w: number
-  h: number
-  d: number
+  /** 建筑尺寸 [宽度, 高度, 深度]（box 形状） */
+  w?: number
+  h?: number
+  d?: number
   /** 建筑颜色 (hex字符串)，默认根据建筑类型自动选择 */
   color?: string
   /** 建筑类型 — 用于决定纹理和样式 */
@@ -80,6 +80,55 @@ export interface Building3DNode {
   projectId?: string
   /** 关联设备数（只读，由后端统计） */
   deviceCount?: number
+  // ── 体育场场景扩展（与内置应用端 1:1 同源，数据源 scene_config.json）──
+  /** 形状元：box/cylinder/disc/ring/shell/shell-cap/pylon/board/cone/anchor/model
+   *         + 风格化散件: palm-tree/street-lamp/metro-arch/hotel-tower/road-segment/flagpole-row */
+  shape?: 'box' | 'cylinder' | 'disc' | 'ring' | 'shell' | 'shell-cap' | 'pylon' | 'board' | 'cone' | 'anchor' | 'model'
+    | 'palm-tree' | 'street-lamp' | 'metro-arch' | 'hotel-tower' | 'road-segment' | 'flagpole-row'
+  /** GLB 模型 URL（shape='model' 时生效，相对站点根，例如 /models/stadium.glb） */
+  modelUrl?: string
+  /** 模型缩放系数（GLB 原始尺寸常为真实米数，需压缩到场景单位），默认 1 */
+  modelScale?: number
+  /** 模型绕 Y 轴旋转（度），默认 0 */
+  modelRotationDeg?: number
+  /** 模型垂直偏移（米），用于把 GLB 原点贴到地面或抬升到指定高度，默认 0 */
+  modelOffsetY?: number
+  /** 椭圆半径（cylinder/disc/ring/shell/shell-cap/cone） */
+  rx?: number
+  rz?: number
+  /** ring 内半径 */
+  innerRx?: number
+  innerRz?: number
+  /** 朝向角（度）: shell-cap 切片朝向 / board LED 大屏绕 Y 朝向（BoxGeometry 正面默认朝 +z，旋转 θ 后朝 (sinθ, 0, cosθ)） */
+  thetaDeg?: number
+  /** 看台三色环带（蓝/黄/绿） */
+  tiers?: string[]
+  /** 自发光色（board LED 屏 / fountain 喷泉芯） */
+  emissive?: string
+  /** 透明度覆盖（玻璃连廊等） */
+  opacity?: number
+  /** 草坪标线（中线/中圈/禁区） */
+  pitchLines?: boolean
+  /** 塔桅顶部向上光束 */
+  beam?: boolean
+  /** 旗杆数量（disc 上附加） */
+  flagpoles?: number
+  /** 喷泉中央水柱 */
+  jet?: boolean
+  /** 层叠数量（波浪馆/建筑群错位叠放） */
+  stack?: number
+  /** 半球顶（水滴馆/红瓦小屋尖顶近似） */
+  cap?: boolean
+  /** 地面边缘发光线（停车场 LED 描边） */
+  edgeGlow?: string
+  /** 装饰层节点（受场景 decor 开关控制） */
+  decor?: boolean
+  /** cone 簇数量 */
+  count?: number
+  /** board 悬浮高度 */
+  y?: number
+  /** 不可见锚点（看台分区告警联动，仅设备挂载） */
+  selectable?: boolean
 }
 
 /** 设备3D放置信息（后端 device_attributes scene_* 键的聚合） */
@@ -94,6 +143,14 @@ export interface DevicePlacement {
   manual?: boolean
 }
 
+/** 场景元参数（地面/周界/方位/装饰层，Scene3D props 使用） */
+export interface SceneMeta {
+  ground?: { width: number; height: number }
+  perimeter?: { halfW: number; halfD: number }
+  rotationDeg?: number
+  decor?: boolean
+}
+
 /** 场景方案（对应后端 scene_config.json） */
 export interface SceneScheme {
   id: string
@@ -101,6 +158,12 @@ export interface SceneScheme {
   buildings: Building3DNode[]
   fences?: Fence3DSegment[]
   ground?: { width: number; height: number }
+  /** 周界兜底布局参数（无坐标设备的均匀分布矩形） */
+  perimeter?: { halfW: number; halfD: number }
+  /** 整体方位校准角（度） */
+  rotationDeg?: number
+  /** 装饰层开关（树列/地面灯线） */
+  decor?: boolean
 }
 
 /** 3D场景中的围墙段 */

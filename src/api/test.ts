@@ -20,6 +20,10 @@ export interface MatchedRule {
   rule_id: string
   rule_name: string
   matched: boolean
+  /** 规则冷却中 (cooldown_ms 内重复触发被抑制) */
+  cooldown_active?: boolean
+  /** [FIX 2026-08-18] 未命中具体原因 (细分到 事件类型/通道/设备/严重度/置信度; 命中时为"全部条件匹配") */
+  match_reason?: string
 }
 
 /** 图片推理响应 */
@@ -31,9 +35,18 @@ export interface InferImageResult {
   image_width: number
   image_height: number
   alarm_triggered: boolean
+  /** 语义校验拒绝: 图片检出类别与事件类型不一致, 后端拒绝触发告警 */
+  alarm_rejected?: boolean
+  /** 拒绝原因说明 */
+  reject_reason?: string
   alarm_type?: string
   matched_rules: MatchedRule[]
   ws_pushed: boolean
+  /** [FIX 2026-08-15] 实际推理后端: tpu/onnx/opencv_dnn/cpu_fallback/
+   *  quality_skip/not_found; 空字符串 = 插件未执行推理 */
+  infer_backend?: string
+  /** [FIX 2026-08-15] 0 检测框根因说明 (仅 detection_count=0 时返回) */
+  zero_detection_reason?: string
 }
 
 /** 事件可测性分类项 */
@@ -70,6 +83,8 @@ export const testApi = {
     confidence_threshold?: number
     trigger_alarm?: boolean
     alarm_type?: string
+    /** [FIX 2026-08-18] 演练事件严重度 1-5, 默认 4 (=真实链路 reportSimple 0.7f 换算值), 影响 dryRun 规则匹配 */
+    severity?: number
   }) {
     return http.post<ApiResponse<InferImageResult>>('/test/infer-image', data)
   },

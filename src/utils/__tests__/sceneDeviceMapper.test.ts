@@ -150,12 +150,17 @@ describe('perimeterPoint', () => {
   it('total<=0 返回中心', () => {
     expect(perimeterPoint(0, 0)).toEqual({ x: 0, z: 0 })
   })
-  it('所有点都在周界矩形范围内', () => {
+  it('所有点都在周界矩形范围内（默认体育场 perimeter 62/52）', () => {
     for (let i = 0; i < 8; i++) {
       const { x, z } = perimeterPoint(i, 8)
-      expect(Math.abs(x)).toBeLessThanOrEqual(48)
-      expect(Math.abs(z)).toBeLessThanOrEqual(42)
+      expect(Math.abs(x)).toBeLessThanOrEqual(62)
+      expect(Math.abs(z)).toBeLessThanOrEqual(52)
     }
+  })
+  it('halfW/halfD 可传参覆盖默认周界', () => {
+    const { x, z } = perimeterPoint(0, 4, 30, 20)
+    expect(Math.abs(x)).toBeLessThanOrEqual(30)
+    expect(Math.abs(z)).toBeLessThanOrEqual(20)
   })
   it('多个点位置互不重叠', () => {
     const pts = Array.from({ length: 6 }, (_, i) => perimeterPoint(i, 6))

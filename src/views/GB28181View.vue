@@ -40,7 +40,7 @@
         <el-row :gutter="24">
           <el-col :span="12">
             <el-form-item label="SIP 服务器 IP" required>
-              <el-input v-model="config.sipServerIp" placeholder="192.168.1.1" />
+              <el-input v-model="config.sipServerIp" placeholder="0.0.0.0（监听所有接口）" />
             </el-form-item>
           </el-col>
           <el-col :span="12">
@@ -49,6 +49,39 @@
             </el-form-item>
           </el-col>
         </el-row>
+        <!-- [UI-IPCFG 2026-08-15] SDP 媒体地址：决定摄像头 RTP 推流目的 IP -->
+        <el-row :gutter="24">
+          <el-col :span="12">
+            <el-form-item label="SDP 媒体地址">
+              <div style="width:100%">
+                <el-radio-group v-model="sipAdvertiseMode">
+                  <el-radio value="auto">自动获取本机 IP</el-radio>
+                  <el-radio value="manual">手动指定</el-radio>
+                </el-radio-group>
+                <el-input
+                  v-if="sipAdvertiseMode === 'manual'"
+                  v-model="manualAdvertiseIp"
+                  placeholder="192.168.0.108"
+                  style="width:60%;margin-top:6px"
+                />
+              </div>
+            </el-form-item>
+          </el-col>
+          <el-col :span="12">
+            <el-form-item label="当前生效 IP">
+              <div style="display:flex;align-items:center;gap:8px">
+                <el-tag type="success" effect="dark">{{ config.sdpIp || '未知' }}</el-tag>
+                <span style="color:#8c8c8c;font-size:12px">摄像头 RTP 推流目的地址</span>
+              </div>
+            </el-form-item>
+          </el-col>
+        </el-row>
+        <el-alert
+          type="info"
+          :closable="false"
+          style="margin-bottom:12px"
+          title="SDP 媒体地址是告知摄像头的收流地址：推荐“自动获取本机 IP”（DHCP 环境自适应）；手动指定为本机不存在的 IP 会导致预览黑屏。仅改此项立即生效，无需重启。"
+        />
         <el-row :gutter="24">
           <el-col :span="12">
             <el-form-item label="传输协议">
@@ -263,6 +296,8 @@ interface GB28181ConfigForm {
   sipServerDomain: string
   sipServerIp: string
   sipServerPort: number
+  sipAdvertiseIp: string   // SDP 媒体广告 IP：'auto' = 自动探测本机 IP
+  sdpIp: string            // 实际生效 IP（后端探测结果，只读展示）
   transportProtocol: string
   sipTimeoutSec: number
   rtpPortRange: string
@@ -305,6 +340,8 @@ const config = reactive<GB28181ConfigForm>({
   sipServerDomain: '',
   sipServerIp: '',
   sipServerPort: 5060,
+  sipAdvertiseIp: 'auto',
+  sdpIp: '',
   transportProtocol: 'UDP',
   sipTimeoutSec: 30,
   rtpPortRange: '10000-20000',
@@ -312,6 +349,11 @@ const config = reactive<GB28181ConfigForm>({
   sipServerRunning: false,
   cascadeRegistered: false,
 })
+
+// SDP 媒体地址模式：auto = 自动获取本机 IP；manual = 手动指定
+const sipAdvertiseMode = ref<'auto' | 'manual'>('auto')
+const manualAdvertiseIp = ref('')
+const IPV4_RE = /^((25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.){3}(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)$/
 
 const cascade = reactive<CascadeConfig>({
   superiorSipServerIp: '',
@@ -335,6 +377,8 @@ async function fetchConfig() {
         sipServerDomain: data.sip_server_domain ?? '',
         sipServerIp: data.sip_server_ip ?? '',
         sipServerPort: data.sip_server_port ?? 5060,
+        sipAdvertiseIp: data.sip_advertise_ip || 'auto',
+        sdpIp: data.sdp_ip ?? '',
         transportProtocol: data.transport_protocol ?? 'UDP',
         sipTimeoutSec: data.sip_timeout_sec ?? 30,
         rtpPortRange: data.rtp_port_range ?? '',
@@ -342,6 +386,14 @@ async function fetchConfig() {
         sipServerRunning: data.sip_server_running ?? false,
         cascadeRegistered: data.cascade_registered ?? false,
       })
+      // 派生媒体地址编辑状态
+      if (config.sipAdvertiseIp && config.sipAdvertiseIp !== 'auto') {
+        sipAdvertiseMode.value = 'manual'
+        manualAdvertiseIp.value = config.sipAdvertiseIp
+      } else {
+        sipAdvertiseMode.value = 'auto'
+        manualAdvertiseIp.value = ''
+      }
       if (data.cascade) {
         Object.assign(cascade, {
           superiorSipServerIp: data.cascade.superior_sip_server_ip ?? '',
@@ -442,13 +494,20 @@ async function toggleServer(start: boolean) {
 
 // ===== 保存配置 =====
 async function saveConfig() {
+  // SDP 媒体地址校验：手动模式下必须是合法 IPv4
+  const advertiseIp = sipAdvertiseMode.value === 'auto' ? 'auto' : manualAdvertiseIp.value.trim()
+  if (sipAdvertiseMode.value === 'manual' && !IPV4_RE.test(advertiseIp)) {
+    ElMessage.error('SDP 媒体地址格式错误，请输入合法 IPv4（如 192.168.0.108）或改为自动获取')
+    return
+  }
   saving.value = true
   try {
-    await http.put('/system/gb28181/config', {
+    const res = await http.put('/system/gb28181/config', {
       sip_server_id: config.sipServerId,
       sip_server_domain: config.sipServerDomain,
       sip_server_ip: config.sipServerIp,
       sip_server_port: config.sipServerPort,
+      sip_advertise_ip: advertiseIp,
       transport_protocol: config.transportProtocol,
       sip_timeout_sec: config.sipTimeoutSec,
       rtp_port_range: config.rtpPortRange,
@@ -461,7 +520,12 @@ async function saveConfig() {
         local_sip_id: cascade.localSipId,
       },
     })
-    ElMessage.success('配置保存成功')
+    const saved = res.data?.data
+    if (saved?.restart_required) {
+      ElMessage.warning('配置已保存，但 SIP 监听地址/端口变更需重启盒子服务后生效')
+    } else {
+      ElMessage.success(`配置保存成功，实际生效媒体 IP：${saved?.sdp_ip ?? advertiseIp}`)
+    }
     fetchConfig()
   } catch {
     ElMessage.error('保存配置失败')

@@ -44,7 +44,7 @@
                 <el-tab-pane label="实时视频" name="live">
                   <MiniPlayer
                     v-show="activeTab === 'live' && currentAlarm?.channelId && !playerError"
-                    :key="currentAlarm?.channelId || 'none'"
+                    :key="`${currentAlarm?.channelId || 'none'}#${liveRebuildEpoch}`"
                     :channel-id="currentAlarm?.channelId || ''"
                     :show-controls="true"
                     stream-type="main"
@@ -132,6 +132,8 @@
 
                 <!-- 告警快照（始终显示） -->
                 <el-tab-pane label="告警快照" name="snapshot">
+                  <!-- [P0-4-c] live 失败 30s 自动切到本 tab 时显示的提示条 -->
+                  <div v-if="liveFallbackHint" class="alarm-popup__live-fallback-hint">⚠️ {{ liveFallbackHint }}</div>
                   <AlarmSnapshot
                     :key="`snap-${currentAlarm?.id || 'none'}`"
                     :image-url="snapshotImageUrl"
@@ -307,6 +309,7 @@ import { ACTION_TYPE_REVERSE_MAP } from '@/api/linkage'
 import { alarmApi } from '@/api/alarm'
 import { queryRecordings, toLocalISOString, type DeviceRecording } from '@/api/recording'
 import { recordingHttp } from '@/api/http'
+import { checkStreamAlive, stopStream } from '@/api/stream'
 import { useObjectLabel, type ObjectLabelMeta } from '@/composables/useObjectLabel'
 import { useChannelStore } from '@/stores/channel'
 // [P2-CO3] 告警 → 录像回放自动跳转
@@ -332,13 +335,128 @@ const popupSkipStartApi = computed(() => isChannelStreaming.value)
 const playerError = ref('')
 function onPlayerError(msg: string) {
   playerError.value = msg || '视频流加载失败'
+  // [P0-4-c] 失败持续 30s → 自动降级到告警快照 tab
+  startLiveFailTimer()
 }
 function onPlayerPlaying() {
   playerError.value = ''
+  // [P0-4-c] 播放恢复 → 清除降级提示
+  stopLiveFailTimer()
+  liveFallbackHint.value = ''
 }
+
+// ── [P0-4-c 2026-08-20] live tab 持续失败 ≥30s 自动切 snapshot + 探活心跳 ──
+//   ① onPlayerError 置位后 30s 仍无 playing → 切到"告警快照"并提示"正在录像"
+//      (30s = MiniPlayer 3 次指数退避 ≈14s + 观察余量; 对标海康: 视频失败回落抓拍图)
+//   ② streamAliveHeartbeat: 弹窗打开期间每 10s GET /streams/:id/alive,
+//      连续 3 次 alive=false → POST /streams/:id/stop 释放 GB28181 会话 (防幽灵会话)
+//   ③ 恢复: 探活转 alive=true → 自动切回 live; 会话已 stop 则每 ~30s 重建拉流尝试
+const LIVE_FAIL_SWITCH_MS = 30_000
+const HEARTBEAT_INTERVAL_MS = 10_000
+const HEARTBEAT_MAX_FAILS = 3
+const REBUILD_TICKS = 3  // 已 stop 后每 3 个心跳 tick (≈30s) 做一次重建尝试
+
+let liveFailTimer: ReturnType<typeof setTimeout> | null = null
+let switchedAwayFromLive = false       // 因失败自动切走 → 恢复后需切回
+let heartbeatTimer: ReturnType<typeof setInterval> | null = null
+let heartbeatFails = 0
+let heartbeatStopped = false           // 已调用过 /stop (单次弹窗会话只 stop 一次)
+let rebuildTicks = 0
+const liveRebuildEpoch = ref(0)        // ++ → MiniPlayer :key 变化强制重建重拉
+const liveFallbackHint = ref('')
+
+function startLiveFailTimer() {
+  if (liveFailTimer) return  // 已在计时
+  liveFailTimer = setTimeout(() => {
+    liveFailTimer = null
+    if (activeTab.value !== 'live' || !playerError.value) return
+    switchedAwayFromLive = true
+    activeTab.value = 'snapshot'
+    liveFallbackHint.value = '实时视频不可用，正在录像…'
+    console.warn('[AlarmPopup] live failed ≥30s, fallback to snapshot tab')
+  }, LIVE_FAIL_SWITCH_MS)
+}
+
+function stopLiveFailTimer() {
+  if (liveFailTimer) { clearTimeout(liveFailTimer); liveFailTimer = null }
+}
+
+async function probeStreamAlive() {
+  const chId = currentAlarm.value?.channelId
+  if (!chId || !popupVisible.value) return
+  try {
+    const res: any = await checkStreamAlive(String(chId))
+    const d = res?.data?.data ?? res?.data
+    if (d?.alive) {
+      heartbeatFails = 0
+      rebuildTicks = 0
+      // 流恢复: 若之前因失败切到 snapshot → 自动切回 live (visible 变化触发重拉)
+      if (switchedAwayFromLive && activeTab.value !== 'live') {
+        switchedAwayFromLive = false
+        heartbeatStopped = false
+        playerError.value = ''
+        liveFallbackHint.value = ''
+        stopLiveFailTimer()
+        activeTab.value = 'live'
+        console.log('[AlarmPopup] stream alive again, switch back to live tab')
+      }
+    } else {
+      heartbeatFails++
+      // 连续 3 次无流 → 主动释放会话 (GB28181 BYE, 防幽灵会话占用设备连接数)
+      if (heartbeatFails >= HEARTBEAT_MAX_FAILS && !heartbeatStopped) {
+        heartbeatStopped = true
+        try {
+          await stopStream(String(chId))
+          console.warn('[AlarmPopup] stream dead ×3, session stopped:', chId)
+        } catch { /* stop 失败不阻塞 */ }
+        // MiniPlayer 可能仍在退避重试, 提前置位让 UI 立即反馈
+        if (!playerError.value) onPlayerError('流已中断（探活连续失败）')
+      }
+      // 会话已释放且用户在快照页 → 每 ~30s 重建一次拉流 (RTSP 恢复后自动切回)
+      if (heartbeatStopped && switchedAwayFromLive) {
+        rebuildTicks++
+        if (rebuildTicks >= REBUILD_TICKS) {
+          rebuildTicks = 0
+          switchedAwayFromLive = false
+          playerError.value = ''
+          liveRebuildEpoch.value++   // :key 变化 → MiniPlayer 重建 → 重新拉流
+          activeTab.value = 'live'
+          console.log('[AlarmPopup] rebuild attempt epoch', liveRebuildEpoch.value)
+        }
+      }
+    }
+  } catch { /* 单次探活网络失败忽略 */ }
+}
+
+function startHeartbeat() {
+  stopHeartbeat()
+  heartbeatFails = 0
+  heartbeatStopped = false
+  rebuildTicks = 0
+  heartbeatTimer = setInterval(probeStreamAlive, HEARTBEAT_INTERVAL_MS)
+}
+
+function stopHeartbeat() {
+  if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null }
+}
+
 // 切换告警或关闭弹窗时重置错误状态
-watch(() => currentAlarm.value?.id, () => { playerError.value = '' })
-watch(popupVisible, (v) => { if (!v) playerError.value = '' })
+watch(() => currentAlarm.value?.id, () => {
+  playerError.value = ''
+  stopLiveFailTimer()
+  switchedAwayFromLive = false
+  liveFallbackHint.value = ''
+  if (popupVisible.value) startHeartbeat()  // 新通道重新探活
+})
+watch(popupVisible, (v) => {
+  if (!v) {
+    playerError.value = ''
+    stopLiveFailTimer()
+    stopHeartbeat()
+    switchedAwayFromLive = false
+    liveFallbackHint.value = ''
+  }
+})
 
 // [P2-CO3] 告警 → 录像回放跳转
 const router = useRouter()
@@ -440,6 +558,8 @@ watch(popupVisible, (v) => {
   if (v) {
     startCountdown()
     loadPlayback()
+    // [P0-4-c] 弹窗打开 → 启动流探活心跳 (每 10s, 连续 3 次失败停流)
+    startHeartbeat()
     // 无 clip URL 时启动轮询（等待 record_complete）
     if (!currentAlarm.value?.videoClipUrl) {
       startRecordingPoll()
@@ -661,6 +781,9 @@ onBeforeUnmount(() => {
   window.removeEventListener('alarm-clip-updated', onAlarmClipUpdated)
   stopCountdown()
   stopRecordingPoll()
+  // [P0-4-c] 清理探活心跳与降级定时器
+  stopHeartbeat()
+  stopLiveFailTimer()
 })
 </script>
 
@@ -676,6 +799,23 @@ onBeforeUnmount(() => {
   font-size: 10px;
   border-radius: 4px;
   z-index: 10;
+  pointer-events: none;
+}
+
+/* [P0-4-c] live 失败降级提示条 (显示在 snapshot tab 顶部) */
+.alarm-popup__tabs :deep(.el-tab-pane) {
+  position: relative;
+}
+.alarm-popup__live-fallback-hint {
+  position: absolute;
+  top: 6px;
+  left: 10px;
+  z-index: 10;
+  padding: 3px 10px;
+  border-radius: 4px;
+  color: #FFB800;
+  background: rgba(255, 184, 0, 0.15);
+  font-size: 12px;
   pointer-events: none;
 }
 

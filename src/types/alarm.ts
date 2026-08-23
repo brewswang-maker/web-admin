@@ -67,6 +67,9 @@ export type AlarmType =
   // ── 安全合规 ──
   | 'helmet' | 'helmet_violation' | 'uniform_violation' | 'mask_violation'
   | 'guard_absence' | 'ppe_violation' | 'phone_call' | 'smoking'
+  | 'seatbelt' | 'seatbelt_violation'
+  // [FIX IllegalRider 2026-08-18] 违规载人 (叉车/货车载人检测)
+  | 'illegal_rider'
   // ── 设备状态 ──
   | 'gb28181_alarm' | 'camera_tamper' | 'brightness_abnormal' | 'image_freeze' | 'glare'
   // ── 危险物 ──
@@ -74,6 +77,19 @@ export type AlarmType =
   // ── 兼容别名 ──
   | 'plate' | 'plate_detected' | 'wrong_way' | 'intruder' | 'wandering' | 'fighting' | 'violence'
   | 'fall_detected' | 'falling' | 'crowd_density' | 'gathering' | 'punch' | 'kick'
+  // ── [P0-1 2026-08-20] 补齐 SSOT 99 项 (对齐后端 EventTypeAliases.h meta_table) ──
+  // 前端原仅 72 keys, 48 项 canonical 类型缺失 (审计: SSOT 99 vs 前端 72)
+  | 'fight' | 'tailgate' | 'sleep_on_duty' | 'object_removal' | 'drowsy' | 'yawn'
+  | 'fatigue_detected' | 'drowning_detected' | 'unsafe_operation' | 'body_temp_abnormal'
+  | 'traffic_accident' | 'traffic_violation' | 'traffic_congestion' | 'speeding'
+  | 'environment_anomaly' | 'water_leak' | 'gas_leak' | 'air_quality' | 'garbage_overflow'
+  | 'facility_damage' | 'fire_exit_blocked' | 'elevator_anomaly' | 'power_anomaly'
+  | 'theft_suspected' | 'shelf_anomaly' | 'animal_detected'
+  | 'smolder' | 'firework' | 'fire_access' | 'smog' | 'illegal_occupation' | 'vandalism'
+  | 'door_open_timeout' | 'line_cross_count'
+  | 'parking_occupancy' | 'parking_vacancy' | 'queue_length' | 'people_count' | 'density_heatmap'
+  | 'ocr_text' | 'safety_sign_violation' | 'lpr_pass' | 'lpr_violation'
+  | 'stream_connected' | 'stream_disconnected' | 'stream_recovered' | 'stream_error' | 'stream_degraded'
   // ── 其他 ──
   | 'other'
 
@@ -162,6 +178,7 @@ export interface AlarmQuery {
   endTime?: string
   start_ms?: number      // 后端时间戳参数
   end_ms?: number
+  since?: number         // [P0-4-d] WS 断线重连补拉: 只返回 created_at > since 的告警 (ms, 排他)
   search?: string
   dateRange?: [string, string]
 }
@@ -271,6 +288,9 @@ export const ALARM_TYPE_CN: Record<string, string> = {
   ppe_violation: 'PPE违规',
   phone_call: '打电话检测',
   smoking: '吸烟检测',
+  seatbelt: '未系安全带',
+  seatbelt_violation: '未系安全带',
+  illegal_rider: '违规载人',
   // ── 设备状态 ──
   gb28181_alarm: '设备告警',
   camera_tamper: '视频遮挡',
@@ -290,6 +310,69 @@ export const ALARM_TYPE_CN: Record<string, string> = {
   intruder: '区域入侵',
   wandering: '徘徊检测',
   falling: '倒地检测',
+  // ── [P0-1 2026-08-20] 补齐 SSOT 99 项镜像 (48 项缺失, 中文名 = meta_table display_name_cn) ──
+  // 审计: SSOT meta_table 99 vs 前端 72 keys; 服务端 getEventTypes() 已改遍历 meta_table,
+  // 前端翻译表必须同步, 否则新 30 项事件类型在通知中心显示英文原名.
+  // ── 周界/行为补充 ──
+  fight: '打架检测',
+  tailgate: '尾随通行',
+  sleep_on_duty: '睡岗检测',
+  object_removal: '物品移除',
+  // ── DMS 疲劳 ──
+  fatigue_detected: '疲劳检测',
+  drowsy: '驾驶员闭眼',
+  yawn: '驾驶员哈欠',
+  // ── 人员安全/医疗 ──
+  drowning_detected: '溺水检测',
+  unsafe_operation: '危险操作',
+  body_temp_abnormal: '体温异常',
+  // ── 交通事件 ──
+  traffic_accident: '交通事故',
+  traffic_violation: '交通违章',
+  traffic_congestion: '交通拥堵',
+  speeding: '超速检测',
+  // ── 环境异常 ──
+  environment_anomaly: '环境异常',
+  water_leak: '漏水积水',
+  gas_leak: '燃气泄漏',
+  air_quality: '空气质量异常',
+  garbage_overflow: '垃圾溢出',
+  // ── 设施/建筑 ──
+  facility_damage: '设施损坏',
+  fire_exit_blocked: '消防通道堵塞',
+  elevator_anomaly: '电梯异常',
+  power_anomaly: '电力异常',
+  // ── 零售/经营 ──
+  theft_suspected: '疑似盗窃',
+  shelf_anomaly: '货架异常',
+  // ── 动物检测 ──
+  animal_detected: '动物检测',
+  // ── 烟火/消防扩充 ──
+  smolder: '阴燃检测',
+  firework: '烟花识别',
+  fire_access: '明火作业',
+  smog: '雾霾检测',
+  // ── 行为异常扩充 ──
+  illegal_occupation: '非法占用',
+  vandalism: '故意破坏',
+  door_open_timeout: '门超时未关',
+  line_cross_count: '越线计数',
+  // ── 停车场/客流/OCR ──
+  parking_occupancy: '车位占用',
+  parking_vacancy: '车位空闲',
+  queue_length: '排队长度',
+  people_count: '人数统计',
+  density_heatmap: '密度热力图',
+  ocr_text: '文字识别',
+  safety_sign_violation: '安全标识违规',
+  lpr_pass: '车牌通行',
+  lpr_violation: '车牌违规',
+  // ── 流状态 ──
+  stream_connected: '流已连接',
+  stream_disconnected: '流已断开',
+  stream_recovered: '流已恢复',
+  stream_error: '流错误',
+  stream_degraded: '流质量降级',
   // ── 其他 ──
   other: '其他事件',
 }
@@ -310,6 +393,8 @@ export const ALARM_CATEGORY: Record<string, AlarmCategory> = {
   fire: 'alarm', smoke: 'alarm',
   helmet_violation: 'alarm', uniform_violation: 'alarm', mask_violation: 'alarm',
   guard_absence: 'alarm', ppe_violation: 'alarm', phone_call: 'alarm', smoking: 'alarm',
+  seatbelt: 'alarm', seatbelt_violation: 'alarm',
+  illegal_rider: 'alarm',
   weapon_detected: 'alarm', weapon: 'alarm', dangerous_item: 'alarm',
   // NOTIFICATION 类 (通行通知)
   face_pass_whitelist: 'notification', face_pass_visitor: 'notification',
@@ -324,6 +409,25 @@ export const ALARM_CATEGORY: Record<string, AlarmCategory> = {
   // STATE 类
   gb28181_alarm: 'state', camera_tamper: 'state',
   brightness_abnormal: 'state', image_freeze: 'state', glare: 'state',
+  stream_connected: 'state', stream_disconnected: 'state', stream_recovered: 'state',
+  stream_error: 'state', stream_degraded: 'state',
+  // [P0-1 2026-08-20] 补齐 SSOT 99 项分类 (对齐 meta_table EventCategory)
+  fight: 'alarm', tailgate: 'alarm', sleep_on_duty: 'alarm', object_removal: 'alarm',
+  fatigue_detected: 'alarm', drowsy: 'alarm', yawn: 'alarm',
+  drowning_detected: 'alarm', unsafe_operation: 'alarm', body_temp_abnormal: 'alarm',
+  traffic_accident: 'alarm', traffic_violation: 'alarm', traffic_congestion: 'alarm',
+  speeding: 'alarm', wrong_way: 'alarm',
+  environment_anomaly: 'alarm', water_leak: 'alarm', gas_leak: 'alarm',
+  air_quality: 'alarm', garbage_overflow: 'alarm',
+  facility_damage: 'alarm', fire_exit_blocked: 'alarm', elevator_anomaly: 'alarm',
+  power_anomaly: 'alarm', theft_suspected: 'alarm', animal_detected: 'alarm',
+  smolder: 'alarm', firework: 'alarm', fire_access: 'alarm', smog: 'alarm',
+  illegal_occupation: 'alarm', vandalism: 'alarm', door_open_timeout: 'alarm',
+  safety_sign_violation: 'alarm', lpr_violation: 'alarm',
+  parking_occupancy: 'business', parking_vacancy: 'business', queue_length: 'business',
+  people_count: 'business', density_heatmap: 'business', ocr_text: 'business',
+  shelf_anomaly: 'business', line_cross_count: 'business',
+  lpr_pass: 'notification',
 }
 
 /** 数字 severity → AlarmLevel 字符串 */
@@ -373,12 +477,19 @@ export function normalizeAlarmCore(raw: any): AlarmEvent {
   //   修复: 按 channel_id_str → metadata.channel_id_str → channel_id 顺序回退
   const md = raw.metadata
   const rawCh = raw.channel_id ?? raw.channelId ?? raw.channel ?? ''
-  const channelId =
-    String(raw.channel_id_str ?? '') ||
-    (md && typeof md === 'object' ? String(md.channel_id_str ?? '') : '') ||
-    (Array.isArray(md) && md[0] && typeof md[0] === 'object' ? String(md[0].channel_id_str ?? '') : '') ||
-    String(rawCh) ||
-    ''
+  // [FIX 2026-08-21] 过滤无效通道哨兵: "-1" (测试告警 reportSimple(-1) /
+  //   WEB_POPUP 透传)、"0"、URL 型、负数截断值都不是合法流 ID; 原逻辑
+  //   用 || 短路, 首个非空候选即使是 "-1" 也直接生效 → MiniPlayer 对
+  //   /streams/-1/ 永久轮询, 报警弹窗一直显示"等待流"。改为在候选链中
+  //   择首个有效值; 全无效时置空, AlarmPopup 自动走"无通道信息"占位。
+  const isValidChannelId = (v: string) =>
+    v !== '' && v !== '0' && !v.startsWith('-') && !v.includes('://')
+  const channelId = [
+    String(raw.channel_id_str ?? ''),
+    md && typeof md === 'object' ? String(md.channel_id_str ?? '') : '',
+    Array.isArray(md) && md[0] && typeof md[0] === 'object' ? String(md[0].channel_id_str ?? '') : '',
+    String(rawCh),
+  ].find(v => isValidChannelId(v)) || ''
   const rawChStr = String(rawCh)
 
   return {

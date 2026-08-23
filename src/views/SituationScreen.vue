@@ -100,10 +100,11 @@
           <div class="panel-title">
             <!-- <i class="iconfont1 icon1-yuanqu1 panel-title-icon" aria-hidden="true"></i> -->
             <div class="view-switcher" role="tablist" aria-label="中心视图切换">
-              <button class="view-switch-btn" :class="{ active: centerView === '3d' }" type="button" role="tab" :aria-selected="centerView === '3d'" @click="setCenterView('3d')">园区态势图</button>
+              <button class="view-switch-btn" :class="{ active: centerView === '3d' }" type="button" role="tab" :aria-selected="centerView === '3d'" @click="setCenterView('3d')">{{ t('situationScreen.sceneMap') }}</button>
               <button class="view-switch-btn" :class="{ active: centerView === 'video' }" type="button" role="tab" :aria-selected="centerView === 'video'" @click="setCenterView('video')">视频监控</button>
             </div>
             <span v-if="sceneIsDemo && centerView === '3d'" style="font-size:11px;color:#F4B400;border:1px solid rgba(244,180,0,0.6);border-radius:3px;padding:1px 6px;margin-left:4px;">演示数据</span>
+            <span v-if="!sceneIsDemo && sceneRealCount > 0 && centerView === '3d'" style="font-size:11px;color:#39C76F;border:1px solid rgba(57,199,111,0.6);border-radius:3px;padding:1px 6px;margin-left:4px;">实况接入 {{ sceneRealCount }} 台</span>
             <!-- 3D视图操作按钮 -->
             <div v-if="centerView === '3d'" class="scene-actions">
               <el-select
@@ -153,6 +154,7 @@
               class="scene3d-wrapper"
               :devices="sceneDevices"
               :buildings="sceneBuildings"
+              :scene-meta="sceneMeta"
               :edit-mode="sceneEditActive"
               :selected-device-id="selectedDeviceId"
               :show-mini-map="showMiniMap"
@@ -161,6 +163,8 @@
               @building-hover="onBuildingHover"
               @minimap-select="onMinimapSelect"
               @device-video="onDeviceVideo"
+              @device-cast="onDeviceCast"
+              :casting-device-id="castDeviceId"
             />
             <div class="building-hover-overlay" v-if="hoveredBuilding">
               <div class="building-hover-name">{{ hoveredBuilding.name }}</div>
@@ -329,12 +333,15 @@
                 class="scene3d-wrapper"
                 :devices="sceneDevices"
                 :buildings="sceneBuildings"
+                :scene-meta="sceneMeta"
                 :show-mini-map="showMiniMap"
                 @device-drag="onDeviceDrag"
                 @device-select="onDeviceSelect"
                 @building-hover="onBuildingHover"
                 @minimap-select="onMinimapSelect"
                 @device-video="onDeviceVideo"
+                @device-cast="onDeviceCast"
+                :casting-device-id="castDeviceId"
               />
             </div>
             <div v-else class="fullscreen-empty">{{ t('situationScreen.noMapDevice') }}</div>
@@ -378,7 +385,7 @@
   >
     <div class="video-preview-container">
       <div v-if="videoPreviewLoading" style="height:200px;display:flex;align-items:center;justify-content:center;color:#00B4FF">
-        <span>\u89c6\u9891\u8fde\u63a5\u4e2d...</span>
+        <span>视频连接中...</span>
       </div>
       <video ref="previewVideoRef" muted autoplay playsinline style="width:100%;max-height:420px;background:#000;display:block" />
     </div>
@@ -401,6 +408,8 @@ import { statsHttp, streamHttp } from '@/api/http'
 import { normalizeStreamUrl } from '@/utils/streamUrl'
 import { locationApi } from '@/api/location'
 import { sceneApi } from '@/api/scene'
+import { DEFAULT_BUILDINGS, STADIUM_SCENE_META } from '@/components/scene3d/constants/defaultSceneData'
+import type { Building3DNode, SceneMeta } from '@/components/scene3d/types/scene3d'
 import { useWebSocket } from '@/composables/useWebSocket'
 import Scene3D from '@/components/Scene3D.vue'
 import SceneEditPanel from '@/components/SceneEditPanel.vue'
@@ -411,10 +420,10 @@ import { useChannelStore } from '@/stores/channel'
 import {
   normalizeMapDevicePoint,
   normalizeGb28181Location,
-  normalizePlacement,
   mergeDeviceLocations,
-  mergePlacements,
   mapDevicesToScene,
+  normalizePlacement,
+  mergePlacements,
   DEMO_SCENE_DEVICES,
   type SceneDevice3D,
   type RawMapDevicePoint,
@@ -518,16 +527,9 @@ const alarmsFailed = ref(false)
 const agentsFailed = ref(false)
 const hourlyFailed = ref(false)
 
-// ── 3D场景数据 ──
-const DEFAULT_SCENE_BUILDINGS = [
-  { name: '1号车间', x: -20, z: -15, w: 24, d: 16, h: 8, color: '#1A73E8' },
-  { name: '2号车间', x: 15, z: -15, w: 20, d: 14, h: 7, color: '#0F9D58' },
-  { name: '仓库', x: -25, z: 15, w: 18, d: 12, h: 6, color: '#F4B400' },
-  { name: '办公楼', x: 20, z: 15, w: 16, d: 12, h: 12, color: '#7C3AED' },
-  { name: '配电房', x: 35, z: -5, w: 8, d: 8, h: 4, color: '#666666' },
-  { name: '门卫室', x: 0, z: 42, w: 6, d: 4, h: 3, color: '#888888' },
-]
-const sceneBuildings = ref(DEFAULT_SCENE_BUILDINGS)
+// ── 3D场景数据（体育场，后端 scene_config.json 优先，本地常量兜底）──
+const sceneBuildings = ref<Building3DNode[]>(DEFAULT_BUILDINGS)
+const sceneMeta = ref<SceneMeta>(STADIUM_SCENE_META)
 
 // ── 编辑模式状态 ──
 const sceneEditActive = ref(false)
@@ -552,6 +554,8 @@ function onSceneSwitch(sceneId: string) {
 const sceneDevices = ref<SceneDevice3D[]>([])
 /** 当前 3D 场景是否使用演示数据兜底（真实设备为空/接口失败时） */
 const sceneIsDemo = ref(false)
+/** [v1.9.4] 已结合进 3D 场景的真实设备台数（合并模式下展示"实况接入 N 台"） */
+const sceneRealCount = ref(0)
 
 // P2: Scene3D 组件引用（用于调用 exposed 方法）
 const scene3dRef = ref<InstanceType<typeof Scene3D> | null>(null)
@@ -593,21 +597,21 @@ function togglePatrol() {
 // P2-5: 预案演练
 const presetPlans = [
   {
-    name: '入侵告警演练',
+    name: '人群聚集告警演练',
     actions: [
-      { time: 0, type: 'camera' as const, params: { x: 25, y: 15, z: 10, lookX: 35, lookY: 4, lookZ: 25 } },
-      { time: 1, type: 'highlight' as const, target: 'cam4' },
-      { time: 1, type: 'particle' as const, target: 'intrusion', params: { x: 35, y: 4, z: 25 } },
-      { time: 4, type: 'camera' as const, params: { x: 0, y: 50, z: 70, lookX: 0, lookY: 0, lookZ: 0 } },
+      { time: 0, type: 'camera' as const, params: { x: 40, y: 20, z: 20, lookX: 26, lookY: 13, lookZ: -8 } },
+      { time: 1, type: 'highlight' as const, target: 'demo-cam6' },
+      { time: 1, type: 'particle' as const, target: 'intrusion', params: { x: 26, y: 13, z: -8 } },
+      { time: 4, type: 'camera' as const, params: { x: 70, y: 55, z: 85, lookX: 0, lookY: 0, lookZ: 0 } },
     ],
   },
   {
     name: '设备巡检',
     actions: [
-      { time: 0, type: 'camera' as const, params: { x: -40, y: 10, z: -35, lookX: -40, lookY: 4, lookZ: -35 } },
-      { time: 2, type: 'camera' as const, params: { x: 20, y: 10, z: -38, lookX: 20, lookY: 4, lookZ: -38 } },
-      { time: 4, type: 'camera' as const, params: { x: -15, y: 10, z: 5, lookX: -15, lookY: 5, lookZ: 5 } },
-      { time: 6, type: 'camera' as const, params: { x: 0, y: 50, z: 70, lookX: 0, lookY: 0, lookZ: 0 } },
+      { time: 0, type: 'camera' as const, params: { x: 0, y: 10, z: 40, lookX: 0, lookY: 5, lookZ: 24 } },
+      { time: 2, type: 'camera' as const, params: { x: -19, y: 12, z: 60, lookX: -19, lookY: 6, lookZ: 46 } },
+      { time: 4, type: 'camera' as const, params: { x: 0, y: 20, z: -10, lookX: 0, lookY: 13, lookZ: -32 } },
+      { time: 6, type: 'camera' as const, params: { x: 70, y: 55, z: 85, lookX: 0, lookY: 0, lookZ: 0 } },
     ],
   },
 ]
@@ -1180,7 +1184,31 @@ let previewFlvPlayer: flvjs.Player | null = null
 let previewHlsPlayer: Hls | null = null
 const previewVideoRef = ref<HTMLVideoElement>()
 
+// [WEB-GLB v1.9.8] LED 大屏投放 — 与预览弹窗完全独立: 不弹窗, 由隐藏 video
+// (castVideoEl) 独立拉流后作为 VideoTexture 投到 Scene3D 大屏; castDeviceId
+// 记录投放中设备 (驱动 Scene3D 菜单项切换"停止投放"), 释放链路 stopCastToBoard
+const castDeviceId = ref('')
+let castFlvPlayer: flvjs.Player | null = null
+let castHlsPlayer: Hls | null = null
+let castChannelId = ''
+let castVideoEl: HTMLVideoElement | null = null
+
 let previewChannelId = ''
+
+/** 解析设备首通道 id (真机经 getDeviceChannels 换取通道, 演示点位直接用点位 id) */
+async function resolveChannelId(device: { id: string; businessId?: string }): Promise<string> {
+  let channelId = device.id
+  if (device.businessId) {
+    try {
+      const chRes = await channelApi.getDeviceChannels(device.businessId)
+      const channels = (chRes.data?.data as any) || []
+      if (Array.isArray(channels) && channels.length) {
+        channelId = channels[0].id || channels[0].channel_id || device.id
+      }
+    } catch {}
+  }
+  return channelId
+}
 
 async function onDeviceVideo(device: { id: string; name: string; businessId?: string }) {
   videoPreviewDevice.value = device
@@ -1188,16 +1216,7 @@ async function onDeviceVideo(device: { id: string; name: string; businessId?: st
   videoPreviewLoading.value = true
   await nextTick()
   try {
-    let channelId = device.id
-    if (device.businessId) {
-      try {
-        const chRes = await channelApi.getDeviceChannels(device.businessId)
-        const channels = (chRes.data?.data as any) || []
-        if (Array.isArray(channels) && channels.length) {
-          channelId = channels[0].id || channels[0].channel_id || device.id
-        }
-      } catch {}
-    }
+    const channelId = await resolveChannelId(device)
     // 启动 GB28181 推流并等待流就绪
     const mediaInfo = await startStreamAndGetMediaUrl(channelId)
     if (!mediaInfo || !mediaInfo.url) { videoPreviewLoading.value = false; ElMessage.warning('无法获取视频流地址'); return }
@@ -1252,10 +1271,114 @@ async function onDeviceVideo(device: { id: string; name: string; businessId?: st
   } catch { videoPreviewLoading.value = false; ElMessage.warning('视频连接失败') }
 }
 
+/** [WEB-GLB v1.9.8] 投放至 LED 大屏 — 不弹预览窗: 与实时预览弹窗完全独立,
+ *  隐藏 video 独立拉流后作为 VideoTexture 投到当前活跃实例的 4 块大屏
+ *  (Scene3D.castVideoToBoards, rVFC 逐帧刷新纹理)。同设备再次触发 = 停止
+ *  投放 (toggle), 异设备触发 = 切换投放源; 全屏切换经 watch 迁移不中断 */
+async function onDeviceCast(device: { id: string; name: string; businessId?: string }) {
+  if (castDeviceId.value === device.id) { stopCastToBoard(); ElMessage.info('已停止 LED 大屏投放'); return }
+  // 切换投放源: 先释放旧流与纹理 (幂等, 未投放时无操作)
+  stopCastToBoard()
+  const channelId = await resolveChannelId(device)
+  const mediaInfo = await startStreamAndGetMediaUrl(channelId)
+  if (!mediaInfo || !mediaInfo.url) { ElMessage.warning('无法获取视频流地址'); return }
+  // 隐藏 video: 必须留在视口内 (Chromium 对移出视口的 video 不推进解码帧,
+  // requestVideoFrameCallback 不触发纹理会冻结) — 2x2px 极低透明度沉底, 视觉不可见
+  const video = document.createElement('video')
+  video.muted = true
+  video.autoplay = true
+  video.playsInline = true
+  video.dataset.castSource = 'led-board'
+  video.style.cssText = 'position:fixed;right:0;bottom:0;width:2px;height:2px;opacity:0.001;pointer-events:none;z-index:-9999'
+  document.body.appendChild(video)
+  castVideoEl = video
+  castChannelId = channelId
+
+  const isH265 = !!(mediaInfo.codec && (mediaInfo.codec.toUpperCase().includes('H265') || mediaInfo.codec.toUpperCase().includes('HEVC')))
+  const useHls = isH265 || mediaInfo.url.includes('.m3u8')
+  let started = false
+  if (useHls) {
+    if (Hls.isSupported()) {
+      const hls = new Hls({ enableWorker: true, lowLatencyMode: true, liveSyncDurationCount: 1, liveMaxLatencyDurationCount: 2, maxBufferLength: 5 })
+      hls.loadSource(mediaInfo.url)
+      hls.attachMedia(video)
+      hls.on(Hls.Events.MANIFEST_PARSED, () => { video.play().catch(() => {}) })
+      castHlsPlayer = hls
+      started = true
+    } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+      video.src = mediaInfo.url
+      video.play().catch(() => {})
+      started = true
+    }
+  } else if (flvjs.isSupported()) {
+    const player = flvjs.createPlayer(
+      { type: 'flv', url: mediaInfo.url, isLive: true, hasAudio: false, hasVideo: true },
+      {
+        enableStashBuffer: false,
+        stashInitialSize: 128,
+        autoCleanupSourceBuffer: false,
+        lazyLoad: false,
+        liveBufferLatencyChasing: true,
+        liveBufferLatencyChasingOnPaused: true,
+        liveSyncDurationCount: 1,
+        liveMaxLatencyDurationCount: 1.5,
+      } as any
+    )
+    player.attachMediaElement(video)
+    player.load()
+    Promise.resolve(player.play()).catch(() => {})
+    castFlvPlayer = player
+    started = true
+  }
+  if (!started) {
+    ElMessage.warning('浏览器不支持该视频流播放')
+    stopCastToBoard()
+    return
+  }
+  // 投到当前活跃实例 (全屏打开时投全屏实例); castDeviceId 驱动菜单 toggle
+  const target = isFullscreen.value ? fullscreenScene3dRef.value : scene3dRef.value
+  if (target?.castVideoToBoards(video)) {
+    castDeviceId.value = device.id
+    ElMessage.success(`「${device.name}」已投放至 3D 场景 LED 大屏`)
+  } else {
+    ElMessage.warning('3D 场景仍在加载，请稍后重试')
+    stopCastToBoard()
+  }
+}
+
+/** [WEB-GLB v1.9.8] 停止 LED 大屏投放: 销毁独立拉流播放器/隐藏 video 并释放
+ *  SIP 会话, 双实例 stopVideoCast 幂等 (未投放时直接返回) */
+function stopCastToBoard() {
+  if (castFlvPlayer) { try { castFlvPlayer.destroy() } catch {} castFlvPlayer = null }
+  if (castHlsPlayer) { try { castHlsPlayer.destroy() } catch {} castHlsPlayer = null }
+  if (castChannelId) { stopStream(castChannelId); castChannelId = '' }
+  scene3dRef.value?.stopVideoCast?.()
+  fullscreenScene3dRef.value?.stopVideoCast?.()
+  castVideoEl?.remove()
+  castVideoEl = null
+  castDeviceId.value = ''
+}
+
+// [WEB-GLB v1.9.8] 全屏切换时投放迁移: 两实例大屏材质各自独立, 把正在投放
+// 的 video 重新投到切换后的活跃实例。进入全屏时新实例 GLB 异步加载,
+// boardMeshes 就绪前 castVideoToBoards 返回 false — 轮询重投直至成功
+watch(isFullscreen, async () => {
+  const video = castVideoEl
+  if (!castDeviceId.value || !video) return
+  for (let i = 0; i < 15; i++) {
+    await new Promise(r => setTimeout(r, 1000))
+    if (!castDeviceId.value || castVideoEl !== video) return
+    const target = isFullscreen.value ? fullscreenScene3dRef.value : scene3dRef.value
+    if (target?.castVideoToBoards(video)) return
+  }
+})
+
 function closeVideoPreview() {
   if (previewFlvPlayer) { try { previewFlvPlayer.destroy() } catch {} previewFlvPlayer = null }
   if (previewHlsPlayer) { try { previewHlsPlayer.destroy() } catch {} previewHlsPlayer = null }
   if (previewChannelId) { stopStream(previewChannelId); previewChannelId = '' }
+  // [WEB-GLB v1.9.8] 预览弹窗与 LED 大屏投放相互独立, 关闭弹窗不影响投放
+  // (投放释放链路见 stopCastToBoard)
   videoPreviewVisible.value = false
   videoPreviewDevice.value = null
   videoPreviewLoading.value = false
@@ -1267,13 +1390,38 @@ function closeVideoPreview() {
  * 2. 态势点位 + gb28181选点 + 手动放置(scene_*) 三路合并；
  * 3. 优先级: 手动放置 > GB28181坐标 > 周界兜底；
  * 4. 无有效设备时使用演示数据兜底。
+ * [v1.9.6] 补齐第三路接线：手动放置(scene_*)此前仅 SceneEditPanel
+ * 写入（PUT /scene/devices/:id/placement），本页从未读取合并——
+ * 保存的绑定位置刷新即丢。现经 getDevicePlacements + mergePlacements
+ * 应用，优先级最高的设计本意真正生效（真机绑定主入口/内场依赖此链路）。
  */
 async function loadSceneDevices() {
   devicesFailed.value = false
-  const [mapRes, gbRes] = await Promise.allSettled([
+  const [mapRes, gbRes, placeRes, sceneCfgRes] = await Promise.allSettled([
     situationApi.getMapDevices(),
     locationApi.getDeviceLocations(),
+    sceneApi.getDevicePlacements(),
+    sceneApi.getConfig(),
   ])
+
+  // 场景配置：取 active 场景的 buildings/ground 替换本地兜底（接口失败保留体育场常量）
+  if (sceneCfgRes.status === 'fulfilled') {
+    const cfg = sceneCfgRes.value.data?.data
+    if (cfg?.scenes?.length) {
+      availableScenes.value = cfg.scenes.map(s => ({ id: s.id, name: s.name }))
+      const active = cfg.scenes.find(s => s.id === cfg.activeSceneId) ?? cfg.scenes[0]
+      currentSceneId.value = active.id
+      if (active.buildings?.length) {
+        sceneBuildings.value = active.buildings as Building3DNode[]
+        sceneMeta.value = {
+          ground: active.ground,
+          perimeter: active.perimeter,
+          rotationDeg: active.rotationDeg,
+          decor: active.decor,
+        }
+      }
+    }
+  }
 
   const rawPoints = mapRes.status === 'fulfilled'
     ? ((mapRes.value.data?.data as unknown as RawMapDevicePoint[]) ?? [])
@@ -1291,11 +1439,55 @@ async function loadSceneDevices() {
   let merged = mergeDeviceLocations(normalized, gbLocations)
   let sceneNodes = mapDevicesToScene(merged)
 
+  // [v1.9.6] 第三路：手动放置(device_attributes scene_x/y/z)合并。
+  // 优先级最高（覆盖 GB28181 归一化坐标与南侧场边兜底）——绑定真机
+  // 到馆内点位（主入口/内场等）即走此链路；后端值均为字符串，
+  // normalizePlacement/parseCoord 负责类型兼容。
+  const placements = new Map(
+    (placeRes.status === 'fulfilled'
+      ? ((placeRes.value.data?.data as unknown as Record<string, unknown>[]) ?? [])
+      : []
+    )
+      .map(p => normalizePlacement(p))
+      .filter((p): p is NonNullable<typeof p> => p !== null)
+      .map(p => [p.deviceId, p]),
+  )
+  if (placements.size) {
+    sceneNodes = mergePlacements(sceneNodes, placements)
+  }
+
+  // [v1.9.4] 合并模式：演示点位 + 真实设备同场景显示（用户反馈
+  // "没有和现有的摄像头结合"）。v1.9.3 二选一策略在真机全部无坐标时
+  // 把真机整体排除在场景外；现在真机始终进场——无坐标真机走馆内南侧
+  // 场边线兜底（sceneDeviceMapper.southPerimeterPoint，raycast 验证与
+  // 看台演示设备同级），与 11 个馆内演示点位合并；真机带 businessId
+  // 可点击跳转设备详情。
+  // [v1.9.5] 演示点位删 8 处场外配套区（停车场/波浪馆等），只留馆内。
+  // 演示点位去重防御：若后端返回设备 id 撞上演示 id 则演示优先剔除。
+  // [v1.9.7] 真机与演示点位合二为一：手动放置(placement)与某演示点位
+  // 距离 < MERGE_DIST 的真机即"就是该点位的那台摄像头"（如主入口/
+  // 内场），剔除该演示点位，真机继承其名称与位置语义（businessId
+  // 保留，点击仍跳真机设备详情）——不再两台并存。
   if (sceneNodes.length) {
-    sceneDevices.value = sceneNodes
+    const MERGE_DIST = 2.5
+    const realIds = new Set(sceneNodes.map(n => n.id))
+    const keptDemo: typeof DEMO_SCENE_DEVICES = []
+    for (const d of DEMO_SCENE_DEVICES) {
+      if (realIds.has(d.id)) continue
+      const near = sceneNodes.find(n =>
+        Math.hypot(n.x - d.x, n.z - d.z) < MERGE_DIST && Math.abs(n.y - d.y) < 2)
+      if (near) {
+        near.name = d.name
+        continue
+      }
+      keptDemo.push(d)
+    }
+    sceneDevices.value = [...keptDemo, ...sceneNodes]
+    sceneRealCount.value = sceneNodes.length
     sceneIsDemo.value = false
   } else {
     sceneDevices.value = DEMO_SCENE_DEVICES
+    sceneRealCount.value = 0
     sceneIsDemo.value = true
   }
 }
@@ -2056,6 +2248,8 @@ onUnmounted(() => {
   // T3/T4 cleanup
   stopVideoPolling()
   closeVideoPreview()
+  // [WEB-GLB v1.9.8] 释放 LED 大屏投放 (独立拉流播放器 + SIP 会话)
+  stopCastToBoard()
   isFullscreen.value = false
   window.removeEventListener('keydown', onFullscreenEsc)
 })

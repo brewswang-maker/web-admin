@@ -302,25 +302,30 @@ const validation = reactive({ errors: [] as string[], warnings: [] as string[] }
 // ---- 选项 ----
 const suggestedTags = ['高危', '监控', '安防', '消防', '周界', '人流', '生产安全']
 // [P1-1 v7.8 2026-08-09] 事件类型由硬编码静态列表改为动态从 SSOT API 加载.
-//   后端: GET /api/v1/event-types/canonical (RestApiHandlers.cpp kCanonical SSOT, 与 P0-2 扩展同步)
+//   后端: GET /api/v1/event-types/canonical ([P1-8] 已改为动态遍历 EventTypeAliases.h
+//   meta_table 99 项, 与 /event-types/metadata + /linkage/rule-types 同源)
 //   加载失败时回退到 fallback 静态列表, 保证离线/网络异常下可用.
-//   升级路径: 增删事件类型只需改后端 kCanonical, 前端自动同步.
+//   升级路径: 增删事件类型只需改后端 meta_table, 前端自动同步.
+// [P1-8 2026-08-20] fallback 值全部对齐 SSOT meta_table canonical key:
+//   原列表 8 个 value (fighting/fall/tailgating/no_helmet/no_mask/phone/face/
+//   vehicle) 不在 meta_table 内, 离线回退时选中即产生永久沉默规则.
 const FALLBACK_EVENT_TYPE_OPTIONS = [
-  { value: 'intrusion', label: '入侵检测' },
-  { value: 'fire', label: '火灾/烟雾' },
-  { value: 'fighting', label: '打架斗殴' },
-  { value: 'fall', label: '跌倒检测' },
-  { value: 'gathering', label: '人员聚集' },
+  { value: 'intrusion', label: '周界入侵' },
+  { value: 'fire', label: '火焰检测' },
+  { value: 'smoke', label: '烟雾检测' },
+  { value: 'fight', label: '打架检测' },
+  { value: 'fall_detected', label: '跌倒检测' },
+  { value: 'gathering', label: '人群聚集' },
   { value: 'running', label: '奔跑检测' },
-  { value: 'loitering', label: '徘徊' },
-  { value: 'tailgating', label: '尾随' },
-  { value: 'no_helmet', label: '未戴安全帽' },
-  { value: 'no_mask', label: '未戴口罩' },
-  { value: 'smoking', label: '抽烟检测' },
-  { value: 'phone', label: '打电话' },
-  { value: 'illegal_parking', label: '违停' },
-  { value: 'face', label: '人脸识别' },
-  { value: 'vehicle', label: '车辆检测' },
+  { value: 'loitering', label: '徘徊检测' },
+  { value: 'tailgate', label: '尾随通行' },
+  { value: 'helmet_violation', label: '安全帽违规' },
+  { value: 'mask_violation', label: '口罩违规' },
+  { value: 'smoking', label: '吸烟检测' },
+  { value: 'phone_call', label: '打电话检测' },
+  { value: 'illegal_parking', label: '违停检测' },
+  { value: 'face_detected', label: '人脸检测' },
+  { value: 'vehicle_detected', label: '车辆检测' },
 ]
 const eventTypeOptions = ref<Array<{ value: string; label: string }>>([...FALLBACK_EVENT_TYPE_OPTIONS])
 const eventTypesLoading = ref(false)
@@ -328,10 +333,13 @@ const eventTypesLoading = ref(false)
 async function loadEventTypes() {
   eventTypesLoading.value = true
   try {
+    // [P1-8 2026-08-20] http 拦截器返回完整 AxiosResponse (见 api/http.ts L427 return response),
+    //   原代码直接访问 resp.code (恒 undefined)导致动态加载从未生效、一直回落 fallback.
     const resp = await http.get<{ code: number; data: { types: Array<{ key: string; name_zh: string }>; count: number }; message?: string }>('/api/v1/event-types/canonical')
-    if (resp?.code === 0 && resp.data?.types?.length) {
-      eventTypeOptions.value = resp.data.types.map(t => ({ value: t.key, label: t.name_zh }))
-      console.info(`[RuleGuiEditor] 动态加载 ${resp.data.count} 个事件类型`)
+    const payload = resp?.data
+    if (payload?.code === 0 && payload.data?.types?.length) {
+      eventTypeOptions.value = payload.data.types.map(t => ({ value: t.key, label: t.name_zh }))
+      console.info(`[RuleGuiEditor] 动态加载 ${payload.data.count} 个事件类型`)
     } else {
       console.warn('[RuleGuiEditor] SSOT 返回为空, 使用 fallback 静态列表')
     }

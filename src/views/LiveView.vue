@@ -191,9 +191,31 @@
           </div>
         </el-card>
 
-        <!-- PTZ面板 -->
-        <el-card v-if="hasActive" class="ptz-card">
-          <template #header>PTZ 云台</template>
+        <!-- PTZ面板 [P0-OPT] 支持收起/展开，状态持久化到 localStorage -->
+        <el-card v-if="hasActive" class="ptz-card" :class="{ 'is-collapsed': ptzPanelCollapsed }">
+          <template #header>
+            <div class="ptz-card-header">
+              <span class="ptz-card-title">
+                <el-icon><Aim /></el-icon>
+                <span>PTZ 云台</span>
+                <span v-if="ptzPanelCollapsed" class="ptz-card-subtitle">— {{ activeChannelName }}</span>
+              </span>
+              <el-tooltip :content="ptzPanelCollapsed ? '展开云台' : '收起云台'" placement="top">
+                <el-button
+                  link
+                  size="small"
+                  class="ptz-collapse-btn"
+                  :aria-label="ptzPanelCollapsed ? '展开云台' : '收起云台'"
+                  @click="togglePtzPanel"
+                >
+                  <el-icon class="ptz-collapse-icon" :class="{ 'is-collapsed': ptzPanelCollapsed }">
+                    <ArrowDown />
+                  </el-icon>
+                </el-button>
+              </el-tooltip>
+            </div>
+          </template>
+          <div class="ptz-panel-wrapper">
           <div class="ptz-panel">
             <div class="ptz-dpad">
               <div class="ptz-row"><el-button circle @mousedown="ptzStart('up')" @mouseup="ptzStop"><el-icon><ArrowUp /></el-icon></el-button></div>
@@ -259,6 +281,7 @@
               <el-icon :size="12"><Aim /></el-icon>
               <span>双击画面可 3D 放大定位</span>
             </div>
+          </div>
           </div>
         </el-card>
       </el-col>
@@ -1002,6 +1025,15 @@ const eZoomStyle = computed(() => {
 
 // 只有 layout 对应数量的格子可见
 const visibleSlots = computed(() => gridSlots.slice(0, layout.value))
+
+// [P0-OPT] PTZ 面板收起/展开状态 (持久化到 localStorage, 避免每次进入页面都重新展开)
+const PTZ_PANEL_COLLAPSE_KEY = 'smartgateway.liveview.ptzCollapsed.v1'
+const ptzPanelCollapsed = ref<boolean>(localStorage.getItem(PTZ_PANEL_COLLAPSE_KEY) === '1')
+
+function togglePtzPanel() {
+  ptzPanelCollapsed.value = !ptzPanelCollapsed.value
+  localStorage.setItem(PTZ_PANEL_COLLAPSE_KEY, ptzPanelCollapsed.value ? '1' : '0')
+}
 
 // 对讲
 const talkDialogVisible = ref(false)
@@ -2864,4 +2896,63 @@ onUnmounted(() => {
   color: #909399;
 }
 
+/* [P0-OPT] PTZ 面板 - 收起/展开 */
+.ptz-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  min-height: 24px;
+  gap: 8px;
+}
+.ptz-card-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+  color: inherit;
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+}
+.ptz-card-subtitle {
+  font-weight: 400;
+  font-size: 12px;
+  color: #909399;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.ptz-collapse-btn {
+  flex: 0 0 auto;
+  padding: 4px 6px;
+  opacity: 0.75;
+  transition: opacity 0.2s ease;
+}
+.ptz-collapse-btn:hover {
+  opacity: 1;
+}
+.ptz-collapse-icon {
+  transition: transform 0.3s ease;
+  font-size: 14px;
+}
+.ptz-collapse-icon.is-collapsed {
+  transform: rotate(-90deg);
+}
+/* 收起/展开过渡: max-height + opacity, 避免 Element Plus el-card 布局闪烁 */
+.ptz-panel-wrapper {
+  overflow: hidden;
+  transition: max-height 0.3s ease, opacity 0.25s ease;
+  max-height: 900px;
+  opacity: 1;
+}
+.ptz-card.is-collapsed .ptz-panel-wrapper {
+  max-height: 0;
+  opacity: 0;
+}
+.ptz-card.is-collapsed :deep(.el-card__body) {
+  padding-top: 0 !important;
+  padding-bottom: 0 !important;
+}
 </style>

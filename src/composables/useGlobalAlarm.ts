@@ -10,6 +10,7 @@
 import { ref, reactive } from 'vue'
 import { useAlarmStore } from '@/stores/alarm'
 import { settingsApi } from '@/api/settings'
+import { alarmApi } from '@/api/alarm'
 import { showAlarmPopup, pushLinkageLog, normalizeAlarmPayload, playAlarmSound } from './useAlarmPopup'
 
 // ── 单例状态（模块级，不随组件销毁） ──
@@ -38,6 +39,14 @@ export const e2eLatencyStats = reactive({
 })
 
 let started = false
+
+// [P0-4-d 2026-08-20] WS 断线重连补拉:
+//   断线期间后端推送的告警全部丢失 → 重连成功后 GET /alarms?since=<lastAlarmTs>&count=20 拉回。
+//   since 为排他语义 (created_at > since, 后端 RestApiHandlers.cpp [P0-4] 参数),
+//   配合前端按 id 去重 (pushRealtimeAlarm 无去重), 保证断线期间告警不缺失、不重复。
+let lastAlarmTs = 0        // 最近一条实时告警的 created_at (ms), 补拉断点
+let sawDisconnect = false  // 本次会话曾断线 → 重连后触发补拉
+let backfilling = false
 
 // ── 报警弹窗防抖（参考主流安防厂商：TP-LINK 30s, 海康可配置, 小米 3-10min） ──
 // 同一通道 + 同一告警类型在窗口内只弹一次弹窗，告警仍然入库
@@ -131,6 +140,11 @@ function doConnect() {
     console.log('[useGlobalAlarm] WS connected to', url)
     connected.value = true
     reconnectAttempts = 0
+    // [P0-4-d] 断线后重连成功 → 补拉断线期间错过的告警
+    if (sawDisconnect) {
+      sawDisconnect = false
+      backfillMissedAlarms()
+    }
   }
 
   ws.onmessage = (event) => {
@@ -249,6 +263,7 @@ function doConnect() {
   ws.onclose = () => {
     console.warn('[useGlobalAlarm] WS closed, will attempt reconnect #' + (reconnectAttempts + 1))
     connected.value = false
+    sawDisconnect = true   // [P0-4-d] 标记断线, 重连成功后补拉
     attemptReconnect()
   }
 
@@ -268,6 +283,11 @@ function handleAlarm(alarm: any) {
     // 1. 规整: WS 推过来的原始 payload 字段是 snake_case, 前端需要驼峰 + status='unhandled'
     const normalized = normalizeAlarmPayload(alarm)
     console.log('[useGlobalAlarm] normalized alarm:', normalized.id, 'type:', normalized.type)
+
+    // [P0-4-d] 记录最新告警时间戳 (补拉断点; since 排他语义保证不重复拉到本条)
+    const ts = Date.parse(normalized.createdAt)
+    if (!Number.isNaN(ts)) lastAlarmTs = Math.max(lastAlarmTs, ts)
+    else lastAlarmTs = Date.now()
 
     // 2. 推入 alarmStore（更新 realtimeAlarms + unhandledCount）
     try {
@@ -294,6 +314,41 @@ function handleAlarm(alarm: any) {
     speakAlarm(normalized)
   } catch (e) {
     console.error('[useGlobalAlarm] handleAlarm exception:', e)
+  }
+}
+
+// ── [P0-4-d 2026-08-20] WS 断线重连后补拉缺失告警 ──
+//   拉回的告警逐条走 handleAlarm 复用完整链路 (normalize + store + 弹窗防抖 + TTS);
+//   pushRealtimeAlarm 无去重 → 先按 id 过滤已入库的, 避免 realtimeAlarms 重复插入。
+async function backfillMissedAlarms() {
+  if (backfilling) return
+  if (lastAlarmTs <= 0) return  // 从未收到过告警, 无断点基准 (首次连接不补拉)
+  backfilling = true
+  try {
+    const res: any = await alarmApi.getList({ since: lastAlarmTs, count: 20 })
+    const d: any = res?.data?.data ?? res?.data
+    const list: any[] = Array.isArray(d?.alarms) ? d.alarms : (Array.isArray(d?.items) ? d.items : [])
+    if (!list.length) return
+    // 响应按 created_at DESC → 反转为时间正序, 按发生顺序处理
+    list.reverse()
+    let store: any
+    try { store = useAlarmStore() } catch { return }
+    const known = new Set(store.realtimeAlarms.map((a: any) => a.id))
+    let recovered = 0
+    for (const raw of list) {
+      const id = raw?.alarm_id ?? raw?.id ?? ''
+      if (id && known.has(id)) continue  // 断线前已收到, 跳过
+      handleAlarm(raw)
+      recovered++
+    }
+    if (recovered > 0) {
+      console.log('[useGlobalAlarm] backfill recovered', recovered, 'alarm(s) since',
+        new Date(lastAlarmTs).toISOString())
+    }
+  } catch (e) {
+    console.warn('[useGlobalAlarm] backfill failed:', e)
+  } finally {
+    backfilling = false
   }
 }
 

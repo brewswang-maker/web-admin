@@ -862,7 +862,7 @@ const enUS: MessageSchema = {
     alarmTrend: 'Alarm Trend',
     agentBar: 'Multi-Box Compute Load',
     realtimeAlarm: 'Realtime Alarms',
-    sceneMap: '3D Factory Scene Map',
+    sceneMap: 'Stadium Situation Map',
     sceneHint: 'Drag to rotate · Scroll to zoom',
     totalAgents: 'Active Algorithms',
     todayAlarmTotal: 'Today Alarms',

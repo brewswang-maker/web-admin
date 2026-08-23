@@ -382,7 +382,7 @@
                     </div>
                   </template>
                   <template v-else>
-                    <el-checkbox v-for="et in fallbackEventTypes" :key="et" :label="et" :value="et" size="small" />
+                    <el-checkbox v-for="et in fallbackEventTypes" :key="et.value" :label="et.label" :value="et.value" size="small" />
                   </template>
                 </el-checkbox-group>
                 <p v-if="form.conditions.eventType.config.types.length === 0" class="cond-hint" style="color: #E6A23C; margin-top: 4px">⚠ 未选择事件类型 = 匹配所有告警事件</p>
@@ -1106,8 +1106,18 @@ const monthdayOptions = Array.from({ length: 31 }, (_, i) => ({ label: `${i + 1}
 // 动态选项 (从后端加载)
 const { eventTypeOptions, eventTypeGrouped, severityColor, channelOptions: channelOptionsDynamic, locationOptions: locationOptionsDynamic, loading: optionsLoading, fetchOptions } = useLinkageOptions()
 
-// 静态回退选项
-const fallbackEventTypes = ['周界入侵', '绊线', '烟火', '安全帽', '人脸', '车牌', '人群', '摔倒']
+// 静态回退选项 — [P1-8 2026-08-20] value 对齐 SSOT meta_table canonical key
+//   (原中文串 value 不在后端 LinkageEngine 识别范围, 回退时选中即产生永久沉默规则)
+const fallbackEventTypes = [
+  { value: 'intrusion', label: '周界入侵' },
+  { value: 'tripwire', label: '越界检测' },
+  { value: 'fire', label: '火焰检测' },
+  { value: 'helmet_violation', label: '安全帽违规' },
+  { value: 'face_detected', label: '人脸检测' },
+  { value: 'plate_detected', label: '车牌识别' },
+  { value: 'crowd', label: '人群聚集' },
+  { value: 'fall_detected', label: '跌倒检测' },
+]
 const fallbackChannelOptions: string[] = [] // 已移除虚假静态通道，避免规则无法触发
 const roiOptions = ['全部区域', '周界线A', '绊线B', '区域C']
 const groupOptions = ['全部分组', '东区摄像头', '室内摄像头', '室外摄像头']

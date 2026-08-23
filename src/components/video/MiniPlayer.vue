@@ -82,6 +82,36 @@ const emit = defineEmits<{
   snapshot: [blob: Blob]
 }>()
 
+// ── [P0-4 2026-08-20] 流失败自动兜底: 指数退避重试 1s/3s/10s × 3 次 ──
+//   3 次都失败才向父组件 emit error (避免 AlarmPopup 过早降级);
+//   拿到流 URL (attachPlayer) 后计数清零 — 运行时短暂抖动重新从 1s 退避
+const RETRY_DELAYS_MS = [1000, 3000, 10000]
+let autoRetryCount = 0
+let autoRetryTimer: ReturnType<typeof setTimeout> | null = null
+
+function clearAutoRetry() {
+  if (autoRetryTimer) { clearTimeout(autoRetryTimer); autoRetryTimer = null }
+}
+
+/** 调度一次自动重试; 已达上限则报错给父组件 (弹窗此时才降级快照 tab) */
+function scheduleAutoRetry(stage: string) {
+  if (autoRetryTimer) return  // 已有 pending 重试
+  if (autoRetryCount >= RETRY_DELAYS_MS.length) {
+    errorMsg.value = `${stage} · 重试 ${RETRY_DELAYS_MS.length} 次仍失败`
+    emit('error', errorMsg.value)
+    return
+  }
+  const delay = RETRY_DELAYS_MS[autoRetryCount++]
+  console.warn(`[MiniPlayer] ${stage} 失败, ${Math.round(delay / 1000)}s 后自动重试 (${autoRetryCount}/${RETRY_DELAYS_MS.length})`)
+  errorMsg.value = ''
+  loading.value = true
+  autoRetryTimer = setTimeout(() => {
+    autoRetryTimer = null
+    destroyPlayer()
+    startPlay()
+  }, delay)
+}
+
 const videoRef = ref<HTMLVideoElement>()
 const loading = ref(false)
 const playing = ref(false)
@@ -248,18 +278,18 @@ function attachPlayer(video: HTMLVideoElement, fmt: PlayerFormat, url: string) {
             console.warn('[MiniPlayer FLV] Network error during playback, attempting silent reconnect...')
             return  // flv.js 内部会自动重连
           }
-          // 其他错误 → 显示错误提示
-          errorMsg.value = `播放错误: ${errorDetail}`
-          emit('error', errorDetail)
+          // [P0-4] 其他错误 → 指数退避自动重试 (3 次后才 emit error)
           destroyPlayer()
+          scheduleAutoRetry(`FLV ${errorDetail}`)
         })
         // [STABILITY-FIX] 加载超时检测：8秒无数据 → 报错
         let loadTimeout: ReturnType<typeof setTimeout> | null = null
         loadTimeout = setTimeout(() => {
           if (!playing.value && playerInstance === player) {
             console.warn('[MiniPlayer FLV] 8s loading timeout, url=', url)
-            errorMsg.value = '视频流加载超时'
+            // [P0-4] 超时 → 指数退避自动重试
             destroyPlayer()
+            scheduleAutoRetry('流加载超时')
           }
         }, 8000)
         video.addEventListener('playing', () => {
@@ -391,8 +421,9 @@ async function attachWebRtcMini(video: HTMLVideoElement) {
     if (currentUrls['flv']) attachPlayer(video, 'flv', currentUrls['flv'])
     else if (currentUrls['hls']) attachPlayer(video, 'hls', currentUrls['hls'])
     else {
-      errorMsg.value = 'WebRTC 连接失败'
-      emit('error', 'WebRTC failed')
+      // [P0-4] 无降级可用 → 指数退避自动重试
+      destroyPlayer()
+      scheduleAutoRetry('WebRTC 连接失败')
     }
   }
 }
@@ -482,8 +513,8 @@ async function startPlay() {
   loading.value = false
 
   if (!result || !result.urls) {
-    errorMsg.value = '视频流获取失败'
-    emit('error', '无法获取视频流')
+    // [P0-4] 拿不到流 URL → 指数退避自动重试 (3 次后才 emit error)
+    scheduleAutoRetry('视频流获取失败')
     return
   }
 
@@ -491,20 +522,24 @@ async function startPlay() {
   currentUrls = result.urls  // P0-1.2: 保存 URLs 供 WebRTC 降级使用
   const fmt = selectBestFormat(result.urls)
   if (!fmt || !result.urls[fmt]) {
-    errorMsg.value = '无可用播放格式'
-    emit('error', '无可用播放格式')
+    scheduleAutoRetry('无可用播放格式')
     return
   }
 
   attachPlayer(video, fmt, result.urls[fmt]!)
   playing.value = true
   emit('playing')
+  // [P0-4] 拿到流并成功 attach → 重置退避计数 (后续运行时抖动从 1s 重新退避)
+  autoRetryCount = 0
 }
 
 // [STABILITY-FIX 2026-07-29] 失败重试：清除防抖记录后重新拉流
 function retryPlay() {
   errorMsg.value = ''
   loading.value = true
+  // [P0-4] 手动重试 → 清除自动退避状态, 重新获得 3 次机会
+  clearAutoRetry()
+  autoRetryCount = 0
   // 清除全局防抖记录，允许重新调用 /start
   channelStore.clearStartDebounce(props.channelId)
   // 直接重试
@@ -539,6 +574,9 @@ watch(() => props.channelId, (newId, oldId) => {
   if (props.src) return  // src 已提供时跳过直播流获取
   // 只在 channelId 真正变化时销毁并重建，避免同通道不必要重连
   if (newId && newId !== oldId) {
+    // [P0-4] 换通道 → 重置退避计数 (新通道独立计)
+    clearAutoRetry()
+    autoRetryCount = 0
     destroyPlayer()
     if (props.autoPlay && props.visible) {
       nextTick(() => startPlay())
@@ -556,6 +594,7 @@ watch(() => props.visible, (vis) => {
 })
 
 onBeforeUnmount(() => {
+  clearAutoRetry()  // [P0-4] 清理退避定时器, 防止卸载后仍触发 startPlay
   destroyPlayer()
   // [Fix 2026-06-23] 防抖记录已移至 Pinia store，无需在此清理
 })

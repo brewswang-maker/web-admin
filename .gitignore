@@ -36,3 +36,11 @@ test-results/
 # Tmp
 tmp/
 .cache/
+# playwright 验证用浏览器缓存
+.pw-browsers/
+
+# 3D 大资产走制品分发, 不进 git (68M glb / 27M gz)
+public/models/*.glb
+public/models/*.glb.gz
+public/models/*.glb.*
+

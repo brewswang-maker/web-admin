@@ -300,22 +300,36 @@ function startRefreshTimer() {
   }, 1000)
 }
 
+// [FIX 2026-08-22] WS 推送触发去抖重拉: 原告警 handler 仅 alarmCount += 1、
+//   设备 handler 仅 deviceOnline += 0 (假更新), 趋势图/热力图/评分等卡片数据
+//   仍依赖 5 分钟兜底轮询 → 首页不实时。改为收到推送后 3s 合并窗口内去抖
+//   全量重拉 (告警风暴时不打爆 API)。
+let wsRefreshDebounce: ReturnType<typeof setTimeout> | null = null
+function scheduleWsRefresh() {
+  if (wsRefreshDebounce) return
+  wsRefreshDebounce = setTimeout(() => {
+    wsRefreshDebounce = null
+    fetchDashboardData()
+  }, 3000)
+}
+
 onMounted(async () => {
   startRefreshTimer()
   fetchDashboardData()  // [v8.6] 非阻塞并行加载
 
-  // WebSocket: 告警推送 → 增量更新告警计数
+  // WebSocket: 告警推送 → 乐观计数 + 去抖全量重拉
   unsubAlarm = subscribe('alarm', (data: any) => {
     topStatsValues.alarmCount += 1
     lastUpdated.value = t('dashboard.justNow')
     startRefreshTimer()
+    scheduleWsRefresh()
   })
 
-  // WebSocket: 设备状态变更 → 增量刷新设备统计
+  // WebSocket: 设备状态变更 → 去抖全量重拉 (deviceOnline 真值由重拉覆盖)
   unsubDevice = subscribe('device_status', () => {
-    topStatsValues.deviceOnline += 0 // trigger reactivity
     lastUpdated.value = t('dashboard.justNow')
     startRefreshTimer()
+    scheduleWsRefresh()
   })
 
   // 兜底轮询：5分钟全量刷新
@@ -325,6 +339,7 @@ onMounted(async () => {
 onUnmounted(() => {
   if (refreshTimer) clearInterval(refreshTimer)
   if (autoRefreshTimer) clearInterval(autoRefreshTimer)
+  if (wsRefreshDebounce) clearTimeout(wsRefreshDebounce)
   unsubAlarm?.()
   unsubDevice?.()
 })

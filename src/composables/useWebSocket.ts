@@ -5,9 +5,29 @@
 import { ref, onUnmounted, reactive } from 'vue'
 
 interface WSMessage {
-  type: 'alarm' | 'device_status' | 'agent_status' | 'heartbeat'
+  // [FIX 2026-08-22] 放宽为 string: 后端实际推送 'alarm.new'/'linkage_alarm'/
+  //   'system.dashboard_alert'/'system.device_status'/'detection_result' 等
+  //   多种 type, 原联合类型字面量与实际不符 (仅编译期约束, 运行时未校验)。
+  type: string
   data: unknown
   timestamp: string
+}
+
+/**
+ * [FIX 2026-08-22] 后端推送 type → 页面订阅 type 的别名归一化表。
+ * 后端推送 (RestApiHandlers): 'alarm.new' (pushAlarm 默认) / 'linkage_alarm'
+ * (WEB_POPUP 联动) / 'system.dashboard_alert' (pushSystemEvent 前缀拼接) /
+ * 'system.device_status', 而页面 (DashboardView/SituationScreen 等) 订阅的是
+ * 'alarm'/'device_status' → 精确匹配 miss, 推送被静默丢弃 → 首页不实时。
+ * 策略: 仅当原始 type 无订阅者时才按归一化别名匹配, 避免同一消息双分发
+ * (FaceRealtimeView/useAlarmStream 已同时订阅 'alarm'+'alarm.new', 不受影响)。
+ */
+const TYPE_ALIASES: Record<string, string> = {
+  'alarm.new': 'alarm',
+  'linkage_alarm': 'alarm',
+  'dashboard_alert': 'alarm',
+  'system.dashboard_alert': 'alarm',
+  'system.device_status': 'device_status',
 }
 
 type MessageHandler = (data: any) => void
@@ -63,7 +83,10 @@ export function useWebSocket(path?: string) {
         if (messages.length > 100) messages.splice(0, messages.length - 100)
         // Dispatch to subscribers
         // 兼容两种载荷字段名: msg.data(pushSystemEvent) / msg.alarm(pushAlarm)
-        const typeHandlers = handlers.get(msg.type)
+        // [FIX 2026-08-22] 先按原始 type 精确匹配, 无订阅者再按归一化别名匹配
+        const rawType = String(msg.type ?? '')
+        const normType = TYPE_ALIASES[rawType]
+        const typeHandlers = handlers.get(rawType) ?? (normType ? handlers.get(normType) : undefined)
         if (typeHandlers) {
           const payload = (msg as any).data ?? (msg as any).alarm ?? msg
           typeHandlers.forEach(handler => handler(payload))

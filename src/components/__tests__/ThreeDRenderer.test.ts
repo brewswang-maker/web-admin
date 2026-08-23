@@ -121,6 +121,7 @@ vi.mock('three', () => {
     Vector2: vi.fn(function (x: number, y: number) { return { x, y } }),
     DoubleSide: 2,
     PCFShadowMap: 2,
+    ACESFilmicToneMapping: 4,
   }
 })
 

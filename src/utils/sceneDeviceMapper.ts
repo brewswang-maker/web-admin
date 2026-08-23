@@ -141,7 +141,7 @@ export function normalizeMapDevicePoint(raw: RawMapDevicePoint): NormalizedDevic
   if (!id) return null
   return {
     id,
-    name: String(raw.name ?? '') || id,
+    name: String(raw.name ?? '') || String(raw.deviceType ?? raw.type ?? '') || id,
     lat: parseCoord(raw.lat),
     lng: parseCoord(raw.lng),
     status: normalizeStatus(raw.status),
@@ -208,12 +208,10 @@ export function mergeDeviceLocations(
 const SCALE = 38
 
 /**
- * 周界矩形布局：为无坐标设备沿厂区周界均匀分配位置。
- * 矩形半宽 halfW=48、半深 halfD=42（位于围墙 ±55/±48 内侧）。
+ * 周界矩形布局：为无坐标设备沿场景周界均匀分配位置。
+ * halfW/halfD 可传参（默认读体育场场景 perimeter 62/52，位于围墙内侧）。
  */
-export function perimeterPoint(index: number, total: number): { x: number; z: number } {
-  const halfW = 48
-  const halfD = 42
+export function perimeterPoint(index: number, total: number, halfW = 62, halfD = 52): { x: number; z: number } {
   if (total <= 0) return { x: 0, z: 0 }
   const top = 2 * halfW
   const right = 2 * halfD
@@ -228,6 +226,19 @@ export function perimeterPoint(index: number, total: number): { x: number; z: nu
   if (t < bottom) return { x: halfW - t, z: halfD }
   t -= bottom
   return { x: -halfW, z: halfD - t }
+}
+
+/**
+ * [v1.9.5] 馆内场边线布局：无坐标设备兜底位置。
+ * v1.9.4 南侧外围线 (z=52, x±30) 在场馆外（停车场/波浪馆配套区），
+ * 随场外演示点位一并废弃。改为馆内南侧场边线 (z=+20, x ±10 展开)。
+ * raycast 验证 (±10,4,20)：top 视位无遮挡，其余观察位仅 mesh 被看台/屋盖
+ * 遮挡（与既有演示看台设备 CAM_07 同级，CSS2D 标签不受遮挡始终可见）。
+ */
+export function southPerimeterPoint(index: number, total: number, spanX = 20, z = 20): { x: number; z: number } {
+  if (total <= 1) return { x: 0, z }
+  const step = spanX / (total - 1)
+  return { x: -spanX / 2 + index * step, z }
 }
 
 /** 将规范化设备转换为 3D 场景节点 */
@@ -252,7 +263,8 @@ function toSceneNode(dev: NormalizedDevice, x: number, z: number): SceneDevice3D
 /**
  * 将设备列表映射为 3D 场景节点。
  * - 有有效坐标的设备：bounding box 归一化到 [-SCALE, SCALE]。
- * - 无有效坐标的设备：沿周界矩形均匀布局（兜底，避免重叠在中心）。
+ * - 无有效坐标的设备：馆内南侧场边线均匀布局（兜底，避免重叠在中心；
+ *   [v1.9.5] 场外南线改馆内场边，见 southPerimeterPoint 注释）。
  */
 export function mapDevicesToScene(devices: NormalizedDevice[]): SceneDevice3D[] {
   if (!devices.length) return []
@@ -260,7 +272,7 @@ export function mapDevicesToScene(devices: NormalizedDevice[]): SceneDevice3D[] 
   const withCoords = devices.filter(d => isValidCoord(d.lat, d.lng))
   const withoutCoords = devices.filter(d => !isValidCoord(d.lat, d.lng))
 
-  const positioned: Array<{ dev: NormalizedDevice; x: number; z: number }> = []
+  const positioned: Array<{ dev: NormalizedDevice; x: number; z: number; southFallback?: boolean }> = []
 
   if (withCoords.length) {
     let minLat = Infinity
@@ -287,11 +299,16 @@ export function mapDevicesToScene(devices: NormalizedDevice[]): SceneDevice3D[] 
   }
 
   withoutCoords.forEach((d, i) => {
-    const { x, z } = perimeterPoint(i, withoutCoords.length)
-    positioned.push({ dev: d, x, z })
+    // [v1.9.5] 兜底改馆内南侧场边线；真机无坐标时统一朝北(场内)安装
+    const { x, z } = southPerimeterPoint(i, withoutCoords.length)
+    positioned.push({ dev: d, x, z, southFallback: true })
   })
 
-  return positioned.map(({ dev, x, z }) => toSceneNode(dev, x, z))
+  return positioned.map(({ dev, x, z, southFallback }) => {
+    const node = toSceneNode(dev, x, z)
+    if (southFallback) node.rotation = -Math.PI / 2
+    return node
+  })
 }
 
 // ════════════════════════════════════════════════════
@@ -374,18 +391,26 @@ export function mergePlacements(
 
 /**
  * 演示设备数据（接口为空 / 请求失败时兜底）。
+ * 体育场 11 个馆内点位（v1.9.0 增球门 4 点位 demo-cam16~19；
+ * v1.9.5 删 8 处场外配套区点位：喷泉广场/广告大屏/配套楼顶/停车场×2/
+ * 滨水步道/波浪馆/训练场——对应场外建筑 v1.5.0 已删，设备悬空孤点），
+ * 与 box-sdk/config/scene_config.json demoDevices 及内置应用端 StadiumSceneData.js
+ * 同名同坐标。
  * 注意：演示数据不含 businessId，点击不会跳转设备详情。
- * 调用方使用时应显式标注"演示数据"，避免误导。
+ * 调用方使用时应显式标注“演示数据”，避免误导。
  */
 export const DEMO_SCENE_DEVICES: SceneDevice3D[] = [
-  { id: 'demo-cam1', name: 'CAM_01 东门', x: -40, y: 4, z: -35, status: 'online', location: '1号厂区东门', fov: 60, rotation: 0 },
-  { id: 'demo-cam2', name: 'CAM_02 围墙北', x: 20, y: 4, z: -38, status: 'online', location: '北围墙', fov: 75, rotation: Math.PI / 4 },
-  { id: 'demo-cam3', name: 'CAM_03 车间A', x: -15, y: 5, z: 5, status: 'online', location: '2号车间入口', fov: 60, rotation: Math.PI / 2 },
-  { id: 'demo-cam4', name: 'CAM_04 车间B', x: 25, y: 5, z: 10, status: 'alarm', location: '3号厂区东围墙', alarmType: '周界入侵', fov: 65, rotation: -Math.PI / 3 },
-  { id: 'demo-cam5', name: 'CAM_05 仓库', x: -30, y: 4, z: 20, status: 'online', location: '仓库区域', fov: 70, rotation: Math.PI },
-  { id: 'demo-cam6', name: 'CAM_06 停车场', x: 35, y: 4, z: 25, status: 'online', location: '停车场B区', fov: 80, rotation: Math.PI / 6 },
-  { id: 'demo-cam7', name: 'CAM_07 大门', x: 0, y: 5, z: 40, status: 'online', location: '1号大门', fov: 60, rotation: Math.PI },
-  { id: 'demo-cam8', name: 'CAM_08 办公楼', x: -35, y: 6, z: -10, status: 'maintenance', location: '办公楼', fov: 55, rotation: -Math.PI / 2 },
-  { id: 'demo-cam9', name: 'CAM_09 配电房', x: 40, y: 4, z: -15, status: 'offline', location: '配电房', fov: 60, rotation: 0 },
-  { id: 'demo-cam10', name: 'CAM_10 围墙南', x: -10, y: 4, z: 38, status: 'online', location: '南围墙', fov: 75, rotation: Math.PI },
+  { id: 'demo-cam1', name: 'CAM_01 主入口', x: 0, y: 5, z: 24, status: 'online', location: '主入口广场', fov: 70, rotation: 0 },
+  { id: 'demo-cam5', name: 'CAM_05 看台A区', x: 0, y: 13, z: -32, status: 'online', location: '看台A区高点', fov: 65, rotation: 0 },
+  { id: 'demo-cam6', name: 'CAM_06 看台B区', x: 26, y: 13, z: -8, status: 'alarm', location: '看台B区高点', alarmType: '人群聚集', fov: 65, rotation: -1.571 },
+  { id: 'demo-cam7', name: 'CAM_07 看台C区', x: 0, y: 13, z: 16, status: 'online', location: '看台C区高点', fov: 65, rotation: 3.142 },
+  { id: 'demo-cam8', name: 'CAM_08 看台D区', x: -26, y: 13, z: -8, status: 'online', location: '看台D区高点', fov: 65, rotation: 1.571 },
+  { id: 'demo-cam9', name: 'CAM_09 内场', x: 0, y: 4, z: -8, status: 'online', location: '内场草坪', fov: 80, rotation: 3.142 },
+  { id: 'demo-cam10', name: 'CAM_10 塔桅全景', x: 8, y: 20, z: -22, status: 'online', location: '塔桅2全景', fov: 90, rotation: 0 },
+  // [v1.9.2] 球门 4 点位上移至屋盖灯光带 (±24, 27.5, ±14): 旧 y=16 在屋盖下表面
+  // (实测 y≈26) 之下被完全遮挡不可见, raycast 全几何求交验证; 与其他三端逐字段一致
+  { id: 'demo-cam16', name: 'CAM_16 东球门南侧', x: 24, y: 27.5, z: -14, status: 'online', location: '东球门灯光带南侧', fov: 70, rotation: -2.099 },
+  { id: 'demo-cam17', name: 'CAM_17 东球门北侧', x: 24, y: 27.5, z: 14, status: 'online', location: '东球门灯光带北侧', fov: 70, rotation: -1.043 },
+  { id: 'demo-cam18', name: 'CAM_18 西球门南侧', x: -24, y: 27.5, z: -14, status: 'maintenance', location: '西球门灯光带南侧', fov: 70, rotation: 2.099 },
+  { id: 'demo-cam19', name: 'CAM_19 西球门北侧', x: -24, y: 27.5, z: 14, status: 'alarm', location: '西球门灯光带北侧', alarmType: '禁区闯入', fov: 70, rotation: 1.043 },
 ]

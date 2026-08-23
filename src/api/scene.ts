@@ -44,19 +44,48 @@ export interface SceneConfig {
   buildings: SceneBuilding[]
   fences?: SceneFence[]
   ground?: { width: number; height: number }
+  /** 周界兜底布局参数 */
+  perimeter?: { halfW: number; halfD: number }
+  /** 整体方位校准角（度） */
+  rotationDeg?: number
+  /** 装饰层开关 */
+  decor?: boolean
+  /** 演示设备点位（无真实设备时兜底） */
+  demoDevices?: Array<Record<string, unknown>>
 }
 
-/** 场景建筑（对应前端 Building3DNode 但使用后端命名） */
+/** 场景建筑（对应前端 Building3DNode，含体育场形状扩展） */
 export interface SceneBuilding {
   id?: string
   name: string
   x: number
   z: number
-  w: number
-  d: number
-  h: number
+  w?: number
+  d?: number
+  h?: number
   color?: string
   buildingType?: string
+  // ── 体育场场景形状扩展（与 Building3DNode 同名同义）──
+  shape?: 'box' | 'cylinder' | 'disc' | 'ring' | 'shell' | 'shell-cap' | 'pylon' | 'board' | 'cone' | 'anchor'
+  rx?: number
+  rz?: number
+  innerRx?: number
+  innerRz?: number
+  thetaDeg?: number
+  tiers?: string[]
+  emissive?: string
+  opacity?: number
+  pitchLines?: boolean
+  beam?: boolean
+  flagpoles?: number
+  jet?: boolean
+  stack?: number
+  cap?: boolean
+  edgeGlow?: string
+  decor?: boolean
+  count?: number
+  y?: number
+  selectable?: boolean
 }
 
 /** 场景围墙段 */

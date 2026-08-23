@@ -101,6 +101,17 @@
           <i class="iconfont1 icon1-gaojing" aria-hidden="true"></i>
           <span>录像回放</span>
         </button>
+        <!-- [WEB-GLB v1.9.8] 视频投放入口: 仅投 3D LED 大屏动态纹理, 不再弹预览窗;
+             正在投放的设备菜单项切换为"停止投放" (toggle), 其它设备点击则切换投放源 -->
+        <button
+          class="context-menu-item"
+          :class="{ 'context-menu-casting': isCastingThisDevice }"
+          type="button"
+          @click="onDeviceCastToBoard"
+        >
+          <i class="iconfont1 icon1-yingyanshexiangtou" aria-hidden="true"></i>
+          <span>{{ isCastingThisDevice ? '停止投放' : '投放至大屏' }}</span>
+        </button>
         <button v-if="contextMenu.device?.businessId" class="context-menu-item" type="button" @click="onDeviceDetailNav">
           <i class="iconfont1 icon1-shebeizhuangtai" aria-hidden="true"></i>
           <span>设备详情</span>
@@ -118,6 +129,16 @@ import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { CSS2DRenderer, CSS2DObject } from 'three/examples/jsm/renderers/CSS2DRenderer.js'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
+// [WEB-GLB v1.8.0] 对标 Sketchfab 渲染管线调研结论:
+// Sketchfab viewer 对户外模型使用 HDR 天空环境 IBL + ACES tone mapping
+// (Sketchfab PBR 渲染文档); v1.6.0 的 RoomEnvironment 是室内箱体环境,
+// 金属屋顶反射出室内灯带而非天空, 是与 Sketchfab 观感差距的主因。
+// 改用 three.js 官方 Sky (Preetham 物理天空模型, 示例 webgl_shaders_sky 同款)
+// 经 PMREMGenerator 生成户外环境贴图; 仅用于 IBL 反射, 不改变暗色背景风格
+import { Sky } from 'three/examples/jsm/objects/Sky.js'
+// [v1.9.4] 设备 3D 形态改造: 多部件几何合并为单 Mesh (保持 pickDevice
+// 邻近匹配的 position=设备坐标 约束, 见 createDevice 注释)
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 import {
   PerformanceCollector,
   formatPerformanceReport,
@@ -125,6 +146,8 @@ import {
   type PerformanceReport,
 } from '@/utils/performance'
 import aiGif from '@/assets/ai.gif'
+import { DEFAULT_DEVICES, DEFAULT_BUILDINGS, STADIUM_SCENE_META } from './scene3d/constants/defaultSceneData'
+import type { Building3DNode, SceneMeta } from './scene3d/types/scene3d'
 
 // ── Props ──
 interface Device3D {
@@ -145,7 +168,9 @@ interface Device3D {
 }
 const props = defineProps<{
   devices?: Device3D[]
-  buildings?: { name: string; x: number; z: number; w: number; d: number; h: number; color?: string }[]
+  buildings?: Building3DNode[]
+  /** 场景参数（地面尺寸/周界/方位角/装饰层开关），缺省兼容旧 120×100 场景 */
+  sceneMeta?: SceneMeta
   /** 是否默认显示性能面板，默认 false */
   showPerformance?: boolean
   /** FPS 低于此阈值时自动卸载不可见设备（懒卸载优化），默认 15 */
@@ -164,6 +189,8 @@ const props = defineProps<{
   buildingModels?: Record<string, string>
   /** P2-6: 是否显示2D俯视小地图 */
   showMiniMap?: boolean
+  /** [WEB-GLB v1.9.8] 正在 LED 大屏投放的设备 id（菜单项切换"停止投放"） */
+  castingDeviceId?: string
 }>()
 
 const emit = defineEmits<{
@@ -181,6 +208,9 @@ const emit = defineEmits<{
   'minimap-select': [deviceId: string]
   /** T4: 设备视频操作 — 实时预览请求 */
   'device-video': [device: { id: string; name: string; businessId?: string; deviceType?: string }]
+  /** [WEB-GLB v1.9.8] 设备视频投放至 3D LED 大屏（仅 VideoTexture, 不弹窗; 
+   *  同设备再次触发 = 停止投放, 异设备触发 = 切换投放源） */
+  'device-cast': [device: { id: string; name: string; businessId?: string; deviceType?: string }]
 }>()
 
 const router = useRouter()
@@ -191,7 +221,11 @@ const showLabels = ref(true)
 const showPerfPanel = ref(props.showPerformance ?? false)
 const hoveredDevice = ref<Device3D | null>(null)
 
-// T4: 设备右键/点击上下文菜单
+// [WEB-GLB v1.9.8] 当前菜单设备是否正在向 LED 大屏投放 (菜单项切换"停止投放")
+const isCastingThisDevice = computed(
+  () => !!props.castingDeviceId && props.castingDeviceId === contextMenu.device?.id,
+)
+
 const contextMenu = reactive({
   visible: false,
   x: 0,
@@ -222,10 +256,42 @@ let labelRenderer: CSS2DRenderer
 let controls: OrbitControls
 let animationId: number
 let startTime = 0
-let deviceMeshes: Map<string, { mesh: THREE.Mesh; cone: THREE.Mesh; lens?: THREE.Mesh; pulse?: THREE.Mesh; label?: CSS2DObject }> = new Map()
+let sceneDecorEnabled = true
+let deviceMeshes: Map<string, { mesh: THREE.Mesh; lens?: THREE.Mesh; pulse?: THREE.Mesh; label?: CSS2DObject }> = new Map()
 let raycaster: THREE.Raycaster
 let mouse: THREE.Vector2
 let resizeObserver: ResizeObserver | null = null
+
+// ── [WEB-GLB v1.9.0] 体育场层级容器（跟随场景整体缩放/旋转/平移）──
+// 依据: three.js 官方 SceneGraph 文档 — 子节点继承父级 Group 的矩阵变换。
+// 初始为 identity 变换（世界坐标 = 配置坐标），因此 pickDevice 的世界坐标
+// 邻近匹配 / doDeviceDrag / minimap 等既有逻辑全部兼容；体育场 GLB、LED 大屏
+// 与设备图标统一挂载到此层级，整体变换时不脱节、不错位、不残留原位
+let stadiumGroup: THREE.Group
+
+// ── [WEB-GLB v1.9.0] LED 大屏视频投放状态 ──
+/** 4 块 LED 大屏 mesh（board 分支创建时收集，供 VideoTexture 材质替换） */
+let boardMeshes: THREE.Mesh[] = []
+/** 投放前的原屏面材质（关闭投放时还原） */
+let boardOriginalMaterials: THREE.Material[] = []
+/** 投放用动态视频纹理（three 0.184 VideoTexture: 构造时自动注册
+ *  requestVideoFrameCallback 逐帧刷新 needsUpdate, dispose 时自动取消） */
+let boardVideoTexture: THREE.VideoTexture | null = null
+/** 投放用共享材质（VideoTexture 挂 map; MeshBasicMaterial 不受灯光/阴影影响, */
+let boardCastMaterial: THREE.MeshBasicMaterial | null = null
+/** 投放激活标志（animate 连续渲染判定: VideoTexture 每帧有新内容需持续 render） */
+let isCastingVideo = false
+
+// ── [WEB-GLB v1.9.0] 交互流畅度: 拾取缓存与复用对象（消除高频分配）──
+/** 设备拾取网格缓存（避免每次 mousemove 重建数组，设备增删时置 dirty） */
+let deviceMeshList: THREE.Mesh[] = []
+let deviceMeshListDirty = true
+/** 地面拾取复用 Plane/Vector3（原 pickBuilding 每次 new, 60~120Hz mousemove 下持续 GC 压力） */
+const groundPickPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0)
+const groundPickPoint = new THREE.Vector3()
+/** 拖拽平面复用向量（原 doDeviceDrag 每次 new 两个 Vector3） */
+const dragUpNormal = new THREE.Vector3(0, 1, 0)
+const dragPlanePoint = new THREE.Vector3()
 
 // ── 性能采集器 ──
 let perfCollector: PerformanceCollector | null = null
@@ -248,10 +314,13 @@ let dragPlane: THREE.Plane = new THREE.Plane()
 let dragIntersect: THREE.Vector3 = new THREE.Vector3()
 
 /** P1-1: detect if a point falls within a building bounding box */
-function detectBuilding(x: number, z: number, buildings: Array<{ name: string; x: number; z: number; w: number; d: number; h: number; color?: string }>): { name: string; x: number; z: number; w: number; d: number; h: number; color?: string } | null {
+function detectBuilding(x: number, z: number, buildings: Building3DNode[]): Building3DNode | null {
   for (const b of buildings) {
-    const halfW = b.w / 2
-    const halfD = b.d / 2
+    if (b.shape === 'anchor') continue
+    const w = b.w ?? (b.rx ?? 3) * 2
+    const d = b.d ?? (b.rz ?? 3) * 2
+    const halfW = w / 2
+    const halfD = d / 2
     if (x >= b.x - halfW && x <= b.x + halfW && z >= b.z - halfD && z <= b.z + halfD) {
       return b
     }
@@ -268,11 +337,12 @@ function pickBuilding(event: MouseEvent): { name: string; x: number; z: number }
   mouse.x = ((event.clientX - rect.left) / w) * 2 - 1
   mouse.y = -((event.clientY - rect.top) / h) * 2 + 1
   raycaster.setFromCamera(mouse, camera)
-  const groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0)
-  const hit = new THREE.Vector3()
-  raycaster.ray.intersectPlane(groundPlane, hit)
+  // [WEB-GLB v1.9.0] 复用 groundPickPlane/groundPickPoint (见声明处注释):
+  // 消除高频 mousemove 路径的临时 Plane/Vector3 分配; 并改为校验
+  // intersectPlane 返回值 (three.js 官方 API: 未命中返回 null, 命中返回 target)
+  const hit = raycaster.ray.intersectPlane(groundPickPlane, groundPickPoint)
   if (!hit) return null
-  const buildings = (props.buildings || defaultBuildings) as Array<{ name: string; x: number; z: number; w: number; d: number; h: number; color?: string }>
+  const buildings = (props.buildings || defaultBuildings) as Building3DNode[]
   const found = detectBuilding(hit.x, hit.z, buildings)
   return found ? { name: found.name, x: found.x, z: found.z } : null
 }
@@ -284,6 +354,13 @@ let connectionLines: THREE.Line[] = []
 // ── P2-1: CAD 底图叠加 ──
 let groundImageMesh: THREE.Mesh | null = null
 let gltfLoader: GLTFLoader | null = null
+// [WEB-GLB v1.7.0] 各向异性过滤上限 (init 时从 renderer.capabilities 获取)。
+// glTF 贴图斜视角采样必须靠 anisotropy 保清晰 (three.js GLTFLoader FAQ 推荐项)
+let maxAnisotropy = 1
+// [WEB-GLB v1.8.0] 按需渲染脏标记 (three.js 官方 OrbitControls 'change' 事件驱动模式):
+// 相机无变化且无动画时跳过 WebGL render, 空闲帧 GPU 归零, 交互帧独享算力
+let renderDirty = true
+function requestRender() { renderDirty = true }
 
 // ── P2-2: 2D 建筑绘制模式 ──
 let drawStartPoint: THREE.Vector3 | null = null
@@ -327,21 +404,10 @@ function updateBuildingAssociations(buildings: any[]) {
 
   if (!buildings.length) return
 
-  // For each building, draw a colored ring on the ground
-  for (const b of buildings) {
-    const color = b.color ? parseHexColor(b.color) : 0x1A73E8
-    const ringGeo = new THREE.RingGeometry(
-      Math.max(b.w, b.d) / 2 + 0.5,
-      Math.max(b.w, b.d) / 2 + 1.0,
-      32
-    )
-    const ringMat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.3, side: THREE.DoubleSide, depthWrite: false })
-    const ring = new THREE.Mesh(ringGeo, ringMat)
-    ring.rotation.x = -Math.PI / 2
-    ring.position.set(b.x, 0.05, b.z)
-    scene.add(ring)
-    buildingRings.push(ring)
-  }
+  // [WEB-GLB v1.9.2] 建筑底座环已移除 (用户反馈): 参数化模式遗留装饰, 会在
+  // GLB 体育场中心草皮 (shape=model 条目无 w/d/rx/rz, 走默认 foot=6) 与 4 块
+  // LED 大屏脚下画半透明圆环, 属"残留背景"; buildingRings 数组保留 (恒空)
+  // 供上方 dispose 逻辑复用, editMode 设备-建筑连接线功能不受影响。
 
   // Draw connection lines from devices to their buildings (edit mode only)
   if (props.editMode) {
@@ -360,6 +426,8 @@ function updateBuildingAssociations(buildings: any[]) {
       connectionLines.push(line)
     }
   }
+  // [WEB-GLB v1.8.0] 环/连接线重建后标脏渲染
+  requestRender()
 }
 
 // ── P2-1: CAD 底图叠加 ──
@@ -386,6 +454,7 @@ function loadGroundImage(url: string) {
     groundImageMesh.rotation.x = -Math.PI / 2
     groundImageMesh.position.y = 0.02
     scene.add(groundImageMesh)
+    requestRender()
   })
 }
 
@@ -397,10 +466,10 @@ function getGroundIntersect(event: MouseEvent): THREE.Vector3 | null {
   mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1
   mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1
   raycaster.setFromCamera(mouse, camera)
-  const groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0)
-  const hit = new THREE.Vector3()
-  const result = raycaster.ray.intersectPlane(groundPlane, hit)
-  return result ? hit : null
+  // [WEB-GLB v1.9.0] 复用拾取平面/交点对象 (高频 mousemove 路径零分配);
+  // 调用方 (updateDrawPreview 只读 / drawStartPoint = hit.clone()) 均安全
+  const result = raycaster.ray.intersectPlane(groundPickPlane, groundPickPoint)
+  return result ? groundPickPoint : null
 }
 
 /** 更新建筑绘制预览 */
@@ -424,31 +493,77 @@ function updateDrawPreview(start: THREE.Vector3, end: THREE.Vector3) {
 
 // ── P2-3: GLB 模型加载 ──
 /** 为建筑加载 GLB 模型替换程序化几何体 */
-function loadBuildingModel(buildingName: string, modelUrl: string) {
+function loadBuildingModel(buildingName: string, modelUrl: string, transform?: { scale?: number; rotationDeg?: number; offsetY?: number }) {
   if (!scene || !modelUrl) return
   if (!gltfLoader) gltfLoader = new GLTFLoader()
   // 检查缓存
   if (loadedModels.has(modelUrl)) {
     const cached = loadedModels.get(modelUrl)!.clone()
-    applyModelToBuilding(buildingName, cached)
+    applyModelToBuilding(buildingName, cached, transform)
     return
   }
   gltfLoader.load(modelUrl, (gltf) => {
     loadedModels.set(modelUrl, gltf.scene)
-    applyModelToBuilding(buildingName, gltf.scene.clone())
+    applyModelToBuilding(buildingName, gltf.scene.clone(), transform)
   }, undefined, (err) => {
     console.warn('[Scene3D] GLB load failed:', modelUrl, err)
   })
 }
 
-/** 将 GLB 模型应用到建筑（隐藏原 box 几何体） */
-function applyModelToBuilding(buildingName: string, model: THREE.Group) {
+/** 将 GLB 模型应用到建筑（隐藏原 box 几何体）；
+ *  可选 transform 支持缩放/旋转/垂直偏移以适配场景坐标。
+ *  [WEB-GLB v1.6.0] 依据 three.js 官方 GLTFLoader 指南 (jb51/CSDN 参考文章同款):
+ *  加载后必须 traverse 子节点配置阴影与材质; 节点层级/scale/rotation 由 GLTFLoader
+ *  按 glTF 2.0 规范还原, 此处仅在根节点叠加业务 transform (T·R·S 顺序正确) */
+function applyModelToBuilding(buildingName: string, model: THREE.Group, transform?: { scale?: number; rotationDeg?: number; offsetY?: number }) {
   // 移除旧 group
   const old = buildingGroups.get(buildingName)
-  if (old) { scene.remove(old); buildingGroups.delete(buildingName) }
+  // [WEB-GLB v1.9.0] 从体育场层级移除旧 group (与 add 对称)
+  if (old) { stadiumGroup.remove(old); buildingGroups.delete(buildingName) }
+  // 应用 transform（根节点）
+  if (transform?.scale && transform.scale !== 1) model.scale.setScalar(transform.scale)
+  if (transform?.rotationDeg) model.rotation.y = (transform.rotationDeg * Math.PI) / 180
+  if (transform?.offsetY) model.position.y = transform.offsetY
+  // traverse 修正材质渲染行为（不改动任何几何/变换，保证 1:1 还原）
+  model.traverse((child) => {
+    if ((child as THREE.Mesh).isMesh) {
+      child.castShadow = true
+      child.receiveShadow = true
+      // GLB 模型不受场景暗雾影响，保持原始材质色彩
+      const mats = Array.isArray(child.material) ? child.material : [child.material]
+      for (const m of mats) {
+        if (!m) continue
+        m.fog = false
+        // [WEB-GLB v1.7.0] 清晰度修复 1/2: 各向异性过滤。
+        // GLTFLoader 不自动设 anisotropy (默认 1), 草皮 2048×1024 贴图在
+        // 斜视角下采样退化发糊; 设到 GPU 上限后斜视纹理清晰度显著提升
+        // (three.js 官方 GLTFLoader FAQ / webgl_loader_gltf 同款做法)
+        const std = m as THREE.MeshStandardMaterial
+        const texSlots: Array<THREE.Texture | null | undefined> = [
+          std.map, std.normalMap, std.roughnessMap, std.metalnessMap,
+          std.aoMap, std.emissiveMap,
+        ]
+        for (const tex of texSlots) {
+          if (tex && tex.anisotropy < maxAnisotropy) {
+            tex.anisotropy = maxAnisotropy
+            tex.needsUpdate = true
+          }
+        }
+        // [WEB-GLB v1.7.0] 清晰度修复 2/2: 适当提升 IBL 反射强度,
+        // 让高 metallic 材质 (看台铜顶/金属构0.9~1.0) 细节更鲜明
+        if (std.envMapIntensity !== undefined) std.envMapIntensity = 1.25
+      }
+    }
+  })
   // 记录新 group
   buildingGroups.set(buildingName, model)
-  scene.add(model)
+  // [WEB-GLB v1.9.0] GLB 挂载体育场层级 stadiumGroup: 跟随场景整体缩放/旋转/
+  // 平移 (three.js 官方 SceneGraph 文档: 子节点继承父级矩阵变换)
+  stadiumGroup.add(model)
+  // [WEB-GLB v1.8.0] 静态阴影模式: 新 GLB 几何入场景后需单次刷新 shadow map
+  // (autoUpdate=false 时不会自动重算), 并标脏触发一帧渲染
+  renderer.shadowMap.needsUpdate = true
+  requestRender()
 }
 
 // ── P2-4: 3D 巡视路线 ──
@@ -468,6 +583,8 @@ function stopPatrol() {
   isPatrolling = false
   patrolCurve = null
   if (controls) controls.enabled = true
+  // [WEB-GLB v1.8.0] 连续动画结束: 补一帧渲染收尾
+  requestRender()
 }
 
 /** 巡视动画帧更新 */
@@ -502,6 +619,8 @@ function stopSequence() {
     ;(ps.material as THREE.Material).dispose()
   })
   particleSystems.clear()
+  // [WEB-GLB v1.8.0] 粒子清理后标脏渲染收尾
+  requestRender()
 }
 
 /** 动作序列帧更新 */
@@ -570,6 +689,8 @@ function executeAction(action: SceneAction) {
       break
     }
   }
+  // [WEB-GLB v1.8.0] 相机/可见性/高亮/粒子变更后标脏渲染
+  requestRender()
 }
 
 /** 创建简易粒子效果 */
@@ -699,15 +820,16 @@ function statusLabel(status: string): string {
   }
 }
 
-/** 设备状态图标 */
-function statusIcon(status: string): string {
-  switch (status) {
-    case 'online': return '🟢'
-    case 'alarm': return '🔴'
-    case 'maintenance': return '🟡'
-    case 'offline': return '⚫'
-    default: return '⚫'
-  }
+/**
+ * [v1.9.4] 设备标签图标着色表（替代原 emoji 圆点 statusIcon）。
+ * 标签用 iconfont 摄像头字符 icon1-monitor-camera-full + 状态着色，
+ * 与图例 legend-icon 同一字符同一色系，视觉统一。
+ */
+const DEVICE_ICON_COLORS: Record<string, string> = {
+  online: '#39C76F',
+  alarm: '#F45B69',
+  offline: '#667386',
+  maintenance: '#F4B400',
 }
 
 /** 格式化大数字 */
@@ -804,28 +926,10 @@ function disposeSceneResources(sc: THREE.Scene) {
   })
 }
 
-// ── 默认设备数据 ──
-const defaultDevices: Device3D[] = [
-  { id: 'cam1', name: 'CAM_01 东门', x: -40, y: 4, z: -35, status: 'online', location: '1号厂区东门', fov: 60, rotation: 0 },
-  { id: 'cam2', name: 'CAM_02 围墙北', x: 20, y: 4, z: -38, status: 'online', location: '北围墙', fov: 75, rotation: Math.PI / 4 },
-  { id: 'cam3', name: 'CAM_03 车间A', x: -15, y: 5, z: 5, status: 'online', location: '2号车间入口', fov: 60, rotation: Math.PI / 2 },
-  { id: 'cam4', name: 'CAM_04 车间B', x: 25, y: 5, z: 10, status: 'alarm', location: '3号厂区东围墙', alarmType: '周界入侵', fov: 65, rotation: -Math.PI / 3 },
-  { id: 'cam5', name: 'CAM_05 仓库', x: -30, y: 4, z: 20, status: 'online', location: '仓库区域', fov: 70, rotation: Math.PI },
-  { id: 'cam6', name: 'CAM_06 停车场', x: 35, y: 4, z: 25, status: 'online', location: '停车场B区', fov: 80, rotation: Math.PI / 6 },
-  { id: 'cam7', name: 'CAM_07 大门', x: 0, y: 5, z: 40, status: 'online', location: '1号大门', fov: 60, rotation: Math.PI },
-  { id: 'cam8', name: 'CAM_08 办公楼', x: -35, y: 6, z: -10, status: 'maintenance', location: '办公楼', fov: 55, rotation: -Math.PI / 2 },
-  { id: 'cam9', name: 'CAM_09 配电房', x: 40, y: 4, z: -15, status: 'offline', location: '配电房', fov: 60, rotation: 0 },
-  { id: 'cam10', name: 'CAM_10 围墙南', x: -10, y: 4, z: 38, status: 'online', location: '南围墙', fov: 75, rotation: Math.PI },
-]
+// ── 默认场景数据（体育场，与 box-sdk/config/scene_config.json 同源）──
+const defaultDevices = DEFAULT_DEVICES as Device3D[]
 
-const defaultBuildings = [
-  { name: '1号车间', x: -20, z: -15, w: 24, d: 16, h: 8, color: '#1A73E8' },
-  { name: '2号车间', x: 15, z: -15, w: 20, d: 14, h: 7, color: '#0F9D58' },
-  { name: '仓库', x: -25, z: 15, w: 18, d: 12, h: 6, color: '#F4B400' },
-  { name: '办公楼', x: 20, z: 15, w: 16, d: 12, h: 12, color: '#7C3AED' },
-  { name: '配电房', x: 35, z: -5, w: 8, d: 8, h: 4, color: '#666' },
-  { name: '门卫室', x: 0, z: 42, w: 6, d: 4, h: 3, color: '#888' },
-]
+const defaultBuildings: Building3DNode[] = DEFAULT_BUILDINGS
 
 function init() {
   if (!containerRef.value) return
@@ -840,20 +944,78 @@ function init() {
   // Scene
   scene = new THREE.Scene()
   scene.background = new THREE.Color(0x0a0c10)
-  scene.fog = new THREE.FogExp2(0x0a0c10, 0.008)
+  // [WEB-GLB v1.9.0] 体育场层级容器（identity 初始变换, 见声明处注释）
+  stadiumGroup = new THREE.Group()
+  scene.add(stadiumGroup)
+  // [WEB-GLB v1.6.0] 雾密度 0.008→0.0035: 原密度在相机距离 80m 处将模型
+  // 40% 混入暗背景, 导致"部分看不到/发灰"; 新密度同距离仅 ~7%
+  scene.fog = new THREE.FogExp2(0x0a0c10, 0.0035)
 
   // Camera
-  camera = new THREE.PerspectiveCamera(50, safeW / safeH, 0.1, 500)
-  camera.position.set(60, 50, 70)
-  camera.lookAt(0, 0, 0)
+  // [WEB-GLB v1.6.0] 基于 glTF 2.0 规范严格校验后的修正:
+  // GLB 实际几何 (POSITION accessor min/max): 草皮 y=0, 看台 y=0→30.7×0.5=15.4,
+  // 屋顶 y=37→57×0.5=18.5→28.5。模型中心视觉焦点在 y≈5 (看台中段)
+  // near 0.1→1.0: 深度缓冲 near/far 比率从 1:5000 降到 1:500,
+  // 消除 GLB 草皮(y=0)与看台底板(y=0)的 z-fighting 闪烁/黑斑
+  camera = new THREE.PerspectiveCamera(50, safeW / safeH, 1.0, 500)
+  // [v1.9.5] 默认相机回滚 (52,46,64)→(45,35,55): v1.9.4 拉远是为收纳
+  // CAM_14 波浪馆东入口标签(原屏幕 y=1097 超 1080 视口)，该场外点位已删；
+  // 馆内 11 台 + 真机场边兜底位(z≤24)全部在 (45,35,55) 视野内
+  camera.position.set(45, 35, 55)
+  camera.lookAt(0, 5, 0)
 
   // Renderer
-  renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true })
+  // [WEB-GLB v1.7.0] 清晰度修复: 回退 v1.5 性能降级, 恢复高质量渲染管线。
+  // 1) MSAA 4x (antialias:true) 替代 FXAA 后处理——FXAA 原理上牺牲锐度换平滑,
+  //    是"画面发糊"的直接来源之一; MSAA 在几何边缘做多点采样, 不模糊纹理
+  // 2) pixelRatio 1.5→2 (three.js 官方推荐 min(DPR, 2)): 高分屏下画布物理
+  //    分辨率不足是整体模糊的直接来源
+  renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: 'high-performance' })
   renderer.setSize(safeW, safeH)
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
+  maxAnisotropy = renderer.capabilities.getMaxAnisotropy()
   renderer.shadowMap.enabled = true
-  renderer.shadowMap.type = THREE.PCFShadowMap
+  // [WEB-GLB v1.7.0] BasicShadowMap → PCFSoftShadowMap: 软阴影边缘平滑,
+  // 消除 Basic 硬锅齿造成的画面脏感 (官方示例默认 PCFSoft)
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap
+  // [WEB-GLB v1.8.0] 静态阴影 (three.js 官方文档 WebGLRenderer.shadowMap.autoUpdate):
+  // 场景光源/几何静态时关闭阴影逐帧重渲染, 节省每帧 2048×2048 shadow pass
+  // (65+ GLB mesh 重绘) ——交互帧率提升的最大来源;
+  // GLB 加载完成/设备拖拽时置 needsUpdate=true 单次刷新
+  renderer.shadowMap.autoUpdate = false
+  renderer.shadowMap.needsUpdate = true
+  // [WEB-GLB v1.6.0] 官方示例 webgl_loader_gltf 标准配置: ACES 色调映射。
+  // GLB 材质为 PBR (pbrMetallicRoughness), 无 toneMapping 时高光溢出、
+  // 中间调发灰——"球场质量太差"的直接原因之一 (three.js 官方 glTF 加载指南)
+  renderer.toneMapping = THREE.ACESFilmicToneMapping
+  // [WEB-GLB v1.8.0] exposure 1.1→1.0: Sky 户外 IBL 照明量高于 RoomEnvironment,
+  // 回调曝光避免高光过曝 (ACES 官方推荐区间 0.8~1.2)
+  renderer.toneMappingExposure = 1.0
   container.appendChild(renderer.domElement)
+
+  // [WEB-GLB v1.8.0] 户外天空 IBL: Sky (Preetham 物理天空) → PMREMGenerator。
+  // 依据: Sketchfab viewer 对户外场景用天空 HDR 环境驱动 PBR 反射/漫射;
+  // three.js 官方示例 webgl_shaders_sky 参数化模式 (turbidity/rayleigh/mie)。
+  // 一次性生成 (~10ms), 无逐帧开销; 太阳方位与 dirLight (60,80,40) 保持一致
+  const sky = new Sky()
+  sky.scale.setScalar(2000)
+  const skyUniforms = sky.material.uniforms
+  skyUniforms['turbidity'].value = 6
+  skyUniforms['rayleigh'].value = 1.8
+  skyUniforms['mieCoefficient'].value = 0.005
+  skyUniforms['mieDirectionalG'].value = 0.8
+  const sunPosition = new THREE.Vector3().setFromSphericalCoords(
+    1, THREE.MathUtils.degToRad(55), THREE.MathUtils.degToRad(35),
+  )
+  skyUniforms['sunPosition'].value.copy(sunPosition)
+  const pmremGenerator = new THREE.PMREMGenerator(renderer)
+  const envScene = new THREE.Scene()
+  envScene.add(sky)
+  scene.environment = pmremGenerator.fromScene(envScene, 0.04).texture
+  pmremGenerator.dispose()
+  // 背景仍保持暗色数字孪生风格 (0x0a0c10), Sky 仅贡献 IBL
+  // [WEB-GLB v1.7.0] EffectComposer/FXAA 管线已移除: 直接 renderer.render(),
+  // MSAA 在默认帧缓冲中生效 (FXAA 后处理无法访问 MSAA 缓冲且自带模糊)
 
   // CSS2D Label renderer
   labelRenderer = new CSS2DRenderer()
@@ -868,33 +1030,68 @@ function init() {
   controls = new OrbitControls(camera, renderer.domElement)
   controls.enableDamping = true
   controls.dampingFactor = 0.08
+  // [WEB-GLB v1.8.0] 交互响应: rotate/zoom 速度 1.0→1.15 (OrbitControls 官方参数),
+  // 手感更跟手; dampingFactor 保持 0.08 平滑惯性
+  controls.rotateSpeed = 1.15
+  controls.zoomSpeed = 1.15
+  // [WEB-GLB v1.8.0] 按需渲染: 相机变化时标脏 (官方 'change' 事件契约)
+  controls.addEventListener('change', requestRender)
   controls.maxPolarAngle = Math.PI / 2.2
   controls.minDistance = 20
-  controls.maxDistance = 150
-  controls.target.set(0, 0, 0)
+  controls.maxDistance = 100
+  // [WEB-GLB v1.6.0] v1.5.0 target 修正: GLB 草皮实际在 y=0 (glTF 规范校验),
+  // 看台 scale=0.5 后高 ~15.4, 视觉焦点取看台中段 y=5
+  controls.target.set(0, 5, 0)
 
   startTime = performance.now()
   raycaster = new THREE.Raycaster()
   mouse = new THREE.Vector2()
 
-  // ── 灯光 ──
-  const ambient = new THREE.AmbientLight(0x334455, 0.6)
+  // ── 灯光 (性能优化: 减灯减阴影) ──
+  // [WEB-GLB 2026-08-21] 方案 A 优化: 仅保留 3 盏灯 (删除 fillLight2 与 stadiumInterior pointLight)
+  // 每盏灯都增加 fragment shader 开销, PointLight 尤甚
+  // [WEB-GLB v1.6.0] IBL 环境贴图已提供基础照明, ambient/hemi 适当下调避免过曝
+  // [WEB-GLB v1.8.0] Sky 户外 IBL 漫射分量更强, 再下调避免发白:
+  // ambient 0.8→0.5, hemi 0.6→0.4
+  const ambient = new THREE.AmbientLight(0xffffff, 0.5)
   scene.add(ambient)
 
-  const dirLight = new THREE.DirectionalLight(0xffffff, 0.8)
-  dirLight.position.set(30, 40, 20)
+  // 半球光 (天光 + 地面反射)
+  const hemiLight = new THREE.HemisphereLight(0xffffff, 0x8899aa, 0.4)
+  hemiLight.position.set(0, 80, 0)
+  scene.add(hemiLight)
+
+  // 主方向光 (太阳) - 唯一投射阴影的灯
+  const dirLight = new THREE.DirectionalLight(0xfff5e0, 1.4)
+  dirLight.position.set(60, 80, 40)
   dirLight.castShadow = true
+  // [WEB-GLB 2026-08-21] shadow.mapSize 2048→1024 (4x 速度提升, 阴影略显粗但不明显)
+  // [WEB-GLB v1.7.0] 回调 2048: PCFSoft 配合高分辨率 shadow map 边缘更细腻
   dirLight.shadow.mapSize.set(2048, 2048)
-  dirLight.shadow.camera.left = -60; dirLight.shadow.camera.right = 60
-  dirLight.shadow.camera.top = 60; dirLight.shadow.camera.bottom = -60
+  // [WEB-GLB 2026-08-21] v1.5.0 阴影相机范围缩小 (模型 scale=0.5, ground 80×55)
+  dirLight.shadow.camera.left = -45; dirLight.shadow.camera.right = 45
+  dirLight.shadow.camera.top = 35; dirLight.shadow.camera.bottom = -35
+  dirLight.shadow.camera.near = 1; dirLight.shadow.camera.far = 150
+  // [WEB-GLB v1.8.0] 阴影 bias (three.js 官方 LightShadow 文档):
+  // bias 防阴影痤疮(acne), normalBias 沿法线偏移防大场景浮影/peter-panning;
+  // 消除看台曲面上阴影黑斑, 提升材质表面观感
+  dirLight.shadow.bias = -0.0004
+  dirLight.shadow.normalBias = 0.02
   scene.add(dirLight)
 
-  const pointLight = new THREE.PointLight(0x1A73E8, 0.3, 100)
-  pointLight.position.set(0, 20, 0)
-  scene.add(pointLight)
+  // 补光 (不开阴影)
+  const fillLight1 = new THREE.DirectionalLight(0xffe8c8, 0.5)
+  fillLight1.position.set(-40, 50, -20)
+  scene.add(fillLight1)
+  // fillLight2 与 stadiumInterior PointLight 已删除 (性能)
 
-  // ── 地面 ──
-  const groundGeo = new THREE.PlaneGeometry(120, 100)
+  // ── 地面（尺寸读场景参数，默认 120×100 兼容旧场景）──
+  const sceneMeta = props.sceneMeta ?? (props.buildings ? undefined : STADIUM_SCENE_META)
+  sceneDecorEnabled = sceneMeta?.decor ?? true
+  const groundW = sceneMeta?.ground?.width ?? 120
+  const groundH = sceneMeta?.ground?.height ?? 100
+  // [WEB-GLB v1.9.2] periHalfW/periHalfD (周界围墙参数) 随四面围墙一并移除
+  const groundGeo = new THREE.PlaneGeometry(groundW, groundH)
   const groundMat = new THREE.MeshStandardMaterial({
     color: 0x151820,
     roughness: 0.9,
@@ -902,23 +1099,22 @@ function init() {
   })
   const ground = new THREE.Mesh(groundGeo, groundMat)
   ground.rotation.x = -Math.PI / 2
+  // [WEB-GLB v1.6.0] 下沉 0.05: GLB 草皮与看台底板都在 y=0 (包围盒校验),
+  // 参数化地面与其共面会 z-fighting; 下沉后仅作体育场外围基底
+  ground.position.y = -0.05
   ground.receiveShadow = true
   scene.add(ground)
 
-  // 网格线
-  const gridHelper = new THREE.GridHelper(120, 30, 0x1a1d23, 0x111318)
-  scene.add(gridHelper)
+  // [WEB-GLB v1.9.2] 网格线已移除 (用户反馈): GridHelper 是参数化模式遗留,
+  // 在体育场外围地面残留网格背景, 与 GLB 1:1 体育场观感冲突。
 
   // P2-1: 加载 CAD 底图（如果 prop 提供）
   if (props.groundImageUrl) {
     loadGroundImage(props.groundImageUrl)
   }
 
-  // 围墙（四面）
-  createWall(-55, 0, 0, 0.3, 3, 100, 0x1a2040)   // 左
-  createWall(55, 0, 0, 0.3, 3, 100, 0x1a2040)    // 右
-  createWall(0, 0, -48, 110, 3, 0.3, 0x1a2040)   // 后
-  createWall(0, 0, 48, 110, 3, 0.3, 0x1a2040)    // 前
+  // [WEB-GLB v1.9.2] 四面围墙 + 顶部发光线已移除 (用户反馈): 参数化模式
+  // 遗留的半透明围墙 (h=3) 圈住体育场四周, 属"残留背景", 干扰 GLB 整体观感。
 
   // ── 建筑 ──
   const buildings = props.buildings || defaultBuildings
@@ -998,6 +1194,9 @@ function processLazyLoadBatch() {
   if (lazyLoadQueue.length === 0) {
     lazyLoadScheduled = false
   }
+  // [WEB-GLB v1.8.0] 新设备入场景: 单次刷新阴影 + 标脏渲染
+  renderer.shadowMap.needsUpdate = true
+  requestRender()
 }
 
 // ── 懒卸载优化：低 FPS 时自动卸载离线/维护设备 ──
@@ -1037,6 +1236,9 @@ function performLazyUnload() {
       lazyDeviceCache.set(d.id, d)
     }
   }
+  // [WEB-GLB v1.8.0] 设备移除后刷新阴影 + 标脏
+  renderer.shadowMap.needsUpdate = true
+  requestRender()
 }
 
 /** FPS 恢复后重新加载被卸载的设备 */
@@ -1049,53 +1251,520 @@ function performLazyReload() {
   }
   lazyUnloadedIds.clear()
   lazyDeviceCache.clear()
+  // [WEB-GLB v1.8.0] 设备重新入场景: 刷新阴影 + 标脏
+  renderer.shadowMap.needsUpdate = true
+  requestRender()
 }
 
-function createWall(x: number, y: number, z: number, w: number, h: number, d: number, color: number) {
-  const geo = new THREE.BoxGeometry(w, h, d)
-  const mat = new THREE.MeshStandardMaterial({ color, transparent: true, opacity: 0.4 })
-  const mesh = new THREE.Mesh(geo, mat)
-  mesh.position.set(x, y + h / 2, z)
-  mesh.castShadow = true
-  scene.add(mesh)
+// [WEB-GLB v1.9.2] createWall 函数已移除: 四面围墙 + 顶部发光线属参数化
+// 模式遗留"残留背景" (用户反馈), 唯一调用点 (init 围墙段) 已同步删除。
 
-  // 围墙顶部发光线
-  const edges = new THREE.EdgesGeometry(geo)
-  const line = new THREE.LineSegments(edges, new THREE.LineBasicMaterial({ color: 0x1A73E8, transparent: true, opacity: 0.3 }))
-  line.position.copy(mesh.position)
-  scene.add(line)
-}
+// ══ 建筑形状渲染（形状元与内置应用端 StadiumScene3D.qml 1:1 对应）══
 
-function createBuilding(b: { name: string; x: number; z: number; w: number; d: number; h: number; color?: string }) {
-  const color = b.color ? parseHexColor(b.color) : 0x1A73E8
-  const geo = new THREE.BoxGeometry(b.w, b.h, b.d)
+function buildingMaterial(b: Building3DNode, color: number): THREE.MeshStandardMaterial {
   const mat = new THREE.MeshStandardMaterial({
     color,
     transparent: true,
-    opacity: 0.35,
+    opacity: b.opacity ?? 0.35,
     roughness: 0.7,
     metalness: 0.2,
+    side: THREE.DoubleSide,
   })
-  const mesh = new THREE.Mesh(geo, mat)
-  mesh.position.set(b.x, b.h / 2, b.z)
-  mesh.castShadow = true
-  mesh.receiveShadow = true
-  scene.add(mesh)
+  if (b.emissive) {
+    mat.emissive = new THREE.Color(parseHexColor(b.emissive))
+    mat.emissiveIntensity = 0.6
+  }
+  return mat
+}
 
-  // 边缘线
+/** 椭圆 disc（扁圆柱），支持 stack 错位叠放（波浪馆/建筑群） */
+function addDiscMesh(b: Building3DNode, color: number, radiusX: number, radiusZ: number, height: number, baseY: number, stack = 1): THREE.Mesh {
+  let mesh: THREE.Mesh | null = null
+  for (let i = 0; i < stack; i++) {
+    const shrink = 1 - i * 0.12
+    const geo = new THREE.CylinderGeometry(radiusX * shrink, radiusX * shrink, height, 32)
+    const m = new THREE.Mesh(geo, buildingMaterial(b, color))
+    m.position.set(b.x + i * 0.8, baseY + height / 2 + i * height, b.z + i * 0.6)
+    m.scale.z = radiusZ / radiusX
+    m.castShadow = true
+    m.receiveShadow = true
+    scene.add(m)
+    if (!mesh) mesh = m
+  }
+  return mesh!
+}
+
+function addBuildingEdges(geo: THREE.BufferGeometry, color: number, position: THREE.Vector3, scaleZ = 1, rotationY = 0) {
   const edges = new THREE.EdgesGeometry(geo)
   const line = new THREE.LineSegments(edges, new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.6 }))
-  line.position.copy(mesh.position)
-  scene.add(line)
+  line.position.copy(position)
+  line.scale.z = scaleZ
+  // [WEB-GLB v1.9.0] 新增 rotationY 参数: 边线随主体朝向同步旋转 (board
+  // thetaDeg); 同时挂体育场层级, 与主体 mesh 同父级不脱节
+  if (rotationY) line.rotation.y = rotationY
+  stadiumGroup.add(line)
+}
 
-  // 建筑名称标签
+function addBuildingLabel(b: Building3DNode, topY: number) {
   const labelDiv = document.createElement('div')
   labelDiv.className = 'building-label'
   labelDiv.textContent = b.name
   labelDiv.style.cssText = 'color:rgba(255,255,255,0.5);font-size:10px;font-family:system-ui;text-align:center;white-space:nowrap;'
   const label = new CSS2DObject(labelDiv)
-  label.position.set(b.x, b.h + 1, b.z)
+  label.position.set(b.x, topY + 1, b.z)
   scene.add(label)
+}
+
+// [WEB-GLB 2026-08-21] v1.4.0: addPitchLines 整体废弃 (GLB 已含草坪+标线)
+function addPitchLines(b: Building3DNode, topY: number): void {
+  // no-op: GLB 已含完整草坪+标线+球门+角旗
+}
+
+function addFlagpoles(b: Building3DNode) {
+  const n = b.flagpoles ?? 3
+  const rx = b.rx ?? 3
+  const poleMat = new THREE.MeshStandardMaterial({ color: 0xB8C4D8, roughness: 0.4, metalness: 0.6 })
+  for (let i = 0; i < n; i++) {
+    const geo = new THREE.CylinderGeometry(0.06, 0.08, 5, 6)
+    const pole = new THREE.Mesh(geo, poleMat)
+    pole.position.set(b.x - rx / 2 + (i * rx) / Math.max(n - 1, 1), 2.5, b.z)
+    scene.add(pole)
+  }
+}
+
+function addBuilding(b: Building3DNode, color: number): { topY: number; mesh: THREE.Mesh } {
+  const h = b.h ?? 6
+  switch (b.shape) {
+    // [WEB-GLB 2026-08-21] 方案 B-prime: Three.js 几何拼接 "Lusail 风" 风格化散件
+    case 'palm-tree': {
+      // 中东风棕榈树: 树干 (圆柱) + 8片叶子 (扁锥形) + 椰果簇
+      const trunkH = h
+      const trunkGeo = new THREE.CylinderGeometry(0.18, 0.32, trunkH, 8)
+      const trunkMat = new THREE.MeshStandardMaterial({ color: 0x6B4F3A, roughness: 0.9 })
+      const trunk = new THREE.Mesh(trunkGeo, trunkMat)
+      trunk.position.set(b.x, trunkH / 2, b.z)
+      trunk.castShadow = true
+      scene.add(trunk)
+      // 叶簇 (8片扇形)
+      const leafMat = new THREE.MeshStandardMaterial({ color: color, roughness: 0.7 })
+      for (let i = 0; i < 8; i++) {
+        const leafGeo = new THREE.ConeGeometry(0.85, 2.5, 4, 1, true)
+        const leaf = new THREE.Mesh(leafGeo, leafMat)
+        const angle = (i / 8) * Math.PI * 2
+        leaf.position.set(b.x + Math.cos(angle) * 1.0, trunkH + 1.2, b.z + Math.sin(angle) * 1.0)
+        leaf.rotation.z = Math.PI / 2 - 0.5
+        leaf.rotation.y = angle
+        scene.add(leaf)
+      }
+      // 椰果簇
+      for (let i = 0; i < 5; i++) {
+        const cocoGeo = new THREE.SphereGeometry(0.18, 6, 6)
+        const coco = new THREE.Mesh(cocoGeo, new THREE.MeshStandardMaterial({ color: 0x4A2A18 }))
+        const angle = (i / 5) * Math.PI * 2
+        coco.position.set(b.x + Math.cos(angle) * 0.5, trunkH + 0.8, b.z + Math.sin(angle) * 0.5)
+        scene.add(coco)
+      }
+      return { topY: trunkH + 2.5, mesh: trunk }
+    }
+    case 'street-lamp': {
+      // 路灯: 底座 + 圆柱杆 + 弯曲横杆 + 灯头 (发光球)
+      const totalH = h
+      const baseGeo = new THREE.BoxGeometry(0.8, 0.5, 0.8)
+      const baseMat = new THREE.MeshStandardMaterial({ color: 0x2A3140, roughness: 0.6 })
+      const base = new THREE.Mesh(baseGeo, baseMat)
+      base.position.set(b.x, 0.25, b.z)
+      scene.add(base)
+      // 杆
+      const poleGeo = new THREE.CylinderGeometry(0.12, 0.16, totalH - 0.5, 8)
+      const pole = new THREE.Mesh(poleGeo, new THREE.MeshStandardMaterial({ color: 0x555E70, roughness: 0.4, metalness: 0.6 }))
+      pole.position.set(b.x, (totalH - 0.5) / 2 + 0.5, b.z)
+      pole.castShadow = true
+      scene.add(pole)
+      // 横杆 (向体育场方向伸出)
+      const armLen = 2.5
+      const armGeo = new THREE.CylinderGeometry(0.06, 0.06, armLen, 6)
+      const arm = new THREE.Mesh(armGeo, pole.material)
+      arm.position.set(b.x + armLen / 2 - 0.2, totalH - 0.8, b.z)
+      arm.rotation.z = Math.PI / 2
+      scene.add(arm)
+      // 灯头
+      const lampGeo = new THREE.SphereGeometry(0.4, 12, 12)
+      const lampMat = new THREE.MeshStandardMaterial({
+        color: 0xFFF5D0, emissive: 0xFFC850, emissiveIntensity: 0.9,
+        transparent: true, opacity: 0.95,
+      })
+      const lamp = new THREE.Mesh(lampGeo, lampMat)
+      lamp.position.set(b.x + armLen - 0.4, totalH - 0.8, b.z)
+      scene.add(lamp)
+      // 灯下点光源
+      const ptLight = new THREE.PointLight(0xFFC850, 0.6, 8)
+      ptLight.position.set(b.x + armLen - 0.4, totalH - 0.8, b.z)
+      scene.add(ptLight)
+      return { topY: totalH, mesh: pole }
+    }
+    case 'metro-arch': {
+      // 地铁站入口拱门: 双立柱 + 拱顶 + 站名牌
+      const totalH = h
+      const archW = b.w ?? 8
+      const archD = 4
+      const stoneMat = new THREE.MeshStandardMaterial({ color: color ?? 0xD9C7A0, roughness: 0.7 })
+      // 左立柱
+      const leftCol = new THREE.Mesh(
+        new THREE.BoxGeometry(1, totalH, archD),
+        stoneMat,
+      )
+      leftCol.position.set(b.x - archW / 2, totalH / 2, b.z)
+      leftCol.castShadow = true
+      scene.add(leftCol)
+      // 右立柱
+      const rightCol = new THREE.Mesh(
+        new THREE.BoxGeometry(1, totalH, archD),
+        stoneMat,
+      )
+      rightCol.position.set(b.x + archW / 2, totalH / 2, b.z)
+      rightCol.castShadow = true
+      scene.add(rightCol)
+      // 拱顶 (半圆柱)
+      const archGeo = new THREE.CylinderGeometry(archW / 2, archW / 2, archD, 16, 1, false, Math.PI, Math.PI)
+      const arch = new THREE.Mesh(archGeo, stoneMat)
+      arch.position.set(b.x, totalH, b.z)
+      arch.rotation.z = Math.PI / 2
+      arch.castShadow = true
+      scene.add(arch)
+      // 站名牌
+      const signGeo = new THREE.BoxGeometry(archW - 1, 1.2, 0.2)
+      const signMat = new THREE.MeshStandardMaterial({
+        color: 0x0F1A2E, emissive: 0x2E8FFF, emissiveIntensity: 0.6,
+      })
+      const sign = new THREE.Mesh(signGeo, signMat)
+      sign.position.set(b.x, totalH - 1, b.z + archD / 2 + 0.1)
+      scene.add(sign)
+      return { topY: totalH + archW / 2, mesh: leftCol }
+    }
+    case 'hotel-tower': {
+      // 高层酒店楼: 多层错位 box + 顶部冠顶
+      const baseW = b.w ?? 14
+      const baseD = b.d ?? 14
+      const tiers = b.tiers ?? 3
+      let mesh: THREE.Mesh | null = null
+      for (let i = 0; i < tiers; i++) {
+        const shrink = 1 - i * 0.12
+        const tierH = h / tiers
+        const geo = new THREE.BoxGeometry(baseW * shrink, tierH, baseD * shrink)
+        const m = new THREE.Mesh(geo, buildingMaterial(b, color))
+        m.position.set(b.x, tierH / 2 + i * tierH, b.z)
+        m.castShadow = true
+        m.receiveShadow = true
+        scene.add(m)
+        if (!mesh) mesh = m
+        // 中间错位
+        if (i < tiers - 1) {
+          const offsetX = (i % 2 === 0 ? 1 : -1) * 0.6
+        }
+      }
+      // 顶部冠顶 (锥形)
+      const capGeo = new THREE.ConeGeometry(Math.max(baseW, baseD) * 0.5, h * 0.15, 6)
+      const cap = new THREE.Mesh(capGeo, buildingMaterial(b, color))
+      cap.position.set(b.x, h + h * 0.075, b.z)
+      scene.add(cap)
+      // LED 灯带 (发光边缘)
+      const stripMat = new THREE.MeshStandardMaterial({
+        color: 0xFFFFFF, emissive: b.emissive ? parseHexColor(b.emissive) : 0xFFD58A,
+        emissiveIntensity: 1.5,
+      })
+      for (let i = 0; i < tiers; i++) {
+        const tierH = h / tiers
+        const stripGeo = new THREE.BoxGeometry(baseW * (1 - i * 0.12) * 1.01, 0.15, baseD * (1 - i * 0.12) * 1.01)
+        const strip = new THREE.Mesh(stripGeo, stripMat)
+        strip.position.set(b.x, tierH * (i + 1), b.z)
+        scene.add(strip)
+      }
+      return { topY: h + h * 0.15, mesh: mesh! }
+    }
+    case 'road-segment': {
+      // 道路段: 灰色平面 + 中间黄色分道线
+      const roadW = b.w ?? 6
+      const roadD = b.d ?? 30
+      const roadGeo = new THREE.BoxGeometry(roadW, 0.3, roadD)
+      const roadMat = new THREE.MeshStandardMaterial({ color: 0x2A2D33, roughness: 0.95 })
+      const road = new THREE.Mesh(roadGeo, roadMat)
+      road.position.set(b.x, 0.15, b.z)
+      road.receiveShadow = true
+      scene.add(road)
+      // 边缘线 (白)
+      const lineGeo = new THREE.BoxGeometry(0.2, 0.05, roadD)
+      const lineMat = new THREE.MeshStandardMaterial({ color: 0xFFFFFF, emissive: 0xCCCCCC, emissiveIntensity: 0.3 })
+      for (const s of [-1, 1]) {
+        const line = new THREE.Mesh(lineGeo, lineMat)
+        line.position.set(b.x + s * (roadW / 2 - 0.5), 0.35, b.z)
+        scene.add(line)
+      }
+      // 中间虚线 (黄)
+      for (let i = -2; i <= 2; i++) {
+        const dash = new THREE.Mesh(
+          new THREE.BoxGeometry(0.2, 0.05, 2),
+          new THREE.MeshStandardMaterial({ color: 0xFFC850, emissive: 0xFFC850, emissiveIntensity: 0.5 }),
+        )
+        dash.position.set(b.x, 0.35, b.z + i * (roadD / 5))
+        scene.add(dash)
+      }
+      return { topY: 0.3, mesh: road }
+    }
+    case 'flagpole-row': {
+      // 旗杆列: n 根旗杆 + 卡塔尔风双色旗
+      const count = b.count ?? 5
+      const spacing = (b.w ?? count * 2) / count
+      const poleMat = new THREE.MeshStandardMaterial({ color: 0xC8CDD6, roughness: 0.3, metalness: 0.7 })
+      const flagWhiteMat = new THREE.MeshStandardMaterial({ color: 0xFFFFFF, side: THREE.DoubleSide, roughness: 0.9 })
+      const flagMaroonMat = new THREE.MeshStandardMaterial({ color: 0x8D1B3D, side: THREE.DoubleSide, roughness: 0.9 })
+      let mesh: THREE.Mesh | null = null
+      for (let i = 0; i < count; i++) {
+        const px = b.x - (b.w ?? count * 2) / 2 + spacing * (i + 0.5)
+        const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, h, 8), poleMat)
+        pole.position.set(px, h / 2, b.z)
+        pole.castShadow = true
+        scene.add(pole)
+        if (!mesh) mesh = pole
+        // 双色旗 (上半白, 下半酒红)
+        const flagW = 1.6
+        const flagH = 1.0
+        const topFlag = new THREE.Mesh(
+          new THREE.PlaneGeometry(flagW, flagH / 2),
+          flagWhiteMat,
+        )
+        topFlag.position.set(px + flagW / 2 + 0.1, h - flagH * 0.75, b.z)
+        scene.add(topFlag)
+        const botFlag = new THREE.Mesh(
+          new THREE.PlaneGeometry(flagW, flagH / 2),
+          flagMaroonMat,
+        )
+        botFlag.position.set(px + flagW / 2 + 0.1, h - flagH * 0.25, b.z)
+        scene.add(botFlag)
+        // 锯齿边
+        for (let z = -3; z <= 3; z++) {
+          const tooth = new THREE.Mesh(
+            new THREE.PlaneGeometry(0.15, 0.1),
+            flagWhiteMat,
+          )
+          tooth.position.set(px + flagW + 0.1, h - flagH / 2 + z * 0.16, b.z)
+          scene.add(tooth)
+        }
+      }
+      return { topY: h + 0.5, mesh: mesh! }
+    }
+    case 'cylinder': {
+      const mesh = addDiscMesh(b, color, b.rx ?? 4, b.rz ?? b.rx ?? 4, h, 0, b.stack ?? 1)
+      if (b.cap) {
+        const capGeo = new THREE.SphereGeometry((b.rx ?? 4) * 0.9, 24, 12, 0, Math.PI * 2, 0, Math.PI / 2)
+        const cap = new THREE.Mesh(capGeo, buildingMaterial(b, color))
+        cap.position.set(b.x, h, b.z)
+        cap.scale.set(1, 0.6, (b.rz ?? b.rx ?? 4) / (b.rx ?? 4))
+        scene.add(cap)
+      }
+      return { topY: h, mesh }
+    }
+    case 'disc': {
+      const mesh = addDiscMesh(b, color, b.rx ?? 4, b.rz ?? b.rx ?? 4, h, 0)
+      if (b.flagpoles) addFlagpoles(b)
+      if (b.jet) {
+        const jetGeo = new THREE.CylinderGeometry(0.3, 0.5, 2.2, 8)
+        const jetMat = new THREE.MeshStandardMaterial({
+          color: 0x9FD8FF, emissive: b.emissive ? parseHexColor(b.emissive) : 0x2E8FFF,
+          emissiveIntensity: 0.8, transparent: true, opacity: 0.7,
+        })
+        const jet = new THREE.Mesh(jetGeo, jetMat)
+        jet.position.set(b.x, h + 1.1, b.z)
+        scene.add(jet)
+      }
+      return { topY: h, mesh }
+    }
+    case 'ring': {
+      // 跑道：外椭圆 disc，内圈由草坪节点叠色覆盖
+      const mesh = addDiscMesh(b, color, b.rx ?? 5, b.rz ?? b.rx ?? 5, h, 0)
+      return { topY: h, mesh }
+    }
+    case 'shell': {
+      // 看台碗体：openEnded 椭圆壳体，tiers 三色环带自内向外叠放
+      const rx = b.rx ?? 20
+      const rz = b.rz ?? 16
+      const tiers = b.tiers && b.tiers.length > 0 ? b.tiers : [b.color ?? '#3E5C8F']
+      let mesh: THREE.Mesh | null = null
+      tiers.forEach((tierColor, i) => {
+        const inset = 1 - i * 0.08
+        const tierH = h / tiers.length
+        const geo = new THREE.CylinderGeometry(rx * (1 - i * 0.12), rx * (1 - (i + 1) * 0.12) + rx * 0.06, tierH, 32, 1, true)
+        const m = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({
+          color: parseHexColor(tierColor), transparent: true, opacity: 0.5, roughness: 0.7, metalness: 0.2, side: THREE.DoubleSide,
+        }))
+        m.position.set(b.x, tierH / 2 + i * tierH, b.z)
+        m.scale.z = (rz / rx) * inset
+        m.castShadow = true
+        scene.add(m)
+        if (!mesh) mesh = m
+      })
+      return { topY: h, mesh: mesh! }
+    }
+    case 'shell-cap': {
+      // 花瓣屋盖：半球切片 + 经线肋纹近似
+      const rx = b.rx ?? 12
+      const rz = b.rz ?? 8
+      const phiLen = Math.PI * 0.75
+      const phiStart = -phiLen / 2
+      const geo = new THREE.SphereGeometry(rx, 24, 12, phiStart, phiLen, 0, Math.PI / 2)
+      const m = new THREE.Mesh(geo, buildingMaterial(b, color))
+      m.position.set(b.x, h * 0.45, b.z)
+      m.scale.set(1, h / rx, rz / rx)
+      m.rotation.y = ((b.thetaDeg ?? 0) * Math.PI) / 180
+      m.castShadow = true
+      scene.add(m)
+      const edges = new THREE.LineSegments(
+        new THREE.WireframeGeometry(geo),
+        new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.25 }),
+      )
+      edges.position.copy(m.position)
+      edges.scale.copy(m.scale)
+      edges.rotation.y = m.rotation.y
+      scene.add(edges)
+      return { topY: h * 0.45 + h, mesh: m }
+    }
+    case 'pylon': {
+      // 塔桅：细圆柱 + 顶部发光球 + 向上光束
+      const pylonGeo = new THREE.CylinderGeometry(0.25, 0.45, h, 10)
+      const m = new THREE.Mesh(pylonGeo, buildingMaterial(b, color))
+      m.position.set(b.x, h / 2, b.z)
+      m.castShadow = true
+      scene.add(m)
+      const topGeo = new THREE.SphereGeometry(0.7, 12, 12)
+      const topMat = new THREE.MeshStandardMaterial({ color: 0xE8EEF7, emissive: 0xBBD4FF, emissiveIntensity: 0.9 })
+      const top = new THREE.Mesh(topGeo, topMat)
+      top.position.set(b.x, h + 0.5, b.z)
+      scene.add(top)
+      if (b.beam) {
+        const beamGeo = new THREE.CylinderGeometry(0.12, 0.3, 10, 8)
+        const beamMat = new THREE.MeshBasicMaterial({ color: 0xBBD4FF, transparent: true, opacity: 0.18, depthWrite: false })
+        const beam = new THREE.Mesh(beamGeo, beamMat)
+        beam.position.set(b.x, h + 6, b.z)
+        scene.add(beam)
+      }
+      return { topY: h + 1, mesh: m }
+    }
+    case 'board': {
+      // LED 大屏：悬浮薄板 + 发光面
+      const w = b.w ?? 6
+      const bh = b.h ?? 3
+      const baseY = b.y ?? 6
+      const geo = new THREE.BoxGeometry(w, bh, 0.3)
+      const m = new THREE.Mesh(geo, buildingMaterial(b, color))
+      m.position.set(b.x, baseY + bh / 2, b.z)
+      // [WEB-GLB v1.9.0] 大屏朝向: BoxGeometry 正面朝 +z, 绕 Y 旋转 thetaDeg 后
+      // 正面朝 (sinθ, 0, cosθ)。thetaDeg 由双端同源配置 (scene_config.json /
+      // StadiumSceneData.js 的 board 节点) 提供 — 朝场心角 ± 观众席修正;
+      // 同款先例: shell-cap 分支 m.rotation.y (thetaDeg 弧度制)
+      m.rotation.y = ((b.thetaDeg ?? 0) * Math.PI) / 180
+      m.castShadow = true
+      // [WEB-GLB v1.9.0] 挂体育场层级 (跟随整体变换) + 收集 mesh 供视频投放
+      stadiumGroup.add(m)
+      boardMeshes.push(m)
+      boardOriginalMaterials.push(m.material as THREE.Material)
+      addBuildingEdges(geo, color, m.position, 1, m.rotation.y)
+      // 支撑立柱
+      const postGeo = new THREE.CylinderGeometry(0.15, 0.15, baseY, 6)
+      const post = new THREE.Mesh(postGeo, new THREE.MeshStandardMaterial({ color: 0x333A48, roughness: 0.6 }))
+      post.position.set(b.x, baseY / 2, b.z)
+      stadiumGroup.add(post)
+      return { topY: baseY + bh, mesh: m }
+    }
+    case 'cone': {
+      // 棕榈树簇（装饰层，受 decor 开关控制）
+      const count = b.count ?? 3
+      const rx = b.rx ?? 4
+      const rz = b.rz ?? rx
+      let mesh: THREE.Mesh | null = null
+      if (sceneDecorEnabled) {
+        for (let i = 0; i < count; i++) {
+          const tx = b.x - rx + (2 * rx * i) / Math.max(count - 1, 1)
+          const tz = b.z + (i % 2 === 0 ? -rz * 0.4 : rz * 0.4)
+          const geo = new THREE.ConeGeometry(0.9, h, 8)
+          const m = new THREE.Mesh(geo, buildingMaterial(b, color))
+          m.position.set(tx, h / 2, tz)
+          m.castShadow = true
+          scene.add(m)
+          if (!mesh) mesh = m
+        }
+      }
+      if (!mesh) {
+        // decor 关闭时占位（保证 buildingGroups 注册不缺失）
+        const geo = new THREE.ConeGeometry(0.01, 0.01, 4)
+        mesh = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ visible: false }))
+        mesh.position.set(b.x, 0, b.z)
+        scene.add(mesh)
+      }
+      return { topY: h, mesh }
+    }
+    case 'model': {
+      // GLB 模型：占位 mesh 由 GLB 异步加载后 applyModelToBuilding 替换
+      const placeholder = new THREE.Mesh(
+        new THREE.BoxGeometry(0.01, 0.01, 0.01),
+        new THREE.MeshBasicMaterial({ visible: false }),
+      )
+      placeholder.position.set(b.x, 0, b.z)
+      scene.add(placeholder)
+      if (b.modelUrl) {
+        loadBuildingModel(b.name, b.modelUrl, {
+          scale: b.modelScale,
+          rotationDeg: b.modelRotationDeg,
+          offsetY: b.modelOffsetY,
+        })
+      }
+      return { topY: b.h ?? 0, mesh: placeholder }
+    }
+    case 'box':
+    default: {
+      const w = b.w ?? 6
+      const d = b.d ?? 6
+      const geo = new THREE.BoxGeometry(w, h, d)
+      const m = new THREE.Mesh(geo, buildingMaterial(b, color))
+      m.position.set(b.x, h / 2, b.z)
+      m.castShadow = true
+      m.receiveShadow = true
+      scene.add(m)
+      addBuildingEdges(geo, b.edgeGlow ? parseHexColor(b.edgeGlow) : color, m.position)
+      // [WEB-GLB 2026-08-21] v1.4.0: 删除了替补席/教练区/球员通道的遮阳棚代码
+      // (GLB cabin_2 已含完整更衣室结构)
+      if (b.cap) {
+        // 尖顶近似（红瓦小屋）
+        const capGeo = new THREE.ConeGeometry(Math.max(w, d) * 0.72, h * 0.6, 4)
+        const cap = new THREE.Mesh(capGeo, buildingMaterial(b, 0xA05A45))
+        cap.position.set(b.x, h + h * 0.3, b.z)
+        cap.rotation.y = Math.PI / 4
+        scene.add(cap)
+      }
+      if (b.stack && b.stack > 1) {
+        for (let i = 1; i < b.stack; i++) {
+          const shrink = 1 - i * 0.15
+          const sGeo = new THREE.BoxGeometry(w * shrink, h * 0.5, d * shrink)
+          const sMesh = new THREE.Mesh(sGeo, buildingMaterial(b, color))
+          sMesh.position.set(b.x + i * 1.2, h + (h * 0.5) / 2 + (i - 1) * h * 0.5, b.z + i * 0.8)
+          sMesh.castShadow = true
+          scene.add(sMesh)
+        }
+      }
+      return { topY: h, mesh: m }
+    }
+  }
+}
+
+function createBuilding(b: Building3DNode) {
+  // 不可见锚点（看台分区告警联动），不渲染
+  if (b.shape === 'anchor') return
+  const color = b.color ? parseHexColor(b.color) : 0x1A73E8
+  const { topY, mesh } = addBuilding(b, color)
+
+  // 草坪标线
+  if (b.pitchLines) addPitchLines(b, b.h ?? 0.3)
+
+  // 建筑名称标签（装饰层关闭时不显示树簇标签）
+  if (!(b.decor && !sceneDecorEnabled)) addBuildingLabel(b, topY)
 
   // P2-5: 记录建筑 mesh 到 buildingGroups 以支持 visibility 动作
   buildingGroups.set(b.name, mesh as unknown as THREE.Group)
@@ -1110,36 +1779,44 @@ function createDevice(d: Device3D) {
   }
   const color = statusColors[d.status] || 0x0F9D58
 
-  // 摄像头主体（圆柱+球）
-  const bodyGeo = new THREE.CylinderGeometry(0.3, 0.4, 1.2, 8)
+  // [v1.9.4] 3D 形态: 立柱圆柱+球 → 枪机摄像头(机身/镜头筒/吊装块
+  // 合并几何)。硬约束: entry.mesh 必须保持单 Mesh 且 position=(d.x,d.y,d.z)
+  // (pickDevice 邻近匹配 ±0.1 依赖), 因此用 mergeGeometries 而非 Group
+  // 或多 Mesh 子节点。rotation 复用数据字段作为机身朝向(视锥 v1.9.1
+  // 移除后该字段闲置)。
+  const bodyGeo = new THREE.BoxGeometry(1.05, 0.48, 0.42)
+  const lensTubeGeo = new THREE.CylinderGeometry(0.13, 0.17, 0.42, 12)
+    .rotateZ(Math.PI / 2)
+    .translate(-0.72, 0, 0)
+  const mountGeo = new THREE.BoxGeometry(0.15, 0.4, 0.15)
+    .translate(0.28, 0.4, 0)
+  const camGeo = mergeGeometries([bodyGeo, lensTubeGeo, mountGeo])!
+  bodyGeo.dispose()
+  lensTubeGeo.dispose()
+  mountGeo.dispose()
   const bodyMat = new THREE.MeshStandardMaterial({ color: 0x5a6070, roughness: 0.5, metalness: 0.6 })
-  const body = new THREE.Mesh(bodyGeo, bodyMat)
+  const body = new THREE.Mesh(camGeo, bodyMat)
   body.position.set(d.x, d.y, d.z)
+  body.rotation.y = d.rotation ?? 0
   body.castShadow = true
-  scene.add(body)
+  // [WEB-GLB v1.9.0] 设备图标挂体育场层级: 跟随整体变换; stadiumGroup 为
+  // identity 变换时本地坐标=世界坐标, pickDevice 邻近匹配/doDeviceDrag 兼容
+  stadiumGroup.add(body)
 
-  // 镜头（小球）
-  const lensGeo = new THREE.SphereGeometry(0.35, 12, 12)
-  const lensMat = new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.5, roughness: 0.3 })
+  // 状态指示灯（吊装块顶部发光珠）。原"镜头球"职责拆分: 镜头并入机身
+  // 几何, 球仅显示状态色; doDeviceDrag 仅改 x/z, y 偏移变化仍兼容
+  const lensGeo = new THREE.SphereGeometry(0.15, 10, 10)
+  const lensMat = new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 1.2, roughness: 0.3 })
   const lens = new THREE.Mesh(lensGeo, lensMat)
-  lens.position.set(d.x, d.y + 0.8, d.z)
-  scene.add(lens)
+  lens.position.set(d.x, d.y + 0.68, d.z)
+  stadiumGroup.add(lens)
 
-  // FOV视锥
-  const fov = d.fov || 60
-  const dist = 12
-  const angle = (fov * Math.PI) / 360
-  const coneGeo = new THREE.ConeGeometry(Math.tan(angle) * dist, dist, 16, 1, true)
-  const coneMat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.08, side: THREE.DoubleSide, depthWrite: false })
-  const cone = new THREE.Mesh(coneGeo, coneMat)
-  cone.position.set(d.x, d.y + 0.5, d.z)
-  const rot = d.rotation || 0
-  cone.rotation.x = Math.PI / 2
-  cone.rotation.z = rot
-  cone.translateY(-dist / 2)
-  scene.add(cone)
-
-  const entry = { mesh: body, cone, lens } as any
+  // [WEB-GLB v1.9.1] FOV 视锥已移除 (用户反馈): 初始化时 19 个半透明锥体
+  // (opacity 0.08 + DoubleSide) 从设备水平延伸 12 单位, 内场/看台/球门
+  // 设备的视锥互相叠加横跨草皮上空, 形成"球场铺一层东西"的雾状观感,
+  // 干扰 GLB 体育场 1:1 还原的整体效果; 且视锥无任何选中/悬停联动逻辑,
+  // 纯静态装饰无信息量。fov/rotation 数据字段保留 (配置兼容), 仅不再渲染。
+  const entry = { mesh: body, lens } as any
 
   // 告警脉冲球
   if (d.status === 'alarm') {
@@ -1147,40 +1824,46 @@ function createDevice(d: Device3D) {
     const pulseMat = new THREE.MeshBasicMaterial({ color: 0xDB4437, transparent: true, opacity: 0.25, depthWrite: false })
     const pulse = new THREE.Mesh(pulseGeo, pulseMat)
     pulse.position.set(d.x, d.y + 1, d.z)
-    scene.add(pulse)
+    stadiumGroup.add(pulse)
     entry.pulse = pulse
   }
 
   // 设备标签
   const labelDiv = document.createElement('div')
   labelDiv.className = 'device-label-3d'
-  const icon = statusIcon(d.status)
-  labelDiv.textContent = `${icon} ${d.name}`
+  // [v1.9.4] 图标: emoji 状态圆点(🟢🔴) → iconfont 摄像头图标 + 状态
+  // 着色(用户反馈"摄像头的图标不对")。CSS2DObject 是挂在场景容器内的
+  // 真实 DOM, main.ts 全局引入的 iconfont.css 对其生效
+  const iconColor = DEVICE_ICON_COLORS[d.status] || DEVICE_ICON_COLORS.offline
+  labelDiv.innerHTML = `<i class="iconfont1 icon1-monitor-camera-full" style="color:${iconColor};font-size:12px;font-style:normal;margin-right:3px;" aria-hidden="true"></i>${d.name}`
   labelDiv.style.cssText = `color:${d.status === 'alarm' ? '#DB4437' : '#E8EAED'};font-size:11px;font-family:system-ui;background:rgba(20,25,40,0.7);padding:2px 6px;border-radius:3px;white-space:nowrap;`
   const label = new CSS2DObject(labelDiv)
   label.position.set(d.x, d.y + 2.5, d.z)
-  scene.add(label)
+  stadiumGroup.add(label)
   entry.label = label
 
   deviceMeshes.set(d.id, entry)
+  // [WEB-GLB v1.9.0] 设备新增: 拾取缓存失效 (自动覆盖 lazy load / watch
+  // devices 全量重建路径 — 均经由本函数创建)
+  deviceMeshListDirty = true
 }
 
 /** 从场景中移除设备对象并释放其 GPU 资源 */
-function removeDeviceEntry(entry: { mesh: THREE.Mesh; cone: THREE.Mesh; pulse?: THREE.Mesh; label?: CSS2DObject }) {
-  scene.remove(entry.mesh)
-  scene.remove(entry.cone)
-  if (entry.pulse) scene.remove(entry.pulse)
-  if (entry.label) scene.remove(entry.label)
+function removeDeviceEntry(entry: { mesh: THREE.Mesh; pulse?: THREE.Mesh; label?: CSS2DObject }) {
+  // [WEB-GLB v1.9.0] 与 createDevice 对称: 从体育场层级移除 (懒卸载路径同样经由本函数)
+  stadiumGroup.remove(entry.mesh)
+  if (entry.pulse) stadiumGroup.remove(entry.pulse)
+  if (entry.label) stadiumGroup.remove(entry.label)
 
   // 释放 GPU 资源
   entry.mesh.geometry?.dispose()
   ;(entry.mesh.material as THREE.Material)?.dispose()
-  entry.cone.geometry?.dispose()
-  ;(entry.cone.material as THREE.Material)?.dispose()
   if (entry.pulse) {
     entry.pulse.geometry?.dispose()
     ;(entry.pulse.material as THREE.Material)?.dispose()
   }
+  // [WEB-GLB v1.9.0] 设备移除: 拾取缓存失效 (deviceMeshList 下次拾取时重建)
+  deviceMeshListDirty = true
 }
 
 /** 根据指针事件拾取设备（raycast 按位置邻近匹配） */
@@ -1193,14 +1876,30 @@ function pickDevice(event: MouseEvent): Device3D | null {
   mouse.y = -((event.clientY - rect.top) / h) * 2 + 1
 
   raycaster.setFromCamera(mouse, camera)
-  const meshes = Array.from(deviceMeshes.values()).map(e => e.mesh)
-  const intersects = raycaster.intersectObjects(meshes)
+  // [WEB-GLB v1.9.0] 拾取网格缓存: 设备增删时置 dirty (createDevice/
+  // removeDeviceEntry), 避免每次 mousemove 都 Array.from + map 重建数组
+  // (60~120Hz 高频分配 → GC 卡顿); stadiumGroup identity 下 mesh 本地坐标
+  // = 世界坐标, 邻近匹配语义不变
+  if (deviceMeshListDirty) {
+    deviceMeshList = Array.from(deviceMeshes.values()).map(e => e.mesh)
+    deviceMeshListDirty = false
+  }
+  const intersects = raycaster.intersectObjects(deviceMeshList)
   if (intersects.length === 0) return null
   const hit = intersects[0].object
   return (props.devices || defaultDevices).find(d =>
     Math.abs(d.x - hit.position.x) < 0.1 && Math.abs(d.z - hit.position.z) < 0.1
   ) || null
 }
+
+// [WEB-GLB v1.9.0] mousemove 悬停拾取 rAF 合并节流: 指针事件可达 120Hz+,
+// 每次全量 raycast + 设备/建筑双向拾取是交互卡顿主因之一。将普通悬停拾取
+// 合并到每帧至多一次 (同帧多次 mousemove 只处理最后一次坐标); 绘制预览与
+// 拖拽路径保持即时响应。依据: MDN 'Event handler performance' 推荐的
+// requestAnimationFrame 合并写入模式
+let pointerMovePending = false
+let pointerMoveEvent: MouseEvent | null = null
+let pointerPickRafId = 0
 
 function onMouseMove(event: MouseEvent) {
   // P2-2: 建筑绘制模式 — 实时预览矩形
@@ -1214,6 +1913,19 @@ function onMouseMove(event: MouseEvent) {
     doDeviceDrag(event)
     return
   }
+  // [WEB-GLB v1.9.0] 普通悬停拾取: rAF 合并 (每帧至多一次)
+  pointerMoveEvent = event
+  if (!pointerMovePending) {
+    pointerMovePending = true
+    pointerPickRafId = requestAnimationFrame(processHoverPick)
+  }
+}
+
+/** [WEB-GLB v1.9.0] rAF 回调: 每帧至多一次悬停拾取（含建筑 hover 检测） */
+function processHoverPick() {
+  pointerMovePending = false
+  const event = pointerMoveEvent
+  if (!event) return
   const found = pickDevice(event)
   hoveredDevice.value = found
   if (containerRef.value) {
@@ -1247,8 +1959,11 @@ function doDeviceDrag(event: MouseEvent) {
   mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1
   mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1
   raycaster.setFromCamera(mouse, camera)
+  // [WEB-GLB v1.9.0] 复用 dragUpNormal/dragPlanePoint (见声明处注释):
+  // 拖拽高频路径不再每次 new 两个 Vector3
   // 水平面 Y = dragFixedY
-  dragPlane.setFromNormalAndCoplanarPoint(new THREE.Vector3(0, 1, 0), new THREE.Vector3(0, dragFixedY, 0))
+  dragPlanePoint.set(0, dragFixedY, 0)
+  dragPlane.setFromNormalAndCoplanarPoint(dragUpNormal, dragPlanePoint)
   raycaster.ray.intersectPlane(dragPlane, dragIntersect)
   if (!dragIntersect) return
 
@@ -1256,13 +1971,15 @@ function doDeviceDrag(event: MouseEvent) {
   if (!entry) return
   const nx = dragIntersect.x
   const nz = dragIntersect.z
-  // 更新主体 + 镜头 + 视锥 + 脉冲球 + 标签
+  // 更新主体 + 镜头 + 脉冲球 + 标签
   entry.mesh.position.x = nx
   entry.mesh.position.z = nz
   if (entry.lens) { entry.lens.position.x = nx; entry.lens.position.z = nz }
-  if (entry.cone) { entry.cone.position.x = nx; entry.cone.position.z = nz }
   if (entry.pulse) { entry.pulse.position.x = nx; entry.pulse.position.z = nz }
   if (entry.label) { entry.label.position.x = nx; entry.label.position.z = nz }
+  // [WEB-GLB v1.8.0] 拖拽中设备位移: 单次刷新阴影 + 标脏 (静态阴影模式)
+  renderer.shadowMap.needsUpdate = true
+  requestRender()
 }
 
 // ── 点击跳转设备详情 ──
@@ -1327,7 +2044,7 @@ function onPointerUp(event: MouseEvent) {
     isDragging = false
     controls.enabled = true
     if (entry) {
-      const buildings = (props.buildings || defaultBuildings) as Array<{ name: string; x: number; z: number; w: number; d: number; h: number; color?: string }>
+      const buildings = (props.buildings || defaultBuildings) as Building3DNode[]
       const detectedBuilding = detectBuilding(entry.mesh.position.x, entry.mesh.position.z, buildings)
       emit('device-drag', {
         deviceId: dragDeviceId,
@@ -1388,6 +2105,57 @@ function onDevicePlayback() {
   void router.push(`/recordings${q}`)
 }
 
+// [WEB-GLB v1.9.8] 投放至大屏 — 仅投 3D LED 大屏动态纹理不弹窗: SituationScreen
+// onDeviceCast 独立拉流(隐藏 video)后回调 castVideoToBoards; 同设备再次点击
+// 由父组件 toggle 停止 (stopVideoCast 还原材质并释放视频纹理)
+function onDeviceCastToBoard() {
+  const dev = contextMenu.device
+  if (!dev) return
+  emit('device-cast', { id: dev.id, name: dev.name, businessId: dev.businessId, deviceType: dev.deviceType })
+  closeContextMenu()
+}
+
+/** [WEB-GLB v1.9.0] 将视频元素投放到 4 块 LED 大屏 (动态视频纹理)。
+ *  依据 three.js 0.184 VideoTexture 源码: 构造时自动注册
+ *  requestVideoFrameCallback, 视频每一新帧自动置 needsUpdate=true,
+ *  dispose() 时自动取消回调; 默认 LinearFilter + generateMipmaps=false,
+ *  无需手动逐帧刷新。colorSpace=SRGB: 视频帧为 sRGB 编码, r152+ 默认色彩
+ *  管理下须显式标注才能正确 sRGB→linear→输出转换 (官方 webgl_materials_video
+ *  同款)。MeshBasicMaterial 自发光不受灯光/阴影影响, 与 LED 屏发光属性一致
+ *  [WEB-GLB v1.9.8] 返回是否投放成功 — GLB 异步加载期间 boardMeshes 未
+ *  就绪时返回 false, 父组件 (全屏切换迁移投放) 据此轮询重投 */
+function castVideoToBoards(video: HTMLVideoElement): boolean {
+  if (!scene || boardMeshes.length === 0) return false
+  // 重复投放: 先还原上一次 (材质/纹理资源正确释放)
+  if (isCastingVideo) stopVideoCast()
+  boardVideoTexture = new THREE.VideoTexture(video)
+  boardVideoTexture.colorSpace = THREE.SRGBColorSpace
+  boardCastMaterial = new THREE.MeshBasicMaterial({ map: boardVideoTexture })
+  boardMeshes.forEach((m, i) => {
+    if (boardOriginalMaterials[i]) m.material = boardCastMaterial!
+  })
+  isCastingVideo = true
+  // [WEB-GLB v1.8.0 契约延续] 场景变化: 单次刷新阴影 + 标脏
+  renderer.shadowMap.needsUpdate = true
+  requestRender()
+  return true
+}
+
+/** [WEB-GLB v1.9.0] 停止投放: 还原 4 块大屏原材质并释放视频纹理
+ *  (VideoTexture.dispose 自动取消 requestVideoFrameCallback 注册) */
+function stopVideoCast() {
+  if (!isCastingVideo) return
+  boardMeshes.forEach((m, i) => {
+    if (boardOriginalMaterials[i]) m.material = boardOriginalMaterials[i]
+  })
+  boardCastMaterial?.dispose()
+  boardVideoTexture?.dispose()
+  boardCastMaterial = null
+  boardVideoTexture = null
+  isCastingVideo = false
+  requestRender()
+}
+
 // T4: 设备详情 — 跳转到设备详情页
 function onDeviceDetailNav() {
   const dev = contextMenu.device
@@ -1400,13 +2168,15 @@ function animate() {
   animationId = requestAnimationFrame(animate)
   const t = (performance.now() - startTime) / 1000
 
-  // 性能采集器 tick（精确计算 FPS）
+  // 性能采集器 tick（精确计算 FPS）——轻量, 每帧保留
   perfCollector?.tick()
 
-  // 告警脉冲动画
+  // 告警脉冲动画 (连续动画源之一)
+  let anyPulse = false
   if (alarmPulse.value) {
     deviceMeshes.forEach((entry) => {
       if (entry.pulse) {
+        anyPulse = true
         const s = 1 + 0.3 * Math.sin(t * 3);
         (entry.pulse.scale as any).set(s, s, s);
         (entry.pulse.material as any).opacity = 0.15 + 0.1 * Math.sin(t * 3);
@@ -1419,38 +2189,45 @@ function animate() {
     if (entry.label) entry.label.visible = showLabels.value
   })
 
+  // controls.update() 内部阻尼会让相机持续微调, 相机变化时派发 'change' 事件
+  // → requestRender(), 因此惯性滑动期间仍会渲染, 停下后自动停渲
   controls.update()
-  renderer.render(scene, camera)
-  labelRenderer.render(scene, camera)
 
-  // 更新性能面板数据（从采集器获取最新快照）
-  if (showPerfPanel.value && perfCollector) {
-    const snap = perfCollector.latestSnapshot
-    if (snap) {
-      // 补充 renderer 实时数据（采集器的快照是采样间隔的，但 renderer.info 每帧更新）
-      perfSnapshot.value = {
-        ...snap,
-        drawCalls: renderer.info.render.calls,
-        triangles: renderer.info.render.triangles,
-        geometries: renderer.info.memory.geometries,
-        textures: renderer.info.memory.textures,
+  // 巡视/序列更新 (各自推进相机或触发 action, 均为连续动画源)
+  updatePatrol()
+  updateSequence()
+
+  // [WEB-GLB v1.8.0] 按需渲染: 仅在脏标或存在连续动画时执行 WebGL 渲染。
+  // 依据 three.js 官方 "Rendering on demand" 模式: 静态帧 GPU 归零,
+  // 把算力让给交互帧, 旋转/缩放更流畅
+  // [WEB-GLB v1.9.0] isCastingVideo: VideoTexture 的 rVFC 只置纹理脏标,
+  // 不触发本组件渲染循环 — 投放期间必须持续渲染才能呈现动态视频帧
+  const animating = anyPulse || isPatrolling || isPlayingSequence || lazyLoadScheduled || isCastingVideo
+  if (renderDirty || animating) {
+    renderer.render(scene, camera)
+    labelRenderer.render(scene, camera)
+    renderDirty = false
+
+    // 性能面板数据 (仅在实际渲染帧更新)
+    if (showPerfPanel.value && perfCollector) {
+      const snap = perfCollector.latestSnapshot
+      if (snap) {
+        perfSnapshot.value = {
+          ...snap,
+          drawCalls: renderer.info.render.calls,
+          triangles: renderer.info.render.triangles,
+          geometries: renderer.info.memory.geometries,
+          textures: renderer.info.memory.textures,
+        }
       }
     }
   }
 
-  // 懒加载分批调度
+  // 懒加载分批调度 / 懒卸载检查
   processLazyLoadBatch()
-
-  // 懒卸载检查
   checkLazyUnload()
 
-  // P2-4: 巡视路线更新
-  updatePatrol()
-
-  // P2-5: 动作序列更新
-  updateSequence()
-
-  // P2-6: 小地图渲染（每帧更新）
+  // P2-6: 小地图渲染（2D canvas, 开销低, 保持每帧）
   if (props.showMiniMap) {
     drawMiniMapFrame()
   }
@@ -1469,6 +2246,8 @@ function updateSize(w: number, h: number) {
   camera.updateProjectionMatrix()
   renderer.setSize(safeW, safeH)
   labelRenderer.setSize(safeW, safeH)
+  // [WEB-GLB v1.8.0] 尺寸变化后标脏重渲
+  requestRender()
 }
 
 /** window resize 回调 */
@@ -1482,13 +2261,14 @@ function onResize() {
 }
 
 function resetCamera() {
-  camera.position.set(60, 50, 70)
-  controls.target.set(0, 0, 0)
+  // [v1.9.5] 与 init 默认相机同步回滚 (见 init 处注释)
+  camera.position.set(45, 35, 55)
+  controls.target.set(0, 5, 0)
   controls.update()
 }
 
-function toggleAlarmPulse() { alarmPulse.value = !alarmPulse.value }
-function toggleLabels() { showLabels.value = !showLabels.value }
+function toggleAlarmPulse() { alarmPulse.value = !alarmPulse.value; requestRender() }
+function toggleLabels() { showLabels.value = !showLabels.value; requestRender() }
 function togglePerfPanel() {
   showPerfPanel.value = !showPerfPanel.value
   if (showPerfPanel.value) {
@@ -1528,6 +2308,10 @@ defineExpose({
   stopSequence,
   // P2-6
   initMiniMap,
+  // [WEB-GLB v1.9.0] LED 大屏视频投放 (SituationScreen 拉流就绪后调用)
+  castVideoToBoards,
+  stopVideoCast,
+  isVideoCasting: () => isCastingVideo,
 })
 
 // ── Watch devices prop ──
@@ -1549,6 +2333,9 @@ watch(() => props.devices, (newDevices) => {
   } else {
     newDevices.forEach(d => createDevice(d))
   }
+  // [WEB-GLB v1.8.0] 设备重建后刷新阴影 + 标脏
+  renderer.shadowMap.needsUpdate = true
+  requestRender()
 }, { deep: true })
 
 // Watch editMode: toggle OrbitControls
@@ -1611,12 +2398,20 @@ onUnmounted(() => {
   stopPatrol()
   stopSequence()
 
+  // [WEB-GLB v1.9.0] 停止 LED 大屏视频投放 (还原材质 + 释放 VideoTexture,
+  // 避免卸载后 rVFC 回调残留) + 取消悬停拾取 pending rAF
+  stopVideoCast()
+  cancelAnimationFrame(pointerPickRafId)
+
   // P2-1: 清理底图
   if (groundImageMesh) {
     groundImageMesh.geometry.dispose()
     ;(groundImageMesh.material as THREE.Material).dispose()
     groundImageMesh = null
   }
+  // [WEB-GLB v1.9.0] 清理大屏收集数组 (disposeSceneResources 已释放 mesh 资源)
+  boardMeshes = []
+  boardOriginalMaterials = []
 
   // P2-6: 清理小地图
   if (miniMapCanvas) {
@@ -1975,5 +2770,15 @@ onUnmounted(() => {
   font-size: 16px;
   width: 18px;
   text-align: center;
+}
+
+/* [WEB-GLB v1.9.8] 正在投放至 LED 大屏的设备菜单项高亮 (切换"停止投放") */
+.context-menu-item.context-menu-casting {
+  color: #35E08C;
+}
+
+.context-menu-item.context-menu-casting:hover {
+  color: #5CF0A6;
+  background: rgba(53, 224, 140, 0.12);
 }
 </style>

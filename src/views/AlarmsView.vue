@@ -1331,6 +1331,10 @@ async function showEvidence(row: any) {
   }
 
   // 自动查询告警设备在报警时间前后的录像
+  // [FIX evidence-AI 2026-08-18] 从证据 video_clip URL 提取 ZLM 流名 (gb_131...) 传入,
+  // 避免 channel_id (国标 340 开头) 与实际流名 (设备注册 131 开头) 不匹配导致查不到录像
+  const clipUrl = evidenceData.value?.videoClipUrl || row.videoClipUrl || ''
+  const streamMatch = clipUrl.match(/^\/record\/rtp\/([^/]+)\//)
   if (row.deviceId) {
     try {
       const alarmTime = new Date(row.createdAt)
@@ -1339,6 +1343,7 @@ async function showEvidence(row: any) {
       deviceRecordings.value = await queryRecordings({
         device_id: row.deviceId,
         channel_id: row.channelId || undefined,
+        stream_name: streamMatch ? streamMatch[1] : undefined,
         start_time: toLocalISOString(start),
         end_time: toLocalISOString(end),
       })
