@@ -91,7 +91,7 @@ const { threeMock } = vi.hoisted(() => {
     EdgesGeometry: vi.fn(function () { return {} }),
     WireframeGeometry: vi.fn(function () { return {} }),
     BufferGeometry: vi.fn(function () {
-      return { setFromPoints: vi.fn(function () { return this }), dispose: vi.fn() }
+      return { setFromPoints: vi.fn(function (this: unknown) { return this }), dispose: vi.fn() }
     }),
     GridHelper: vi.fn(function () { return {} }),
     MeshStandardMaterial: vi.fn(function () {

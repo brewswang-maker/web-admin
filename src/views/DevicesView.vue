@@ -533,11 +533,13 @@ const pickerDevice = ref<{ id: string; name: string; longitude?: number; latitud
 
 function openLocationPicker(row: DeviceItem) {
   const meta = (row.metadata as any) || {}
+  // 后端可能附带经纬度但未入 DeviceItem 类型声明，此处局部扩展
+  const rowLoc = row as DeviceItem & { longitude?: number; latitude?: number }
   pickerDevice.value = {
     id: row.id,
     name: row.name,
-    longitude: row.longitude ?? meta.longitude,
-    latitude: row.latitude ?? meta.latitude,
+    longitude: rowLoc.longitude ?? meta.longitude,
+    latitude: rowLoc.latitude ?? meta.latitude,
     address: row.location ?? meta.location ?? '',
   }
   showLocationPicker.value = true

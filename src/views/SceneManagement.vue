@@ -46,7 +46,7 @@
           ref="previewScene3dRef"
           class="preview-3d"
           :devices="[]"
-          :buildings="activeScene?.buildings || []"
+          :buildings="previewBuildings"
           :ground-image-url="groundImageUrl"
           :draw-building-mode="drawBuildingMode"
           :show-mini-map="false"
@@ -62,17 +62,20 @@
 import { ref, computed, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { sceneApi, type SceneConfig, type SceneScheme } from '@/api/scene'
+import type { Building3DNode } from '@/components/scene3d/types/scene3d'
 import Scene3D from '@/components/Scene3D.vue'
 
 const saving = ref(false)
 const scenes = ref<SceneConfig[]>([])
 const activeSceneId = ref('default')
 const activeScene = computed(() => scenes.value.find(s => s.id === activeSceneId.value) || scenes.value[0] || null)
+/** SceneBuilding 与 Building3DNode 字段同名同义（tiers 类型宽度不同），双重断言对齐 */
+const previewBuildings = computed(() => (activeScene.value?.buildings || []) as unknown as Building3DNode[])
 
 onMounted(async () => {
   try {
     const res = await sceneApi.getConfig()
-    const config = (res as any)?.data?.data as SceneScheme
+    const config = res.data?.data as SceneScheme
     if (config?.scenes?.length) {
       scenes.value = config.scenes
       activeSceneId.value = config.activeSceneId || config.scenes[0].id

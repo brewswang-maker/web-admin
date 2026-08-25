@@ -98,6 +98,13 @@ export interface SceneFence {
   depth: number
 }
 
+/** 场景接口通用响应包装（后端 { code, message, data } 结构） */
+interface SceneApiResponse<T> {
+  code: number
+  message: string
+  data: T
+}
+
 // ─────────────────────────────────────────────────────────
 // API 方法
 // ─────────────────────────────────────────────────────────
@@ -105,7 +112,7 @@ export interface SceneFence {
 export const sceneApi = {
   /** 获取场景配置 */
   getConfig() {
-    return http.get<SceneScheme>('/scene/config')
+    return http.get<SceneApiResponse<SceneScheme>>('/scene/config')
   },
 
   /** 保存场景配置（全量替换） */
@@ -115,7 +122,7 @@ export const sceneApi = {
 
   /** 批量获取所有设备的3D放置信息 */
   getDevicePlacements() {
-    return http.get<DevicePlacement[]>('/scene/devices/placement')
+    return http.get<SceneApiResponse<DevicePlacement[]>>('/scene/devices/placement')
   },
 
   /** 更新单个设备的3D放置位置 */

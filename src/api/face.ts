@@ -162,14 +162,14 @@ const faceApi = {
     quality_score?: number
     valid_days?: number
   }) {
-    return http.post<FaceDatabaseResponse<{ person_id: string; message: string }>>('/face/database/records', data)
+    return http.post<FaceDatabaseResponse<{ person_id: string; message: string; auto_cropped?: boolean }>>('/face/database/records', data)
   },
 
   /**
    * 更新人脸记录
    */
   updateRecord(personId: string, data: Partial<FaceRecord>) {
-    return http.put<FaceDatabaseResponse<{ message: string }>>(`/face/database/records/${personId}`, data)
+    return http.put<FaceDatabaseResponse<{ message: string; auto_cropped?: boolean }>>(`/face/database/records/${personId}`, data)
   },
 
   /**

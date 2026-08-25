@@ -417,7 +417,7 @@ function updateBuildingAssociations(buildings: any[]) {
       if (!bld) continue
       const points = [
         new THREE.Vector3(dev.x, dev.y - 0.5, dev.z),
-        new THREE.Vector3(bld.x, bld.h / 2, bld.z),
+        new THREE.Vector3(bld.x, (bld.h ?? 0) / 2, bld.z),
       ]
       const lineGeo = new THREE.BufferGeometry().setFromPoints(points)
       const lineMat = new THREE.LineBasicMaterial({ color: 0x4488ff, transparent: true, opacity: 0.3 })
@@ -530,10 +530,11 @@ function applyModelToBuilding(buildingName: string, model: THREE.Group, transfor
       child.castShadow = true
       child.receiveShadow = true
       // GLB 模型不受场景暗雾影响，保持原始材质色彩
-      const mats = Array.isArray(child.material) ? child.material : [child.material]
+      const mesh = child as THREE.Mesh
+      const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material]
       for (const m of mats) {
         if (!m) continue
-        m.fog = false
+        ;(m as THREE.MeshStandardMaterial).fog = false
         // [WEB-GLB v1.7.0] 清晰度修复 1/2: 各向异性过滤。
         // GLTFLoader 不自动设 anisotropy (默认 1), 草皮 2048×1024 贴图在
         // 斜视角下采样退化发糊; 设到 GPU 上限后斜视纹理清晰度显著提升
@@ -764,8 +765,8 @@ function drawMiniMapFrame() {
   for (const b of buildings) {
     const bx = ((b.x + 60) / 120) * 180
     const bz = ((b.z + 50) / 100) * 150
-    const bw = (b.w / 120) * 180
-    const bd = (b.d / 100) * 150
+    const bw = ((b.w ?? 0) / 120) * 180
+    const bd = ((b.d ?? 0) / 100) * 150
     ctx.fillStyle = (b.color || '#1A73E8') + '33'
     ctx.strokeStyle = b.color || '#1A73E8'
     ctx.fillRect(bx - bw / 2, bz - bd / 2, bw, bd)
@@ -1445,7 +1446,7 @@ function addBuilding(b: Building3DNode, color: number): { topY: number; mesh: TH
       // 高层酒店楼: 多层错位 box + 顶部冠顶
       const baseW = b.w ?? 14
       const baseD = b.d ?? 14
-      const tiers = b.tiers ?? 3
+      const tiers = (b.tiers as unknown as number) ?? 3
       let mesh: THREE.Mesh | null = null
       for (let i = 0; i < tiers; i++) {
         const shrink = 1 - i * 0.12

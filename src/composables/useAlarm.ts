@@ -143,7 +143,7 @@ export function useAlarmLabels() {
   }
 
   function statusLabel(status: AlarmStatus) {
-    const map: Record<AlarmStatus, string> = {
+    const map: Partial<Record<AlarmStatus, string>> = {
       unhandled: '未处理',
       confirmed: '已确认',
       false_alarm: '误报',

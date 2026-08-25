@@ -42,7 +42,7 @@ export interface GB28181Config {
   sipServerRunning?: boolean
   sipAdvertiseIp?: string
   sdpIp?: string
-  cascade?: boolean | GB28181CascadeConfig
+  cascade?: GB28181CascadeConfig
   cascadeRegistered?: boolean
   transportProtocol?: 'UDP' | 'TCP'
   rtpPortRange?: string

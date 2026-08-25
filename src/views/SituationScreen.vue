@@ -1984,7 +1984,7 @@ function initCharts() {
           length2: 10,
           smooth: false,
         },
-        labelLayout: params => {
+        labelLayout: (params: any) => {
           const isLeft = params.labelRect.x < c.getWidth() / 2
           const labelX = isLeft ? 12 : c.getWidth() - 12
           const points = params.labelLinePoints
@@ -2017,7 +2017,7 @@ function initCharts() {
     c.setOption({
       backgroundColor: 'transparent',
       grid: { left: 54, right: 18, top: 32, bottom: 42 },
-      tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' }, valueFormatter: value => `${value}%` },
+      tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' }, valueFormatter: (value: number | string) => `${value}%` },
       xAxis: {
         type: 'category',
         data: labels,

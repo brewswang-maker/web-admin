@@ -492,7 +492,6 @@ const enUS: MessageSchema = {
     minutesAgo: 'm ago',
     justNow: 'just now',
     fedRoundPrefix: 'R',
-    title: 'Dashboard',
     loadFailed: 'Load Failed',
     loading: 'Loading…',
     securityScoreFailed: 'Security score data loading failed',

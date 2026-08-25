@@ -489,7 +489,6 @@ const zhCN = {
     minutesAgo: '分钟前',
     justNow: '刚刚',
     fedRoundPrefix: 'R',
-    title: '全局仪表盘',
     loadFailed: '加载失败',
     loading: '加载中…',
     securityScoreFailed: '安全评分数据加载失败',
