@@ -722,6 +722,9 @@ const zhCN = {
       total: '总识别',
       blacklist: '黑名单',
       whitelist: '白名单',
+      vip: 'VIP',        // [扩展分组 2026-08-25]
+      staff: '员工',
+      custom: '自定义',
       unknown: '未知'
     },
     conn: {
@@ -734,6 +737,9 @@ const zhCN = {
       blacklist: '黑名单',
       whitelist: '白名单',
       visitor: '访客',
+      vip: 'VIP',        // [扩展分组 2026-08-25]
+      staff: '员工',
+      custom: '自定义',
       unknown: '未知'
     },
     control: {
@@ -753,6 +759,9 @@ const zhCN = {
       blacklist: '黑名单',
       whitelist: '白名单',
       visitor: '访客',
+      vip: 'VIP',        // [扩展分组 2026-08-25]
+      staff: '员工',
+      custom: '自定义',
       unknown: '未知'
     },
     field: {
@@ -785,6 +794,9 @@ const zhCN = {
       loadFailed: '加载通行记录失败',
       type_whitelist: '白名单',
       type_visitor: '访客',
+      type_vip: 'VIP',        // [扩展分组 2026-08-25]
+      type_staff: '员工',
+      type_custom: '自定义',
       type_blacklist_hit: '黑名单比对',
       type_unknown: '陌生人',
       type_unknown_type: '未知'

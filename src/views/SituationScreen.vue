@@ -748,6 +748,15 @@ const videoSlots = reactive<VideoSlot[]>(
 )
 // 全局防抖 store: 防止短时间内对同一通道重复 SIP INVITE (与 MiniPlayer/LiveView 共享)
 const channelStore = useChannelStore()
+
+// [v8.7 软关闭] channelStore slot idx 命名空间：LiveView 占用 0-35 (gridSlots.length=36)，
+// 本页用偏移避免覆盖：轮巡槽位 100+i，预览弹窗 200，LED 投放 201。
+// 停流判定双层分工：前端 channelStore.hasOtherViewers 拦“浏览器内还有别人在看”；
+// 算法占用（AutoDeploy 自动启动的推理通道）由后端 /streams/:id/stop 的
+// inference-active 保护兜底（对前端不可见，只能后端拦）
+const SIT_SLOT_BASE = 100
+const SIT_PREVIEW_IDX = 200
+const SIT_CAST_IDX = 201
 const videoDisplaySlots = computed(() => videoLayout.value === 1 ? [videoSlots[0]] : videoSlots)
 const videoSlotRefs = ref<Record<number, HTMLVideoElement>>({})
 const videoPollingActive = ref(false)
@@ -906,7 +915,8 @@ async function playVideoInSlot(slotIdx: number, channelId: string, deviceName: s
   slot.playing = false
 
   // 注册到全局 channelStore，使 AlarmPopup 等组件能检测到码流复用
-  channelStore.registerSlot(slotIdx, {
+  // [v8.7] idx 加 SIT_SLOT_BASE 偏移，避免与 LiveView 的 0-35 冲突
+  channelStore.registerSlot(SIT_SLOT_BASE + slotIdx, {
     channelId,
     deviceId: '',
     name: deviceName,
@@ -924,8 +934,11 @@ async function playVideoInSlot(slotIdx: number, channelId: string, deviceName: s
     if (myGen !== slot._gen) return
 
     // 新流已就绪，现在安全地停止旧通道推流（减少空窗期）
+    // [v8.7 引用计数] 旧通道若仍被其他 slot（浮窗/其他页面）观看则不停流
     if (oldChannelId && oldChannelId !== channelId) {
-      stopStream(oldChannelId)
+      if (!channelStore.hasOtherViewers(oldChannelId, SIT_SLOT_BASE + slotIdx)) {
+        stopStream(oldChannelId)
+      }
     }
 
     if (!mediaInfo || !mediaInfo.url) {
@@ -1041,13 +1054,54 @@ function stopVideoSlot(slotIdx: number) {
   // 清理 video 元素
   const video = videoSlotRefs.value[slotIdx]
   if (video) { try { video.pause() } catch {} video.removeAttribute('src') }
-  // 停止服务端推流
-  if (slot.channelId) {
+  // [v8.7 引用计数] 停服务端推流前先注销自己，仅当无其他观看者
+  // （浮窗/其他页面 slot 正在播同一通道）时才真正 SIP BYE
+  channelStore.unregisterSlot(SIT_SLOT_BASE + slotIdx)
+  if (slot.channelId && !channelStore.hasOtherViewers(slot.channelId)) {
     stopStream(slot.channelId)
   }
-  // 注销全局 channelStore 中的 slot
-  channelStore.unregisterSlot(slotIdx)
   slot.playing = false; slot.loading = false; slot.channelId = ''; slot.deviceName = ''; slot.mediaUrl = ''; slot.codec = ''; slot.mediaFormat = 'flv'
+}
+
+/**
+ * [v8.7 软关闭] 仅销毁前端播放器，保留 channelStore 注册与服务端流。
+ * 页面卸载（切到其他路由）时由 FloatingPreview 浮窗接管预览；
+ * 回页经 restoreVideoSlotsFromStore 恢复画面（multi-urls 复用，无重新 SIP INVITE）；
+ * 流的真正释放交给用户显式关闭时的引用计数判定。
+ */
+function softCloseVideoSlots() {
+  for (let i = 0; i < videoSlots.length; i++) {
+    const slot = videoSlots[i]
+    slot._gen++  // 使任何在途的异步拉流失效
+    destroySlotPlayers(slot)
+    const video = videoSlotRefs.value[i]
+    if (video) { try { video.pause() } catch {} video.removeAttribute('src') }
+    slot.playing = false; slot.loading = false
+    // 保留 channelStore 注册 (SIT_SLOT_BASE+i) → 浮窗接管
+  }
+}
+
+/**
+ * [v8.7] 回页恢复：从 channelStore 恢复软关闭前的轮巡画面。
+ * 走 playVideoInSlot → startStreamAndGetMediaUrl 的 multi-urls 复用路径，
+ * 流仍存活时直接拿 URL 建播放器，不重新 SIP INVITE；
+ * 流已断（如相机掉线被清理）则重新拉流。
+ */
+function restoreVideoSlotsFromStore() {
+  let restored = 0
+  for (let i = 0; i < videoSlots.length; i++) {
+    const data = channelStore.getSlot(SIT_SLOT_BASE + i)
+    if (data?.channelId) {
+      playVideoInSlot(i, data.channelId, data.name)
+      restored++
+    }
+  }
+  if (restored) {
+    // 页面内已显示画面，收起浮窗（注册保留，再次离开时重新弹出）
+    channelStore.showFloatingPreview = false
+    console.info(`[SituationScreen] 已从 channelStore 恢复 ${restored} 个轮巡画面`)
+  }
+  return restored
 }
 
 /**
@@ -1166,9 +1220,14 @@ function startVideoPolling() {
 }
 
 function stopVideoPolling() {
+  stopVideoPollingTimer()
+  stopAllVideoSlots()
+}
+
+/** [v8.7] 仅停轮巡定时器（不动 slot 画面与注册），供页面卸载软关闭路径复用 */
+function stopVideoPollingTimer() {
   videoPollingActive.value = false
   if (videoPollTimer) { clearInterval(videoPollTimer); videoPollTimer = null }
-  stopAllVideoSlots()
 }
 
 function toggleVideoPolling() {
@@ -1221,6 +1280,18 @@ async function onDeviceVideo(device: { id: string; name: string; businessId?: st
     const mediaInfo = await startStreamAndGetMediaUrl(channelId)
     if (!mediaInfo || !mediaInfo.url) { videoPreviewLoading.value = false; ElMessage.warning('无法获取视频流地址'); return }
     previewChannelId = channelId
+    // [v8.7] 弹窗通道注册到全局 store：切页软关闭后 FloatingPreview 可接管；
+    // 关闭弹窗时注销并做引用计数判定是否真正停流
+    channelStore.registerSlot(SIT_PREVIEW_IDX, {
+      channelId,
+      deviceId: device.id,
+      name: device.name,
+      urls: {},
+      codec: '',
+      format: 'flv',
+      inferenceEnabled: false,
+      registeredAt: Date.now(),
+    })
     const video = previewVideoRef.value
     if (!video) { videoPreviewLoading.value = false; return }
     if (previewFlvPlayer) { try { previewFlvPlayer.destroy() } catch {} previewFlvPlayer = null }
@@ -1293,6 +1364,18 @@ async function onDeviceCast(device: { id: string; name: string; businessId?: str
   document.body.appendChild(video)
   castVideoEl = video
   castChannelId = channelId
+  // [v8.7] 投放通道注册到全局 store：切页软关闭后浮窗可接管；
+  // 停止投放时注销并做引用计数判定是否真正停流
+  channelStore.registerSlot(SIT_CAST_IDX, {
+    channelId,
+    deviceId: device.id,
+    name: device.name,
+    urls: {},
+    codec: '',
+    format: 'flv',
+    inferenceEnabled: false,
+    registeredAt: Date.now(),
+  })
 
   const isH265 = !!(mediaInfo.codec && (mediaInfo.codec.toUpperCase().includes('H265') || mediaInfo.codec.toUpperCase().includes('HEVC')))
   const useHls = isH265 || mediaInfo.url.includes('.m3u8')
@@ -1347,11 +1430,21 @@ async function onDeviceCast(device: { id: string; name: string; businessId?: str
 }
 
 /** [WEB-GLB v1.9.8] 停止 LED 大屏投放: 销毁独立拉流播放器/隐藏 video 并释放
- *  SIP 会话, 双实例 stopVideoCast 幂等 (未投放时直接返回) */
-function stopCastToBoard() {
+ *  SIP 会话, 双实例 stopVideoCast 幂等 (未投放时直接返回)
+ *  [v8.7] @param soft 页面卸载路径传 true：保留 channelStore 注册不停流
+ *  （浮窗接管）；投放失败回滚/用户主动停止（默认）注销并引用计数判定 */
+function stopCastToBoard(soft = false) {
   if (castFlvPlayer) { try { castFlvPlayer.destroy() } catch {} castFlvPlayer = null }
   if (castHlsPlayer) { try { castHlsPlayer.destroy() } catch {} castHlsPlayer = null }
-  if (castChannelId) { stopStream(castChannelId); castChannelId = '' }
+  if (castChannelId) {
+    if (!soft) {
+      channelStore.unregisterSlot(SIT_CAST_IDX)
+      if (!channelStore.hasOtherViewers(castChannelId)) {
+        stopStream(castChannelId)
+      }
+    }
+    castChannelId = ''
+  }
   scene3dRef.value?.stopVideoCast?.()
   fullscreenScene3dRef.value?.stopVideoCast?.()
   castVideoEl?.remove()
@@ -1373,10 +1466,24 @@ watch(isFullscreen, async () => {
   }
 })
 
-function closeVideoPreview() {
+/**
+ * [v8.7] 关闭预览弹窗。
+ * @param soft 页面卸载路径传 true：仅销毁播放器，保留 channelStore 注册，
+ *             服务端流由浮窗接管/推理继续消费；
+ *             用户手动关闭（默认 false）：注销自己，仅当无其他观看者才停流。
+ */
+function closeVideoPreview(soft = false) {
   if (previewFlvPlayer) { try { previewFlvPlayer.destroy() } catch {} previewFlvPlayer = null }
   if (previewHlsPlayer) { try { previewHlsPlayer.destroy() } catch {} previewHlsPlayer = null }
-  if (previewChannelId) { stopStream(previewChannelId); previewChannelId = '' }
+  if (previewChannelId) {
+    if (!soft) {
+      channelStore.unregisterSlot(SIT_PREVIEW_IDX)
+      if (!channelStore.hasOtherViewers(previewChannelId)) {
+        stopStream(previewChannelId)
+      }
+    }
+    previewChannelId = ''
+  }
   // [WEB-GLB v1.9.8] 预览弹窗与 LED 大屏投放相互独立, 关闭弹窗不影响投放
   // (投放释放链路见 stopCastToBoard)
   videoPreviewVisible.value = false
@@ -2232,6 +2339,9 @@ onMounted(async () => {
 
   // T3: 预加载视频通道列表
   loadVideoDeviceList()
+  // [v8.7] 回页恢复：软关闭前的轮巡画面从 channelStore 恢复
+  // (multi-urls 复用现有服务端流，不重新 SIP INVITE；流已断则重新拉流)
+  restoreVideoSlotsFromStore()
   // 全屏ESC退出
   window.addEventListener('keydown', onFullscreenEsc)
 })
@@ -2245,11 +2355,18 @@ onUnmounted(() => {
   // 清理延迟定时器
   if (centerViewTimer) { clearTimeout(centerViewTimer); centerViewTimer = null }
   if (fullscreenTimer) { clearTimeout(fullscreenTimer); fullscreenTimer = null }
-  // T3/T4 cleanup
-  stopVideoPolling()
-  closeVideoPreview()
-  // [WEB-GLB v1.9.8] 释放 LED 大屏投放 (独立拉流播放器 + SIP 会话)
-  stopCastToBoard()
+  // T3/T4 cleanup — [v8.7 软关闭] 页面卸载不再停服务端流：
+  // 活跃通道保留在 channelStore，由 FloatingPreview 浮窗接管预览；
+  // 回页经 restoreVideoSlotsFromStore 恢复；真正停流由显式关闭时的
+  // 引用计数判定（后端 GB28181 流 keep-alive，供推理持续消费）
+  stopVideoPollingTimer()
+  softCloseVideoSlots()
+  closeVideoPreview(true)
+  // [WEB-GLB v1.9.8] 释放 LED 大屏投放播放器（软关闭：流与注册保留）
+  stopCastToBoard(true)
+  if (channelStore.hasActive) {
+    channelStore.showFloatingPreview = true
+  }
   isFullscreen.value = false
   window.removeEventListener('keydown', onFullscreenEsc)
 })

@@ -5,13 +5,16 @@
 
 import { http } from './http'
 
+/** 人脸分组类型 (后端 FaceGroupType 枚举, FaceDatabase.h; 6 种业务分组) */
+export type FaceGroupTypeStr = 'blacklist' | 'whitelist' | 'visitor' | 'vip' | 'staff' | 'custom'
+
 export interface FaceRecord {
   person_id: string
   name: string
   id_number?: string
   phone?: string
   email?: string
-  group_type: 'blacklist' | 'whitelist' | 'visitor'
+  group_type: FaceGroupTypeStr
   group_type_cn: string
   group_id?: string
   quality_score: number
@@ -40,6 +43,9 @@ export interface FaceDatabaseStats {
   blacklist: number
   whitelist: number
   visitor: number
+  vip: number      // [扩展分组 2026-08-25]
+  staff: number    // [扩展分组 2026-08-25]
+  custom: number   // [扩展分组 2026-08-25]
   active: number
   expired: number
 }
@@ -67,7 +73,7 @@ export interface FaceAlarmEvent {
 
 /** 通行记录类型（后端 FacePassRecord） */
 export interface FacePassRecord {
-  pass_type: 'whitelist' | 'visitor' | 'blacklist_hit' | 'unknown' | 'unknown_type'
+  pass_type: 'whitelist' | 'visitor' | 'vip' | 'staff' | 'custom' | 'blacklist_hit' | 'unknown' | 'unknown_type'
   timestamp: number
   channel_id: number
   device_id: string
@@ -122,7 +128,7 @@ const faceApi = {
    * 获取人脸记录列表
    */
   getRecords(params: {
-    group_type?: 'blacklist' | 'whitelist' | 'visitor'
+    group_type?: FaceGroupTypeStr
     search?: string
     page?: number
     page_size?: number
@@ -145,7 +151,7 @@ const faceApi = {
     id_number?: string
     phone?: string
     email?: string
-    group_type: 'blacklist' | 'whitelist' | 'visitor'
+    group_type: FaceGroupTypeStr
     group_id?: string
     gender?: string
     age?: number
@@ -181,7 +187,7 @@ const faceApi = {
     id_number?: string
     phone?: string
     email?: string
-    group_type?: 'blacklist' | 'whitelist' | 'visitor'
+    group_type?: FaceGroupTypeStr
     gender?: string
     age?: number
     address?: string
@@ -197,7 +203,7 @@ const faceApi = {
   /**
    * 清空指定分组
    */
-  clearGroup(groupType: 'blacklist' | 'whitelist' | 'visitor') {
+  clearGroup(groupType: FaceGroupTypeStr) {
     return http.delete<FaceDatabaseResponse<{ deleted: number; message: string }>>(
       `/face/database/groups/${groupType}`
     )

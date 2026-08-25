@@ -2,7 +2,7 @@
   <div class="face-realtime-view">
     <!-- 统计卡片 -->
     <el-row :gutter="16" class="stats-row">
-      <el-col :span="5">
+      <el-col :span="6">
         <el-card class="stat-card" shadow="hover">
           <div class="stat-content">
             <el-icon class="stat-icon" :size="36" color="#409EFF"><Picture /></el-icon>
@@ -13,7 +13,7 @@
           </div>
         </el-card>
       </el-col>
-      <el-col :span="5">
+      <el-col :span="6">
         <el-card class="stat-card" shadow="hover" :class="{ 'highlight-blacklist': stats.blacklist > 0 }">
           <div class="stat-content">
             <el-icon class="stat-icon" :size="36" color="#F56C6C"><WarningFilled /></el-icon>
@@ -24,7 +24,7 @@
           </div>
         </el-card>
       </el-col>
-      <el-col :span="5">
+      <el-col :span="6">
         <el-card class="stat-card" shadow="hover">
           <div class="stat-content">
             <el-icon class="stat-icon" :size="36" color="#67C23A"><CircleCheckFilled /></el-icon>
@@ -35,7 +35,7 @@
           </div>
         </el-card>
       </el-col>
-      <el-col :span="5">
+      <el-col :span="6">
         <el-card class="stat-card" shadow="hover">
           <div class="stat-content">
             <el-icon class="stat-icon" :size="36" color="#909399"><QuestionFilled /></el-icon>
@@ -46,7 +46,41 @@
           </div>
         </el-card>
       </el-col>
-      <el-col :span="4" >
+      <!-- [扩展分组 2026-08-25] 新增员工/VIP/自定义三组统计卡片 -->
+      <el-col :span="6">
+        <el-card class="stat-card" shadow="hover">
+          <div class="stat-content">
+            <el-icon class="stat-icon" :size="36" color="#F7B500"><Trophy /></el-icon>
+            <div class="stat-info">
+              <div class="stat-value">{{ stats.vip }}</div>
+              <div class="stat-label">{{ $t('faceRealtime.stats.vip') }}</div>
+            </div>
+          </div>
+        </el-card>
+      </el-col>
+      <el-col :span="6">
+        <el-card class="stat-card" shadow="hover">
+          <div class="stat-content">
+            <el-icon class="stat-icon" :size="36" color="#13C2C2"><Suitcase /></el-icon>
+            <div class="stat-info">
+              <div class="stat-value">{{ stats.staff }}</div>
+              <div class="stat-label">{{ $t('faceRealtime.stats.staff') }}</div>
+            </div>
+          </div>
+        </el-card>
+      </el-col>
+      <el-col :span="6">
+        <el-card class="stat-card" shadow="hover">
+          <div class="stat-content">
+            <el-icon class="stat-icon" :size="36" color="#9254DE"><Setting /></el-icon>
+            <div class="stat-info">
+              <div class="stat-value">{{ stats.custom }}</div>
+              <div class="stat-label">{{ $t('faceRealtime.stats.custom') }}</div>
+            </div>
+          </div>
+        </el-card>
+      </el-col>
+      <el-col :span="6">
         <el-card class="stat-card stat-conn" shadow="hover">
           <div class="stat-content">
             <el-icon class="stat-icon" :size="28" :color="connected ? '#67C23A' : '#F56C6C'">
@@ -78,6 +112,16 @@
             </el-radio-button>
             <el-radio-button value="visitor">
               <span class="dot dot-orange" />{{ $t('faceRealtime.filter.visitor') }}
+            </el-radio-button>
+            <!-- [扩展分组 2026-08-25] -->
+            <el-radio-button value="vip">
+              <span class="dot dot-gold" />{{ $t('faceRealtime.filter.vip') }}
+            </el-radio-button>
+            <el-radio-button value="staff">
+              <span class="dot dot-cyan" />{{ $t('faceRealtime.filter.staff') }}
+            </el-radio-button>
+            <el-radio-button value="custom">
+              <span class="dot dot-purple" />{{ $t('faceRealtime.filter.custom') }}
             </el-radio-button>
             <el-radio-button value="unknown">
               <span class="dot dot-gray" />{{ $t('faceRealtime.filter.unknown') }}
@@ -300,7 +344,8 @@ import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import {
   Delete, Loading, User, Bell, VideoCamera, Clock, Aim, Histogram, Star,
-  WarningFilled, CircleCheckFilled, QuestionFilled, Picture, Connection, CircleClose, Refresh
+  WarningFilled, CircleCheckFilled, QuestionFilled, Picture, Connection, CircleClose, Refresh,
+  Trophy, Suitcase, Setting  // [扩展分组 2026-08-25]
 } from '@element-plus/icons-vue'
 import { useWebSocket } from '@/composables/useWebSocket'
 import { useI18n } from 'vue-i18n'
@@ -315,7 +360,7 @@ interface FaceRealtimeEvent {
   timestamp: number
   personId: string
   name: string
-  group: 'blacklist' | 'whitelist' | 'visitor' | 'unknown'
+  group: 'blacklist' | 'whitelist' | 'visitor' | 'vip' | 'staff' | 'custom' | 'unknown'  // [扩展分组 2026-08-25]
   similarity: number
   livenessScore: number
   isLive: boolean
@@ -342,7 +387,7 @@ let recentLoadAbort: AbortController | null = null
 
 // ── 状态 ──
 const events = ref<FaceRealtimeEvent[]>([])
-const filterGroup = ref<'all' | 'blacklist' | 'whitelist' | 'visitor' | 'unknown'>('all')
+const filterGroup = ref<'all' | 'blacklist' | 'whitelist' | 'visitor' | 'vip' | 'staff' | 'custom' | 'unknown'>('all')  // [扩展分组 2026-08-25]
 const soundEnabled = ref(false)
 const autoScroll = ref(true)
 const windowMinutes = ref(30)
@@ -371,10 +416,13 @@ async function loadPassRecords() {
   }
 }
 
-function passTypeTag(type: string): 'success' | 'warning' | 'danger' | 'info' {
+function passTypeTag(type: string): 'success' | 'warning' | 'danger' | 'info' | 'primary' {
   switch (type) {
     case 'whitelist':    return 'success'
     case 'visitor':      return 'warning'
+    case 'vip':          return 'warning'   // [扩展分组 2026-08-25]
+    case 'staff':        return 'success'
+    case 'custom':       return 'primary'
     case 'blacklist_hit': return 'danger'
     case 'unknown':      return 'info'
     default:             return 'info'
@@ -393,6 +441,9 @@ const stats = computed(() => {
     total: recent.length,
     blacklist: recent.filter(e => e.group === 'blacklist').length,
     whitelist: recent.filter(e => e.group === 'whitelist').length,
+    vip: recent.filter(e => e.group === 'vip').length,        // [扩展分组 2026-08-25]
+    staff: recent.filter(e => e.group === 'staff').length,
+    custom: recent.filter(e => e.group === 'custom').length,
     unknown: recent.filter(e => e.group === 'unknown').length,
   }
 })
@@ -438,8 +489,15 @@ function classifyAlarmType(alarmType: string | number | undefined, group: string
   if (s.includes('black') || s === 'face_blacklist') return 'blacklist'
   if (s.includes('white') || s === 'face_whitelist') return 'whitelist'
   if (s.includes('visitor') || s === 'face_visitor') return 'visitor'
+  // [扩展分组 2026-08-25] 通行事件 face_pass_vip / face_pass_staff / face_pass_custom
+  if (s.includes('vip') || s === 'face_pass_vip') return 'vip'
+  if (s.includes('staff') || s === 'face_pass_staff') return 'staff'
+  if (s.includes('custom') || s === 'face_pass_custom') return 'custom'
   // 没有明确分组时根据原 group_type 字符串
-  if (group === 'blacklist' || group === 'whitelist' || group === 'visitor') return group
+  if (group === 'blacklist' || group === 'whitelist' || group === 'visitor'
+      || group === 'vip' || group === 'staff' || group === 'custom') {
+    return group as FaceRealtimeEvent['group']
+  }
   return 'unknown'
 }
 
@@ -524,7 +582,8 @@ async function handleAlarmEvent(raw: any) {
   // 1. 字段归一 (snake_case + camelCase 兼容)
   const alarmType = raw.alarm_type ?? raw.type ?? raw.alarmType
   const typeStr = String(alarmType || '').toLowerCase()
-  // 只处理人脸告警 (face_blacklist / face_whitelist / face_visitor / face_unknown)
+  // 只处理人脸告警 (face_blacklist / face_whitelist / face_visitor / face_unknown
+  //   及通行事件 face_pass_vip / face_pass_staff / face_pass_custom) [扩展分组 2026-08-25]
   if (!typeStr.startsWith('face')) return
 
   const meta = raw.metadata || raw.meta || {}
@@ -708,6 +767,10 @@ defineOptions({ name: 'FaceRealtimeView' })
 .dot-green { background: #67C23A; }
 .dot-orange { background: #E6A23C; }
 .dot-gray { background: #909399; }
+/* [扩展分组 2026-08-25] */
+.dot-gold { background: #F7B500; }
+.dot-cyan { background: #13C2C2; }
+.dot-purple { background: #9254DE; }
 .window-label { font-size: 12px; color: #606266; }
 
 /* ── 事件卡片 ── */
@@ -746,6 +809,9 @@ defineOptions({ name: 'FaceRealtimeView' })
 }
 .event-blacklist { border-color: rgba(245, 108, 108, 0.5); }
 .event-whitelist { border-color: rgba(103, 194, 58, 0.4); }
+.event-vip { border-color: rgba(247, 181, 0, 0.5); }
+.event-staff { border-color: rgba(19, 194, 194, 0.4); }
+.event-custom { border-color: rgba(146, 84, 222, 0.4); }
 
 .event-image-wrap {
   position: relative;
@@ -773,6 +839,10 @@ defineOptions({ name: 'FaceRealtimeView' })
 .tag-whitelist { background: rgba(103, 194, 58, 0.92); }
 .tag-visitor   { background: rgba(230, 162, 60, 0.92); }
 .tag-unknown   { background: rgba(144, 147, 153, 0.92); }
+/* [扩展分组 2026-08-25] */
+.tag-vip    { background: rgba(247, 181, 0, 0.92); }
+.tag-staff  { background: rgba(19, 194, 194, 0.92); }
+.tag-custom { background: rgba(146, 84, 222, 0.92); }
 
 .event-liveness-tag {
   position: absolute; top: 8px; right: 8px;
@@ -796,6 +866,9 @@ defineOptions({ name: 'FaceRealtimeView' })
 .name-whitelist { color: #67C23A; }
 .name-visitor   { color: #E6A23C; }
 .name-unknown   { color: #606266; }
+.name-vip    { color: #D48806; }
+.name-staff  { color: #0E9E9E; }
+.name-custom { color: #7C4DD8; }
 
 .event-meta-row {
   display: flex; align-items: center; gap: 4px;

@@ -78,7 +78,8 @@ const props = withDefaults(defineProps<{
 
 const emit = defineEmits<{
   playing: []
-  error: [msg: string]
+  /** fatal=true 表示确定性失败 (设备离线等), 重试无意义, 父组件可立即降级 */
+  error: [msg: string, fatal?: boolean]
   snapshot: [blob: Blob]
 }>()
 
@@ -93,12 +94,15 @@ function clearAutoRetry() {
   if (autoRetryTimer) { clearTimeout(autoRetryTimer); autoRetryTimer = null }
 }
 
-/** 调度一次自动重试; 已达上限则报错给父组件 (弹窗此时才降级快照 tab) */
-function scheduleAutoRetry(stage: string) {
+/** 调度一次自动重试; 已达上限则报错给父组件 (弹窗此时才降级快照 tab)
+ *  [P0-E 2026-08-24] fatal=确定性失败 (设备离线等): 跳过退避立即 emit —
+ *    原逻辑 3 次退避 ≈14s 才报错, 对离线设备纯属无效等待 */
+function scheduleAutoRetry(stage: string, fatal = false) {
   if (autoRetryTimer) return  // 已有 pending 重试
-  if (autoRetryCount >= RETRY_DELAYS_MS.length) {
-    errorMsg.value = `${stage} · 重试 ${RETRY_DELAYS_MS.length} 次仍失败`
-    emit('error', errorMsg.value)
+  if (fatal || autoRetryCount >= RETRY_DELAYS_MS.length) {
+    errorMsg.value = fatal ? `${stage} · 设备不可达` : `${stage} · 重试 ${RETRY_DELAYS_MS.length} 次仍失败`
+    loading.value = false
+    emit('error', errorMsg.value, fatal)
     return
   }
   const delay = RETRY_DELAYS_MS[autoRetryCount++]
@@ -123,9 +127,49 @@ let currentFormat: PlayerFormat | '' = ''
 let codec = ''
 let currentUrls: Partial<Record<PlayerFormat, string>> = {}  // P0-1.2: WebRTC 降级用
 
+// ── [P0-C 2026-08-24] 真实首帧管理 ──
+//   原问题: attachPlayer 后立即 playing=true + emit('playing') 是"假首帧" —
+//           实际画面要等 video 'playing' 事件 (数据到达浏览器并渲染), FLV 场景
+//           最多滞后 8s; 期间 LIVE 徽章已亮、AlarmPopup onPlayerPlaying 误清降级态
+//   修复: 统一由 video 'playing' 事件驱动 markPlaying(), 并加 8s 首帧超时兜底
+//         (同时覆盖 HLS/WebRTC 原本无超时检测的路径)
+let firstFrameTimer: ReturnType<typeof setTimeout> | null = null
+
+function clearFirstFrameTimer() {
+  if (firstFrameTimer) { clearTimeout(firstFrameTimer); firstFrameTimer = null }
+}
+
+/** 真实首帧回调 (video 'playing' 事件): 幂等 */
+function markPlaying() {
+  clearFirstFrameTimer()
+  loading.value = false
+  autoRetryCount = 0  // 确有画面才重置退避计数 (原在 attach 后重置, 现延后到真实首帧)
+  if (!playing.value) {
+    playing.value = true
+    emit('playing')
+  }
+}
+
+/** attach 后启动首帧超时监视: 8s 无真实首帧 → 退避重试 */
+function watchFirstFrame() {
+  clearFirstFrameTimer()
+  firstFrameTimer = setTimeout(() => {
+    if (!playing.value) {
+      console.warn('[MiniPlayer] 8s 无真实首帧 (format=' + currentFormat + ')')
+      destroyPlayer()
+      scheduleAutoRetry('首帧超时')
+    }
+  }, 8000)
+}
+
+// [P0-E 2026-08-24] fetchStreamUrls 与 startPlay 间传递"确定性失败"标记
+let lastStartFatal = false
+
 // ── 播放器销毁 ──
 function destroyPlayer() {
   destroyWebRtc()  // P0-1.2: 清理 WebRTC 连接
+  clearFirstFrameTimer()  // [P0-C] 首帧监视随播放器销毁而取消
+  videoRef.value?.removeEventListener('playing', markPlaying)
   if (playerInstance) {
     try {
       if ('destroy' in playerInstance) playerInstance.destroy()
@@ -151,6 +195,7 @@ async function fetchStreamUrls(
   chId: string,
   forceSkipStart = false,
 ): Promise<{ urls: Partial<Record<PlayerFormat, string>>, codec: string } | null> {
+  lastStartFatal = false  // [P0-E] 每次拉流重置确定性失败标记
   // URL 规范化辅助：将后端返回的绝对 URL 转为相对路径走 Vite 代理
   const norm = (u: string, isWs = false) =>
     isWs ? normalizeWsFlvUrl(u) : normalizeStreamUrl(u)
@@ -179,18 +224,15 @@ async function fetchStreamUrls(
     // [STABILITY-FIX 2026-07-29] 统一轮询策略：
     //   - forceSkipStart=true（防抖窗口内）: 15×300ms = 4.5s, 等待其他播放器的 INVITE 完成
     //   - 普通模式: 8×300ms = 2.4s, 复用已有流
-    //   - 新增 consecutiveNotAlive 快速失败（5次 streamAlive=false 终止）
+    // [POPUP-FIX 2026-08-25] 移除 consecutiveNotAlive>=5 快速失败:
+    //   multi-urls 无流 ≠ 设备离线, 更可能是 INVITE 后 RTP/ZLM 注册进行中 (需 2-5s);
+    //   原截断使名义 2.4s/4.5s 窗口实际 ~1.75s 即终止 → 过早回退 /start 重发 INVITE
+    //   → 打断正在建立的推流 → 恶性循环 (弹窗间歇性打不开的直接原因);
+    //   设备离线的确定性识别已由 /start 400 离线 (P0-E fatal) 承担, 此处无需重复拦截
     const initialAttempts = forceSkipStart ? 15 : 8
-    let consecutiveNotAlive = 0
     for (let attempt = 0; attempt < initialAttempts; attempt++) {
       const result = await queryMultiUrls()
       if (result) return result
-      consecutiveNotAlive++
-      if (consecutiveNotAlive >= 5 && attempt >= 2) {
-        // 离线设备快速失败
-        console.warn(`[MiniPlayer] ch=${chId} 连续 ${consecutiveNotAlive} 次 streamAlive=false, 终止初始轮询`)
-        break
-      }
       await new Promise(r => setTimeout(r, 300))
     }
 
@@ -203,10 +245,10 @@ async function fetchStreamUrls(
     // 标记全局防抖，使并发调用者复用本次拉流
     channelStore.markStartCalled(chId)
     try {
-      const { data: startResp } = await streamHttp.post(`/${chId}/start`, {
-        stream_type: props.streamType,
-      })
-      const startData = startResp?.data || startResp
+      // [P1-1 2026-08-24] 走单飞: 与 useGlobalAlarm 预热 (P0-A) / 其他实例共享在途 /start
+      //   — 消除"防抖窗口内并发回退 /start → 同通道双 INVITE → RTP 冲突"竞态
+      const resp: any = await channelStore.sharedStartStream(chId, props.streamType)
+      const startData = resp?.data?.data || resp?.data
       if (startData && (startData.flvUrl || startData.webrtcUrl) && startData.zlmReady) {
         return {
           urls: {
@@ -218,19 +260,27 @@ async function fetchStreamUrls(
           codec: startData.codec || '',
         }
       }
-    } catch { /* 可能已在推流 */ }
+    } catch (err: any) {
+      // [P0-E 2026-08-24] 确定性失败识别: 设备离线 (后端 badRequest code=1001, 消息含"离线")
+      //   后端 [FIX 2026-06-28] INVITE 前心跳检查: 90s 无心跳直接拒绝, 重试无意义
+      const body = err?.response?.data
+      const msg: string = body?.message || body?.error || ''
+      if ((err?.response?.status === 400 || body?.code === 1001) && /离线/.test(msg)) {
+        console.warn(`[MiniPlayer] ch=${chId} /start 确定性失败: ${msg}`)
+        lastStartFatal = true
+      }
+      /* 其余失败 (网络抖动/超时等) 维持原语义: 可能已在推流, 走后续轮询 */
+    }
 
     // start 后等待流就绪 (GB28181 INVITE + RTP 建立需 2-5 秒)
     // [STABILITY-FIX] 10×300ms=3s → 15×300ms=4.5s, 覆盖完整 INVITE 超时窗口
-    consecutiveNotAlive = 0
-    for (let attempt = 0; attempt < 15; attempt++) {
+    // [POPUP-FIX 2026-08-25] 15×300ms → 25×300ms=7.5s 且移除 5 次截断:
+    //   后端 /start 就绪窗口已扩至 ~6s (waitForStreamReady 4s + fallback 2s),
+    //   返回 zlmReady=false 说明流仍在注册中, 前端轮询必须覆盖完整窗口;
+    //   原截断 ~1.75s 即终止 → 冷流必退避重试 → 重复 INVITE 打断推流 → 弹窗 5-15s 黑屏或最终失败
+    for (let attempt = 0; attempt < 25; attempt++) {
       const result = await queryMultiUrls()
       if (result) return result
-      consecutiveNotAlive++
-      if (consecutiveNotAlive >= 5 && attempt >= 4) {
-        console.warn(`[MiniPlayer] ch=${chId} /start 后连续 ${consecutiveNotAlive} 次无流, 终止轮询`)
-        break
-      }
       await new Promise(r => setTimeout(r, 300))
     }
     return null
@@ -271,30 +321,20 @@ function attachPlayer(video: HTMLVideoElement, fmt: PlayerFormat, url: string) {
         } as any)
         // [STABILITY-FIX 2026-07-29] FLV 错误处理：防止静默失败导致黑屏
         //   原因：flv.js 无 error handler → 网络抖动/流中断时静默失败 → 用户看到黑屏
+        // [POPUP-FIX 2026-08-25] 断流自愈: NETWORK_ERROR 时 flv.js 不会自动重连
+        //   取证 (nginx access log): 后端 watchdog 对活流重发 INVITE → auto-cleanup 杀流
+        //   → 播放中的 FLV 连接连坐掐断 (~60s 节律); 原注释 "flv.js 内部会自动重连"
+        //   是错误假设 → 断流后黑屏挂死, 用户必须刷新页面 (弹窗间歇性打不开的元凶之一).
+        //   修复: 统一走 scheduleAutoRetry 退避重连 (1s/3s/10s); 重连的 fetchStreamUrls
+        //   phase1 会命中杀流后 ~80ms 内重 INVITE 恢复的流 → 实际秒级自愈;
+        //   每次真实首帧 (markPlaying) 重置退避计数 → 周期性扰动也能持续自愈.
         player.on(flvjs.Events.ERROR, (errorType: string, errorDetail: string) => {
           console.error('[MiniPlayer FLV] error:', errorType, errorDetail, 'url=', url)
-          // 网络错误且已播放过 → 静默重连一次（短暂网络抖动）
-          if (errorType === flvjs.ErrorTypes.NETWORK_ERROR && playing.value) {
-            console.warn('[MiniPlayer FLV] Network error during playback, attempting silent reconnect...')
-            return  // flv.js 内部会自动重连
-          }
-          // [P0-4] 其他错误 → 指数退避自动重试 (3 次后才 emit error)
           destroyPlayer()
           scheduleAutoRetry(`FLV ${errorDetail}`)
         })
-        // [STABILITY-FIX] 加载超时检测：8秒无数据 → 报错
-        let loadTimeout: ReturnType<typeof setTimeout> | null = null
-        loadTimeout = setTimeout(() => {
-          if (!playing.value && playerInstance === player) {
-            console.warn('[MiniPlayer FLV] 8s loading timeout, url=', url)
-            // [P0-4] 超时 → 指数退避自动重试
-            destroyPlayer()
-            scheduleAutoRetry('流加载超时')
-          }
-        }, 8000)
-        video.addEventListener('playing', () => {
-          if (loadTimeout) { clearTimeout(loadTimeout); loadTimeout = null }
-        }, { once: true })
+        // [P0-C] 超时检测统一为 attachPlayer 末尾的 watchFirstFrame (8s 无真实首帧),
+        //   FLV 不再单独计时 — 原两处 8s 计时语义重复
         player.attachMediaElement(video)
         player.load()
         const p = player.play()
@@ -332,6 +372,10 @@ function attachPlayer(video: HTMLVideoElement, fmt: PlayerFormat, url: string) {
       break
     }
   }
+  // [P0-C] 统一真实首帧监听 + 8s 超时监视 (覆盖 flv/ws-flv/hls/webrtc 全格式);
+  //   destroyPlayer 时移除, 避免跨次 attach 残留
+  video.addEventListener('playing', markPlaying)
+  watchFirstFrame()
 }
 
 // ── WebRTC 播放实现 ──
@@ -370,9 +414,7 @@ async function attachWebRtcMini(video: HTMLVideoElement) {
       if (ev.streams && ev.streams[0]) {
         video.srcObject = ev.streams[0]
         video.play().catch(() => {})
-        loading.value = false
-        playing.value = true
-        emit('playing')
+        // [P0-C] track 到达 ≠ 首帧渲染, 真实首帧由统一 'playing' 监听 (markPlaying) 上报
       }
     }
 
@@ -510,11 +552,13 @@ async function startPlay() {
 
   // 防抖窗口内 forceSkipStart=true，仅查 multi-urls 复用已有流
   const result = await fetchStreamUrls(props.channelId, inDebounce)
-  loading.value = false
+  // [P0-C] loading 不在此清除 — 保持"等待流..."动画直到真实首帧 (markPlaying);
+  //   失败路径由 scheduleAutoRetry 自行管理 loading
 
   if (!result || !result.urls) {
     // [P0-4] 拿不到流 URL → 指数退避自动重试 (3 次后才 emit error)
-    scheduleAutoRetry('视频流获取失败')
+    //   [P0-E] lastStartFatal=设备离线等确定性失败 → 跳过退避立即报错
+    scheduleAutoRetry('视频流获取失败', lastStartFatal)
     return
   }
 
@@ -527,10 +571,10 @@ async function startPlay() {
   }
 
   attachPlayer(video, fmt, result.urls[fmt]!)
-  playing.value = true
-  emit('playing')
-  // [P0-4] 拿到流并成功 attach → 重置退避计数 (后续运行时抖动从 1s 重新退避)
-  autoRetryCount = 0
+  // [P0-C 2026-08-24] 移除 attach 后立即置 playing/emit — 假首帧 (画面最多滞后 8s):
+  //   LIVE 徽章先于画面出现、AlarmPopup onPlayerPlaying 误清降级态。
+  //   真实首帧由 attachPlayer 内统一 'playing' 监听 (markPlaying) 上报,
+  //   退避计数也移至 markPlaying (确有画面才重置)。
 }
 
 // [STABILITY-FIX 2026-07-29] 失败重试：清除防抖记录后重新拉流

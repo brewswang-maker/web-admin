@@ -726,6 +726,9 @@ const enUS: MessageSchema = {
       total: 'Total',
       blacklist: 'Blacklist',
       whitelist: 'Whitelist',
+      vip: 'VIP',        // [扩展分组 2026-08-25]
+      staff: 'Staff',
+      custom: 'Custom',
       unknown: 'Unknown'
     },
     conn: {
@@ -738,6 +741,9 @@ const enUS: MessageSchema = {
       blacklist: 'Blacklist',
       whitelist: 'Whitelist',
       visitor: 'Visitor',
+      vip: 'VIP',        // [扩展分组 2026-08-25]
+      staff: 'Staff',
+      custom: 'Custom',
       unknown: 'Unknown'
     },
     control: {
@@ -757,6 +763,9 @@ const enUS: MessageSchema = {
       blacklist: 'Blacklist',
       whitelist: 'Whitelist',
       visitor: 'Visitor',
+      vip: 'VIP',        // [扩展分组 2026-08-25]
+      staff: 'Staff',
+      custom: 'Custom',
       unknown: 'Unknown'
     },
     field: {
@@ -789,6 +798,9 @@ const enUS: MessageSchema = {
       loadFailed: 'Failed to load pass records',
       type_whitelist: 'Whitelist',
       type_visitor: 'Visitor',
+      type_vip: 'VIP',        // [扩展分组 2026-08-25]
+      type_staff: 'Staff',
+      type_custom: 'Custom',
       type_blacklist_hit: 'Blacklist Hit',
       type_unknown: 'Unknown',
       type_unknown_type: 'Unknown'

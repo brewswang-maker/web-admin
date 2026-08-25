@@ -47,6 +47,40 @@
             </div>
           </div>
         </el-col>
+        <!-- [扩展分组 2026-08-25] 新增员工/VIP/自定义三组统计卡片 -->
+        <el-col :span="6">
+          <div class="stat-item">
+            <div class="stat-icon vip">
+              <el-icon><Trophy /></el-icon>
+            </div>
+            <div class="stat-info">
+              <div class="stat-value">{{ stats.vip }}</div>
+              <div class="stat-label">VIP</div>
+            </div>
+          </div>
+        </el-col>
+        <el-col :span="6">
+          <div class="stat-item">
+            <div class="stat-icon staff">
+              <el-icon><Suitcase /></el-icon>
+            </div>
+            <div class="stat-info">
+              <div class="stat-value">{{ stats.staff }}</div>
+              <div class="stat-label">员工</div>
+            </div>
+          </div>
+        </el-col>
+        <el-col :span="6">
+          <div class="stat-item">
+            <div class="stat-icon custom">
+              <el-icon><Setting /></el-icon>
+            </div>
+            <div class="stat-info">
+              <div class="stat-value">{{ stats.custom }}</div>
+              <div class="stat-label">自定义</div>
+            </div>
+          </div>
+        </el-col>
       </el-row>
     </el-card>
 
@@ -59,6 +93,9 @@
             <el-option label="黑名单" value="blacklist" />
             <el-option label="白名单" value="whitelist" />
             <el-option label="访客" value="visitor" />
+            <el-option label="VIP" value="vip" />
+            <el-option label="员工" value="staff" />
+            <el-option label="自定义" value="custom" />
           </el-select>
           <el-input
             v-model="searchKeyword"
@@ -114,9 +151,13 @@
         </el-table-column>
         <el-table-column prop="quality_score" label="质量分" width="80">
           <template #default="{ row }">
+            <!-- [FIX 2026-08-23] 0/空 = 后端 "未度量" 语义 (存量老记录/无注册照),
+                 显示灰标签而非 0% 红条, 避免误读为质量极差 -->
+            <el-tag v-if="!row.quality_score" type="info" size="small" effect="plain">未测量</el-tag>
             <el-progress
-              :percentage="row.quality_score != null ? Math.round(row.quality_score * 100) : 0"
-              :color="getQualityColor(row.quality_score || 0)"
+              v-else
+              :percentage="Math.round(row.quality_score * 100)"
+              :color="getQualityColor(row.quality_score)"
               :stroke-width="10"
             />
           </template>
@@ -174,7 +215,14 @@
             <el-option label="黑名单" value="blacklist" />
             <el-option label="白名单" value="whitelist" />
             <el-option label="访客" value="visitor" />
+            <el-option label="VIP" value="vip" />
+            <el-option label="员工" value="staff" />
+            <el-option label="自定义" value="custom" />
           </el-select>
+        </el-form-item>
+        <!-- [扩展分组 2026-08-25] CUSTOM 组名由 group_id 承载 (零新表方案, 后端已透传) -->
+        <el-form-item v-if="formData.group_type === 'custom'" label="分组名称" prop="group_id">
+          <el-input v-model="formData.group_id" placeholder="请输入自定义分组名称 (如: 保洁外包)" />
         </el-form-item>
         <el-form-item label="手机号">
           <el-input v-model="formData.phone" placeholder="请输入手机号" />
@@ -210,7 +258,7 @@
             >
               <el-icon class="upload-icon"><Plus /></el-icon>
             </el-upload>
-            <div class="image-tip">支持 JPG/PNG 格式，建议尺寸 200x200 像素以上</div>
+            <div class="image-tip">建议单人正脸大头照 (JPG/PNG, 人脸 ≥80x80px)；非正方形照片将自动裁剪为人脸中心的大头照</div>
             <div v-if="formData.imagePreview" class="image-preview">
               <el-image :src="formData.imagePreview" fit="cover" />
               <el-button type="danger" size="small" circle @click="handleImageRemove">
@@ -273,7 +321,9 @@
           <el-descriptions-item label="年龄">{{ detailRecord.age || '-' }}</el-descriptions-item>
           <el-descriptions-item label="住址" :span="2">{{ detailRecord.address || '-' }}</el-descriptions-item>
           <el-descriptions-item label="质量分">
+            <el-tag v-if="!detailRecord.quality_score" type="info" size="small" effect="plain">未测量</el-tag>
             <el-progress
+              v-else
               :percentage="Math.round(detailRecord.quality_score * 100)"
               :color="getQualityColor(detailRecord.quality_score)"
               :stroke-width="10"
@@ -302,8 +352,8 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { User, Warning, CircleCheck, UserFilled, Search, Plus, Upload, Download, Delete } from '@element-plus/icons-vue'
-import faceApi, { FaceRecord, FaceDatabaseStats } from '@/api/face'
+import { User, Warning, CircleCheck, UserFilled, Search, Plus, Upload, Download, Delete, Trophy, Suitcase, Setting } from '@element-plus/icons-vue'
+import faceApi, { FaceRecord, FaceDatabaseStats, FaceGroupTypeStr } from '@/api/face'
 import { evaluateImageQuality, evaluateImageQualityFromDataUrl } from '@/utils/imageQuality'
 
 const loading = ref(false)
@@ -316,7 +366,8 @@ const showDetailDialog = ref(false)
 const editingRecord = ref<FaceRecord | null>(null)
 const detailRecord = ref<FaceRecord | null>(null)
 
-const stats = reactive<FaceDatabaseStats>({ total: 0, blacklist: 0, whitelist: 0, visitor: 0, active: 0, expired: 0 })
+// [扩展分组 2026-08-25] 补 vip/staff/custom 三字段 (对齐后端 Statistics)
+const stats = reactive<FaceDatabaseStats>({ total: 0, blacklist: 0, whitelist: 0, visitor: 0, vip: 0, staff: 0, custom: 0, active: 0, expired: 0 })
 const filterGroupType = ref('')
 const searchKeyword = ref('')
 const records = ref<FaceRecord[]>([])
@@ -324,7 +375,9 @@ const pagination = reactive({ page: 1, pageSize: 20, total: 0 })
 
 const formData = reactive({
   name: '',
-  group_type: 'visitor' as 'blacklist' | 'whitelist' | 'visitor',
+  // [扩展分组 2026-08-25] 6 种业务分组; custom 组名由 group_id 承载
+  group_type: 'visitor' as FaceGroupTypeStr,
+  group_id: '',
   phone: '',
   id_number: '',
   email: '',
@@ -379,7 +432,7 @@ function handleCloseDialog() {
   formData.imagePreview = ''
   imageUploadRef.value?.clearFiles()
   Object.assign(formData, {
-    name: '', group_type: 'visitor', phone: '', id_number: '', email: '',
+    name: '', group_type: 'visitor', group_id: '', phone: '', id_number: '', email: '',
     gender: '', age: 0, address: '', image_path: '', image_data: '', imagePreview: '', valid_days: 7
   })
 }
@@ -400,6 +453,7 @@ function handleEdit(row: FaceRecord) {
   Object.assign(formData, {
     name: row.name,
     group_type: row.group_type,
+    group_id: row.group_id || '',
     phone: row.phone || '',
     id_number: row.id_number || '',
     email: row.email || '',
@@ -484,7 +538,12 @@ async function handleSubmit() {
       ? await faceApi.updateRecord(editingRecord.value.person_id, submitData)
       : await faceApi.addRecord(submitData)
     if (res.data.code === 0) {
-      ElMessage.success(editingRecord.value ? '更新成功' : '添加成功')
+      // [FIX 2026-08-23 注册照自动规整] 服务端以最佳人脸为中心自动裁剪正方形大头照
+      if (res.data.data?.auto_cropped) {
+        ElMessage.success(editingRecord.value ? '更新成功，已自动裁剪为标准大头照' : '添加成功，已自动裁剪为标准大头照')
+      } else {
+        ElMessage.success(editingRecord.value ? '更新成功' : '添加成功')
+      }
       handleCloseDialog()
       loadRecords()
       loadStats()
@@ -585,6 +644,9 @@ function getGroupTagType(groupType: string) {
     case 'blacklist': return 'danger'
     case 'whitelist': return 'success'
     case 'visitor': return 'warning'
+    case 'vip': return 'warning'      // 金色 (与访客同色, 文字区分)
+    case 'staff': return 'success'    // 绿色 (与白名单同色)
+    case 'custom': return 'primary'   // [扩展分组 2026-08-25] 蓝色
     default: return 'info'
   }
 }
@@ -616,6 +678,10 @@ onMounted(() => { loadStats(); loadRecords() })
 .stat-icon.blacklist { background: linear-gradient(135deg, #f5365c 0%, #f53b5c 100%); }
 .stat-icon.whitelist { background: linear-gradient(135deg, #2fb18d 0%, #28a879 100%); }
 .stat-icon.visitor { background: linear-gradient(135deg, #f9a825 0%, #f57f17 100%); }
+/* [扩展分组 2026-08-25] */
+.stat-icon.vip { background: linear-gradient(135deg, #ffd452 0%, #f0a500 100%); }
+.stat-icon.staff { background: linear-gradient(135deg, #4facfe 0%, #0083b0 100%); }
+.stat-icon.custom { background: linear-gradient(135deg, #9254de 0%, #6a5acd 100%); }
 .stat-value { font-size: 28px; font-weight: 600; color: #303133; }
 .stat-label { font-size: 14px; color: #909399; }
 .toolbar { display: flex; justify-content: space-between; align-items: center; }

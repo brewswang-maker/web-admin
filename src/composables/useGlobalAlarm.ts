@@ -12,6 +12,7 @@ import { useAlarmStore } from '@/stores/alarm'
 import { settingsApi } from '@/api/settings'
 import { alarmApi } from '@/api/alarm'
 import { showAlarmPopup, pushLinkageLog, normalizeAlarmPayload, playAlarmSound } from './useAlarmPopup'
+import { useChannelStore } from '@/stores/channel'
 
 // ── 单例状态（模块级，不随组件销毁） ──
 
@@ -295,6 +296,24 @@ function handleAlarm(alarm: any) {
       alarmStore.pushRealtimeAlarm(normalized)
     } catch (e) {
       console.warn('[useGlobalAlarm] pushRealtimeAlarm failed:', e)
+    }
+
+    // [P0-A 2026-08-24] 告警到达即预热拉流 (fire-and-forget): SIP INVITE 与弹窗渲染并行
+    //   原时序: WS 告警 → 弹窗渲染 → MiniPlayer mount → multi-urls 轮询 2.4s 无果 → 才发 /start
+    //           (INVITE 在告警后 ~3s 才发出, 用户再等 INVITE 2-5s → 弹窗视频打开慢)
+    //   优化: WS 告警到达立即发 /start (sharedStartStream 单飞, 与 MiniPlayer 共享在途请求),
+    //           MiniPlayer mount 时命中防抖窗口 → forceSkipStart 仅轮询 multi-urls → 命中预热流
+    //   注: 弹窗被防抖时也预热 — 流常驻 ZLM, 30s 内同通道再次告警秒开;
+    //       设备离线等失败静默 (MiniPlayer 侧有 P0-E 确定性失败快速降级, 预热不重复报错)
+    const prewarmChId = normalized.channelId ? String(normalized.channelId) : ''
+    if (prewarmChId) {
+      try {
+        const channelStore = useChannelStore()
+        if (!channelStore.checkSkipStart(prewarmChId)) {
+          channelStore.markStartCalled(prewarmChId)
+          channelStore.sharedStartStream(prewarmChId).catch(() => { /* 静默: 预热失败不打扰 */ })
+        }
+      } catch { /* pinia 未就绪等极端情况忽略 */ }
     }
 
     // 3. 弹窗防抖: 同一通道+同一类型在 POPUP_DEBOUNCE_MS 内不重复弹窗

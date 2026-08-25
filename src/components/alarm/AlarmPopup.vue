@@ -333,10 +333,11 @@ const popupSkipStartApi = computed(() => isChannelStreaming.value)
 //   - error: 加载/播放失败（连续 streamAlive=false + /start 失败 + 协议错误等）
 //   - playing: 重新成功播放时清除错误信息
 const playerError = ref('')
-function onPlayerError(msg: string) {
+function onPlayerError(msg: string, fatal?: boolean) {
   playerError.value = msg || '视频流加载失败'
   // [P0-4-c] 失败持续 30s → 自动降级到告警快照 tab
-  startLiveFailTimer()
+  //   [P0-E 2026-08-24] fatal (设备离线等确定性失败) → 3s 快速降级, 不再空等 30s
+  startLiveFailTimer(Boolean(fatal))
 }
 function onPlayerPlaying() {
   playerError.value = ''
@@ -352,6 +353,7 @@ function onPlayerPlaying() {
 //      连续 3 次 alive=false → POST /streams/:id/stop 释放 GB28181 会话 (防幽灵会话)
 //   ③ 恢复: 探活转 alive=true → 自动切回 live; 会话已 stop 则每 ~30s 重建拉流尝试
 const LIVE_FAIL_SWITCH_MS = 30_000
+const LIVE_FAIL_FAST_MS = 3_000  // [P0-E 2026-08-24] 确定性失败 (设备离线) 快速降级窗口
 const HEARTBEAT_INTERVAL_MS = 10_000
 const HEARTBEAT_MAX_FAILS = 3
 const REBUILD_TICKS = 3  // 已 stop 后每 3 个心跳 tick (≈30s) 做一次重建尝试
@@ -365,16 +367,17 @@ let rebuildTicks = 0
 const liveRebuildEpoch = ref(0)        // ++ → MiniPlayer :key 变化强制重建重拉
 const liveFallbackHint = ref('')
 
-function startLiveFailTimer() {
+function startLiveFailTimer(fast = false) {
   if (liveFailTimer) return  // 已在计时
+  const delay = fast ? LIVE_FAIL_FAST_MS : LIVE_FAIL_SWITCH_MS
   liveFailTimer = setTimeout(() => {
     liveFailTimer = null
     if (activeTab.value !== 'live' || !playerError.value) return
     switchedAwayFromLive = true
     activeTab.value = 'snapshot'
     liveFallbackHint.value = '实时视频不可用，正在录像…'
-    console.warn('[AlarmPopup] live failed ≥30s, fallback to snapshot tab')
-  }, LIVE_FAIL_SWITCH_MS)
+    console.warn(`[AlarmPopup] live failed ≥${Math.round(delay / 1000)}s${fast ? ' (确定性失败)' : ''}, fallback to snapshot tab`)
+  }, delay)
 }
 
 function stopLiveFailTimer() {

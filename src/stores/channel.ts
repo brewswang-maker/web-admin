@@ -10,6 +10,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { registerInferenceViewer, unregisterInferenceViewer } from '@/api/inference'
+import { streamHttp } from '@/api/http'
 
 /** PlayerFormat 与 LiveView 一致 */
 export type PlayerFormat = 'flv' | 'ws-flv' | 'hls' | 'webrtc'
@@ -72,6 +73,23 @@ export const useChannelStore = defineStore('channel', () => {
     lastStartApiAt.value.delete(channelId)
   }
 
+  // [P1-1 2026-08-24] /start 单飞 (single-flight): 同通道并发调用共享在途 Promise
+  //   原问题: 5s 防抖只防"时间先后", 不防"同时在途": A 的 /start 在途 (INVITE 需 2-5s) 期间,
+  //           B 的 multi-urls 轮询 4.5s 用尽后回退 /start → 同通道双 INVITE → 设备 RTP 冲突,
+  //           后到 INVITE 的清残留逻辑还可能误杀前者正在建立的 RTP server
+  //   方案: channel 维度 inflight Promise 共享, 后到者复用在途请求的响应 (含 P0-A 预热)
+  //   注: key 不含 streamType — multi-urls 恒查 main 流, 防抖也是 channel 维度, 保持一致
+  const inflightStarts = new Map<string, Promise<any>>()
+
+  function sharedStartStream(channelId: string, streamType: 'main' | 'sub' = 'main'): Promise<any> {
+    const existing = inflightStarts.get(channelId)
+    if (existing) return existing
+    const p = streamHttp.post(`/${channelId}/start`, { stream_type: streamType })
+      .finally(() => inflightStarts.delete(channelId))
+    inflightStarts.set(channelId, p)
+    return p
+  }
+
   /** @deprecated 已拆分为 checkSkipStart + markStartCalled（向后兼容保留） */
   function shouldSkipStart(channelId: string): boolean {
     const last = lastStartApiAt.value.get(channelId) || 0
@@ -128,6 +146,28 @@ export const useChannelStore = defineStore('channel', () => {
     return slots.value.get(idx)
   }
 
+  /**
+   * [v8.7 软关闭·引用计数] 查询某通道是否仍被其他前端 slot 引用。
+   *
+   * 仅覆盖本浏览器会话内的多观看者（浮窗/其他页面 slot 播同一通道）。
+   * 算法消费者（AutoDeploy 自动启动的推理通道）对前端不可见，由服务端
+   * /streams/:id/stop 的 inference-active 保护兜底：算法占用时 stop 被后端跳过，
+   * 不会挂断（响应 stopped=false, reason=inference_active）。
+   * 注意 GB28181 流后端 keep-alive（on_stream_none_reader 返回 close=false），
+   * 前端显式 /stop 是唯一停流途径；本函数拦“前端有人看”，后端拦“算法在用”。
+   *
+   * @param channelId 目标通道
+   * @param excludeIdx 排除的 slot idx（通常是调用者自己正在关闭的 slot，
+   *                   应先 unregister 再调用，或传此参排除自身）
+   */
+  function hasOtherViewers(channelId: string, excludeIdx?: number): boolean {
+    for (const [idx, s] of slots.value.entries()) {
+      if (excludeIdx !== undefined && idx === excludeIdx) continue
+      if (s.channelId === channelId) return true
+    }
+    return false
+  }
+
   /** 返回所有 slot 快照（用于 LiveView 恢复） */
   function snapshot() {
     return Array.from(slots.value.entries()).map(([idx, data]) => ({ idx, data }))
@@ -149,11 +189,13 @@ export const useChannelStore = defineStore('channel', () => {
     unregisterSlot,
     clearAll,
     getSlot,
+    hasOtherViewers,
     snapshot,
     setFloatingChannel,
     shouldSkipStart,
     markStartCalled,
     clearStartDebounce,
     checkSkipStart,
+    sharedStartStream,
   }
 })

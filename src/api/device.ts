@@ -15,30 +15,46 @@ import type { DeviceItem, DeviceStats, DeviceForm, DiscoveredDevice, DeviceConfi
  * - name         → device_name
  * - ip           → ip_address
  * - rtspPort     → port
- * - deviceType   → device_type (camelToSnake 拦截器自动处理)
+ * - deviceType   → device_type
  * - 缺 device_id 时根据 ip+port 自动生成
+ *
+ * [Fix 2026-08-25] 兼容两种入参风格(http.ts 全局 camelToSnake 已移除):
+ * - camelCase(DeviceForm: name/deviceType/ip/rtspPort...)
+ * - snake_case 直传(后端字段: device_name/device_type/ip_address/port/config...)
+ *   DevicesView.confirmEdit 等调用点直接传后端字段名,若不识别会被整体丢弃,
+ *   导致 PUT body 只剩 device_id、后端空值保护跳过更新却仍返回成功(假成功)。
  */
-function mapDeviceFormToBackend(data: DeviceForm | Partial<DeviceForm>, idForUpdate?: string): Record<string, unknown> {
+function mapDeviceFormToBackend(data: DeviceForm | Partial<DeviceForm> | Record<string, any>, idForUpdate?: string): Record<string, unknown> {
+  const d = data as any
   const out: Record<string, unknown> = {}
 
   if (idForUpdate) out.device_id = idForUpdate
-  else if ((data as DeviceForm).ip && !(data as any).device_id) {
+  else if (d.device_id) out.device_id = d.device_id
+  else if (d.ip || d.ip_address) {
     // 创建设备时若前端没填 device_id,使用 ip:port 形式
-    const port = (data as DeviceForm).rtspPort ?? 554
-    out.device_id = `${(data as DeviceForm).ip}:${port}`
+    const port = d.rtspPort ?? d.port ?? 554
+    out.device_id = `${d.ip ?? d.ip_address}:${port}`
   }
 
-  if (data.name !== undefined) out.device_name = data.name
-  if (data.deviceType !== undefined) out.device_type = data.deviceType
-  if (data.ip !== undefined) out.ip_address = data.ip
-  if (data.rtspPort !== undefined) out.port = data.rtspPort
-  if ((data as any).channelCount !== undefined) out.channel_count = (data as any).channelCount
-  if ((data as any).vendor !== undefined) out.vendor = (data as any).vendor
-  if ((data as any).model !== undefined) out.model = (data as any).model
-  if ((data as any).username !== undefined) out.username = (data as any).username
-  if ((data as any).password !== undefined) out.password = (data as any).password
-  if ((data as any).description !== undefined) out.description = (data as any).description
-  if (data.algoPlugin !== undefined) out.algo_plugin = data.algoPlugin
+  if (d.name !== undefined) out.device_name = d.name
+  else if (d.device_name !== undefined) out.device_name = d.device_name
+  if (d.deviceType !== undefined) out.device_type = d.deviceType
+  else if (d.device_type !== undefined) out.device_type = d.device_type
+  if (d.ip !== undefined) out.ip_address = d.ip
+  else if (d.ip_address !== undefined) out.ip_address = d.ip_address
+  if (d.rtspPort !== undefined) out.port = d.rtspPort
+  else if (d.port !== undefined) out.port = d.port
+  if (d.channelCount !== undefined) out.channel_count = d.channelCount
+  else if (d.channel_count !== undefined) out.channel_count = d.channel_count
+  if (d.algoPlugin !== undefined) out.algo_plugin = d.algoPlugin
+  else if (d.algo_plugin !== undefined) out.algo_plugin = d.algo_plugin
+  // 单词字段 camel/snake 同名,直接透传
+  for (const k of ['vendor', 'model', 'username', 'password', 'description']) {
+    if (d[k] !== undefined) out[k] = d[k]
+  }
+
+  // config 对象透传:后端 PUT /devices/:id 支持携带 config 同步更新设备配置
+  if (d.config !== undefined && typeof d.config === 'object') out.config = d.config
 
   return out
 }

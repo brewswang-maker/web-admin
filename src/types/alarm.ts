@@ -430,9 +430,30 @@ export const ALARM_CATEGORY: Record<string, AlarmCategory> = {
   lpr_pass: 'notification',
 }
 
+/**
+ * [FIX severity-scale 2026-08-24] severity 刻度归一化
+ * 后端链路存在两种刻度历史:
+ *   - AlarmInfo.level / LinkageEvent.severity: 1-5 整数 (现行契约)
+ *   - BehaviorEvent.severity: 0-1 浮点 (插件上报); 旧版 WEB_POPUP 曾未经换算
+ *     直接透传, float→int 截断后 0.95 变 0 → 级别显示"低" (8/24 12:52 危险物告警实测)
+ * 归一化规则:
+ *   1. NaN (字符串标签/缺失) → level 兜底 → 2
+ *   2. (0,1) 浮点 → round(n*5), 下限 2 (0.95→5 critical, 0.7→4 high)
+ *   3. 越界时夹紧到 [1,5]
+ */
+function normalizeSeverityScale(sev: unknown, level?: unknown): number {
+  let n = Number(sev)
+  if (!Number.isFinite(n)) n = Number(level)
+  if (!Number.isFinite(n)) n = 2
+  if (n > 0 && n < 1) n = Math.max(2, Math.round(n * 5))
+  return Math.max(1, Math.min(5, n))
+}
+
 /** 数字 severity → AlarmLevel 字符串 */
 function mapSeverity(severity: number | string | undefined): AlarmLevel {
-  const n = Number(severity ?? 0)
+  // [FIX severity-scale 2026-08-24] NaN 防御: 字符串标签 (如 "critical")
+  //   Number() 后为 NaN, 全部比较 false → 兜底 'low'. 改用归一化后再映射.
+  const n = Number.isFinite(Number(severity)) ? Number(severity) : normalizeSeverityScale(severity)
   if (n >= 5) return 'critical'
   if (n >= 4) return 'high'
   if (n >= 3) return 'medium'
@@ -469,7 +490,8 @@ export function normalizeAlarmCore(raw: any): AlarmEvent {
     console.warn('[normalizeAlarmCore] raw is null/undefined, using empty fallback')
     raw = {}
   }
-  const severityNum = Number(raw.severity ?? raw.level ?? 2)
+  // [FIX severity-scale 2026-08-24] 统一走刻度归一化 (兼容 0-1 浮点 / 1-5 整数 / 缺失)
+  const severityNum = normalizeSeverityScale(raw.severity, raw.level)
   const alarmType = raw.alarm_type || raw.type || 'other'
   // [FIX PhoneCall 2026-07-29] 优先取 metadata.channel_id_str (完整 GB28181 20位 ID)
   //   原因: phone_call 等 specialized plugin 路径的 channel_id 会被截断为 int32 hash

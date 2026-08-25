@@ -2581,7 +2581,11 @@ function restoreFromStore() {
   const snapshot = channelStore.snapshot()
   if (!snapshot.length) return
 
+  let restored = 0
   for (const { idx, data } of snapshot) {
+    // [v8.7] 越界保护：跳过非本页命名空间的 slot（如 SituationScreen 的
+    // 100+ 偏移注册），避免 gridSlots[idx] undefined 导致恢复报错
+    if (idx < 0 || idx >= gridSlots.length || !gridSlots[idx]) continue
     const slot = gridSlots[idx]
     slot.channelId = data.channelId
     slot.name = data.name
@@ -2597,10 +2601,14 @@ function restoreFromStore() {
       attachPlayerByFormat(idx, data.format)
       adaptiveBitrate.activate(idx, data.channelId, () => streamHealth.getHealth(idx))
     })
+    restored++
   }
-  // 恢复后隐藏浮窗
-  channelStore.showFloatingPreview = false
-  console.info(`[LiveView] 已恢复 ${snapshot.length} 个通道`)
+  // [v8.7] 仅当本页实际恢复了画面才隐藏浮窗：若 snapshot 只含其他页面的
+  // 命名空间注册（如 SituationScreen 100+），浮窗继续显示那些通道
+  if (restored > 0) {
+    channelStore.showFloatingPreview = false
+    console.info(`[LiveView] 已恢复 ${restored} 个通道`)
+  }
 }
 
 onUnmounted(() => {
