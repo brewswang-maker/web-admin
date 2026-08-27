@@ -185,6 +185,13 @@
         :closable="false"
         style="margin-top: 12px"
       />
+      <!-- [FIX 2026-08-28] 拒绝后一键改用合成事件注入: 行为类事件图片模式
+           仅单帧语义校验, 被拒时免手动切模式重填参数 -->
+      <div v-if="inferResult?.alarm_rejected" style="margin-top: 8px; text-align: right">
+        <el-button size="small" type="warning" plain :disabled="testing" @click="testMode = 'synthesis'">
+          ⚡ 改用合成事件注入继续演练
+        </el-button>
+      </div>
 
       <!-- 错误信息 -->
       <el-alert v-if="errorMsg" type="error" :title="errorMsg" :closable="true" @close="errorMsg = ''" style="margin-top: 12px" />
@@ -350,6 +357,19 @@ function autoSelectAlgorithm() {
     }
   }
 
+  // [FIX 2026-08-28] coverage 推荐算法不在列表时停止兜底: 前 3 策略落空
+  //   且 coverage 明确指定的 algo_id 列表里找不到, 说明后端注册与
+  //   /algorithms 清单不一致 (如 personal_item 曾漏列), 前缀/模糊兜底
+  //   极易选错语义近邻算法 (实测 person_with_backpack 兑底命中人形检测
+  //   → 只出 person 框被拒)。提示手动选择, 不静默选错。
+  const covAlgoMissing = !!covAlgoId &&
+    !algos.some(a => (a.algo_id || a.id) === covAlgoId)
+  if (covAlgoMissing) {
+    console.warn('[EventTestDrawer] coverage algo_id missing in list:', covAlgoId)
+    ElMessage.warning(`推荐算法 ${covAlgoId} 不在算法列表中，请手动选择算法或改用合成事件模式`)
+    return
+  }
+
   // 策略4: 反向匹配 — 算法 alarm_type 是事件类型的前缀或子串
   // 如 blacklist_person → 算法 alarm_type="face_detect" 不匹配，但可以用前缀 "face" 匹配
   if (evtType) {
@@ -399,8 +419,11 @@ watch(visible, (v) => {
 
 watch(() => props.coverageInfo, (info) => {
   if (info) {
-    // 始终默认图片推理模式
-    testMode.value = 'image'
+    // [FIX 2026-08-28] 默认模式遵循 coverage 矩阵推荐 (后端按插件
+    //   supports_behavior 分类): 行为类事件 (person_with_backpack/
+    //   tailgating/fall 等) 需帧序列状态机, 图片模式仅单帧语义校验,
+    //   被拒概率高, 默认合成事件注入; 初版一刀切默认 image。
+    testMode.value = info.test_mode === 'synthesis' ? 'synthesis' : 'image'
     // 重置已选算法，触发 autoSelectAlgorithm 重新匹配
     selectedAlgoId.value = ''
     // 如果算法列表已加载，立即尝试匹配；否则触发加载
