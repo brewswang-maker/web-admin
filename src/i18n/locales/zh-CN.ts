@@ -74,6 +74,10 @@ const zhCN = {
 
   menu: {
     dashboard: '仪表盘',
+    largeEventOverview: '活动总览',
+    largeEventDensity: '密度热力大屏',
+    largeEventEvents: '事件告警',
+    largeEventPacks: '场景包',
     devices: '设备管理',
     channels: '通道管理',
     alarms: '告警中心',
@@ -696,6 +700,7 @@ const zhCN = {
     video: '视频',
     alarm: '报警',
     ai: 'AI 智能',
+    largeEvent: '大型活动',
     platform: '平台管理'
   },
 

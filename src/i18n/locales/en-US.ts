@@ -76,6 +76,10 @@ const enUS: MessageSchema = {
 
   menu: {
     dashboard: 'Dashboard',
+    largeEventOverview: 'Event Overview',
+    largeEventDensity: 'Density Screen',
+    largeEventEvents: 'Event Alerts',
+    largeEventPacks: 'Scene Packs',
     devices: 'Devices',
     channels: 'Channels',
     alarms: 'Alarms',
@@ -700,6 +704,7 @@ const enUS: MessageSchema = {
     video: 'Video',
     alarm: 'Alarm',
     ai: 'AI',
+    largeEvent: 'Large Event',
     platform: 'Platform Management'
   },
 

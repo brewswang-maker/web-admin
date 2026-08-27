@@ -88,8 +88,9 @@ const eventTypesApi = {
   /**
    * v7.6 获取 SSOT 事件类型元数据 (分类+严重等级+UI分组)
    * 对标海康/大华事件配置面板: 按大类分组, 每个事件带严重等级标签
+   * [P0-1] scene: 场景标签过滤 (逗号分隔多值, e.g. "large_event_stadium,large_event_expo")
    */
-  metadata(params?: { category?: string; severity?: string }) {
+  metadata(params?: { category?: string; severity?: string; scene?: string }) {
     return http.get<ApiResponse<EventTypeMetadataResponse>>(
       '/event-types/metadata',
       { params }

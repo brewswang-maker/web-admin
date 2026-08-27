@@ -55,6 +55,11 @@ const AlgoQualityView = () => import('@/views/AlgoQualityView.vue')
 const PipelineHealthView = () => import('@/views/PipelineHealthView.vue')
 const AnnotationView = () => import('@/views/AnnotationView.vue')
 const TrainingView = () => import('@/views/TrainingView.vue')
+// 大型活动 EventGuard (Phase 0-1)
+const LargeEventOverviewView = () => import('@/views/large-event/OverviewView.vue')
+const LargeEventDensityView = () => import('@/views/large-event/DensityScreenView.vue')
+const LargeEventEventsView = () => import('@/views/large-event/EventListView.vue')
+const LargeEventScenePacksView = () => import('@/views/large-event/ScenePacksView.vue')
 
 // 基础路由（无需权限）
 export const constantRoutes: RouteRecordRaw[] = [
@@ -352,6 +357,31 @@ export const asyncRoutes: RouteRecordRaw[] = [
         name: 'Training',
         component: TrainingView,
         meta: { title: '零代码训练', icon: 'Cpu', roles: ['admin', 'user'] }
+      },
+      // ── 大型活动 EventGuard (Phase 0-1) ──
+      {
+        path: 'large-event/overview',
+        name: 'LargeEventOverview',
+        component: LargeEventOverviewView,
+        meta: { title: '大型活动总览', icon: 'DataBoard', roles: ['admin', 'user', 'viewer'] }
+      },
+      {
+        path: 'large-event/density',
+        name: 'LargeEventDensity',
+        component: LargeEventDensityView,
+        meta: { title: '密度热力大屏', icon: 'Histogram', roles: ['admin', 'user', 'viewer'] }
+      },
+      {
+        path: 'large-event/events',
+        name: 'LargeEventEvents',
+        component: LargeEventEventsView,
+        meta: { title: '大型活动事件', icon: 'Bell', roles: ['admin', 'user', 'viewer'] }
+      },
+      {
+        path: 'large-event/scene-packs',
+        name: 'LargeEventScenePacks',
+        component: LargeEventScenePacksView,
+        meta: { title: '场景包', icon: 'Files', roles: ['admin', 'user'] }
       },
     ]
   },

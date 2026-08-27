@@ -496,7 +496,7 @@ const alarmStore = useAlarmStore()
 const prefStore = usePreferenceStore()
 const { t } = useI18n()
 
-type PrimaryMenuKey = 'home' | 'location' | 'video' | 'alarm' | 'ai' | 'platform'
+type PrimaryMenuKey = 'home' | 'location' | 'video' | 'alarm' | 'ai' | 'large-event' | 'platform'
 type SidebarItem = {
   path: string
   label: string
@@ -550,6 +550,16 @@ const primaryMenus = computed<PrimaryMenu[]>(() => [
       { path: '/algorithm-store', label: t('menu.algorithms'), icon: ShoppingCart },
       { path: '/face-database', label: t('menu.face'), icon: User },
       { path: '/face-realtime', label: t('menu.faceRealtime'), icon: Aim },
+    ],
+  },
+  {
+    key: 'large-event',
+    label: t('menuPrimary.largeEvent'),
+    items: [
+      { path: '/large-event/overview', label: t('menu.largeEventOverview'), icon: DataAnalysis },
+      { path: '/large-event/density', label: t('menu.largeEventDensity'), icon: Position },
+      { path: '/large-event/events', label: t('menu.largeEventEvents'), icon: Bell },
+      { path: '/large-event/scene-packs', label: t('menu.largeEventPacks'), icon: FolderOpened },
     ],
   },
   {
