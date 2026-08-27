@@ -99,7 +99,7 @@
           <el-card shadow="never" class="roi-card">
             <template #header>
               <div class="config-header">
-                <span>ROI {{ $t('detectionZone', '检测区域') }} / {{ $t('tripwire', '绊线') }} / {{ $t('countingZone', '计数区') }}</span>
+                <span>ROI {{ $t('detectionZone', '检测区域') }} / {{ $t('tripwire', '绊线') }} / {{ $t('passageway', '通道') }} / {{ $t('countingZone', '计数区') }}</span>
                 <el-button type="primary" text size="small" @click="loadRegions">{{ $t('refresh', '刷新') }}</el-button>
               </div>
             </template>
@@ -121,6 +121,29 @@
                   <div v-for="tw in tripwires" :key="tw.id" class="tripwire-list__item">
                     <span>{{ tw.name }} ({{ tw.direction }})</span>
                     <el-button text size="small" type="danger" @click="deleteTripwire(tw.id)">
+                      {{ $t('delete', '删除') }}
+                    </el-button>
+                  </div>
+                </div>
+              </el-tab-pane>
+              <el-tab-pane :label="$t('passageway', '通道 (尾随 v5)')" name="passageway">
+                <div class="pw-toolbar-row">
+                  <el-button size="small" @click="migrateTripwires">老绊线迁移</el-button>
+                  <span class="pw-mig-hint">绊线→矩形通道 (幂等, detector 首帧自动执行)</span>
+                </div>
+                <PassagewayEditor
+                  v-if="selected"
+                  @confirm="onPassagewayConfirm"
+                />
+                <div v-if="passageways.length" class="tripwire-list">
+                  <div v-for="pw in passageways" :key="pw.id" class="tripwire-list__item">
+                    <span>
+                      {{ pw.name }}
+                      (sens={{ pw.sensitivity }}, {{ pw.direction_in ? '进入' : '离开' }}
+                      {{ pw.suppress_mode }}
+                      <template v-if="pw.migrated_from_tripwire">, 迁移自绊线#{{ pw.migrated_from_tripwire }}</template>)
+                    </span>
+                    <el-button text size="small" type="danger" @click="deletePassageway(pw.id)">
                       {{ $t('delete', '删除') }}
                     </el-button>
                   </div>
@@ -163,9 +186,10 @@ import type { ScheduledChannel } from '@/api/inference'
 import algorithmsApi from '@/api/algorithms'
 import type { AlgorithmInfo } from '@/api/algorithms'
 import { regionApi } from '@/api/region'
-import type { RegionDef, TripwireDef } from '@/types/region'
+import type { RegionDef, TripwireDef, PassagewayDef, SuppressMode } from '@/types/region'
 import RoiPolygonEditor from '@/components/RoiPolygonEditor.vue'
 import TripwireEditor from '@/components/TripwireEditor.vue'
+import PassagewayEditor from '@/components/PassagewayEditor.vue'
 
 /** 通道项（合并通道信息 + 推理调度状态） */
 interface ChannelItem {
@@ -202,21 +226,31 @@ const form = reactive({
 })
 
 // 🆕 v7.1 (28 算法补齐 P0-A5): 区域/绊线/计数区持久化
-const roiTab = ref<'region' | 'tripwire' | 'counting'>('region')
+// 🆕 v5.0 (尾随区域版): + 通道 (passageway)
+const roiTab = ref<'region' | 'tripwire' | 'passageway' | 'counting'>('region')
 const regions = ref<RegionDef[]>([])
 const tripwires = ref<TripwireDef[]>([])
+const passageways = ref<PassagewayDef[]>([])
 
 async function loadRegions() {
   if (!selected.value) return
-  const chId = Number(selected.value.channelId)
-  if (!Number.isFinite(chId)) return
+  // GB28181 完整编码可能是超大数, int32 查询降级为 0 (passageway 走 string 主路径)
+  const chIdStr = selected.value.channelId
+  const chIdNum = Number(chIdStr)
+  const chId = Number.isFinite(chIdNum) && Number.isSafeInteger(chIdNum) ? chIdNum : 0
   try {
-    const [rRes, tRes] = await Promise.all([
+    const [rRes, tRes, pRes] = await Promise.all([
       regionApi.listRegions({ channel_id: chId }),
-      regionApi.listTripwires({ channel_id: chId })
+      regionApi.listTripwires({ channel_id: chId }),
+      // 🆕 v5.0: 通道主路径 channel_id_str (GB28181 完整编码)
+      regionApi.listPassageways({
+        channel_id_str: chIdStr,
+        algo_id: form.algorithm || 'shield.algo.perimeter.tailgating'
+      })
     ])
     regions.value = rRes.data?.regions ?? []
     tripwires.value = tRes.data?.tripwires ?? []
+    passageways.value = pRes.data?.passageways ?? []
   } catch (e: any) {
     ElMessage.warning(`加载区域失败: ${e?.message ?? e}`)
   }
@@ -278,6 +312,60 @@ async function deleteTripwire(id: number) {
     await loadRegions()
   } catch (e: any) {
     ElMessage.error(`删除失败: ${e?.message ?? e}`)
+  }
+}
+
+// 🆕 v5.0: 通道 (多边形通行区) 添加/删除/老绊线迁移
+async function onPassagewayConfirm(payload: {
+  transit_polygon: [number, number][]
+  direction_in: boolean
+  sensitivity: number
+  suppress_mode: SuppressMode
+  cooldown_sec: number
+}) {
+  if (!selected.value) return
+  const chIdStr = selected.value.channelId
+  const chIdNum = Number(chIdStr)
+  const algoId = form.algorithm || 'shield.algo.perimeter.tailgating'
+  try {
+    await regionApi.createPassageway({
+      channel_id: Number.isFinite(chIdNum) && Number.isSafeInteger(chIdNum) ? chIdNum : 0,
+      channel_id_str: chIdStr,
+      algo_id: algoId,
+      name: `pw_${Date.now() % 10000}`,
+      transit_polygon: payload.transit_polygon,
+      direction_in: payload.direction_in,
+      sensitivity: payload.sensitivity,
+      suppress_mode: payload.suppress_mode,
+      cooldown_sec: payload.cooldown_sec,
+      enabled: true
+    })
+    ElMessage.success('通道已添加')
+    await loadRegions()
+  } catch (e: any) {
+    ElMessage.error(`添加通道失败: ${e?.message ?? e}`)
+  }
+}
+
+async function deletePassageway(id: number) {
+  try {
+    await regionApi.deletePassageway(id)
+    ElMessage.success('已删除')
+    await loadRegions()
+  } catch (e: any) {
+    ElMessage.error(`删除失败: ${e?.message ?? e}`)
+  }
+}
+
+async function migrateTripwires() {
+  const algoId = form.algorithm || 'shield.algo.perimeter.tailgating'
+  try {
+    const res = await regionApi.migratePassageways(algoId)
+    const n = res.data?.migrated ?? 0
+    ElMessage.success(n > 0 ? `已迁移 ${n} 条老绊线为通道` : '无可迁移的老绊线 (或已全部迁移)')
+    await loadRegions()
+  } catch (e: any) {
+    ElMessage.error(`迁移失败: ${e?.message ?? e}`)
   }
 }
 
@@ -473,6 +561,10 @@ async function saveConfig() {
 .tripwire-list__item {
   display: flex; align-items: center; justify-content: space-between;
   padding: 6px 10px; background: var(--bg-page); border-radius: 4px;
+}
+.pw-toolbar-row {
+  display: flex; align-items: center; gap: 10px; margin-bottom: 8px;
+  .pw-mig-hint { font-size: 12px; color: #909399; }
 }
 .bottom-bar {
   padding: 12px 24px; background: var(--bg-card); border-top: 1px solid var(--border-light);

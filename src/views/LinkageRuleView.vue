@@ -149,12 +149,21 @@
             <el-switch v-model="row.enabled" size="small" inline-prompt active-text="开" inactive-text="关" @change="toggleRule(row)" />
           </template>
         </el-table-column>
-        <el-table-column prop="name" label="规则名称" min-width="180">
+        <el-table-column prop="name" label="规则名称" min-width="180" show-overflow-tooltip>
           <template #default="{ row }">
-            <div class="rule-name-cell">
-              <span class="rule-name">{{ row.name }}</span>
-              <el-tag size="small" :type="row.enabled ? 'success' : 'info'" effect="plain" class="priority-tag">P{{ row.priority }}</el-tag>
-              <el-tag v-for="tag in (row.tags || [])" :key="tag" size="small" type="info" effect="plain" style="margin-left: 2px">{{ tag }}</el-tag>
+            <span class="rule-name">{{ row.name || '未命名规则' }}</span>
+          </template>
+        </el-table-column>
+        <!-- [FIX 2026-08-27 v5] 优先级 与 标签 拆出为独立列, 避免 flex 布局吞掉 prop="name" 的渲染 -->
+        <el-table-column label="优先级" width="70" align="center">
+          <template #default="{ row }">
+            <el-tag size="small" :type="row.enabled ? 'success' : 'info'" effect="plain" class="priority-tag">P{{ row.priority ?? '-' }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="标签" min-width="120">
+          <template #default="{ row }">
+            <div class="cell-tags">
+              <el-tag v-for="tag in (row.tags || [])" :key="tag" size="small" type="info" effect="plain">{{ tag }}</el-tag>
             </div>
           </template>
         </el-table-column>
@@ -336,6 +345,26 @@
                 </el-form-item>
                 <el-form-item label="ROI多边形区域" label-position="top" class="cond-form-item">
                   <RoiPolygonEditor v-model="form.conditions.region.config.roiPolygon" :background-image-url="roiBackgroundUrl" :canvas-width="440" :canvas-height="248" />
+                </el-form-item>
+                <!-- [FIX 2026-08-27 P0-PERIMETER v3] 越界 (Tripwire) 联动 -->
+                <el-form-item label="越界绊线" label-position="top" class="cond-form-item">
+                  <el-select v-model="form.conditions.region.config.tripwireId" placeholder="选择越界绊线 (不选=不限)" clearable style="width: 100%" @focus="loadTripwireOptions" v-loading="tripwireLoading">
+                    <template v-if="tripwireOptions.length > 0">
+                      <el-option v-for="t in tripwireOptions" :key="t.id" :label="t.label" :value="t.id" />
+                    </template>
+                    <template #empty><span class="text-secondary">{{ tripwireEmptyHint }}</span></template>
+                  </el-select>
+                </el-form-item>
+                <el-form-item label="越界方向" label-position="top" class="cond-form-item">
+                  <el-radio-group v-model="form.conditions.region.config.direction">
+                    <el-radio value="">不限</el-radio>
+                    <el-radio value="A_TO_B">A → B</el-radio>
+                    <el-radio value="B_TO_A">B → A</el-radio>
+                    <el-radio value="BOTH">双向</el-radio>
+                  </el-radio-group>
+                  <p class="cond-hint" style="margin-top:4px">
+                    💡 仅选择越界绊线后, 方向过滤才生效; 仅选择方向则任意绊线的该方向都会触发。
+                  </p>
                 </el-form-item>
                 <el-form-item label="设备分组" label-position="top" class="cond-form-item">
                   <el-select v-model="form.conditions.region.config.group" placeholder="选择分组" style="width: 100%"><el-option v-for="g in groupOptions" :key="g" :label="g" :value="g" /></el-select>
@@ -1137,6 +1166,36 @@ async function loadChannelSnapshot(channelId: string) {
   } catch { roiBackgroundUrl.value = '' }
 }
 
+// [FIX 2026-08-27 P0-PERIMETER v3] 加载越界绊线选项 (按需, 仅在用户聚焦下拉时拉一次)
+async function loadTripwireOptions() {
+  if (tripwireOptions.value.length > 0) return  // 缓存
+  tripwireLoading.value = true
+  try {
+    const res = await fetch('/api/v1/algos/tripwires', { credentials: 'include' })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    const data = await res.json()
+    // 兼容 makeOkResponse 包装: 直接读 data.tripwires 或 data.data.tripwires
+    const list = data?.tripwires ?? data?.data?.tripwires ?? []
+    // direction 大小写转换: a_to_b → A_TO_B
+    tripwireOptions.value = list.map((t: any) => ({
+      id: String(t.id),
+      label: `${t.name || '未命名绊线'} [${t.channel_id_str || t.channel_id || '?'}] (${dirToUpper(t.direction)})`,
+      direction: dirToUpper(t.direction),
+      channelIdStr: t.channel_id_str || '',
+    }))
+    tripwireEmptyHint.value = tripwireOptions.value.length === 0 ? '暂无越界绊线, 请先到算法配置创建' : ''
+  } catch (e: any) {
+    tripwireEmptyHint.value = `加载失败: ${e?.message || '未知错误'}`
+    tripwireOptions.value = []
+  } finally {
+    tripwireLoading.value = false
+  }
+}
+function dirToUpper(d: string): string {
+  if (!d) return ''
+  return d.toUpperCase()
+}
+
 const clientActionGroups = [
   { label: '视频联动', items: [
     { type: 'CLIENT_SHOW_LIVE', icon: '📹', label: '弹出指定监控点实时视频' },
@@ -1237,6 +1296,13 @@ const sortOrder = ref<'ascending' | 'descending'>('descending')
 const selectedRows = ref<LinkageRule[]>([])
 const tagFilter = ref<string[]>([])
 const showArchived = ref(false) // [FIX P2-3] 是否显示归档规则
+
+// [FIX 2026-08-27 P0-PERIMETER v3] 越界绊线选项
+//   后端 GET /api/v1/algos/tripwires → { tripwires: [{id, name, channel_id_str, algo_id, direction, ...}] }
+//   direction 后端为小写 a_to_b, 前端为 A_TO_B, 转换在 loadTripwireOptions 内进行。
+const tripwireLoading = ref(false)
+const tripwireOptions = ref<Array<{ id: string; label: string; direction: string; channelIdStr: string }>>([])
+const tripwireEmptyHint = ref('点击加载越界绊线')
 
 // [P2-LR2] 规则冲突检测状态
 const conflictLoading = ref(false)
@@ -1627,7 +1693,7 @@ function getActiveConditions(rule: LinkageRule): Array<{ key: string; label: str
   if (tc && (tc.time_start || tc.time_end || tc.weekdays?.length || tc.monthdays?.length))
     tags.push({ key: 'time', label: '🕐 时间' })
   const sc = rule.spatial_cond
-  if (sc && (sc.region_id || sc.location_id || sc.device_group_id || sc.roi_polygon?.length))
+  if (sc && (sc.region_id || sc.location_id || sc.device_group_id || sc.roi_polygon?.length || sc.tripwire_id || sc.direction))
     tags.push({ key: 'spatial', label: '📍 空间' })
   const src = rule.source_cond
   if (src && (src.event_types?.length || src.channel_ids?.length || src.algorithm_ids?.length))
@@ -1740,10 +1806,11 @@ function openEditor(rule: LinkageRule | null) {
     }
     // spatial_cond → region + location
     const sc = rule.spatial_cond || {} as any
-    const hasSpatial = !!(sc.region_id || sc.location_id || sc.device_group_id || sc.roi_polygon?.length)
+    const hasSpatial = !!(sc.region_id || sc.location_id || sc.device_group_id || sc.roi_polygon?.length || sc.tripwire_id || sc.direction)
     form.conditions.region = {
       enabled: hasSpatial,
-      config: { location: sc.location_id || '', roi: sc.region_id || '', group: sc.device_group_id || '', roiPolygon: [] as RoiData[], channelId: '' },
+      // [FIX 2026-08-27 P0-PERIMETER v3] tripwire + direction 从后端读出
+      config: { location: sc.location_id || '', roi: sc.region_id || '', group: sc.device_group_id || '', roiPolygon: [] as RoiData[], channelId: '', tripwireId: sc.tripwire_id || '', direction: sc.direction || '' },
     }
     form.conditions.location = {
       enabled: !!sc.location_id,
@@ -1840,7 +1907,12 @@ async function handleSave() {
       location_id: cleanLocation(lc.enabled ? (lc.config.point || rc.config.location) : (rc.config.location || '')),
       device_group_id: cleanGroup(rc.config.group || ''),
       roi_polygon: rc.config.roiPolygon.flatMap((r: RoiData) => r.polygon) || [] as number[],
-    } : { region_id: '', location_id: '', device_group_id: '', roi_polygon: [] as number[] }
+      // [FIX 2026-08-27 P0-PERIMETER v3] tripwire 越界联动
+      //   tripwireId 与 direction 都空 = 不启用 tripwire 过滤
+      //   否则仅匹配的 tripwire + direction 才触发动作
+      tripwire_id: rc.config.tripwireId || '',
+      direction: rc.config.direction || '',
+    } : { region_id: '', location_id: '', device_group_id: '', roi_polygon: [] as number[], tripwire_id: '', direction: '' }
 
     const etc = form.conditions.eventType
     const esc = form.conditions.eventSource
@@ -2560,20 +2632,22 @@ watch(mainTab, (tab) => {
 .list-card :deep(.el-card__body) { padding: 0; }
 
 /* ── 规则名称 ── */
-.rule-name-cell { display: flex; align-items: center; gap: 8px; min-width: 0; }
+/* [FIX 2026-08-27 v5] 完全放弃 flex, 用最简单 inline-block ellipsis.
+   show-overflow-tooltip 在 prop 列上自带完整文本 hover 提示, 不需要抹平中部所有样式. */
 .rule-name {
   font-weight: 600;
-  /* [FIX 2026-08-27] 单行省略: 覆盖 EP .cell 默认 overflow-wrap: break-word
-     (中文会被按字拆开为一字一行垂直显示) */
+  display: inline-block;
+  max-width: 100%;
+  vertical-align: middle;
+  /* 关键: 覆盖 Element Plus .cell 的 overflow-wrap: break-word */
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  flex: 1;
-  min-width: 0;
   overflow-wrap: normal;
   word-break: keep-all;
 }
-.priority-tag { font-family: var(--font-mono); font-size: 11px; flex-shrink: 0; }
+.priority-tag { font-family: var(--font-mono); font-size: 11px; }
+.cell-tags { display: flex; flex-wrap: wrap; gap: 4px; }
 
 /* ── 条件标签 ── */
 .condition-tags { display: flex; flex-wrap: wrap; gap: 4px; }
