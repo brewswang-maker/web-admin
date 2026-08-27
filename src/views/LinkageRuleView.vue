@@ -107,7 +107,7 @@
           </el-button>
         </template>
         <el-table :data="ruleStatsData" stripe size="small" style="width: 100%">
-          <el-table-column prop="rule_name" label="规则名称" min-width="160" />
+          <el-table-column prop="rule_name" label="规则名称" min-width="160" show-overflow-tooltip />
           <el-table-column prop="trigger_count" label="触发次数" width="100" align="center">
             <template #default="{ row }">
               <el-tag :type="row.trigger_count > 0 ? 'success' : 'info'" size="small">{{ row.trigger_count }}</el-tag>
@@ -666,8 +666,8 @@
             <el-table-column prop="trigger_at" label="触发时间" width="170">
               <template #default="{ row }"><span class="time-text">{{ formatTime(row.trigger_at) }}</span></template>
             </el-table-column>
-            <el-table-column prop="rule_name" label="规则" width="140" />
-            <el-table-column prop="event_type" label="事件类型" width="100" />
+            <el-table-column prop="rule_name" label="规则" width="140" show-overflow-tooltip />
+            <el-table-column prop="event_type" label="事件类型" width="120" show-overflow-tooltip />
             <el-table-column prop="channel_id" label="通道" width="80" />
             <el-table-column label="执行动作" min-width="180">
               <template #default="{ row }">
@@ -725,7 +725,7 @@
           <el-table-column prop="created_at" label="时间" width="170">
             <template #default="{ row }"><span class="time-text">{{ formatTime(row.created_at) }}</span></template>
           </el-table-column>
-          <el-table-column prop="action_name" label="动作名称" width="140" />
+          <el-table-column prop="action_name" label="动作名称" width="140" show-overflow-tooltip />
           <el-table-column prop="rule_id" label="规则ID" width="120" show-overflow-tooltip>
             <template #default="{ row }">
               <span v-if="row.rule_id" style="font-family: monospace; font-size: 12px">{{ row.rule_id }}</span>
@@ -853,7 +853,7 @@
         <el-table-column prop="version" label="版本" width="70">
           <template #default="{ row }"><el-tag size="small">v{{ row.version }}</el-tag></template>
         </el-table-column>
-        <el-table-column prop="name" label="名称" min-width="120" />
+        <el-table-column prop="name" label="名称" min-width="120" show-overflow-tooltip />
         <el-table-column label="状态" width="80">
           <template #default="{ row }">
             <el-tag :type="row.enabled ? 'success' : 'info'" size="small">{{ row.enabled ? '启用' : '停用' }}</el-tag>
@@ -885,7 +885,7 @@
           </template>
         </el-alert>
         <el-table :data="dryRunResult.rule_details" stripe size="small" style="margin-bottom: 16px">
-          <el-table-column prop="rule_name" label="规则名称" min-width="120" />
+          <el-table-column prop="rule_name" label="规则名称" min-width="120" show-overflow-tooltip />
           <el-table-column label="匹配" width="70" align="center">
             <template #default="{ row }"><el-tag :type="row.matched ? 'success' : 'danger'" size="small">{{ row.matched ? '是' : '否' }}</el-tag></template>
           </el-table-column>
@@ -901,7 +901,7 @@
           <el-table-column label="冷却" width="60" align="center">
             <template #default="{ row }"><el-tag :type="row.cooldown_active ? 'warning' : 'info'" size="small">{{ row.cooldown_active ? '是' : '否' }}</el-tag></template>
           </el-table-column>
-          <el-table-column prop="match_reason" label="原因" min-width="120" />
+          <el-table-column prop="match_reason" label="原因" min-width="120" show-overflow-tooltip />
         </el-table>
         <div v-if="dryRunResult.simulated_actions?.length" style="margin-top: 12px">
           <div style="font-weight: 600; margin-bottom: 8px">将触发的动作:</div>
@@ -984,8 +984,8 @@
       </div>
       <el-table :data="plans" stripe v-loading="plansLoading" size="small" style="margin-top: 12px">
         <el-table-column prop="plan_id" label="ID" width="140" />
-        <el-table-column prop="name" label="名称" width="160" />
-        <el-table-column prop="description" label="描述" min-width="180" />
+        <el-table-column prop="name" label="名称" width="160" show-overflow-tooltip />
+        <el-table-column prop="description" label="描述" min-width="180" show-overflow-tooltip />
         <el-table-column label="关联规则" width="100">
           <template #default="{ row }">{{ (row.rule_ids || []).length }} 条</template>
         </el-table-column>
@@ -1024,8 +1024,8 @@
       </div>
       <el-table :data="cepPatterns" stripe v-loading="cepLoading" size="small" style="margin-top: 12px">
         <el-table-column prop="pattern_id" label="ID" width="200" />
-        <el-table-column prop="name" label="名称" width="180" />
-        <el-table-column prop="description" label="描述" min-width="180" />
+        <el-table-column prop="name" label="名称" width="180" show-overflow-tooltip />
+        <el-table-column prop="description" label="描述" min-width="180" show-overflow-tooltip />
         <el-table-column label="操作符" width="100">
           <template #default="{ row }">
             <el-tag v-for="s in (row.steps || []).slice(0, 2)" :key="s.step_id" size="small" style="margin: 1px">{{ opLabel(s.op) }}</el-tag>
@@ -1034,7 +1034,7 @@
         <el-table-column label="窗口" width="100">
           <template #default="{ row }">{{ (row.window_ms / 1000).toFixed(0) }}s</template>
         </el-table-column>
-        <el-table-column prop="output_event_type" label="输出事件" width="160" />
+        <el-table-column prop="output_event_type" label="输出事件" width="160" show-overflow-tooltip />
         <el-table-column label="状态" width="90">
           <template #default="{ row }">
             <el-tag :type="row.enabled ? 'success' : 'info'" size="small">{{ row.enabled ? '启用' : '禁用' }}</el-tag>
@@ -2560,9 +2560,20 @@ watch(mainTab, (tab) => {
 .list-card :deep(.el-card__body) { padding: 0; }
 
 /* ── 规则名称 ── */
-.rule-name-cell { display: flex; align-items: center; gap: 8px; }
-.rule-name { font-weight: 600; }
-.priority-tag { font-family: var(--font-mono); font-size: 11px; }
+.rule-name-cell { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.rule-name {
+  font-weight: 600;
+  /* [FIX 2026-08-27] 单行省略: 覆盖 EP .cell 默认 overflow-wrap: break-word
+     (中文会被按字拆开为一字一行垂直显示) */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: normal;
+  word-break: keep-all;
+}
+.priority-tag { font-family: var(--font-mono); font-size: 11px; flex-shrink: 0; }
 
 /* ── 条件标签 ── */
 .condition-tags { display: flex; flex-wrap: wrap; gap: 4px; }
