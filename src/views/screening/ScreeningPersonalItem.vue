@@ -1,6 +1,6 @@
 <template>
   <div class="screening-personal-item">
-    <!-- ===== 模型部署状态卡 (新 API) ===== -->
+    <!-- ===== 模型部署状态卡 (personal-item/status) ===== -->
     <el-card shadow="never" class="status-card">
       <template #header>
         <div class="card-header">
@@ -10,25 +10,31 @@
           </el-button>
         </div>
       </template>
+
+      <!-- 正常展示: 平铺字段网格 -->
       <div v-if="status" class="status-grid">
         <div class="status-cell">
           <div class="cell-label">插件注册</div>
           <div class="cell-value">
-            <el-tag :type="status.registered ? 'success' : 'danger'" effect="light">
-              {{ status.registered ? '已注册' : '未注册' }}
+            <el-tag :type="status.algo_registered ? 'success' : 'danger'" effect="light">
+              {{ status.algo_registered ? '已注册' : '未注册' }}
             </el-tag>
           </div>
         </div>
         <div class="status-cell">
-          <div class="cell-label">模型文件</div>
+          <div class="cell-label">模型状态</div>
           <div class="cell-value">
-            <span v-if="status.model_size_bytes > 0" class="val-blue">
-              {{ formatBytes(status.model_size_bytes) }}
-            </span>
-            <el-tag v-else-if="status.model_size_bytes === 0" type="warning" effect="light">
-              未部署
-            </el-tag>
+            <el-tag :type="modelStatusTag" effect="dark">{{ modelStatusText }}</el-tag>
+            <span v-if="status.model_is_fallback" class="cell-sub warn">(回退通用模型)</span>
+          </div>
+        </div>
+        <div class="status-cell">
+          <div class="cell-label">模型文件</div>
+          <div class="cell-value file-cell">
+            <span v-if="status.model_size_bytes > 0" class="val-blue">{{ formatBytes(status.model_size_bytes) }}</span>
+            <el-tag v-else-if="status.model_size_bytes === 0" type="warning" effect="light">未部署</el-tag>
             <el-tag v-else type="danger" effect="light">stat 失败</el-tag>
+            <span class="file-name" :title="status.model_path">{{ status.model_actual_file || '-' }}</span>
           </div>
         </div>
         <div class="status-cell">
@@ -38,30 +44,55 @@
             <span class="cell-sub">{{ freshnessText }}</span>
           </div>
         </div>
-        <div class="status-cell">
-          <div class="cell-label">当前状态</div>
-          <div class="cell-value">
-            <el-tag :type="stateTag" effect="dark">{{ stateText }}</el-tag>
-          </div>
-        </div>
       </div>
-      <el-alert v-else-if="statusError" type="error" :title="statusError" :closable="false" />
+
+      <!-- 近 24h 三态事件计数 -->
+      <div v-if="status && status.event_counts_24h" class="counts-row">
+        <span class="counts-label">近 24h 事件:</span>
+        <el-tag v-for="(v, k) in status.event_counts_24h" :key="k" size="small" effect="plain" class="count-tag">
+          {{ typeName(String(k)) }} · {{ v }}
+        </el-tag>
+        <span v-if="Object.keys(status.event_counts_24h).length === 0" class="counts-empty">无</span>
+      </div>
+
+      <!-- 降级: 端点 404 (固件版本差异) -->
+      <el-result v-else-if="statusNotFound" icon="info" title="当前固件暂不支持该端点"
+                 sub-title="GET /api/v1/algo/personal-item/status 返回 404 — 设备后端版本落后于本地 box-sdk 代码, 升级 smartgateway 固件后此卡片自动恢复展示。" />
+      <!-- 降级: 其他错误 -->
+      <el-result v-else-if="statusError" icon="warning" title="模型状态 API 失败"
+                 :sub-title="statusError">
+        <template #extra>
+          <el-button type="primary" size="small" @click="loadStatus">重试</el-button>
+        </template>
+      </el-result>
     </el-card>
 
-    <!-- ===== 三态机制说明 ===== -->
+    <!-- ===== 三态机制说明 (SSOT: personal_item_detector.h L18-21) ===== -->
     <el-card shadow="never" class="threestate-card">
       <template #header>
         <div class="card-header">
           <span>人包三态机制</span>
-          <span class="hint">Phase 2 personal_item 插件 · 30/70/90s</span>
+          <span class="hint">SSOT: person_with_backpack / unattended_baggage / abandoned</span>
         </div>
       </template>
       <el-row :gutter="14">
-        <el-col :span="8" v-for="(phase, idx) in phases" :key="phase.label">
+        <el-col :span="8" v-for="phase in phases" :key="phase.eventKey">
           <div class="phase-tile" :class="phase.cls">
-            <div class="phase-num">阶段 {{ idx + 1 }}</div>
+            <div class="phase-head">
+              <span class="phase-level">{{ phase.levelText }}</span>
+              <el-tag size="small" :type="phase.tagType" effect="light">severity {{ phase.severity }}</el-tag>
+            </div>
             <div class="phase-label">{{ phase.label }}</div>
-            <div class="phase-time">≥ {{ phase.threshold }}s</div>
+            <div class="phase-event">
+              <span class="evt-key">{{ phase.eventKey }}</span>
+            </div>
+            <div class="phase-time">
+              <template v-if="phase.thresholdKey">
+                ≥ {{ thresholdOf(phase.thresholdKey) }}s
+                <span class="th-source">{{ thresholdSource(phase.thresholdKey) }}</span>
+              </template>
+              <template v-else>携带确认即通知</template>
+            </div>
             <div class="phase-desc">{{ phase.desc }}</div>
           </div>
         </el-col>
@@ -72,10 +103,13 @@
     <el-card shadow="never">
       <template #header>
         <div class="card-header">
-          <span>最近人包事件 (person_with_backpack / unattended_baggage)</span>
-          <el-button size="small" :loading="loading" @click="loadEvents">
-            <el-icon><Refresh /></el-icon>刷新
-          </el-button>
+          <span>最近人包事件 (三态并集)</span>
+          <div class="header-right">
+            <span class="hint">{{ targetKeys.join(' / ') }}</span>
+            <el-button size="small" :loading="loading" @click="loadEvents">
+              <el-icon><Refresh /></el-icon>刷新
+            </el-button>
+          </div>
         </div>
       </template>
       <el-table :data="displayedEvents" v-loading="loading" size="small"
@@ -119,84 +153,130 @@
 <script setup lang="ts">
 /**
  * 人包核验 — Screening Phase 2 S1-3 + S1-4
- * 模型部署状态卡 (personal-item/status API) + 三态机制 + 事件流
+ * 模型部署状态卡 (personal-item/status 平铺结构) + 三态机制 + 事件流
+ *
+ * [FIX 2026-08-28]
+ *   - URL 双前缀 404 修复 (screening.ts 已改为相对路径)
+ *   - 响应结构对齐: data 直接为平铺 PersonalItemStatus (无 status 嵌套)
+ *   - 三态阈值从后端 config 动态读取 (unattended_alarm_seconds /
+ *     abandoned_alarm_seconds), 不再硬编码 30/70/90 (那是 severity 刻度)
+ *   - 事件流筛选三态 SSOT 键: person_with_backpack / unattended_baggage / abandoned
+ *   - 404 / 网络错误优雅降级, 不再裸报错
  */
 import { computed, onMounted, ref } from 'vue'
 import { Refresh } from '@element-plus/icons-vue'
 import { alarmApi } from '@/api/alarm'
 import { screeningApi } from '@/api/screening'
+import type { PersonalItemStatus, PersonalItemConfig } from '@/api/screening'
 import eventTypesApi from '@/api/eventTypes'
 import type { EventTypeMetadataItem } from '@/api/eventTypes'
-import type { AlarmEvent } from '@/types/alarm'
-import type { PersonalItemStatus } from '@/api/screening'
+import type { AlarmEvent, AlarmLevel } from '@/types/alarm'
 
-// ── 三态阶段说明 ──
+// ── 三态 SSOT 定义 (personal_item_detector.h L18-21) ──
+// severity 为告警级别刻度 (NOTIFICATION 30 / ALARM 70 / ALARM 90),
+// 时间阈值从后端 config 动态读取, 缺省 30s / 120s。
 
-const phases = [
+interface PhaseDef {
+  eventKey: string
+  label: string
+  levelText: string
+  severity: number
+  tagType: 'info' | 'warning' | 'danger'
+  cls: string
+  /** 对应 config 阈值键 (字面量联合, 避免 keyof 因索引签名拓宽为 string|number) */
+  thresholdKey?: 'unattended_alarm_seconds' | 'abandoned_alarm_seconds' | 'owner_lost_seconds'
+  desc: string
+}
+
+const phases: PhaseDef[] = [
   {
-    label: 'missing 临时离开',
-    threshold: 30,
-    desc: '人/包分离 ≤30s 视为临时离开, 不告警',
-    cls: 'phase-yellow',
+    eventKey: 'person_with_backpack', label: '携带确认', levelText: '态 1 · 信息',
+    severity: 30, tagType: 'info', cls: 'phase-blue',
+    desc: 'PERSON_WITH_BAGGAGE — 检测到人员携带背包/箱包时轻量通知 (防推送风暴, 不推 APP/不录像)',
   },
   {
-    label: 'unattended 无人看管',
-    threshold: 70,
-    desc: '70s 内无人认领, 黄色告警 + 通知安保',
-    cls: 'phase-orange',
+    eventKey: 'unattended_baggage', label: '无人看管', levelText: '态 2 · 告警',
+    severity: 70, tagType: 'warning', cls: 'phase-orange',
+    thresholdKey: 'unattended_alarm_seconds',
+    desc: 'UNATTENDED_BAGGAGE — 主人离开累计超过阈值, 告警 + 通知安保; 主人回归自动恢复携带态',
   },
   {
-    label: 'dedicated 持续遗留',
-    threshold: 90,
-    desc: '90s 仍未认领, 红色告警 + 联动闸机/录像',
-    cls: 'phase-red',
+    eventKey: 'abandoned', label: '持续遗留', levelText: '态 3 · 告警',
+    severity: 90, tagType: 'danger', cls: 'phase-red',
+    thresholdKey: 'abandoned_alarm_seconds',
+    desc: 'ABANDONED_OBJECT — 物品无主静止超过阈值 (复用存量事件键), 高级别告警 + 联动录像',
   },
 ]
 
-// ── 模型部署状态 ──
+/** 三态事件键并集 (事件流筛选) */
+const targetKeys = phases.map(p => p.eventKey)
+
+// ── 模型部署状态 (平铺解析 + 降级) ──
 
 const status = ref<PersonalItemStatus | null>(null)
 const statusLoading = ref(false)
 const statusError = ref('')
+const statusNotFound = ref(false)
 
 async function loadStatus() {
   statusLoading.value = true
   statusError.value = ''
+  statusNotFound.value = false
   try {
     const resp = await screeningApi.getPersonalItemStatus()
-    const data = resp.data?.data?.status
-    if (data) {
+    const data = resp.data?.data
+    if (data && typeof data === 'object' && 'algo_id' in data) {
       status.value = data
     } else {
-      statusError.value = '响应格式异常, 未拿到 status 字段'
+      statusError.value = '响应格式异常: 未识别的 personal-item/status 数据结构'
     }
   } catch (e: unknown) {
-    const err = e as { message?: string }
-    statusError.value = `模型状态 API 失败: ${err.message || String(e)}`
+    status.value = null
+    const err = e as { code?: number; message?: string }
+    if (err?.code === 404) {
+      statusNotFound.value = true
+    } else {
+      statusError.value = `${err?.message || String(e)} (code=${err?.code ?? 'network'})`
+    }
     console.error('[ScreeningPersonalItem] status failed', e)
   } finally {
     statusLoading.value = false
   }
 }
 
-const stateTag = computed(() => {
-  switch (status.value?.state) {
-    case 'ok': return 'success'
-    case 'missing': return 'info'
-    case 'dedicated': return 'danger'
-    case 'mixed': return 'warning'
+const modelStatusTag = computed(() => {
+  switch (status.value?.model_status) {
+    case 'dedicated': return 'success'
+    case 'fallback': return 'warning'
+    case 'missing': return 'danger'
     default: return 'info'
   }
 })
-const stateText = computed(() => {
-  switch (status.value?.state) {
-    case 'ok': return '✓ 正常'
-    case 'missing': return '⏱ 临时离开'
-    case 'dedicated': return '⚠ 持续遗留'
-    case 'mixed': return '⇄ 多目标混合'
-    default: return '? 未知'
+const modelStatusText = computed(() => {
+  switch (status.value?.model_status) {
+    case 'dedicated': return '✓ 专属模型'
+    case 'fallback': return '⇄ 回退通用模型'
+    case 'missing': return '✗ 未部署'
+    default: return String(status.value?.model_status ?? '?')
   }
 })
+
+/** 从运行时 config 读三态阈值 (缺省用插件默认: unattended=30 / abandoned=120) */
+const DEFAULT_THRESHOLDS: Record<string, number> = {
+  unattended_alarm_seconds: 30,
+  abandoned_alarm_seconds: 120,
+}
+function thresholdOf(key: string): number {
+  const runtime = (status.value?.config as Record<string, unknown> | undefined)?.[key]
+  if (typeof runtime === 'number') return runtime
+  return DEFAULT_THRESHOLDS[key] ?? 0
+}
+/** 标注阈值来源: 运行时配置 / 插件默认 */
+function thresholdSource(key: string): string {
+  const runtime = (status.value?.config as Record<string, unknown> | undefined)?.[key]
+  return typeof runtime === 'number' ? '(config)' : '(默认)'
+}
+
 const freshnessClass = computed(() => {
   if (!status.value?.checked_at) return 'val-gray'
   const ageMin = (Date.now() - new Date(status.value.checked_at).getTime()) / 60000
@@ -212,12 +292,7 @@ const freshnessText = computed(() => {
   return `${Math.round(ageMin / 60)} 小时前`
 })
 
-// ── 事件流 ──
-
-const events = ref<AlarmEvent[]>([])
-const listLimit = ref(20)
-const loading = ref(false)
-const displayedEvents = computed(() => events.value.slice(0, listLimit.value))
+// ── 事件类型名 (SSOT metadata) ──
 
 const screeningEventTypes = ref<EventTypeMetadataItem[]>([])
 const typeMap = computed(() => {
@@ -229,16 +304,20 @@ function typeName(key: string): string {
   return typeMap.value[key] || key
 }
 
+// ── 事件流 (三态键并集筛选) ──
+
+const events = ref<AlarmEvent[]>([])
+const listLimit = ref(20)
+const loading = ref(false)
+const displayedEvents = computed(() => events.value.slice(0, listLimit.value))
+
 async function loadEvents() {
   loading.value = true
   try {
     const resp = await alarmApi.getList({ page: 1, pageSize: 100 })
     const all = resp.data?.data?.items || []
-    const targetKeys = new Set(['person_with_backpack', 'unattended_baggage'])
-    const sceneKeys = new Set(screeningEventTypes.value.map(t => t.alarm_type))
-    events.value = all.filter((e: AlarmEvent) =>
-      sceneKeys.has(e.type) && targetKeys.has(e.type)
-    )
+    const keys = new Set(targetKeys)
+    events.value = all.filter((e: AlarmEvent) => keys.has(e.type))
   } catch (e) {
     console.error('[ScreeningPersonalItem] load events failed', e)
     events.value = []
@@ -278,17 +357,17 @@ function formatTime(input: string | number | undefined): string {
   const pad = (n: number) => String(n).padStart(2, '0')
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
 }
-function levelClass(level?: number): string {
+function levelClass(level: AlarmLevel): string {
   switch (level) {
-    case 5: return 'lv-crit'
-    case 4: return 'lv-high'
-    case 3: return 'lv-med'
-    case 2: return 'lv-low'
+    case 'critical': return 'lv-crit'
+    case 'high': return 'lv-high'
+    case 'medium': return 'lv-med'
+    case 'low': return 'lv-low'
     default: return 'lv-info'
   }
 }
-function levelText(level?: number): string {
-  return ['', 'INFO', 'LOW', 'MED', 'HIGH', 'CRITICAL'][level ?? 0] || '-'
+function levelText(level: AlarmLevel): string {
+  return level.toUpperCase()
 }
 
 onMounted(async () => {
@@ -305,21 +384,33 @@ onMounted(async () => {
 .cell-value { font-size: 16px; font-weight: 500; }
 .cell-value .val-blue { color: #1890ff; }
 .cell-sub { color: #909399; font-size: 12px; margin-left: 8px; }
+.cell-sub.warn { color: #e6a23c; }
+.file-cell { display: flex; flex-direction: column; gap: 2px; }
+.file-name { color: #909399; font-size: 12px; font-family: monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .val-green { color: #67c23a; }
 .val-orange { color: #e6a23c; }
 .val-gray { color: #909399; }
+.counts-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 14px; padding-top: 12px; border-top: 1px dashed #ebeef5; }
+.counts-label { color: #909399; font-size: 13px; }
+.count-tag { font-family: monospace; }
+.counts-empty { color: #c0c4cc; font-size: 12px; }
 
 .threestate-card { margin-bottom: 16px; }
 .card-header { display: flex; justify-content: space-between; align-items: center; }
+.card-header .header-right { display: flex; gap: 12px; align-items: center; }
 .card-header .hint { color: #909399; font-size: 12px; }
 .phase-tile { padding: 14px; border-radius: 6px; border: 1px solid; margin-bottom: 8px; }
-.phase-tile.phase-yellow { background: #fdf6ec; border-color: #faecd8; }
-.phase-tile.phase-orange { background: #fef0e6; border-color: #fbd9b3; }
+.phase-tile.phase-blue { background: #ecf5ff; border-color: #d9ecff; }
+.phase-tile.phase-orange { background: #fdf6ec; border-color: #faecd8; }
 .phase-tile.phase-red { background: #fef0f0; border-color: #fde2e2; }
-.phase-num { font-size: 12px; color: #909399; }
-.phase-label { font-weight: 500; margin: 4px 0; }
-.phase-time { color: #f56c6c; font-size: 13px; margin-bottom: 6px; }
-.phase-desc { font-size: 12px; color: #606266; }
+.phase-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+.phase-level { color: #909399; font-size: 12px; }
+.phase-label { font-weight: 500; margin: 2px 0; font-size: 15px; }
+.phase-event { margin: 4px 0; }
+.phase-event .evt-key { font-family: monospace; font-size: 12px; color: #606266; background: rgba(255,255,255,.6); padding: 1px 6px; border-radius: 3px; }
+.phase-time { color: #f56c6c; font-size: 13px; margin: 6px 0; font-weight: 500; }
+.th-source { color: #909399; font-size: 11px; font-weight: normal; margin-left: 4px; }
+.phase-desc { font-size: 12px; color: #606266; line-height: 1.5; }
 
 .type-cell { display: flex; flex-direction: column; }
 .evt-key { color: #909399; font-family: monospace; font-size: 12px; }

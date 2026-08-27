@@ -220,7 +220,8 @@ const statCards = computed(() => {
   const total = events.value.length
   const todayEvents = events.value.filter(e => isToday(e.createdAt)).length
   const high = events.value.filter(e => e.level === 'high' || e.level === 'critical').length
-  const unhandled = events.value.filter(e => e.status === 'unhandled' || e.status === 'acknowledged' || e.status === 'disposed').length
+  // [FIX 2026-08-28] 「未处理」仅统计 unhandled (此前误把 acknowledged/disposed 也计入)
+  const unhandled = events.value.filter(e => e.status === 'unhandled').length
   return [
     { label: '今日安检事件', value: todayEvents, sub: `总 ${total} 条`, cls: 'val-blue' },
     { label: '高级别 (≥4)', value: high, sub: '含 critical/high', cls: 'val-red' },

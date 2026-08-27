@@ -95,7 +95,7 @@ import { Refresh } from '@element-plus/icons-vue'
 import { alarmApi } from '@/api/alarm'
 import eventTypesApi from '@/api/eventTypes'
 import type { EventTypeMetadataItem } from '@/api/eventTypes'
-import type { AlarmEvent } from '@/types/alarm'
+import type { AlarmEvent, AlarmLevel } from '@/types/alarm'
 
 // ── 合规声明 ──
 
@@ -182,23 +182,24 @@ async function loadSceneTypes() {
 
 function loadMore() { listLimit.value = Math.min(listLimit.value + 20, events.value.length) }
 
-// ── 工具 ──
+// ── 工具 (对齐 AlarmEvent 类型: level 为 AlarmLevel 字符串枚举, createdAt 为 string) ──
 
-function levelClass(level?: number): string {
+function levelClass(level: AlarmLevel): string {
   switch (level) {
-    case 5: return 'lv-crit'
-    case 4: return 'lv-high'
-    case 3: return 'lv-med'
-    case 2: return 'lv-low'
+    case 'critical': return 'lv-crit'
+    case 'high': return 'lv-high'
+    case 'medium': return 'lv-med'
+    case 'low': return 'lv-low'
     default: return 'lv-info'
   }
 }
-function levelText(level?: number): string {
-  return ['', 'INFO', 'LOW', 'MED', 'HIGH', 'CRITICAL'][level ?? 0] || '-'
+function levelText(level: AlarmLevel): string {
+  return level.toUpperCase()
 }
-function formatTime(ts?: number): string {
+function formatTime(ts?: string): string {
   if (!ts) return '-'
   const d = new Date(ts)
+  if (isNaN(d.getTime())) return ts
   const pad = (n: number) => String(n).padStart(2, '0')
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
 }
