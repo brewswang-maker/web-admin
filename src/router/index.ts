@@ -60,6 +60,12 @@ const LargeEventOverviewView = () => import('@/views/large-event/OverviewView.vu
 const LargeEventDensityView = () => import('@/views/large-event/DensityScreenView.vue')
 const LargeEventEventsView = () => import('@/views/large-event/EventListView.vue')
 const LargeEventScenePacksView = () => import('@/views/large-event/ScenePacksView.vue')
+// 安检场景 (Phase 2 S1-3/S1-4 — 2026-08-27)
+const ScreeningOverviewView = () => import('@/views/screening/ScreeningOverview.vue')
+const ScreeningChannelOrderView = () => import('@/views/screening/ScreeningChannelOrder.vue')
+const ScreeningPersonalItemView = () => import('@/views/screening/ScreeningPersonalItem.vue')
+const ScreeningXrayView = () => import('@/views/screening/ScreeningXray.vue')
+const ScreeningRulesView = () => import('@/views/screening/ScreeningRules.vue')
 
 // 基础路由（无需权限）
 export const constantRoutes: RouteRecordRaw[] = [
@@ -382,6 +388,37 @@ export const asyncRoutes: RouteRecordRaw[] = [
         name: 'LargeEventScenePacks',
         component: LargeEventScenePacksView,
         meta: { title: '场景包', icon: 'Files', roles: ['admin', 'user'] }
+      },
+      // ── 安检场景 (Phase 2 S1-3/S1-4) ──
+      {
+        path: 'screening/overview',
+        name: 'ScreeningOverview',
+        component: ScreeningOverviewView,
+        meta: { title: '安检总览', icon: 'DataBoard', roles: ['admin', 'user', 'viewer'] }
+      },
+      {
+        path: 'screening/channel-order',
+        name: 'ScreeningChannelOrder',
+        component: ScreeningChannelOrderView,
+        meta: { title: '通道秩序', icon: 'Connection', roles: ['admin', 'user', 'viewer'] }
+      },
+      {
+        path: 'screening/personal-item',
+        name: 'ScreeningPersonalItem',
+        component: ScreeningPersonalItemView,
+        meta: { title: '人包核验', icon: 'ShoppingCart', roles: ['admin', 'user'] }
+      },
+      {
+        path: 'screening/xray',
+        name: 'ScreeningXray',
+        component: ScreeningXrayView,
+        meta: { title: '判图辅助', icon: 'Aim', roles: ['admin', 'user', 'viewer'] }
+      },
+      {
+        path: 'screening/rules',
+        name: 'ScreeningRules',
+        component: ScreeningRulesView,
+        meta: { title: '安检模板', icon: 'Document', roles: ['admin', 'user'] }
       },
     ]
   },

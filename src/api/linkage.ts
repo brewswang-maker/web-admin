@@ -317,12 +317,16 @@ export interface RuleTriggerStat {
 /** 规则模板 */
 export interface RuleTemplate {
   template_id: string
+  /** [P0-1 二期补充] 后端实测同时返回 id 字段 (部分路由别名) */
+  id?: string
   name: string
   description: string
   category: string
   tags: string[]
   priority: number
   is_builtin: boolean
+  /** [P0-1 二期补充] 合并抑制间隔毫秒 (LinkageEngine merge_cond 跨规则联动用) */
+  cooldown_ms?: number
   actions: Partial<LinkageAction>[]
   time_cond?: TimeCondition
   spatial_cond?: SpatialCondition

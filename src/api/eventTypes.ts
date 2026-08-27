@@ -74,6 +74,8 @@ export interface EventTypeMetadataResponse {
   groups: Record<string, EventTypeMetadataGroup>
   total: number
   ssot: string
+  /** [P0-1 二期补充] 全场景枚举 (EventTypeAliases.h getAllEventScenes),场景体系横向扩展入口 */
+  scenes_available?: string[]
 }
 
 const eventTypesApi = {
