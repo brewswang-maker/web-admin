@@ -185,9 +185,15 @@
         :closable="false"
         style="margin-top: 12px"
       />
-      <!-- [FIX 2026-08-28] 拒绝后一键改用合成事件注入: 行为类事件图片模式
-           仅单帧语义校验, 被拒时免手动切模式重填参数 -->
-      <div v-if="inferResult?.alarm_rejected" style="margin-top: 8px; text-align: right">
+      <!-- [FIX 2026-08-28] 拒绝/0 框后一键改用合成事件注入: 行为类事件图片模式
+           仅单帧语义校验; 语义拒绝 (alarm_rejected) 与 0 框
+           (detection_count=0, 如 person 图测 person_with_backpack:
+           person 已入人物归属轨道无行李框) 都会得到"换图或用
+           合成事件"指引, 按钮同步给出快捷执行入口, 免手动切模式 -->
+      <div
+        v-if="inferResult?.alarm_rejected || (testMode === 'image' && inferResult?.detection_count === 0)"
+        style="margin-top: 8px; text-align: right"
+      >
         <el-button size="small" type="warning" plain :disabled="testing" @click="testMode = 'synthesis'">
           ⚡ 改用合成事件注入继续演练
         </el-button>
