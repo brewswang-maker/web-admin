@@ -274,6 +274,24 @@
                   </el-form-item>
                 </el-col>
               </el-row>
+              <!-- [P2-1] 治理字段: 关闭条件/响应时限 -->
+              <el-row :gutter="16">
+                <el-col :span="12">
+                  <el-form-item label="关闭条件">
+                    <el-select v-model="form.closeCondition" clearable placeholder="未设置" style="width: 100%">
+                      <el-option label="人工关闭" value="manual" />
+                      <el-option label="事件自动关闭" value="auto_event_close" />
+                      <el-option label="超时自动关闭" value="timeout" />
+                    </el-select>
+                  </el-form-item>
+                </el-col>
+                <el-col :span="12">
+                  <el-form-item label="响应时限(秒)">
+                    <el-input-number v-model="form.responseDeadlineS" :min="0" :max="86400" :step="30" controls-position="right" style="width: 100%" />
+                    <span class="text-secondary" style="margin-left: 8px; font-size: 12px">0 = 未设置</span>
+                  </el-form-item>
+                </el-col>
+              </el-row>
             </el-collapse-item>
           </el-collapse>
 
@@ -344,7 +362,16 @@
                   </el-select>
                 </el-form-item>
                 <el-form-item label="ROI多边形区域" label-position="top" class="cond-form-item">
-                  <RoiPolygonEditor v-model="form.conditions.region.config.roiPolygon" :background-image-url="roiBackgroundUrl" :canvas-width="440" :canvas-height="248" />
+                  <!-- [FIX 2026-08-28] 多边形(检测/排除区域)进 roi_polygon 由后端
+                       pointInPolygon 判定; 绊线类型在保存时自动创建到算法绊线库
+                       (双镜像)并关联本规则 tripwire_id — 须先在上方"关联通道"
+                       选通道。点击画布即开始绘制; 绊线两点自动完成。-->
+                  <RoiPolygonEditor
+                    v-model="form.conditions.region.config.roiPolygon"
+                    :background-image-url="roiBackgroundUrl"
+                    :canvas-width="440" :canvas-height="248"
+                    :types="['detection_zone', 'exclusion_zone', 'tripwire']"
+                  />
                 </el-form-item>
                 <!-- [FIX 2026-08-27 P0-PERIMETER v3] 越界 (Tripwire) 联动 -->
                 <el-form-item label="越界绊线" label-position="top" class="cond-form-item">
@@ -354,6 +381,7 @@
                     </template>
                     <template #empty><span class="text-secondary">{{ tripwireEmptyHint }}</span></template>
                   </el-select>
+                  <p class="cond-hint">可在上方画板直接画绊线（选"绊线"类型，点击两点，保存时自动创建并关联）；或选择已有绊线（AI智能→算法配置页绘制）</p>
                 </el-form-item>
                 <el-form-item label="越界方向" label-position="top" class="cond-form-item">
                   <el-radio-group v-model="form.conditions.region.config.direction">
@@ -975,6 +1003,11 @@
                     <el-tag v-for="t in (tmpl.tags || []).slice(0, 3)" :key="t" size="small" effect="plain" style="margin: 1px">{{ t }}</el-tag>
                   </div>
                   <div style="font-size: 12px; color: #909399; margin-bottom: 10px">优先级: {{ tmpl.priority }} | 动作: {{ (tmpl.actions || []).length }}项</div>
+                  <!-- [P2-1] 治理字段徽标: 仅在模板设置过时显示 -->
+                  <div v-if="tmpl.close_condition || (tmpl.response_deadline_s ?? 0) > 0" style="margin-bottom: 10px">
+                    <el-tag v-if="tmpl.close_condition" size="small" type="warning" effect="plain" style="margin-right: 4px">关闭: {{ closeConditionLabel(tmpl.close_condition) }}</el-tag>
+                    <el-tag v-if="(tmpl.response_deadline_s ?? 0) > 0" size="small" type="danger" effect="plain">时限: {{ tmpl.response_deadline_s }}s</el-tag>
+                  </div>
                   <div style="display: flex; gap: 8px">
                                       <el-button type="primary" size="small" @click="applyTemplate(tmpl)" style="flex: 1">一键应用</el-button>
                                       <el-button type="warning" size="small" @click="openEventTest(tmpl)" plain>
@@ -1100,6 +1133,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import type { FormInstance, FormRules } from 'element-plus'
 import { Search, Plus, Document, Link, Bell, Setting, ArrowDown, Download, Upload, Refresh, WarningFilled, DataLine } from '@element-plus/icons-vue'
 import { linkageApi, ACTION_TYPE_MAP, ACTION_TYPE_REVERSE_MAP, getTargetForActionType } from '@/api/linkage'
+import { regionApi } from '@/api/region'  // [FIX 2026-08-28] 画板绊线自动创建 (createTripwireWithMirror)
 import type { LinkageRule, LinkageAction, LinkageLog, ActionLogEntry, TimeTemplate, LinkagePlan, CEPPattern, ConditionNode, RuleConflict, RuleTriggerStat } from '@/api/linkage'
 import { useLinkageOptions } from '@/composables/useLinkageOptions'
 import { validateTemplateImport } from '@/api/templateSchema'
@@ -1152,17 +1186,35 @@ const roiOptions = ['全部区域', '周界线A', '绊线B', '区域C']
 const groupOptions = ['全部分组', '东区摄像头', '室内摄像头', '室外摄像头']
 
 // ROI 编辑器背景快照
+// [FIX 2026-08-28 SNAPSHOT-JSON-CONTRACT] 后端 /snapshot 返回 JSON {data:{url:"/snapshots/..."}},
+// 旧实现把 JSON body 当图片 blob 塞给 <img> 必然解码失败 → 绘制区域无画面。
+// 改为解析 url 后预加载校验 (nginx 已 alias /snapshots/ → /data/shield/snapshots/);
+// ZLM getSnap 偶发产出 0 字节 JPEG (~3%), 加载失败自动重试一次。
 const roiBackgroundUrl = ref('')
+async function fetchSnapshotUrl(channelId: string): Promise<string> {
+  const res = await fetch(`/api/v1/channels/${channelId}/snapshot`, { credentials: 'include' })
+  if (!res.ok) return ''
+  const j = await res.json().catch(() => null)
+  const url = j?.data?.url || j?.url || ''
+  return url ? String(url) : ''
+}
+function preloadSnapshot(url: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    const img = new Image()
+    img.onload = () => resolve(true)
+    img.onerror = () => resolve(false)
+    img.src = url
+  })
+}
 async function loadChannelSnapshot(channelId: string) {
   if (!channelId) { roiBackgroundUrl.value = ''; return }
   try {
-    const res = await fetch(`/api/v1/channels/${channelId}/snapshot`, { credentials: 'include' })
-    if (res.ok) {
-      const blob = await res.blob()
-      roiBackgroundUrl.value = URL.createObjectURL(blob)
-    } else {
-      roiBackgroundUrl.value = ''
+    let url = await fetchSnapshotUrl(channelId)
+    if (url && !(await preloadSnapshot(url))) {
+      const retryUrl = await fetchSnapshotUrl(channelId) // 偶发空快照, 重试一次
+      if (retryUrl && (await preloadSnapshot(retryUrl))) url = retryUrl
     }
+    roiBackgroundUrl.value = url
   } catch { roiBackgroundUrl.value = '' }
 }
 
@@ -1176,8 +1228,19 @@ async function loadTripwireOptions() {
     const data = await res.json()
     // 兼容 makeOkResponse 包装: 直接读 data.tripwires 或 data.data.tripwires
     const list = data?.tripwires ?? data?.data?.tripwires ?? []
+    // [FIX 2026-08-28 双镜像过滤] 双流实例适配会在 DB 存同一绊线的主形态 +
+    //   _ch0 镜像两条记录; 下拉只列主形态, 避免用户选到镜像。
+    const seenBase = new Set<string>()
+    const mainList = (list as any[]).filter((t: any) => {
+      const chStr = String(t.channel_id_str || '')
+      const base = chStr.replace(/_ch\d+$/, '')
+      if (base !== chStr) return false              // 镜像记录不列
+      if (seenBase.has(base + ':' + t.point_a)) return false  // 同位重复去重
+      seenBase.add(base + ':' + t.point_a)
+      return true
+    })
     // direction 大小写转换: a_to_b → A_TO_B
-    tripwireOptions.value = list.map((t: any) => ({
+    tripwireOptions.value = mainList.map((t: any) => ({
       id: String(t.id),
       label: `${t.name || '未命名绊线'} [${t.channel_id_str || t.channel_id || '?'}] (${dirToUpper(t.direction)})`,
       direction: dirToUpper(t.direction),
@@ -1191,6 +1254,20 @@ async function loadTripwireOptions() {
     tripwireLoading.value = false
   }
 }
+/** 通道 ID 双形态归一: 同一通道(剥 _ch0 后缀相等)只留一个, 带后缀形态优先
+ *  (与通道选项 value 形态一致, 保证编辑回填时勾选能匹配上) */
+function dedupeChannelForms(raw: string[]): string[] {
+  const byBase = new Map<string, string>()
+  for (const c of raw) {
+    const base = c.replace(/_ch\d+$/, '')
+    const prev = byBase.get(base)
+    if (prev === undefined) { byBase.set(base, c); continue }
+    // 已有形态: 若存的是主形态而当前是带后缀形态 → 替换 (带后缀优先)
+    if (prev === base && c !== base) byBase.set(base, c)
+  }
+  return [...byBase.values()]
+}
+
 function dirToUpper(d: string): string {
   if (!d) return ''
   return d.toUpperCase()
@@ -1457,6 +1534,9 @@ const form = reactive({
   suppressAfterRule: '',
   suppressLowerPriority: false,
   enableVlmVerify: false,
+  // [P2-1] 治理字段: 关闭条件/响应时限
+  closeCondition: '',
+  responseDeadlineS: 0,
   conditions: defaultConditions(),
 })
 const advancedCollapse = ref<string[]>([])
@@ -1785,7 +1865,10 @@ function openEditor(rule: LinkageRule | null) {
   form.suppressAfterRule = rule?.suppress_after_rule || ''
   form.suppressLowerPriority = !!rule?.suppress_lower_priority
   form.enableVlmVerify = !!rule?.enable_vlm_verify
-  advancedCollapse.value = (form.mutexGroup || form.suppressAfterRule || form.suppressLowerPriority || form.enableVlmVerify) ? ['advanced'] : []
+  // [P2-1] 恢复治理字段: 关闭条件/响应时限
+  form.closeCondition = rule?.close_condition || ''
+  form.responseDeadlineS = rule?.response_deadline_s ?? 0
+  advancedCollapse.value = (form.mutexGroup || form.suppressAfterRule || form.suppressLowerPriority || form.enableVlmVerify || form.closeCondition || form.responseDeadlineS > 0) ? ['advanced'] : []
   // 恢复条件树
   if (rule?.condition_tree) {
     advancedConditionMode.value = true
@@ -1829,7 +1912,10 @@ function openEditor(rule: LinkageRule | null) {
     }
     form.conditions.eventSource = {
       enabled: !!(src.channel_ids?.length || src.device_ids?.length),
-      config: { channels: [...(src.channel_ids || []).map(String), ...(src.device_ids || [])] },
+      // [FIX 2026-08-28 双形态归一] device_ids 可能同时存主形态(不带 _ch0)与
+      // 子码流形态(带 _ch0) — 同一通道只回填一个勾选值(带后缀优先,
+      // 与通道选项 value 形态一致), 保存时再展开双形态。
+      config: { channels: dedupeChannelForms([...(src.channel_ids || []).map(String), ...(src.device_ids || [])]) },
     }
     // merge_cond → autoMerge
     const mc = rule.merge_cond || {} as any
@@ -1899,6 +1985,37 @@ async function handleSave() {
 
     const rc = form.conditions.region
     const lc = form.conditions.location
+    // [FIX 2026-08-28] 画板绊线 → 自动创建到算法绊线库 (双镜像) 并关联本规则;
+    //   仅当未通过下拉显式选择绊线时才创建 (显式选择优先)。
+    let effectiveTripwireId = rc.config.tripwireId || ''
+    const drawnTripwires = rc.config.roiPolygon.filter(r => r.roi_type === 'tripwire')
+    if (drawnTripwires.length > 0 && !effectiveTripwireId) {
+      const chStr = (rc.config.channelId || '').replace(/_ch\d+$/, '')
+      if (!chStr) {
+        ElMessage.warning('画了绊线但未选"关联通道", 绊线未创建; 请选择通道后重新保存')
+      } else {
+        const p = drawnTripwires[0].polygon || []
+        if (p.length >= 4) {
+          try {
+            const newId = await regionApi.createTripwireWithMirror({
+              channel_id: 0,
+              channel_id_str: chStr,
+              algo_id: 'shield.algo.perimeter.tripwire',
+              name: `${form.name || '规则'}_绊线`,
+              point_a: [p[0], p[1]],
+              point_b: [p[2], p[3]],
+              direction: 'both',
+              enabled: true,
+            })
+            effectiveTripwireId = String(newId)
+            tripwireOptions.value = []  // 失效缓存, 下次 focus 重新加载
+            ElMessage.success('绊线已创建并关联到本规则 (插件最多 5 分钟自动加载)')
+          } catch (e: any) {
+            ElMessage.error(`绊线创建失败: ${e?.message ?? e} (规则仍会保存, 绊线条件未生效)`)
+          }
+        }
+      }
+    }
     // 清理 "全部XXX" 占位值，后端空字符串 = 不过滤
     const cleanLocation = (v: string) => (v && v.startsWith('全部') ? '' : v)
     const cleanGroup = (v: string) => (v && v.startsWith('全部') ? '' : v)
@@ -1906,11 +2023,12 @@ async function handleSave() {
       region_id: cleanLocation(rc.config.roi || ''),
       location_id: cleanLocation(lc.enabled ? (lc.config.point || rc.config.location) : (rc.config.location || '')),
       device_group_id: cleanGroup(rc.config.group || ''),
-      roi_polygon: rc.config.roiPolygon.flatMap((r: RoiData) => r.polygon) || [] as number[],
+      // 绊线类型的 2 点数据不进 roi_polygon (后端仅做 pointInPolygon, 线段永远不含点)
+      roi_polygon: rc.config.roiPolygon.filter(r => r.roi_type !== 'tripwire').flatMap((r: RoiData) => r.polygon) || [] as number[],
       // [FIX 2026-08-27 P0-PERIMETER v3] tripwire 越界联动
       //   tripwireId 与 direction 都空 = 不启用 tripwire 过滤
       //   否则仅匹配的 tripwire + direction 才触发动作
-      tripwire_id: rc.config.tripwireId || '',
+      tripwire_id: effectiveTripwireId || '',
       direction: rc.config.direction || '',
     } : { region_id: '', location_id: '', device_group_id: '', roi_polygon: [] as number[], tripwire_id: '', direction: '' }
 
@@ -1918,13 +2036,20 @@ async function handleSave() {
     const esc = form.conditions.eventSource
     // 提取 alarm type (从算法 ID 最后一部分)
     const event_types = etc.config.types.map(id => { const p = id.split('.'); return p[p.length - 1] || id })
-    // 通道分类: 纯数字 ID → channel_ids (int32), 字符串 ID → device_ids
+    // 通道分类: 小整数 ID → channel_ids (int32), 字符串 ID → device_ids
+    // [FIX 2026-08-28 双形态存储] GB28181 通道有主码流(不带 _ch0)/子码流(带 _ch0)
+    //   双实例, 告警的 channel_id_str 两种形态都可能出现; 后端 device_ids 是
+    //   精确比对 → 规则同时存两种形态, 任一实例的告警都能命中。
     const numericChannels: number[] = []
     const stringChannels: string[] = []
     for (const c of esc.config.channels) {
       const n = parseInt(c, 10)
       if (!isNaN(n) && String(n) === c.trim()) numericChannels.push(n)
-      else stringChannels.push(c)
+      else {
+        const base = c.replace(/_ch\d+$/, '')
+        stringChannels.push(base)
+        if (base !== c && !stringChannels.includes(c)) stringChannels.push(c)
+      }
     }
     const source_cond = {
       channel_ids: numericChannels,
@@ -1988,6 +2113,9 @@ async function handleSave() {
       suppress_after_rule: form.suppressAfterRule || '',
       suppress_lower_priority: form.suppressLowerPriority,
       enable_vlm_verify: form.enableVlmVerify,
+      // [P2-1] 治理字段提交: 关闭条件/响应时限
+      close_condition: form.closeCondition || '',
+      response_deadline_s: form.responseDeadlineS ?? 0,
       ...(advancedConditionMode.value && conditionTreeValue.value ? { condition_tree: conditionTreeValue.value } : {}),
       time_cond,
       spatial_cond,
@@ -2037,6 +2165,16 @@ async function handleDryRun() {
 }
 
 // ── 模板库 ──
+
+// [P2-1] 关闭条件显示名映射
+const CLOSE_CONDITION_LABELS: Record<string, string> = {
+  manual: '人工关闭',
+  auto_event_close: '事件自动关闭',
+  timeout: '超时自动关闭',
+}
+function closeConditionLabel(v: string): string {
+  return CLOSE_CONDITION_LABELS[v] || v
+}
 
 async function openTemplateLibrary() {
   showTemplateDialog.value = true

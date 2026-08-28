@@ -6,8 +6,9 @@ import type { RuleTemplate } from './linkage'
 
 /** 当前规则模板导出格式版本 (major.minor)。
  *  - major 变更 = 不兼容 (导入时拒绝)
- *  - minor 变更 = 向后兼容 (导入时警告但放行, 未知字段忽略) */
-export const TEMPLATE_SCHEMA_VERSION = '1.0'
+ *  - minor 变更 = 向后兼容 (导入时警告但放行, 未知字段忽略)
+ *  [P2-1] v1.1: 新增 close_condition / response_deadline_s 治理字段 (可选, 旧文件缺省导入宽容) */
+export const TEMPLATE_SCHEMA_VERSION = '1.1'
 
 /** 导入校验结果 */
 export interface TemplateImportValidation {

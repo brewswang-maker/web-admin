@@ -212,6 +212,9 @@ export interface LinkageRule {
   suppress_after_rule?: string
   suppress_lower_priority?: boolean
   enable_vlm_verify?: boolean
+  // [P2-1] 治理字段: 关闭条件 + 响应时限 (''|manual|auto_event_close|timeout, 0=未设)
+  close_condition?: string
+  response_deadline_s?: number
   version?: number
   is_archived?: boolean
   created_by: string
@@ -336,6 +339,9 @@ export interface RuleTemplate {
   spatial_cond?: SpatialCondition
   source_cond?: SourceCondition
   merge_cond?: MergeCondition
+  // [P2-1] 治理字段: 关闭条件 + 响应时限 (旧模板缺省, 导入宽容)
+  close_condition?: string
+  response_deadline_s?: number
 }
 
 // ── API ──
