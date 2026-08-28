@@ -39,6 +39,41 @@
       </el-col>
     </el-row>
 
+    <!-- [P1-2 2026-08-28] 运营指标: 每相机日误报 + 规则成功率 Top/Bottom -->
+    <el-row :gutter="16" class="stat-row" v-loading="loading">
+      <el-col :span="8">
+        <el-card shadow="hover" class="metric-card">
+          <div class="metric-value" style="color: #FF6B35">{{ camDayFalseAlarms.toFixed(2) }}</div>
+          <div class="metric-label">每相机日误报</div>
+          <div class="metric-sub">近 {{ baselineDays }} 天 · 误报 {{ baselineTotalFalse }} / {{ activeCameras }} 台相机</div>
+        </el-card>
+      </el-col>
+      <el-col :span="8">
+        <el-card shadow="hover" class="metric-card">
+          <template #header><span>成功率 TOP3</span></template>
+          <div v-if="topSuccess.length > 0">
+            <div v-for="s in topSuccess" :key="s.rule_id" class="rate-item">
+              <span class="rate-name" :title="s.rule_name">{{ s.rule_name }}</span>
+              <span class="rate-num" style="color: #00D4AA">{{ ((s.success_rate ?? 0) * 100).toFixed(0) }}%</span>
+            </div>
+          </div>
+          <div v-else class="empty-hint">样本不足 (需≥3次动作)</div>
+        </el-card>
+      </el-col>
+      <el-col :span="8">
+        <el-card shadow="hover" class="metric-card">
+          <template #header><span>成功率 BOTTOM3</span></template>
+          <div v-if="bottomSuccess.length > 0">
+            <div v-for="s in bottomSuccess" :key="s.rule_id" class="rate-item">
+              <span class="rate-name" :title="s.rule_name">{{ s.rule_name }}</span>
+              <span class="rate-num" style="color: #FF3D71">{{ ((s.success_rate ?? 0) * 100).toFixed(0) }}%</span>
+            </div>
+          </div>
+          <div v-else class="empty-hint">样本不足 (需≥3次动作)</div>
+        </el-card>
+      </el-col>
+    </el-row>
+
     <!-- 动作执行统计 -->
     <el-row :gutter="16">
       <el-col :span="12">
@@ -102,12 +137,32 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
-import { linkageApi } from '@/api/linkage'
+import { linkageApi, type RuleTriggerStat } from '@/api/linkage'
+import { statisticsApi } from '@/api/statistics'
 
 const loading = ref(false)
 const latency = ref<{ p50: number; p90: number; p99: number; samples: number }>({ p50: 0, p90: 0, p99: 0, samples: 0 })
 const topTriggered = ref<Array<{ rule_id: string; rule_name: string; trigger_count: number; avg_latency_ms: number }>>([])
 const actionStats = ref<{ total_executed: number; total_failed: number; cooldown_skips: number; merge_count: number; vlm_suppressed: number } | null>(null)
+
+// [P1-2] 运营指标: 每相机日误报 + 规则成功率 Top/Bottom
+const camDayFalseAlarms = ref(0)
+const baselineDays = ref(30)
+const baselineTotalFalse = ref(0)
+const activeCameras = ref(0)
+const ruleStats = ref<RuleTriggerStat[]>([])
+
+const MIN_ACTION_SAMPLES = 3
+const topSuccess = computed(() =>
+  ruleStats.value
+    .filter(s => s.action_success + s.action_failed >= MIN_ACTION_SAMPLES)
+    .sort((a, b) => (b.success_rate ?? 0) - (a.success_rate ?? 0))
+    .slice(0, 3))
+const bottomSuccess = computed(() =>
+  ruleStats.value
+    .filter(s => s.action_success + s.action_failed >= MIN_ACTION_SAMPLES)
+    .sort((a, b) => (a.success_rate ?? 0) - (b.success_rate ?? 0))
+    .slice(0, 3))
 
 const successRate = computed(() => {
   if (!actionStats.value || actionStats.value.total_executed === 0) return 0
@@ -130,12 +185,31 @@ function barColor(idx: number) {
 async function refresh() {
   loading.value = true
   try {
-    const res = await linkageApi.getAnalytics()
-    const data = res.data?.data
-    if (data) {
-      latency.value = data.latency
-      topTriggered.value = data.topTriggered || []
-      actionStats.value = data.actionStats
+    // [P1-2] 三路并行: 引擎分析 + 按规则统计 + 误报基线 (每相机日误报)
+    const [analyticsRes, statsRes, baselineRes] = await Promise.allSettled([
+      linkageApi.getAnalytics(),
+      linkageApi.getRuleStatsReport(),
+      statisticsApi.getFalseAlarmBaseline({ days: 30, include_feedback: false }),
+    ])
+    if (analyticsRes.status === 'fulfilled') {
+      const data = analyticsRes.value.data?.data
+      if (data) {
+        latency.value = data.latency
+        topTriggered.value = data.topTriggered || []
+        actionStats.value = data.actionStats
+      }
+    }
+    if (statsRes.status === 'fulfilled') {
+      ruleStats.value = statsRes.value.data?.data || []
+    }
+    if (baselineRes.status === 'fulfilled') {
+      const b = baselineRes.value.data?.data
+      if (b) {
+        camDayFalseAlarms.value = b.false_alarms_per_camera_day ?? 0
+        baselineDays.value = b.days ?? 30
+        baselineTotalFalse.value = b.total_false_alarms ?? 0
+        activeCameras.value = b.by_channel?.length ?? 0
+      }
     }
   } catch (e) {
     console.error('[LinkageAnalytics] fetch error:', e)
@@ -172,4 +246,8 @@ onMounted(() => refresh())
 .top-name { width: 140px; font-size: 12px; color: #E8E8E8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .top-count { font-size: 12px; font-weight: 700; color: #00D4AA; min-width: 40px; text-align: right; }
 .top-latency { font-size: 10px; color: #9AA0A6; min-width: 50px; text-align: right; }
+.rate-item { display: flex; align-items: center; justify-content: space-between; padding: 5px 0; border-bottom: 1px solid rgba(255,255,255,0.05); }
+.rate-name { font-size: 12px; color: #E8E8E8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 180px; }
+.rate-num { font-size: 13px; font-weight: 700; }
+.empty-hint { text-align: center; padding: 18px 0; color: #9AA0A6; font-size: 12px; }
 </style>

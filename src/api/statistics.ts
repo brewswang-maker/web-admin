@@ -90,7 +90,33 @@ export interface AlgoPerformanceResponse {
   total: number
 }
 
+/** [P1-1 2026-08-28] 误报基线分桶 (channel/type/day/camera×day) */
+export interface FalseAlarmBucket {
+  key: string
+  total: number
+  false_alarms: number
+  false_alarm_rate: number
+}
+
+/** [P1-1] 误报基线响应 (含每相机日误报运营指标, 竞品报告 v2.1 §9.3) */
+export interface FalseAlarmBaselineResponse {
+  days: number
+  total_alarms: number
+  total_false_alarms: number
+  overall_rate: number
+  false_alarms_per_camera_day: number
+  per_camera_day: FalseAlarmBucket[]
+  by_channel: FalseAlarmBucket[]
+  by_type: FalseAlarmBucket[]
+  by_day: FalseAlarmBucket[]
+}
+
 export const statisticsApi = {
+  /** [P1-1] 误报基线 (含每相机日误报 false_alarms_per_camera_day) */
+  getFalseAlarmBaseline(params?: { days?: number; include_feedback?: boolean }) {
+    return statsHttp.get<ApiResponse<FalseAlarmBaselineResponse>>('/false_alarm_baseline', { params })
+  },
+
   /** 获取安全评分 */
   getSecurityScore(params?: { period?: '7d' | '30d' | '90d'; projectId?: string }) {
     return statsHttp.get<ApiResponse<ScoreResponse>>('/security-score', { params })

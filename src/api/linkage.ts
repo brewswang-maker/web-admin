@@ -312,6 +312,10 @@ export interface RuleTriggerStat {
   action_success: number
   action_failed: number
   last_trigger_ms: number
+  /** [P1-1] 规则当前启用状态 (禁用切换即清零统计) */
+  enabled?: boolean
+  /** [P1-1] 动作成功率 = action_success / (success + failed) */
+  success_rate?: number
 }
 
 /** 规则模板 */
@@ -752,5 +756,30 @@ export const linkageApi = {
   /** 恢复归档规则 */
   restoreRule(id: string) {
     return http.post<ApiResponse<{ message: string; rule_id: string }>>(`/linkage/rules/${id}/restore`, {})
+  },
+
+  // ── [P1-1 2026-08-28] 按规则统计运营指标 ──
+
+  /** 按规则统计报表 (新端点 /linkage/rules/stats: 数组结构 + success_rate) */
+  getRuleStatsReport() {
+    return http.get<ApiResponse<RuleTriggerStat[]>>('/linkage/rules/stats')
+  },
+
+  // ── [P1-2 2026-08-28] 端到端时延报表 ──
+
+  /** 时延报表: 引擎直方图 (p50/p90/p99) + 按 trace_id 分段 (event→trigger→action) */
+  getLatencyReport(params?: { limit?: number }) {
+    return http.get<ApiResponse<{
+      latency: {
+        p50_ms: number; p90_ms: number; p99_ms: number
+        avg_ms: number; max_ms: number; min_ms: number; sample_count: number
+      }
+      traces: Array<{
+        trace_id: string; rule_id: string; action_name: string; status: string
+        event_to_trigger_ms: number | null
+        trigger_to_action_ms: number | null
+        e2e_ms: number | null
+      }>
+    }>>('/linkage/stats/latency', { params })
   },
 }
