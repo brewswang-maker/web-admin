@@ -113,6 +113,7 @@ const zhCN = {
     location: '定位与轨迹',
     face: '人脸库管理',
     faceRealtime: '人脸实时识别',
+    retrieval: '智能检索', // [P0-B 2026-08-30]
     gb28181: 'GB28181',
     onvif: 'ONVIF 发现',
     openPlatform: '开放平台',

@@ -66,6 +66,8 @@ const ScreeningChannelOrderView = () => import('@/views/screening/ScreeningChann
 const ScreeningPersonalItemView = () => import('@/views/screening/ScreeningPersonalItem.vue')
 const ScreeningXrayView = () => import('@/views/screening/ScreeningXray.vue')
 const ScreeningRulesView = () => import('@/views/screening/ScreeningRules.vue')
+// 智能检索 (P0-B: P4-E 混合检索 / 以文搜图 / 以图搜图 三合一)
+const RetrievalView = () => import('@/views/RetrievalView.vue')
 
 // 基础路由（无需权限）
 export const constantRoutes: RouteRecordRaw[] = [
@@ -139,6 +141,13 @@ export const asyncRoutes: RouteRecordRaw[] = [
         name: 'Alarms',
         component: AlarmsView,
         meta: { title: '告警中心', icon: 'Bell', roles: ['admin', 'user', 'viewer'] }
+      },
+      {
+        // [P0-B 2026-08-30 智能检索三合一] face/hybrid 涉 retrieval:face 授权, viewer 不开放
+        path: 'retrieval',
+        name: 'Retrieval',
+        component: RetrievalView,
+        meta: { title: '智能检索', icon: 'Search', roles: ['admin', 'user'] }
       },
       {
         path: 'statistics',

@@ -550,6 +550,8 @@ const primaryMenus = computed<PrimaryMenu[]>(() => [
       { path: '/algorithm-store', label: t('menu.algorithms'), icon: ShoppingCart },
       { path: '/face-database', label: t('menu.face'), icon: User },
       { path: '/face-realtime', label: t('menu.faceRealtime'), icon: Aim },
+      // [P0-B 2026-08-30] 智能检索三合一 (P4-E 混合/以文搜图/以图搜图)
+      { path: '/retrieval', label: t('menu.retrieval'), icon: Search },
     ],
   },
   {

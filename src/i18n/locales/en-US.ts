@@ -115,6 +115,7 @@ const enUS: MessageSchema = {
     location: 'Location & Tracks',
     face: 'Face Database',
     faceRealtime: 'Face Realtime',
+    retrieval: 'Smart Retrieval', // [P0-B 2026-08-30]
     gb28181: 'GB28181',
     onvif: 'ONVIF Discovery',
     openPlatform: 'Open Platform',
