@@ -105,6 +105,15 @@ export interface SpatialCondition {
   roi_polygon: number[]
 }
 
+/** 属性条件 (后端 AttributeCondition, [AttrDec β] + [P4-D 2026-08-29])
+ *  op 协议字符串: == != > >= < <= exists not_exists (与 RestApiHandlers 对齐)
+ *  key 白名单见 api/attributeKeys.ts (P4-B SSOT 前端移植) */
+export interface AttributeCondition {
+  key: string
+  op: string
+  value: number
+}
+
 /** 事件源条件 */
 export interface SourceCondition {
   channel_ids: number[]
@@ -113,6 +122,8 @@ export interface SourceCondition {
   min_severity: number
   min_confidence: number
   algorithm_ids: string[]
+  /** [P4-D] 属性条件集合 (AND 语义); LEAF:SOURCE 与 rule 级 source_cond 共用 */
+  attribute_conditions?: AttributeCondition[]
 }
 
 /** 合并条件 */
