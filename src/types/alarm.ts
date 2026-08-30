@@ -179,6 +179,7 @@ export interface AlarmQuery {
   start_ms?: number      // 后端时间戳参数
   end_ms?: number
   since?: number         // [P0-4-d] WS 断线重连补拉: 只返回 created_at > since 的告警 (ms, 排他)
+  scene?: string         // [校园方案 2026-08-30] 场景过滤 (逗号分隔多值, 后端 SSOT 展开 SQL IN)
   search?: string
   dateRange?: [string, string]
 }

@@ -68,6 +68,16 @@ const ScreeningPersonalItemView = () => import('@/views/screening/ScreeningPerso
 const ScreeningXrayView = () => import('@/views/screening/ScreeningXray.vue')
 const ScreeningRulesView = () => import('@/views/screening/ScreeningRules.vue')
 const ScreeningRuleManagerView = () => import('@/views/screening/ScreeningRuleManager.vue')
+// [校园方案 2026-08-30] 校园一级模块 9 子页 (docs/plans/校园整体解决方案设计_v1.0.md §3)
+const SchoolOverviewView = () => import('@/views/school/SchoolOverview.vue')
+const AccessControlView = () => import('@/views/school/AccessControl.vue')
+const PerimeterView = () => import('@/views/school/Perimeter.vue')
+const BehaviorView = () => import('@/views/school/Behavior.vue')
+const AttendanceView = () => import('@/views/school/Attendance.vue')
+const VisitorManagementView = () => import('@/views/school/VisitorManagement.vue')
+const CampusSecurityView = () => import('@/views/school/CampusSecurity.vue')
+const CampusDashboardView = () => import('@/views/school/CampusDashboard.vue')
+const Campus3DView = () => import('@/views/school/Campus3D.vue')
 // 智能检索 (P0-B: P4-E 混合检索 / 以文搜图 / 以图搜图 三合一)
 const RetrievalView = () => import('@/views/RetrievalView.vue')
 
@@ -450,6 +460,61 @@ export const asyncRoutes: RouteRecordRaw[] = [
         name: 'ScreeningRuleManager',
         component: ScreeningRuleManagerView,
         meta: { title: '规则管理', icon: 'Setting', roles: ['admin', 'user'] }
+      },
+      // ═══ [校园方案 2026-08-30] 校园一级模块 9 子路由 ═══
+      {
+        path: 'school/overview',
+        name: 'SchoolOverview',
+        component: SchoolOverviewView,
+        meta: { title: '校园总览', icon: 'School', roles: ['admin', 'user', 'viewer'] }
+      },
+      {
+        path: 'school/access',
+        name: 'SchoolAccessControl',
+        component: AccessControlView,
+        meta: { title: '门禁管理', icon: 'Lock', roles: ['admin', 'user', 'viewer'] }
+      },
+      {
+        path: 'school/perimeter',
+        name: 'SchoolPerimeter',
+        component: PerimeterView,
+        meta: { title: '周界防范', icon: 'Warning', roles: ['admin', 'user', 'viewer'] }
+      },
+      {
+        path: 'school/behavior',
+        name: 'SchoolBehavior',
+        component: BehaviorView,
+        meta: { title: '行为分析', icon: 'Basketball', roles: ['admin', 'user', 'viewer'] }
+      },
+      {
+        path: 'school/attendance',
+        name: 'SchoolAttendance',
+        component: AttendanceView,
+        meta: { title: '考勤统计', icon: 'Clock', roles: ['admin', 'user', 'viewer'] }
+      },
+      {
+        path: 'school/visitor',
+        name: 'SchoolVisitor',
+        component: VisitorManagementView,
+        meta: { title: '访客管理', icon: 'User', roles: ['admin', 'user', 'viewer'] }
+      },
+      {
+        path: 'school/security',
+        name: 'CampusSecurity',
+        component: CampusSecurityView,
+        meta: { title: '校园安检', icon: 'Aim', roles: ['admin', 'user', 'viewer'] }
+      },
+      {
+        path: 'school/dashboard',
+        name: 'CampusDashboard',
+        component: CampusDashboardView,
+        meta: { title: '校园态势大屏', icon: 'DataBoard', roles: ['admin', 'user', 'viewer'] }
+      },
+      {
+        path: 'school/campus3d',
+        name: 'Campus3D',
+        component: Campus3DView,
+        meta: { title: '3D 校园', icon: 'MapLocation', roles: ['admin', 'user', 'viewer'] }
       },
     ]
   },

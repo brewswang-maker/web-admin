@@ -479,6 +479,7 @@ import {
   Sunny, Moon, Cpu, ArrowDown, SwitchButton,
   DArrowLeft, DArrowRight, VideoPlay, Film, VideoPause, Camera, SetUp,
   Location, Share, ShoppingCart, Wallet, Position, Aim, MapLocation,
+  School, Warning, Basketball, Clock, DataBoard,
 } from '@element-plus/icons-vue'
 import logoUrl from '@/assets/logo.png'
 import userAvatarUrl from '@/assets/photo2.jpg'
@@ -496,7 +497,7 @@ const alarmStore = useAlarmStore()
 const prefStore = usePreferenceStore()
 const { t } = useI18n()
 
-type PrimaryMenuKey = 'home' | 'location' | 'video' | 'alarm' | 'ai' | 'screening' | 'large-event' | 'platform'
+type PrimaryMenuKey = 'home' | 'location' | 'video' | 'alarm' | 'ai' | 'screening' | 'school' | 'large-event' | 'platform'
 type SidebarItem = {
   path: string
   label: string
@@ -568,6 +569,22 @@ const primaryMenus = computed<PrimaryMenu[]>(() => [
       { path: '/screening/rules', label: t('menu.screeningRules'), icon: DocumentChecked },
       // [安检对标优化 2026-08-30] 安检专属事件规则列表入口 (页面已存在, 此前漏接入菜单)
       { path: '/screening/rule-manager', label: t('menu.screeningRuleManager'), icon: Setting },
+    ],
+  },
+  {
+    // [校园方案 2026-08-30] 一级菜单「校园」: 9 子模块 (总览/门禁/周界/行为/考勤/访客/安检/大屏/3D)
+    key: 'school',
+    label: t('menuPrimary.school'),
+    items: [
+      { path: '/school/overview', label: t('menu.schoolOverview'), icon: School },
+      { path: '/school/access', label: t('menu.schoolAccess'), icon: Lock },
+      { path: '/school/perimeter', label: t('menu.schoolPerimeter'), icon: Warning },
+      { path: '/school/behavior', label: t('menu.schoolBehavior'), icon: Basketball },
+      { path: '/school/attendance', label: t('menu.schoolAttendance'), icon: Clock },
+      { path: '/school/visitor', label: t('menu.schoolVisitor'), icon: User },
+      { path: '/school/security', label: t('menu.campusSecurity'), icon: Aim },
+      { path: '/school/dashboard', label: t('menu.campusDashboard'), icon: DataBoard },
+      { path: '/school/campus3d', label: t('menu.campus3d'), icon: MapLocation },
     ],
   },
   {
