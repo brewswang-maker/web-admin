@@ -81,6 +81,13 @@ const Campus3DView = () => import('@/views/school/Campus3D.vue')
 const SchoolScenePacksView = () => import('@/views/school/SchoolScenePacks.vue')
 // [加油站方案 2026-08-30] 一级菜单加油站 (设计 docs/plans/加油站整体解决方案设计_v1.0.md §4)
 const GasScenePacksView = () => import('@/views/gas-station/GasScenePacks.vue')
+const GasOverviewView = () => import('@/views/gas-station/GasOverview.vue')
+const FuelingAreaView = () => import('@/views/gas-station/FuelingArea.vue')
+const UnloadingAreaView = () => import('@/views/gas-station/UnloadingArea.vue')
+const GasPerimeterView = () => import('@/views/gas-station/Perimeter.vue')
+const TankAreaView = () => import('@/views/gas-station/TankArea.vue')
+const GasDashboardView = () => import('@/views/gas-station/GasDashboard.vue')
+const Gas3DView = () => import('@/views/gas-station/Gas3D.vue')
 // 智能检索 (P0-B: P4-E 混合检索 / 以文搜图 / 以图搜图 三合一)
 const RetrievalView = () => import('@/views/RetrievalView.vue')
 
@@ -531,6 +538,49 @@ export const asyncRoutes: RouteRecordRaw[] = [
         name: 'GasScenePacks',
         component: GasScenePacksView,
         meta: { title: '加油站场景包', icon: 'Box', roles: ['admin', 'user', 'viewer'] }
+      },
+      // [加油站方案 2026-08-30] 加油站 7 子页 (总览/加油区/卸油区/周界/油罐区/态势大屏/3D)
+      {
+        path: 'gas-station/overview',
+        name: 'GasOverview',
+        component: GasOverviewView,
+        meta: { title: '加油站总览', icon: 'DataAnalysis', roles: ['admin', 'user', 'viewer'] }
+      },
+      {
+        path: 'gas-station/fueling',
+        name: 'FuelingArea',
+        component: FuelingAreaView,
+        meta: { title: '加油区', icon: 'TakeawayBox', roles: ['admin', 'user', 'viewer'] }
+      },
+      {
+        path: 'gas-station/unloading',
+        name: 'UnloadingArea',
+        component: UnloadingAreaView,
+        meta: { title: '卸油区', icon: 'MagicStick', roles: ['admin', 'user', 'viewer'] }
+      },
+      {
+        path: 'gas-station/perimeter',
+        name: 'GasPerimeter',
+        component: GasPerimeterView,
+        meta: { title: '加油站周界', icon: 'Warning', roles: ['admin', 'user', 'viewer'] }
+      },
+      {
+        path: 'gas-station/tank',
+        name: 'TankArea',
+        component: TankAreaView,
+        meta: { title: '油罐区', icon: 'Histogram', roles: ['admin', 'user', 'viewer'] }
+      },
+      {
+        path: 'gas-station/dashboard',
+        name: 'GasDashboard',
+        component: GasDashboardView,
+        meta: { title: '加油站态势大屏', icon: 'DataBoard', roles: ['admin', 'user', 'viewer'] }
+      },
+      {
+        path: 'gas-station/gas3d',
+        name: 'Gas3D',
+        component: Gas3DView,
+        meta: { title: '3D 加油站', icon: 'MapLocation', roles: ['admin', 'user', 'viewer'] }
       },
     ]
   },

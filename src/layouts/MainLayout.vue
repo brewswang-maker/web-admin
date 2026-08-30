@@ -479,7 +479,7 @@ import {
   Sunny, Moon, Cpu, ArrowDown, SwitchButton,
   DArrowLeft, DArrowRight, VideoPlay, Film, VideoPause, Camera, SetUp,
   Location, Share, ShoppingCart, Wallet, Position, Aim, MapLocation,
-  School, Warning, Basketball, Clock, DataBoard, Box,
+  School, Warning, Basketball, Clock, DataBoard, Box, Histogram,
   // [加油站方案 2026-08-30] 一级菜单加油站 (T6 硬红线 + EHS 闭环)
   TakeawayBox, MagicStick,
 } from '@element-plus/icons-vue'
@@ -591,12 +591,20 @@ const primaryMenus = computed<PrimaryMenu[]>(() => [
     ],
   },
   {
-    // [加油站方案 2026-08-30] 一级菜单「加油站」: 场景包子页 (T6 硬红线 + EHS 闭环)
-    //   设计: docs/plans/加油站整体解决方案设计_v1.0.md §4 (7 子模块规划, 本期先落场景包子页)
+    // [加油站方案 2026-08-30] 一级菜单「加油站」: 7 子模块 (总览/加油区/卸油区/周界/油罐区/态势大屏/3D)
+    //   设计: docs/plans/加油站整体解决方案设计_v1.0.md §4
+    //   T6 红线 (电话/吸烟不联锁) + EHS 闭环 + 安全 PLC 隔离
     key: 'gas-station',
     label: t('menuPrimary.gasStation'),
     items: [
-      { path: '/gas-station/scene-packs', label: t('menu.gasStationScenePacks'), icon: Box },
+      { path: '/gas-station/overview',    label: t('menu.gasStationOverview'),    icon: DataAnalysis },
+      { path: '/gas-station/fueling',     label: t('menu.gasStationFueling'),     icon: TakeawayBox },
+      { path: '/gas-station/unloading',   label: t('menu.gasStationUnloading'),   icon: MagicStick },
+      { path: '/gas-station/perimeter',   label: t('menu.gasStationPerimeter'),   icon: Warning },
+      { path: '/gas-station/tank',        label: t('menu.gasStationTank'),        icon: Histogram },
+      { path: '/gas-station/dashboard',   label: t('menu.gasStationDashboard'),   icon: DataBoard },
+      { path: '/gas-station/gas3d',       label: t('menu.gasStationGas3D'),       icon: MapLocation },
+      { path: '/gas-station/scene-packs', label: t('menu.gasStationScenePacks'),  icon: Box },
     ],
   },
   {

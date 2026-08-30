@@ -95,8 +95,15 @@ const zhCN = {
     campusDashboard: '校园态势大屏',
     campus3d: '3D 校园',
     schoolScenePacks: '校园场景包',
-        // [加油站方案 2026-08-30] 一级菜单加油站 (T6 硬红线 + EHS 闭环)
-        gasStationScenePacks: '加油站场景包',
+    // [加油站方案 2026-08-30] 一级菜单加油站 (T6 硬红线 + EHS 闭环)
+    gasStationOverview: '加油站总览',
+    gasStationFueling: '加油区',
+    gasStationUnloading: '卸油区',
+    gasStationPerimeter: '加油站周界',
+    gasStationTank: '油罐区',
+    gasStationDashboard: '加油站态势大屏',
+    gasStationGas3D: '3D 加油站',
+    gasStationScenePacks: '加油站场景包',
     devices: '设备管理',
     channels: '通道管理',
     alarms: '告警中心',

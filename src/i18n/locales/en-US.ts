@@ -97,8 +97,15 @@ const enUS: MessageSchema = {
     campusDashboard: 'Campus Dashboard',
     campus3d: '3D Campus',
     schoolScenePacks: 'Scene Packs',
-        // [加油站方案 2026-08-30] 一级菜单加油站
-        gasStationScenePacks: 'Gas Station Scene Packs',
+    // [加油站方案 2026-08-30] 一级菜单加油站
+    gasStationOverview: 'Gas Station Overview',
+    gasStationFueling: 'Fueling Area',
+    gasStationUnloading: 'Unloading Area',
+    gasStationPerimeter: 'Gas Station Perimeter',
+    gasStationTank: 'Tank Area',
+    gasStationDashboard: 'Gas Station Dashboard',
+    gasStationGas3D: '3D Gas Station',
+    gasStationScenePacks: 'Gas Station Scene Packs',
     devices: 'Devices',
     channels: 'Channels',
     alarms: 'Alarms',
