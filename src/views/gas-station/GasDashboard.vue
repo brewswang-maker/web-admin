@@ -316,21 +316,36 @@ const levelPieOption = computed(() => {
   } as EChartsOption
 })
 
-/** EHS 闭环指标 (本地聚合, 真实事件计算) */
+/** EHS 闭环指标 (本地聚合, 真实事件计算)
+ * [加油站三期 2026-08-30 EHS 闭环真实化] 数据源切换:
+ *   旧: metadata.close_status === 'manual_ack' — 后端无此字段, 闭环率恒 0 (伪指标)
+ *   新: 后端工单状态机真实字段 — status (handleAlarm 持久化, DB 列回填
+ *       metadata, AlarmService.getRecentAlarmsPaged SELECT) +
+ *       acked_at/resolved_at/closed_at 生命周期时间戳
+ *   语义 (按计划 P0-3 口径): 整改对象 = 非 false_alarm 事件 (误报不计入);
+ *         闭环 = 终态 (resolved/closed, 旧版 confirmed 兼容);
+ *         响应时长 = acked_at (人工确认在环) 优先, 兜底终态时间戳
+ */
+const CLOSED_STATUSES = new Set<string>(['resolved', 'closed', 'confirmed'])
 const ehs = computed(() => {
-  const core = events.value.filter(e =>
-    ['fire', 'smoke', 'smolder', 'fire_access', 'intrusion'].includes(e.type)
-  )
-  const t6 = events.value.filter(e => e.type === 'phone_call' || e.type === 'smoking')
-  // close=manual 模板触发数 vs 已 ack 数 (metadata.close_status)
-  const closed = events.value.filter(e => e.metadata?.close_status === 'manual_ack').length
-  const total = core.length
+  // 整改对象: 非 false_alarm 全量事件 (误报不计入整改对象, 计划 P0-3 口径)
+  const targets = events.value.filter(e => e.status !== 'false_alarm')
+  const t6 = events.value.filter(e =>
+    (e.type === 'phone_call' || e.type === 'smoking') && e.status !== 'false_alarm')
+  const closedSet = targets.filter(e => CLOSED_STATUSES.has(e.status))
+  const closed = closedSet.length
+  const total = targets.length
   const pending = total - closed
   const closeRate = total > 0 ? closed / total : 0
-  // 平均响应时长 (s): metadata.response_seconds
-  const latencies = events.value
-    .map(e => Number(e.metadata?.response_seconds))
-    .filter(n => Number.isFinite(n) && n > 0)
+  // 响应时长 (s): acked_at (确认在环) 优先, 兜底 resolved_at/closed_at 终态;
+  //   仅闭环事件有终态时间戳, 未闭环自然被 Number.isFinite 过滤
+  const latencies = closedSet
+    .map((e) => {
+      const created = new Date(e.createdAt).getTime()
+      const resp = Number(e.metadata?.acked_at ?? e.metadata?.resolved_at ?? e.metadata?.closed_at)
+      return Number.isFinite(resp) && resp > 0 && created > 0 ? (resp - created) / 1000 : NaN
+    })
+    .filter(n => Number.isFinite(n) && n >= 0)
   const avg = latencies.length ? latencies.reduce((a, b) => a + b, 0) / latencies.length : 0
   const ehsAvgLatency = avg ? Math.round(avg) : 0
   const avgLatencyPct = Math.min(100, (ehsAvgLatency / 120) * 100)

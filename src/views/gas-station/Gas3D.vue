@@ -115,17 +115,30 @@ function isT6Event(type: string) { return T6_EVENTS.has(type) }
 const activePack = computed(() =>
   scenePacks.value.find(p => p.scene_pack_id === activePackId.value) || null)
 
-/** 三圈环带 (加油站版: 控制→警戒→核心; zones 驱动, fallback 内置) */
+/** 三圈环带 (加油站版: 控制→警戒→核心; zones + circle_radii_m 驱动, fallback 内置)
+ * [加油站三期 2026-08-30] 半径从场景包 circle_radii_m 动态计算 (方案 §9):
+ *   SVG 比例尺 1.1 px/m (80m→r88 满幅), 图例显示真实米数;
+ *   zones key 三期起为 gas_station_{core,alert,control}_circle (includes 匹配兼容);
+ *   fallback 内置默认三圈 80/30/15m (与 ScenePackDefs §5 fallback 同源) */
+const RADIUS_SCALE_PX_PER_M = 1.1
+const FALLBACK_RADII_M: Record<string, number> = { control: 80, alert: 30, core: 15 }
 const circleRings = computed(() => {
   const defs = [
-    { key: 'control', label: '控制圈 (围墙外 30m)', color: '#409eff', fill: 'rgba(64,158,255,0.06)', r: 88 },
-    { key: 'alert',   label: '警戒圈 (加油区+便利店)', color: '#e6a23c', fill: 'rgba(230,162,60,0.07)', r: 62 },
-    { key: 'core',    label: '核心圈 (卸油+罐区)', color: '#f56c6c', fill: 'rgba(245,108,108,0.10)', r: 36 },
+    { key: 'control', label: '控制圈', color: '#409eff', fill: 'rgba(64,158,255,0.06)' },
+    { key: 'alert',   label: '警戒圈', color: '#e6a23c', fill: 'rgba(230,162,60,0.07)' },
+    { key: 'core',    label: '核心圈', color: '#f56c6c', fill: 'rgba(245,108,108,0.10)' },
   ]
   const zones = activePack.value?.zones ?? {}
+  const radii = activePack.value?.circle_radii_m ?? {}
+  const matchKey = (src: Record<string, unknown>, key: string): string | null =>
+    Object.keys(src).find(k => k.includes(key)) ?? null
   const zoneOf = (key: string): string[] => {
-    const found = Object.entries(zones).find(([k]) => k.includes(key))
-    return found ? found[1] : []
+    const k = matchKey(zones, key)
+    return k ? (zones[k] as string[]) : []
+  }
+  const metersOf = (key: string): number => {
+    const k = matchKey(radii, key)
+    return k ? (radii[k] as number) : FALLBACK_RADII_M[key] ?? 30
   }
   // fallback: 加油站内置默认三圈 (围墙/加油岛/罐区; 半径 80m/30m/15m 示意)
   const FALLBACK: Record<string, string[]> = {
@@ -133,10 +146,16 @@ const circleRings = computed(() => {
     alert: ['加油岛', '便利店', '出入口'],
     core: ['卸油区', '油罐区', '加油机'],
   }
-  return defs.map(d => ({
-    ...d,
-    zones: zoneOf(d.key).length ? zoneOf(d.key) : FALLBACK[d.key] ?? [],
-  }))
+  return defs.map(d => {
+    const meters = metersOf(d.key)
+    return {
+      ...d,
+      label: `${d.label} (${meters}m)`,
+      // clamp: SVG viewBox 200, 圆心 100, 半径限 [10, 95]
+      r: Math.min(95, Math.max(10, Math.round(meters * RADIUS_SCALE_PX_PER_M))),
+      zones: zoneOf(d.key).length ? zoneOf(d.key) : FALLBACK[d.key] ?? [],
+    }
+  })
 })
 
 const typeMap = computed(() => {

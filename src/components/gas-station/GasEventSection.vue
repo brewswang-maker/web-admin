@@ -59,10 +59,12 @@
         <el-table-column label="时间" width="150">
           <template #default="{ row }">{{ shortTime(row.createdAt) }}</template>
         </el-table-column>
-        <el-table-column label="" width="112" align="center">
+        <el-table-column label="" width="152" align="center">
           <template #default="{ row }">
             <el-button size="small" type="primary" link @click.stop="openDetail(row)">详情</el-button>
             <el-button size="small" type="success" link @click.stop="goTrajectory(row)">轨迹</el-button>
+            <!-- [加油站三期 2026-08-30 §11.1C] 视频证据链: 跳转事件时刻录像回放 -->
+            <el-button size="small" type="warning" link @click.stop="jumpToPlayback(row)">回放</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -166,6 +168,22 @@ function openDetail(row: AlarmEvent) {
 }
 
 const router = useRouter()
+// [加油站三期 2026-08-30 §11.1C] 视频证据链回放跳转
+//   范式复用 AlarmPopup.jumpToPlayback: Recording 页带 channelId/时间参数
+//   (回放页定位该时刻); 卸油事件 close=manual 需值守人员复核录像证据链
+function jumpToPlayback(row: AlarmEvent) {
+  const t = row.createdAt ? new Date(row.createdAt).getTime() : Date.now()
+  router.push({
+    name: 'Recording',
+    query: {
+      channelId: row.channelId || '',
+      deviceId: row.deviceId || '',
+      time: String(t),
+      alarmId: row.id || '',
+    },
+  })
+  ElMessage.success('正在跳转到录像回放…')
+}
 function goTrajectory(row: AlarmEvent) {
   const meta = (row.metadata ?? {}) as Record<string, unknown>
   const trackId = Number(meta.track_id) || 0

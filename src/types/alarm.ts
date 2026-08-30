@@ -499,6 +499,12 @@ export function normalizeAlarmCore(raw: any): AlarmEvent {
   //   (e.g. "1756644621"), 弹窗查 /api/v1/streams/{id}/multi-urls 时 404, 视频流获取失败.
   //   修复: 按 channel_id_str → metadata.channel_id_str → channel_id 顺序回退
   const md = raw.metadata
+  // [加油站三期 2026-08-30 EHS 闭环] 治理字段解包: 后端 metadata 落库为 JSON 数组
+  //   (设备实况 [{algo_id,...}], 状态机回填字段注入首元素), 对象形态直接用 —
+  //   供 status 与 acked_at/resolved_at/closed_at 读取及 metadata 展开。
+  const gov: Record<string, unknown> =
+    Array.isArray(md) ? (md[0] && typeof md[0] === 'object' ? md[0] : {})
+      : (md && typeof md === 'object' ? md : {})
   const rawCh = raw.channel_id ?? raw.channelId ?? raw.channel ?? ''
   // [FIX 2026-08-21] 过滤无效通道哨兵: "-1" (测试告警 reportSimple(-1) /
   //   WEB_POPUP 透传)、"0"、URL 型、负数截断值都不是合法流 ID; 原逻辑
@@ -532,7 +538,10 @@ export function normalizeAlarmCore(raw: any): AlarmEvent {
     videoClipUrl: toAbsoluteUrl(raw.video_clip_url || raw.videoClipUrl),
     aiConclusion: raw.ai_conclusion || raw.aiConclusion || raw.ai_analysis || raw.aiAnalysis || '',
     confidence: Number(raw.confidence ?? raw.ai_confidence ?? raw.aiConfidence ?? 0),
-    status: (raw.status as AlarmStatus) || 'unhandled',
+    // [加油站三期 2026-08-30 EHS 闭环] status 双源: 后端顶层字段优先,
+    //    兜底工单状态机回填的 metadata 治理字段 (handleAlarm 持久化 →
+    //    getRecentAlarmsPaged SELECT 回填数组首元素), 未处理保持 'unhandled'
+    status: (raw.status as AlarmStatus) || (gov.status as AlarmStatus) || 'unhandled',
     location: raw.location || raw.location_name || raw.zone || '',
     metadata: {
       bbox: raw.bbox || [],
@@ -555,10 +564,16 @@ export function normalizeAlarmCore(raw: any): AlarmEvent {
       liveness_score: raw.liveness_score || raw.metadata?.liveness_score,
       quality_score: raw.quality_score || raw.metadata?.quality_score,
       face_box: raw.face_box || raw.metadata?.face_box,
-      algo_id: raw.algo_id || raw.metadata?.algo_id,
+      algo_id: raw.algo_id || gov.algo_id,
       snapshot_base64: raw.snapshot_base64 || raw.metadata?.snapshot_base64,
       snapshot_format: raw.snapshot_format || raw.metadata?.snapshot_format,
-      ...(raw.metadata && typeof raw.metadata === 'object' ? raw.metadata : {}),
+      // [加油站三期 2026-08-30] 治理字段显式透出 (EHS 闭环指标数据源):
+      //   acked_at/resolved_at/closed_at + track_id 等原始字段随 gov 展开
+      //   (原直接展开 raw.metadata, 数组形态会展开为索引键导致字段丢失)
+      acked_at: gov.acked_at,
+      resolved_at: gov.resolved_at,
+      closed_at: gov.closed_at,
+      ...gov,
     },
     // [Fix 2026-06-24] 支持 raw.timestamp 字段（后端实际返回的时间戳字段名）
     //   优先级: created_at > createdAt > timestamp > timestamp_ms > 当前时间

@@ -67,11 +67,11 @@
           <div class="pack-actions">
             <el-button size="small" @click.stop="openDetail(p)">查看详情</el-button>
             <el-button size="small" :loading="applying === p.scene_pack_id"
-                       @click.stop="confirmApply(p, false)">
+                       @click.stop="confirmValidate(p)">
               仅校验
             </el-button>
             <el-button size="small" type="primary" :loading="applying === p.scene_pack_id"
-                       @click.stop="confirmApply(p, true)">
+                       @click.stop="openDeployDialog(p)">
               校验并布防
             </el-button>
           </div>
@@ -130,6 +130,46 @@
       </template>
     </el-dialog>
 
+    <!-- ===== [加油站三期] 布防通道勾选对话框 (§6.1 映射精度: 真实通道绑定) ===== -->
+    <el-dialog v-model="deployDialog.visible"
+               :title="`校验并布防 — ${deployDialog.pack?.display_name ?? ''}`" width="560px">
+      <p class="deploy-hint">
+        将实例化 {{ deployDialog.pack?.linkage_templates?.length ?? 0 }} 个 GS 联动模板为规则
+        (幂等, 已存在跳过; T6 模板仅声光+TTS, 不联动工艺联锁)。
+      </p>
+      <div class="deploy-channels">
+        <div class="deploy-channels-head">
+          <span>绑定通道 (规则事件源 channel_ids)</span>
+          <el-button size="small" link type="primary" :loading="deployDialog.loading"
+                     @click="loadChannels">刷新</el-button>
+        </div>
+        <el-checkbox-group v-model="deployDialog.selected" :disabled="deployDialog.loading">
+          <div v-for="c in deployDialog.channels" :key="c.id" class="deploy-channel-item">
+            <el-checkbox :value="c.id">{{ c.label }}</el-checkbox>
+          </div>
+        </el-checkbox-group>
+        <div v-if="!deployDialog.loading && deployDialog.channels.length === 0" class="deploy-hint">
+          未获取到通道列表 — 布防将绑定全部通道
+        </div>
+        <div class="deploy-hint deploy-hint-sub">
+          不勾选任何通道 = 绑定全部通道 (与后端 channel_ids 空数组语义一致)
+        </div>
+        <!-- [加油站三期 P1-6] 按 zones 圈层建议分组提示 (与详情抽屉「三圈布防 zones」同源) -->
+        <div v-if="deployDialog.pack?.zones && Object.keys(deployDialog.pack.zones).length"
+             class="deploy-circle-hints">
+          <div v-for="(names, circle) in deployDialog.pack.zones" :key="circle" class="deploy-circle-hint">
+            <span class="deploy-circle-label">{{ circleLabel(String(circle)) }}</span>
+            <span>{{ (names as string[]).slice(0, 3).join(' / ') }}{{ (names as string[]).length > 3 ? ' 等' : '' }}</span>
+          </div>
+        </div>
+      </div>
+      <template #footer>
+        <el-button @click="deployDialog.visible = false">取消</el-button>
+        <el-button type="primary" :loading="applying === deployDialog.pack?.scene_pack_id"
+                   @click="doDeploy">布防</el-button>
+      </template>
+    </el-dialog>
+
     <!-- ===== 详情抽屉 ===== -->
     <el-drawer v-model="drawerVisible" :title="activePack?.display_name ?? ''" size="520px">
       <template v-if="activePack">
@@ -184,8 +224,9 @@
  *
  * 三个加油站场景包卡片 (中石化/中石油标准日常/卸油作业专项/EHS 闭环, 对齐 ScenePackDefs.h
  * gas_station tag) + el-drawer 详情 (algo_set / 三圈 zones / 阈值档位 / GS-* 模板) +
- * 应用: 双模式 (仅校验 = 缺口报告; 校验并布防 = deploy=true 实例化 GS 模板为联动规则,
- *   幂等, 机器 tag 为 scene_pack/gas_station)。
+ * 应用: 双模式 (仅校验 = 缺口报告; 校验并布防 = 布防通道勾选对话框 → 实例化 GS 模板为
+ *   联动规则 + 绑定勾选通道 channel_ids, 幂等, 机器 tag 为 scene_pack/gas_station;
+ *   不勾选 = 全部通道, 与后端 channel_ids 空数组语义一致)。
  * 数据源复用 /large-event/scene-packs SSOT 端点 (后端全量返回, 本页按 tag 过滤)。
  *
  * 工程红线展示:
@@ -194,13 +235,15 @@
  *   抽屉内工程红线 4 条提示
  * 三态完整 (骨架屏/错误态/空态), 范式对齐 school/SchoolScenePacks.vue。
  */
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   CircleCheckFilled, Link, Box, MagicStick, TakeawayBox, Refresh,
 } from '@element-plus/icons-vue'
 import { gasStationApi } from '@/api/gasStation'
+import { channelApi } from '@/api/channel'
+import type { ChannelItem } from '@/types/device'
 import { linkageApi } from '@/api/linkage'
 import type { RuleTemplate } from '@/api/linkage'
 import type { ScenePack, ScenePackApplyResult } from '@/types/largeEvent'
@@ -245,7 +288,8 @@ function packClass(packId: string) {
 function circleLabel(circle: string) {
   if (circle.includes('core')) return '核心圈 (卸油区/油罐/加油机)'
   if (circle.includes('alert')) return '警戒圈 (加油区/便利店)'
-  if (circle.includes('control')) return '管控圈 (围墙/外围道路)'
+  // [加油站三期 2026-08-31] 「管控圈」→「控制圈」: 与设计文档 §5 三圈术语及 Gas3D 图例统一
+  if (circle.includes('control')) return '控制圈 (围墙/外围道路)'
   return circle
 }
 
@@ -302,22 +346,82 @@ function openDetail(p: ScenePack) {
   drawerVisible.value = true
 }
 
-async function confirmApply(p: ScenePack, deploy: boolean) {
+// [加油站三期 2026-08-30 §6.1 映射精度] 布防通道勾选:
+//   apply v2 channel_ids (int32 数组, 空=全部通道, LinkageRuleView 同源分类) →
+//   规则 source_cond 绑定真实设备通道; 对话框替代原 ElMessageBox 确认
+const deployDialog = reactive({
+  visible: false,
+  pack: null as ScenePack | null,
+  channels: [] as { id: number; label: string }[],
+  selected: [] as number[],
+  loading: false,
+})
+
+async function loadChannels() {
+  deployDialog.loading = true
+  try {
+    const res = await channelApi.getList({ page: 1, pageSize: 200 })
+    const data = res.data?.data as unknown as { items?: ChannelItem[]; list?: ChannelItem[] } | undefined
+    const rawList: ChannelItem[] = data?.items ?? data?.list ?? []
+    deployDialog.channels = rawList
+      .map((c) => {
+        // 小整数 ID → int32 channel_ids (联动规则事件源语义)
+        const numId = Number(c.channelNo) || Number(c.id) || 0
+        return { id: numId, label: `${c.name || `通道${numId}`} (#${numId})` }
+      })
+      .filter(c => c.id > 0)
+  } catch {
+    deployDialog.channels = []
+  } finally {
+    deployDialog.loading = false
+  }
+}
+
+function openDeployDialog(p: ScenePack) {
+  deployDialog.pack = p
+  deployDialog.selected = []
+  deployDialog.visible = true
+  if (deployDialog.channels.length === 0) void loadChannels()
+}
+
+async function doDeploy() {
+  const p = deployDialog.pack
+  if (!p) return
+  applying.value = p.scene_pack_id
+  try {
+    // 勾选 → int32 channel_ids; 空 = 全部通道 (undefined 不序列化字段)
+    const channelIds = deployDialog.selected.length ? deployDialog.selected : undefined
+    const res = await gasStationApi.applyScenePack(p.scene_pack_id, { deploy: true, channel_ids: channelIds })
+    lastResult.value = res.data?.data ?? null
+    if (!lastResult.value) {
+      ElMessage.error('应用响应异常 (无 data)')
+      return
+    }
+    deployDialog.visible = false
+    resultVisible.value = true
+    ElMessage.success(
+      `布防完成: 新建 ${lastResult.value.rules_created ?? 0} 条规则, 跳过已有 ${lastResult.value.rules_skipped ?? 0} 条`)
+  } catch (e: unknown) {
+    ElMessage.error(`布防失败: ${(e as Error)?.message ?? e}`)
+  } finally {
+    applying.value = ''
+  }
+}
+
+/** 仅校验: 不写配置, 输出算法缺口报告 */
+async function confirmValidate(p: ScenePack) {
   try {
     await ElMessageBox.confirm(
-      deploy
-        ? `将按场景包「${p.display_name}」校验算法可用性, 并把 ${p.linkage_templates?.length ?? 0} 个 GS 联动模板实例化为规则 (幂等, 已存在跳过; T6 模板仅声光+TTS, 不联动工艺联锁; 可在「联动规则」页查看)。继续?`
-        : `将按场景包「${p.display_name}」校验算法可用性并输出部署清单 (不写配置)。继续?`,
-      deploy ? '校验并布防' : '仅校验',
-      { confirmButtonText: deploy ? '布防' : '校验', cancelButtonText: '取消', type: 'info' }
+      `将按场景包「${p.display_name}」校验算法可用性并输出部署清单 (不写配置)。继续?`,
+      '仅校验',
+      { confirmButtonText: '校验', cancelButtonText: '取消', type: 'info' }
     )
   } catch {
     return
   }
   applying.value = p.scene_pack_id
   try {
-    const res = await gasStationApi.applyScenePack(
-      p.scene_pack_id, deploy ? { deploy: true } : undefined)
+    const res = await gasStationApi.applyScenePack(p.scene_pack_id)
     lastResult.value = res.data?.data ?? null
     if (!lastResult.value) {
       ElMessage.error('应用响应异常 (无 data)')
@@ -328,10 +432,6 @@ async function confirmApply(p: ScenePack, deploy: boolean) {
       ElMessage.success(`场景包 ${p.display_name} 就绪`)
     } else {
       ElMessage.warning(`存在 ${lastResult.value.missing_algos?.length ?? 0} 个算法缺口, 详见报告`)
-    }
-    if (deploy) {
-      ElMessage.success(
-        `布防完成: 新建 ${lastResult.value.rules_created ?? 0} 条规则, 跳过已有 ${lastResult.value.rules_skipped ?? 0} 条`)
     }
   } catch (e: unknown) {
     ElMessage.error(`应用失败: ${(e as Error)?.message ?? e}`)
@@ -366,6 +466,14 @@ onMounted(() => {
 .t6-banner { margin-bottom: 16px; }
 .deploy-summary { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
 .go-rules-row { margin-top: 10px; display: flex; justify-content: flex-end; }
+.deploy-hint { font-size: 12px; color: var(--el-text-color-secondary); margin: 0 0 10px; }
+.deploy-channels { margin: 4px 0 2px; }
+.deploy-channels-head { display: flex; justify-content: space-between; align-items: center; font-size: 13px; font-weight: 500; margin-bottom: 8px; }
+.deploy-channel-item { margin-bottom: 6px; }
+.deploy-hint-sub { margin: 8px 0 0; }
+.deploy-circle-hints { margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--el-border-color-lighter); display: flex; flex-direction: column; gap: 4px; }
+.deploy-circle-hint { font-size: 12px; color: var(--el-text-color-regular); line-height: 1.5; }
+.deploy-circle-label { font-weight: 600; margin-right: 6px; color: var(--el-text-color-secondary); }
 .pack-card { margin-bottom: 16px; cursor: pointer; }
 .pack-head { display: flex; gap: 12px; align-items: center; margin-bottom: 10px; }
 .pack-icon { width: 44px; height: 44px; border-radius: 8px; display: flex; align-items: center; justify-content: center; color: #fff; flex-shrink: 0; }
