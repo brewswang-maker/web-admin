@@ -60,12 +60,14 @@ const LargeEventOverviewView = () => import('@/views/large-event/OverviewView.vu
 const LargeEventDensityView = () => import('@/views/large-event/DensityScreenView.vue')
 const LargeEventEventsView = () => import('@/views/large-event/EventListView.vue')
 const LargeEventScenePacksView = () => import('@/views/large-event/ScenePacksView.vue')
+const LargeEventRulesView = () => import('@/views/large-event/RulesView.vue') // [EventGuard apply v2 2026-08-28] 事件规则聚合页
 // 安检场景 (Phase 2 S1-3/S1-4 — 2026-08-27)
 const ScreeningOverviewView = () => import('@/views/screening/ScreeningOverview.vue')
 const ScreeningChannelOrderView = () => import('@/views/screening/ScreeningChannelOrder.vue')
 const ScreeningPersonalItemView = () => import('@/views/screening/ScreeningPersonalItem.vue')
 const ScreeningXrayView = () => import('@/views/screening/ScreeningXray.vue')
 const ScreeningRulesView = () => import('@/views/screening/ScreeningRules.vue')
+const ScreeningRuleManagerView = () => import('@/views/screening/ScreeningRuleManager.vue')
 // 智能检索 (P0-B: P4-E 混合检索 / 以文搜图 / 以图搜图 三合一)
 const RetrievalView = () => import('@/views/RetrievalView.vue')
 
@@ -398,7 +400,20 @@ export const asyncRoutes: RouteRecordRaw[] = [
         component: LargeEventScenePacksView,
         meta: { title: '场景包', icon: 'Files', roles: ['admin', 'user'] }
       },
+      {
+        path: 'large-event/rules',
+        name: 'LargeEventRules',
+        component: LargeEventRulesView,
+        meta: { title: '事件规则', icon: 'List', roles: ['admin', 'user', 'viewer'] }
+      },
       // ── 安检场景 (Phase 2 S1-3/S1-4) ──
+      {
+        // [安检对标优化 2026-08-30] 运行大屏 (对标海康可视化安检中枢)
+        path: 'screening/dashboard',
+        name: 'ScreeningDashboard',
+        component: () => import('@/views/screening/ScreeningDashboard.vue'),
+        meta: { title: '运行大屏', icon: 'DataLine', roles: ['admin', 'user', 'viewer'] }
+      },
       {
         path: 'screening/overview',
         name: 'ScreeningOverview',
@@ -428,6 +443,13 @@ export const asyncRoutes: RouteRecordRaw[] = [
         name: 'ScreeningRules',
         component: ScreeningRulesView,
         meta: { title: '安检模板', icon: 'Document', roles: ['admin', 'user'] }
+      },
+      {
+        // [P2-1 2026-08-29 安检 gap audit] 生效规则管理 (与模板页互补)
+        path: 'screening/rule-manager',
+        name: 'ScreeningRuleManager',
+        component: ScreeningRuleManagerView,
+        meta: { title: '规则管理', icon: 'Setting', roles: ['admin', 'user'] }
       },
     ]
   },

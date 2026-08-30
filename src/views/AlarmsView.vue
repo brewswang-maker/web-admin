@@ -93,6 +93,12 @@
       </div>
     </el-card>
 
+    <!-- ===== [安检对标优化 2026-08-30] 复核质控统计条 ===== -->
+    <el-alert
+      v-if="fbStats"
+      type="info" :closable="false" class="qc-strip" show-icon
+      :title="`复核质控: 已标注 ${fbStats.total} 条 · 误报 ${fbStats.falsePositives} · 标注误报率 ${(fbStats.falseRate * 100).toFixed(1)}% · 待复核约 ${fbStats.pending} 条 (近 30 天)`" />
+
     <!-- ===== 批量操作栏 ===== -->
     <div v-if="selected.length > 0" class="batch-bar" :class="{ visible: selected.length > 0 }">
       <span class="batch-info">已选 <strong>{{ selected.length }}</strong> 条告警</span>
@@ -104,6 +110,31 @@
       </el-button>
       <el-button size="small" @click="selected = []">取消选择</el-button>
     </div>
+
+    <!-- ===== [安检对标优化 2026-08-30] 复核标注 dialog ===== -->
+    <!--   判定标注独立于处置工作流: verdict 写 false_alarm_feedback 并同步 status -->
+    <el-dialog v-model="reviewVisible" title="告警复核标注" width="480px">
+      <div v-if="reviewTarget" class="review-body">
+        <div class="review-target">
+          {{ reviewTarget.description || reviewTarget.type }} · {{ reviewTarget.channelName || reviewTarget.channelId }}
+        </div>
+        <el-radio-group v-model="reviewVerdict" class="review-verdicts">
+          <el-radio-button label="true_positive">真实告警</el-radio-button>
+          <el-radio-button label="false_positive">误报</el-radio-button>
+          <el-radio-button label="unsure">存疑</el-radio-button>
+        </el-radio-group>
+        <el-input
+          v-model="reviewNote" type="textarea" :rows="3"
+          placeholder="备注 (可选): 误报原因 / 处置说明..." />
+        <div class="review-hint">
+          提交后写入复核库并同步处置状态 (误报→false_alarm / 真实→confirmed), 同时反馈自适应阈值优化器用于误报抑制。
+        </div>
+      </div>
+      <template #footer>
+        <el-button @click="reviewVisible = false">取消</el-button>
+        <el-button type="primary" :loading="reviewSubmitting" @click="submitReview">提交复核</el-button>
+      </template>
+    </el-dialog>
 
     <!-- ===== [P3-VP2] 证据库视图（截图/录像统一管理） ===== -->
     <el-card v-if="viewMode === 'gallery'" shadow="never" class="evidence-gallery">
@@ -342,6 +373,10 @@
                     <el-dropdown-item command="escalate" v-if="row.status !== 'closed' && row.status !== 'false_alarm'">升级告警</el-dropdown-item>
                     <el-dropdown-item command="reassign" v-if="row.status !== 'closed'">转派处理</el-dropdown-item>
                     <el-dropdown-item command="false_alarm" :disabled="row.status === 'closed'">标记误报</el-dropdown-item>
+                    <!-- [安检对标优化 2026-08-30] 复核判定标注 (独立于处置工作流) -->
+                    <el-dropdown-item command="review" divided>
+                      {{ verdictMap.has(row.id) ? `已复核: ${verdictText(verdictMap.get(row.id))}` : '复核标注' }}
+                    </el-dropdown-item>
                     <el-dropdown-item command="ignore" :disabled="row.status === 'closed'">忽略</el-dropdown-item>
                     <el-dropdown-item command="evidence" divided>证据链</el-dropdown-item>
                     <el-dropdown-item command="detail">详情</el-dropdown-item>
@@ -602,6 +637,7 @@ import {
   Picture, VideoPlay, Position, ArrowDown,
 } from '@element-plus/icons-vue'
 import { alarmApi } from '@/api/alarm'
+import { screeningApi, type AlarmFeedbackItem } from '@/api/screening'
 import { exportApi } from '@/api/export'
 import { queryRecordings, toLocalISOString, type DeviceRecording } from '@/api/recording'
 import { recordingHttp } from '@/api/http'
@@ -1223,8 +1259,78 @@ async function handleCloseAlarm(row: any) {
   }).catch(() => {})
 }
 
+// ── [安检对标优化 2026-08-30] 复核标注 (false_alarm_feedback 质控闭环) ──
+//   判定标注独立于处置工作流: 提交 POST /stats/false_alarm_baseline/feedback,
+//   后端 UPSERT + 同步 alarm_events.status + 反馈 AdaptiveThreshold 优化器。
+const verdictMap = ref<Map<string, string>>(new Map())
+const reviewVisible = ref(false)
+const reviewTarget = ref<any>(null)
+const reviewVerdict = ref('true_positive')
+const reviewNote = ref('')
+const reviewSubmitting = ref(false)
+const fbStats = ref<{ total: number; falsePositives: number; falseRate: number; pending: number } | null>(null)
+
+function verdictText(v?: string | null) {
+  return v === 'true_positive' ? '真实' : v === 'false_positive' ? '误报' : '存疑'
+}
+
+/** 拉复核明细建 alarm_id→verdict 映射 (dropdown 回显), 失败不阻断列表 */
+async function loadFeedbackMap() {
+  try {
+    const resp = await screeningApi.queryFeedback({ limit: 500 })
+    const items = resp.data?.data || []
+    verdictMap.value = new Map(items.map((it: AlarmFeedbackItem) => [it.alarm_id, it.verdict]))
+  } catch { /* 明细不可达时 dropdown 显示「复核标注」原文案 */ }
+}
+
+/** 拉复核统计 (标注总数/误报率/待复核近似值) */
+async function loadFbStats() {
+  try {
+    const resp = await screeningApi.getFalseAlarmBaseline({ days: 30, include_feedback: true })
+    const d: any = resp.data?.data || {}
+    const fb: any = d.feedback || {}
+    fbStats.value = {
+      total: fb.total_feedback || 0,
+      falsePositives: fb.false_positives || 0,
+      falseRate: fb.annotated_false_rate || 0,
+      pending: Math.max(0, (d.total_alarms || 0) - (fb.total_feedback || 0))
+    }
+  } catch { fbStats.value = null }
+}
+
+function openReview(row: any) {
+  reviewTarget.value = row
+  reviewVerdict.value = verdictMap.value.get(row.id) || 'true_positive'
+  reviewNote.value = ''
+  reviewVisible.value = true
+}
+
+async function submitReview() {
+  if (!reviewTarget.value) return
+  reviewSubmitting.value = true
+  try {
+    await screeningApi.submitFeedback({
+      alarm_id: reviewTarget.value.id,
+      verdict: reviewVerdict.value,
+      note: reviewNote.value.trim()
+    })
+    verdictMap.value.set(reviewTarget.value.id, reviewVerdict.value)
+    verdictMap.value = new Map(verdictMap.value)  // 重赋触发响应式
+    reviewVisible.value = false
+    ElMessage.success(`已复核: ${verdictText(reviewVerdict.value)}`)
+    loadFbStats()
+  } catch (e: any) {
+    ElMessage.error(`复核提交失败: ${e?.message || e}`)
+  } finally {
+    reviewSubmitting.value = false
+  }
+}
+
 async function handleLifecycleCommand(cmd: string, row: any) {
   switch (cmd) {
+    case 'review':
+      openReview(row)
+      break
     case 'escalate':
       ElMessageBox.confirm(`升级此告警到更高优先级?`, '升级告警', {
         confirmButtonText: '升级',
@@ -1494,6 +1600,8 @@ async function exportAlarms() {
 // 页面加载时获取数据
 onMounted(() => {
   fetchAlarms()
+  loadFeedbackMap()
+  loadFbStats()
   window.addEventListener('alarm-clip-updated', onAlarmClipUpdated)
 })
 
@@ -1620,6 +1728,13 @@ onUnmounted(() => {
 }
 
 /* ── 批量操作栏 ── */
+/* [安检对标优化 2026-08-30] 复核质控条 + 复核 dialog */
+.qc-strip { margin-bottom: 12px; }
+.review-body { display: flex; flex-direction: column; gap: 12px; }
+.review-target { color: #606266; font-size: 13px; }
+.review-verdicts { margin: 4px 0; }
+.review-hint { color: #909399; font-size: 12px; line-height: 1.5; }
+
 .batch-bar {
   opacity: 0;
   max-height: 0;

@@ -74,6 +74,15 @@
         <el-table-column label="时间" width="170">
           <template #default="{ row }">{{ formatTime(row.createdAt) }}</template>
         </el-table-column>
+        <!-- [安检对标优化 2026-08-30] 人包关联 (对标海康人包合一): 过包告警↔同通道人员图像 -->
+        <el-table-column label="人包追溯" width="110" align="center" fixed="right">
+          <template #default="{ row }">
+            <el-button size="small" type="primary" link :loading="traceLoading === row.id"
+                       @click="handleTrace(row)">
+              <el-icon><Search /></el-icon>追溯
+            </el-button>
+          </template>
+        </el-table-column>
       </el-table>
       <div class="pager" v-if="events.length > listLimit">
         <el-button size="small" :disabled="listLimit >= events.length" @click="loadMore">
@@ -81,6 +90,35 @@
         </el-button>
       </div>
     </el-card>
+
+    <!-- ===== [安检对标优化 2026-08-30] 人包追溯 drawer ===== -->
+    <!--   有快照→以图搜图 (同通道优先); 无快照→跳智能检索页预填以文搜图 -->
+    <el-drawer v-model="traceVisible" :title="traceTitle" size="560px" direction="rtl">
+      <div v-loading="traceSearching" class="trace-body">
+        <el-alert v-if="traceError" type="warning" :closable="false" :title="traceError" show-icon />
+        <template v-else>
+          <div class="trace-hint">
+            以告警快照在图像库中检索同通道前后人员/包裹图像 (同通道优先排序, 共 {{ traceItems.length }} 条)。
+          </div>
+          <el-empty v-if="!traceSearching && traceItems.length === 0" description="无匹配图像 (图像塔未激活或库内无同期数据)" />
+          <div class="trace-grid">
+            <el-card v-for="it in traceItems" :key="it.image_id" shadow="hover" class="trace-item"
+                     :body-style="{ padding: '8px' }">
+              <el-image v-if="it.file_path" :src="it.file_path" fit="cover"
+                        :preview-src-list="[it.file_path]" preview-teleported
+                        style="width:100%;height:130px;border-radius:4px" />
+              <div class="trace-meta">
+                <el-tag size="small" :type="it.channel_id === traceChannelId ? 'success' : 'info'" effect="plain">
+                  通道 {{ it.channel_id }}
+                </el-tag>
+                <el-tag size="small" type="warning" effect="plain">相似 {{ ((it.similarity || 0) * 100).toFixed(0) }}%</el-tag>
+              </div>
+              <div class="trace-ts">{{ formatTime(it.timestamp) }}</div>
+            </el-card>
+          </div>
+        </template>
+      </div>
+    </el-drawer>
   </div>
 </template>
 
@@ -91,8 +129,11 @@
  * 合规: AI 辅助提示, 决定权在判图员 (民航 MH/T 红线, 方案 §7)
  */
 import { computed, onMounted, ref } from 'vue'
-import { Refresh } from '@element-plus/icons-vue'
+import { Refresh, Search } from '@element-plus/icons-vue'
+import { ElMessage } from 'element-plus'
+import { useRouter } from 'vue-router'
 import { alarmApi } from '@/api/alarm'
+import { retrievalApi, extractTowerUnavailable, type ImageSearchItem } from '@/api/retrieval'
 import eventTypesApi from '@/api/eventTypes'
 import type { EventTypeMetadataItem } from '@/api/eventTypes'
 import type { AlarmEvent, AlarmLevel } from '@/types/alarm'
@@ -196,12 +237,73 @@ function levelClass(level: AlarmLevel): string {
 function levelText(level: AlarmLevel): string {
   return level.toUpperCase()
 }
-function formatTime(ts?: string): string {
+function formatTime(ts?: string | number): string {
   if (!ts) return '-'
   const d = new Date(ts)
   if (isNaN(d.getTime())) return ts
   const pad = (n: number) => String(n).padStart(2, '0')
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+}
+
+// ── [安检对标优化 2026-08-30] 人包追溯 (对标海康人包合一) ──
+//   有快照 → fetch 快照转 base64 → 以图搜图 (同通道 ±10min 窗口);
+//   无快照 (已清理) → 跳智能检索页预填以文搜图关键字。
+const router = useRouter()
+const traceVisible = ref(false)
+const traceTitle = ref('')
+const traceSearching = ref(false)
+const traceError = ref('')
+const traceItems = ref<ImageSearchItem[]>([])
+const traceChannelId = ref('')
+const traceLoading = ref('')
+
+async function snapshotToBase64(url: string): Promise<string> {
+  const blob = await (await fetch(url)).blob()
+  return await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result).split(',')[1] || '')
+    reader.onerror = () => reject(new Error('快照读取失败'))
+    reader.readAsDataURL(blob)
+  })
+}
+
+async function handleTrace(row: AlarmEvent) {
+  const channelId = String((row as Record<string, unknown>).channelId ?? '')
+  traceLoading.value = row.id
+  traceItems.value = []
+  traceError.value = ''
+  traceChannelId.value = channelId
+  try {
+    if (!row.snapshotUrl) {
+      ElMessage.info('快照已清理, 已跳转智能检索预填关键字 (以文搜图)')
+      router.push({ path: '/retrieval', query: { nl: `通道${channelId} ${typeName(row.type)}`, from: 'xray' } })
+      return
+    }
+    traceTitle.value = `人包追溯 — ${typeName(row.type)} @通道${channelId}`
+    traceVisible.value = true
+    traceSearching.value = true
+    const base64 = await snapshotToBase64(row.snapshotUrl)
+    const ts = new Date(row.createdAt || Date.now()).getTime()
+    const win = 10 * 60 * 1000 // ±10min: 同通道前后通行人员/包裹
+    const resp = await retrievalApi.searchByImage({
+      image_base64: base64,
+      channel_id: channelId || undefined,
+      start_time: ts - win,
+      end_time: ts + win,
+      top_k: 24,
+      min_similarity: 0.3,
+    })
+    traceItems.value = resp.data?.items || []
+  } catch (e) {
+    const tower = extractTowerUnavailable(e)
+    traceError.value = tower
+      ? `图像塔未就绪: ${tower.hint} (期望模型: ${tower.bmodel_expected})`
+      : '以图搜图失败 (网络或服务异常)'
+    console.error('[ScreeningXray] trace failed', e)
+  } finally {
+    traceSearching.value = false
+    traceLoading.value = ''
+  }
 }
 
 onMounted(async () => {
@@ -236,4 +338,11 @@ onMounted(async () => {
 .snap-thumb { width: 50px; height: 32px; border-radius: 4px; }
 .snap-error { color: #c0c4cc; font-size: 12px; padding: 4px 8px; background: #f5f7fa; border-radius: 4px; }
 .pager { text-align: center; padding: 12px 0 0; }
+
+/* [安检对标优化 2026-08-30] 人包追溯 drawer */
+.trace-body { min-height: 200px; }
+.trace-hint { color: #909399; font-size: 12px; margin-bottom: 12px; line-height: 1.6; }
+.trace-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+.trace-meta { display: flex; gap: 6px; margin-top: 6px; }
+.trace-ts { color: #909399; font-size: 12px; margin-top: 4px; }
 </style>

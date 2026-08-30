@@ -474,7 +474,7 @@ import { useI18n } from 'vue-i18n'
 import { ElMessageBox } from 'element-plus'
 import {
   Odometer, DataAnalysis, Monitor, VideoCamera, Bell, TrendCharts,
-  ChatDotRound, Connection, FolderOpened, Upload, Setting,
+  ChatDotRound, Connection, FolderOpened, Upload, Setting, List,
   DocumentChecked, Link, User, Avatar, Lock, Search,
   Sunny, Moon, Cpu, ArrowDown, SwitchButton,
   DArrowLeft, DArrowRight, VideoPlay, Film, VideoPause, Camera, SetUp,
@@ -543,6 +543,9 @@ const primaryMenus = computed<PrimaryMenu[]>(() => [
     items: [
       { path: '/dashboard', label: t('menu.dashboard'), icon: Odometer },
       { path: '/pipelines', label: t('menu.pipelineEditor'), icon: SetUp },
+      // [ADD 2026-08-28] 算法配置入口: 路由 /algo-config 早已存在但未挂菜单,
+      //   仅 admin 可见 (与路由 meta.roles: ['admin'] 对齐)
+      { path: '/algo-config', label: t('menu.algoConfig'), icon: SetUp },
       { path: '/models', label: t('menu.models'), icon: Cpu },
       { path: '/ai-chat', label: t('menu.aiChat'), icon: ChatDotRound },
       { path: '/statistics', label: t('menu.statistics'), icon: TrendCharts, iconFont: 'icon1-jinritongji' },
@@ -552,7 +555,7 @@ const primaryMenus = computed<PrimaryMenu[]>(() => [
       { path: '/face-realtime', label: t('menu.faceRealtime'), icon: Aim },
       // [P0-B 2026-08-30] 智能检索三合一 (P4-E 混合/以文搜图/以图搜图)
       { path: '/retrieval', label: t('menu.retrieval'), icon: Search },
-    ],
+    ].filter(item => item.path !== '/algo-config' || auth.hasRole('admin')),
   },
   {
     key: 'screening',
@@ -563,6 +566,8 @@ const primaryMenus = computed<PrimaryMenu[]>(() => [
       { path: '/screening/personal-item', label: t('menu.screeningPersonalItem'), icon: ShoppingCart },
       { path: '/screening/xray', label: t('menu.screeningXray'), icon: Aim },
       { path: '/screening/rules', label: t('menu.screeningRules'), icon: DocumentChecked },
+      // [安检对标优化 2026-08-30] 安检专属事件规则列表入口 (页面已存在, 此前漏接入菜单)
+      { path: '/screening/rule-manager', label: t('menu.screeningRuleManager'), icon: Setting },
     ],
   },
   {
@@ -573,6 +578,7 @@ const primaryMenus = computed<PrimaryMenu[]>(() => [
       { path: '/large-event/density', label: t('menu.largeEventDensity'), icon: Position },
       { path: '/large-event/events', label: t('menu.largeEventEvents'), icon: Bell },
       { path: '/large-event/scene-packs', label: t('menu.largeEventPacks'), icon: FolderOpened },
+      { path: '/large-event/rules', label: t('menu.largeEventRules'), icon: List },
     ],
   },
   {

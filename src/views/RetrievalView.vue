@@ -194,7 +194,7 @@
  * CLIP 图像塔激活指引 (诚实降级口径)。
  */
 import { computed, reactive, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import type { UploadFile } from 'element-plus'
 import {
@@ -246,6 +246,15 @@ function parseEmbedding(text: string): number[] | null {
 
 // ── Tab 2 以文搜图 ──────────────────────────────────────────────
 const nlForm = reactive({ nl: '', top_k: 10 })
+
+// [安检对标优化 2026-08-30] X 光判图"追溯"跳转预填 (from=screening-xray):
+//   ScreeningXray 无快照时 router.push(/retrieval?nl=...&from=xray)
+const route = useRoute()
+if (route.query.from === 'xray' && route.query.nl) {
+  nlForm.nl = String(route.query.nl)
+  activeTab.value = 'nl'
+  ElMessage.info('已从 X 光判图跳转, 关键字已预填 (点击搜索或回车执行)')
+}
 
 // ── Tab 3 以图搜图 ──────────────────────────────────────────────
 const imageForm = reactive({

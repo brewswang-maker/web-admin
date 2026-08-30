@@ -3,7 +3,14 @@
     <!-- ===== 顶部说明 ===== -->
     <el-alert
       type="info" :title="'安检联动模板包 — 一键应用'" :closable="false" show-icon class="hint-alert"
-      :description="`内置 ${templates.length} 个安检分类模板 (通道秩序/判图员合规/人包核验)。点击卡片 [应用] 调 POST /linkage/rule-templates/:id/apply 以所选名称创建规则并写入 DB, 重启后生效。`" />
+      :description="`内置 ${templates.length} 个安检分类模板 (入口核验/通道秩序/判图员合规/人包核验)。点击卡片 [应用] 或 [全部应用] 调 POST /linkage/rule-templates/:id/apply 以所选名称创建规则并写入 DB, 重启后生效。应用后请到「规则管理」页启停/编辑。`">
+      <div class="hint-actions">
+        <el-button size="small" type="primary" plain :loading="applyingAll"
+                   :disabled="templates.length === 0" @click="applyAllTemplates">
+          <el-icon><Finished /></el-icon>全部应用 ({{ pendingCount }} 待应用)
+        </el-button>
+      </div>
+    </el-alert>
 
     <!-- ===== 模板卡列表 ===== -->
     <el-row :gutter="16" v-loading="loading">
@@ -135,7 +142,7 @@
  *   - 加载失败/空态给出可诊断提示而非静默空列表
  */
 import { computed, onMounted, reactive, ref } from 'vue'
-import { Document, Check, InfoFilled } from '@element-plus/icons-vue'
+import { Document, Check, InfoFilled, Finished } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { screeningApi, type ScreeningRuleTemplate } from '@/api/screening'
 
@@ -146,6 +153,14 @@ const templates = ref<ScreeningRuleTemplate[]>([])
 const detailVisible = ref(false)
 const current = ref<ScreeningRuleTemplate | null>(null)
 const detailTitle = computed(() => current.value ? `模板详情 · ${current.value.name}` : '模板详情')
+
+// [P0-3b 2026-08-29 一键应用全部]: 后端 createRuleFromTemplate 的 rule_id 是
+//   时间戳随机格式 (与模板 id 无关联), 已应用判定用规则名 === 模板名 (apply
+//   默认以模板名建规则; 用户改名后视为未应用会重复创建, 可接受)。
+const applyingAll = ref(false)
+const appliedNames = ref<Set<string>>(new Set())
+const pendingCount = computed(() =>
+  templates.value.filter(t => !appliedNames.value.has(t.name)).length)
 
 /** 触发事件键 (兼容顶层字段缺失场景, SSOT 位置在 source_cond.event_types) */
 function eventTypesOf(t: ScreeningRuleTemplate): string[] {
@@ -164,6 +179,7 @@ async function loadTemplates() {
     if (templates.value.length === 0 && list.length > 0) {
       console.warn('[ScreeningRules] scene 过滤返回', list.length, '个模板但无 category=安检 项')
     }
+    await loadAppliedNames()
   } catch (e: unknown) {
     console.error('[ScreeningRules] load templates failed', e)
     templates.value = []
@@ -175,6 +191,54 @@ async function loadTemplates() {
     }
   } finally {
     loading.value = false
+  }
+}
+
+/** 拉生效规则名集合 (一键应用/单卡应用的已应用对照) */
+async function loadAppliedNames() {
+  try {
+    const resp = await screeningApi.listAllRules()
+    const items = resp.data?.data?.items || []
+    appliedNames.value = new Set(items.map((r: { name: string }) => r.name))
+  } catch (e) {
+    console.warn('[ScreeningRules] applied rules load failed (对照跳过)', e)
+  }
+}
+
+/** [P0-3b] 一键应用全部待应用模板 (已应用同名规则自动跳过) */
+async function applyAllTemplates() {
+  const pending = templates.value.filter(t => !appliedNames.value.has(t.name))
+  if (pending.length === 0) {
+    ElMessage.info('全部模板均已应用 — 到「规则管理」页查看/启停')
+    return
+  }
+  try {
+    await ElMessageBox.confirm(
+      `将依次应用 ${pending.length} 个未应用模板 (写入 DB, 重启后生效)。\n\n${pending.map(t => `· ${t.name}`).join('\n')}\n\n是否继续?`,
+      '全部应用安检模板',
+      { confirmButtonText: '全部应用', cancelButtonText: '取消', type: 'warning' }
+    )
+  } catch { return }
+  applyingAll.value = true
+  let ok = 0, fail = 0
+  for (const t of pending) {
+    applying[t.template_id] = true
+    try {
+      await screeningApi.applyTemplate(t.template_id, t.name)
+      appliedNames.value.add(t.name)
+      ok++
+    } catch (e) {
+      console.error('[ScreeningRules] applyAll item failed', t.template_id, e)
+      fail++
+    } finally {
+      applying[t.template_id] = false
+    }
+  }
+  applyingAll.value = false
+  if (fail === 0) {
+    ElMessage.success(`已应用 ${ok} 个模板, 重启后生效; 到「规则管理」页可启停/编辑`)
+  } else {
+    ElMessage.warning(`应用完成: 成功 ${ok} / 失败 ${fail} (失败项见控制台)`)
   }
 }
 
@@ -192,6 +256,7 @@ async function applyTemplate(t: ScreeningRuleTemplate) {
   try {
     const resp = await screeningApi.applyTemplate(t.template_id, t.name)
     const result = resp.data?.data
+    appliedNames.value.add(t.name)
     if (result?.id) {
       ElMessage.success(
         `已创建规则 #${result.id}「${result.name}」, 启用动作 ${result.actions?.filter(a => a.enabled).length ?? '-'}/${result.actions?.length ?? '-'} · 重启后生效`

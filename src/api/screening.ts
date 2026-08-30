@@ -130,6 +130,43 @@ export interface AppliedRuleResult {
   [k: string]: unknown
 }
 
+// ── 生效规则 CRUD (P2-1 2026-08-29 安检 gap audit) ──────────
+//   后端已就绪 (RestApiHandlers L13872-14409), 此前前端未封装:
+//   GET/POST /linkage/rules, GET/PUT/DELETE /linkage/rules/:id,
+//   GET /linkage/rules/stats, GET /linkage/rules/all
+
+/** 生效联动规则 (serializeRuleToJson L13802 实测结构) */
+export interface LinkageRuleInfo {
+  id: string
+  name: string
+  description: string
+  enabled: boolean
+  priority: number
+  cooldown_ms: number
+  time_cond?: { time_start: string; time_end: string; weekdays: number[]; monthdays?: number[] }
+  spatial_cond?: Record<string, unknown>
+  source_cond?: {
+    channel_ids?: string[]
+    device_ids?: string[]
+    event_types?: string[]
+    /** 注意: 后端序列化 min_confidence 已 ×100 (0.5→50) */
+    min_severity?: number
+    min_confidence?: number
+    algorithm_ids?: string[]
+    [k: string]: unknown
+  }
+  merge_cond?: { enabled?: boolean; window_ms?: number; max_merge_count?: number; merge_by?: string }
+  actions: TemplateAction[] & Array<Record<string, unknown>>
+  tags?: string[]
+  [k: string]: unknown
+}
+
+/** 规则运营指标 (GET /linkage/rules/stats) */
+export interface RuleStatsInfo {
+  [rule_id: string]: unknown
+  [k: string]: unknown
+}
+
 // ── API ──
 
 export const screeningApi = {
@@ -166,6 +203,119 @@ export const screeningApi = {
       { params }
     )
   },
+
+  // ── 生效规则 CRUD (P2-1) ──
+
+  /** GET /linkage/rules — 规则列表 (分页, 默认 page_size=100) */
+  listRules(params?: { page?: number; page_size?: number; tag?: string }) {
+    return http.get<ApiResponse<{ items: LinkageRuleInfo[]; total: number; page: number; page_size: number }>>(
+      '/linkage/rules',
+      { params }
+    )
+  },
+
+  /** GET /linkage/rules/all — 全量规则 (enabled_only=true 只返回启用) */
+  listAllRules(params?: { enabled_only?: boolean }) {
+    return http.get<ApiResponse<{ items: LinkageRuleInfo[]; total: number }>>(
+      '/linkage/rules/all',
+      { params }
+    )
+  },
+
+  /** GET /linkage/rules/:id — 单条规则 */
+  getRule(ruleId: string) {
+    return http.get<ApiResponse<LinkageRuleInfo>>(
+      `/linkage/rules/${encodeURIComponent(ruleId)}`
+    )
+  },
+
+  /** PUT /linkage/rules/:id — 更新规则 (启停/改名/改动作等, 只传变更字段) */
+  updateRule(ruleId: string, patch: Partial<Record<string, unknown>>) {
+    return http.put<ApiResponse<LinkageRuleInfo>>(
+      `/linkage/rules/${encodeURIComponent(ruleId)}`,
+      patch
+    )
+  },
+
+  /** DELETE /linkage/rules/:id — 删除规则 */
+  deleteRule(ruleId: string) {
+    return http.delete<ApiResponse<unknown>>(
+      `/linkage/rules/${encodeURIComponent(ruleId)}`
+    )
+  },
+
+  /** GET /linkage/rules/stats — 按规则运营指标 (触发次数/最近触发等) */
+  getRuleStats() {
+    return http.get<ApiResponse<RuleStatsInfo>>('/linkage/rules/stats')
+  },
+
+  // ── 告警复核闭环 + 大屏 (安检对标优化 2026-08-30) ──
+  //   后端: POST /stats/false_alarm_baseline/feedback (UPSERT + 同步 alarm_events.status)
+  //         GET  /stats/false_alarm_feedback (复核明细, RestApiHandlers 2026-08-30 新增)
+  //         GET  /stats/screening_dashboard (大屏聚合, 同上新增)
+
+  /** 提交复核标注 (verdict: true_positive|false_positive|unsure) — 后端同步处置状态 */
+  submitFeedback(body: { alarm_id: string; verdict: string; note?: string }) {
+    return http.post<ApiResponse<{ alarm_id: string; verdict: string; recorded_at_ms: number }>>(
+      '/stats/false_alarm_baseline/feedback', body
+    )
+  },
+
+  /** 复核明细 (alarm_id 精确查或 limit 倒序列表, 默认 100) */
+  queryFeedback(params?: { alarm_id?: string; limit?: number }) {
+    return http.get<ApiResponse<AlarmFeedbackItem[]>>('/stats/false_alarm_feedback', { params })
+  },
+
+  /** 误报基线聚合 (by_type/by_channel/by_labeler/feedback 维度) */
+  getFalseAlarmBaseline(params?: { days?: number; include_feedback?: boolean }) {
+    return http.get<ApiResponse<Record<string, unknown>>>('/stats/false_alarm_baseline', { params })
+  },
+
+  /** 安检大屏聚合 (趋势/KPI/时延/基线一次拉齐) */
+  getScreeningDashboard(params?: { hours?: number; days?: number }) {
+    return http.get<ApiResponse<ScreeningDashboard>>('/stats/screening_dashboard', { params })
+  },
+}
+
+/** 单条复核标注 (false_alarm_feedback 行, GET /stats/false_alarm_feedback) */
+export interface AlarmFeedbackItem {
+  alarm_id: string
+  channel_id: number
+  alarm_type: string
+  verdict: 'true_positive' | 'false_positive' | 'unsure'
+  labeler: string
+  confidence_at_feedback: number
+  note: string
+  created_at: number
+}
+
+/** 安检大屏聚合响应 (GET /stats/screening_dashboard) */
+export interface ScreeningDashboard {
+  hours: number
+  days: number
+  /** 按小时趋势: hr=epoch 小时, cnt=计数 */
+  alarm_trend: Array<{ hr: number; cnt: number }>
+  passage_trend: Array<{ hr: number; cnt: number }>
+  key_trend: Array<{ hr: number; cnt: number }>
+  kpi: {
+    today_alarms: number
+    today_passages: number
+    pending_review: number
+    total_events: number
+    review_rate: number
+  }
+  action_latency: { p50_ms: number; p90_ms: number; avg_ms: number; sample_count: number } | null
+  overall_rate: number
+  by_type: Array<{ key: string; total: number; false_alarms: number; false_alarm_rate: number }>
+  by_channel: Array<{ key: string; total: number; false_alarms: number; false_alarm_rate: number }>
+  feedback: {
+    total_feedback: number
+    true_positives: number
+    false_positives: number
+    unsure: number
+    annotated_false_rate: number
+    by_labeler: Array<{ key: string; total: number; false_alarms: number; false_alarm_rate: number }>
+  }
 }
 
 export default screeningApi
