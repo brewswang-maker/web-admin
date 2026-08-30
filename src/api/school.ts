@@ -7,6 +7,7 @@
  */
 import { http } from './http'
 import type { ApiResponse } from '@/types/common'
+import type { ScenePack, ScenePackApplyResult } from '@/types/largeEvent'
 
 /** campus_dashboard 响应 (与后端端点实测结构一致) */
 export interface CampusDashBucket { hr: number; cnt: number }
@@ -56,6 +57,46 @@ export interface VlmStats {
   ready: boolean
 }
 
+/** [校园二期 2026-08-30] /stats/tpu 推理调度水位 (IRM + InferenceScheduler 真实统计) */
+export interface TpuStats {
+  irm: {
+    active_channels: number
+    queued_tasks: number
+    worker_threads: number
+    tpu_utilization_pct: number
+    avg_inference_ms: number
+    avg_batch_size: number
+    throughput_fps: number
+    total_submitted: number
+    total_completed: number
+    total_skipped: number
+    infer_exceptions: number
+    config?: {
+      worker_thread_count: number
+      max_batch_size: number
+      batch_timeout_ms: number
+      max_queue_depth: number
+      tpu_overload_threshold: number
+    }
+  }
+  scheduler?: {
+    active_channels: number
+    active_inferences: number
+    pending_tasks: number
+    worker_threads: number
+    avg_inference_ms: number
+    scheduler_utilization: number
+    total_inferences: number
+    total_detections: number
+    motion_gate?: {
+      total_skipped: number
+      total_inferred: number
+      skip_rate_pct: number
+    }
+  }
+  timestamp: number
+}
+
 export const schoolApi = {
   /** 校园总览聚合 (KPI/24h 三路趋势/五级分卡/通行出入口/基线/联动时延) */
   getCampusDashboard(params?: { hours?: number; days?: number }) {
@@ -65,6 +106,25 @@ export const schoolApi = {
   /** VLM 异步研判统计 (端侧 Qwen3-VL pipeline 真实水位) */
   getVlmStats() {
     return http.get<ApiResponse<VlmStats>>('/vlm/stats')
+  },
+
+  /** [校园二期] 推理调度水位 (并发/队列/TPU 利用率/跳帧率, 大屏调度水位卡数据源) */
+  getTpuStats() {
+    return http.get<ApiResponse<TpuStats>>('/stats/tpu')
+  },
+
+  // ─── [校园二期 2026-08-30] 场景包 (复用 /large-event/scene-packs SSOT 端点,
+  //       ScenePackDefs.h 三个校园包 scene_tag=school_campus, 前端按 tag 过滤) ───
+  listScenePacks() {
+    return http.get<ApiResponse<{ scene_packs: ScenePack[]; count: number }>>(
+      '/large-event/scene-packs')
+  },
+
+  /** apply: 仅校验 (deploy 缺省) / 校验并布防 (deploy=true 实例化 SC 模板为规则, 幂等) */
+  applyScenePack(packId: string, opts?: { deploy?: boolean; channel_ids?: number[] }) {
+    return http.post<ApiResponse<ScenePackApplyResult>>(
+      `/large-event/scene-packs/${encodeURIComponent(packId)}/apply`,
+      opts ?? {})
   },
 }
 

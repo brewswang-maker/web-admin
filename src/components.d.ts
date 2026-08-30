@@ -133,6 +133,7 @@ declare module 'vue' {
     RuleGuiEditor: typeof import('./components/RuleGuiEditor.vue')['default']
     Scene3D: typeof import('./components/Scene3D.vue')['default']
     SceneEditPanel: typeof import('./components/SceneEditPanel.vue')['default']
+    SchoolEventSection: typeof import('./components/school/SchoolEventSection.vue')['default']
     Search: typeof import('@element-plus/icons-vue')['Search']
     Setting: typeof import('@element-plus/icons-vue')['Setting']
     SkeletonLoader: typeof import('./components/SkeletonLoader.vue')['default']

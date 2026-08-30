@@ -479,7 +479,7 @@ import {
   Sunny, Moon, Cpu, ArrowDown, SwitchButton,
   DArrowLeft, DArrowRight, VideoPlay, Film, VideoPause, Camera, SetUp,
   Location, Share, ShoppingCart, Wallet, Position, Aim, MapLocation,
-  School, Warning, Basketball, Clock, DataBoard,
+  School, Warning, Basketball, Clock, DataBoard, Box,
 } from '@element-plus/icons-vue'
 import logoUrl from '@/assets/logo.png'
 import userAvatarUrl from '@/assets/photo2.jpg'
@@ -585,6 +585,7 @@ const primaryMenus = computed<PrimaryMenu[]>(() => [
       { path: '/school/security', label: t('menu.campusSecurity'), icon: Aim },
       { path: '/school/dashboard', label: t('menu.campusDashboard'), icon: DataBoard },
       { path: '/school/campus3d', label: t('menu.campus3d'), icon: MapLocation },
+      { path: '/school/scene-packs', label: t('menu.schoolScenePacks'), icon: Box },
     ],
   },
   {

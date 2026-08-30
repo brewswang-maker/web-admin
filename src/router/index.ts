@@ -78,6 +78,7 @@ const VisitorManagementView = () => import('@/views/school/VisitorManagement.vue
 const CampusSecurityView = () => import('@/views/school/CampusSecurity.vue')
 const CampusDashboardView = () => import('@/views/school/CampusDashboard.vue')
 const Campus3DView = () => import('@/views/school/Campus3D.vue')
+const SchoolScenePacksView = () => import('@/views/school/SchoolScenePacks.vue')
 // 智能检索 (P0-B: P4-E 混合检索 / 以文搜图 / 以图搜图 三合一)
 const RetrievalView = () => import('@/views/RetrievalView.vue')
 
@@ -515,6 +516,12 @@ export const asyncRoutes: RouteRecordRaw[] = [
         name: 'Campus3D',
         component: Campus3DView,
         meta: { title: '3D 校园', icon: 'MapLocation', roles: ['admin', 'user', 'viewer'] }
+      },
+      {
+        path: 'school/scene-packs',
+        name: 'SchoolScenePacks',
+        component: SchoolScenePacksView,
+        meta: { title: '校园场景包', icon: 'Box', roles: ['admin', 'user', 'viewer'] }
       },
     ]
   },

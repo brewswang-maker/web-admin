@@ -113,6 +113,50 @@
         </el-card>
       </el-col>
     </el-row>
+
+    <!-- ===== [校园二期] 调度水位 (GET /stats/tpu 真实 IRM/Scheduler 统计) ===== -->
+    <el-row :gutter="12">
+      <el-col :span="24">
+        <el-card shadow="never" class="qc-card">
+          <template #header>
+            <span class="card-title">推理调度水位
+              <span class="title-sub">TPU 利用 / 队列深度 / 并发熔断态</span>
+              <el-tag v-if="schedState" :type="schedState.type" size="small" class="sched-tag">
+                {{ schedState.text }}
+              </el-tag>
+            </span>
+          </template>
+          <template v-if="hasTpu">
+            <el-row :gutter="24">
+              <el-col :xs="24" :md="10">
+                <div class="qc-rate-row">
+                  <span>TPU 利用率</span>
+                  <el-progress :percentage="tpuPct" :stroke-width="14"
+                               :status="tpuPct >= 90 ? 'exception' : (tpuPct >= 70 ? 'warning' : 'success')"
+                               :format="(p: number) => `${p}%`" />
+                </div>
+                <div class="qc-rate-row">
+                  <span>队列水位</span>
+                  <el-progress :percentage="queuePct" :stroke-width="14"
+                               :status="queuePct >= 80 ? 'exception' : (queuePct >= 60 ? 'warning' : 'success')"
+                               :format="() => `${tpu?.irm.queued_tasks ?? 0} / ${tpu?.irm.config?.max_queue_depth ?? '—'}`" />
+                </div>
+                <div class="sched-note">队列水位 ≥80% 视为熔断风险 (IRM 丢帧保护触发阈值)</div>
+              </el-col>
+              <el-col :xs="24" :md="14">
+                <div class="sched-tiles">
+                  <div class="sched-tile" v-for="m in schedTiles" :key="m.label">
+                    <span class="sched-num">{{ m.value }}</span>
+                    <span class="sched-label">{{ m.label }}</span>
+                  </div>
+                </div>
+              </el-col>
+            </el-row>
+          </template>
+          <el-empty v-else :image-size="48" description="调度统计不可用 (设备离线或固件版本较旧)" />
+        </el-card>
+      </el-col>
+    </el-row>
   </div>
 </template>
 
@@ -127,7 +171,7 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { Refresh, FullScreen, Monitor } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import LazyChart from '@/components/LazyChart.vue'
-import { schoolApi, type CampusDashboard } from '@/api/school'
+import { schoolApi, type CampusDashboard, type TpuStats } from '@/api/school'
 
 const pageRoot = ref<HTMLElement | null>(null)
 const isFullscreen = ref(false)
@@ -135,6 +179,7 @@ const loading = ref(false)
 const hours = ref(24)
 const days = ref(7)
 const data = ref<CampusDashboard | null>(null)
+const tpu = ref<TpuStats | null>(null)
 let refreshTimer: ReturnType<typeof setInterval> | null = null
 
 const TYPE_NAMES: Record<string, string> = {
@@ -270,11 +315,44 @@ const passageChannels = computed(() => {
   return list.map(c => ({ ...c, pct: Math.round(c.cnt / max * 100) }))
 })
 
+// ─── [校园二期 2026-08-30] 调度水位 (GET /stats/tpu, 失败降级空态) ───
+const hasTpu = computed(() => tpu.value?.irm?.tpu_utilization_pct != null)
+const tpuPct = computed(() => Math.min(100, Math.round(tpu.value?.irm?.tpu_utilization_pct ?? 0)))
+const queuePct = computed(() => {
+  const q = tpu.value?.irm?.queued_tasks ?? 0
+  const max = tpu.value?.irm?.config?.max_queue_depth ?? 0
+  return max > 0 ? Math.min(100, Math.round((q / max) * 100)) : 0
+})
+/** 熔断态: 队列水位 ≥80% 熔断风险 / TPU ≥90% 高负载 / 其余正常 */
+const schedState = computed(() => {
+  if (!hasTpu.value) return null
+  if (queuePct.value >= 80) return { type: 'danger' as const, text: '熔断风险' }
+  if (tpuPct.value >= 90) return { type: 'warning' as const, text: '高负载' }
+  return { type: 'success' as const, text: '运行正常' }
+})
+const schedTiles = computed(() => {
+  const s = tpu.value?.scheduler
+  const irm = tpu.value?.irm
+  return [
+    { label: '并发推理', value: s?.active_inferences != null ? String(s.active_inferences) : '—' },
+    { label: '活跃通道', value: s?.active_channels != null ? String(s.active_channels) : '—' },
+    { label: '均推理延迟', value: irm?.avg_inference_ms != null ? `${irm.avg_inference_ms}ms` : '—' },
+    { label: '吞吐', value: irm?.throughput_fps != null ? `${irm.throughput_fps}fps` : '—' },
+    { label: '跳帧率', value: s?.motion_gate?.skip_rate_pct != null ? `${s.motion_gate.skip_rate_pct}%` : '—' },
+    { label: '待处理任务', value: s?.pending_tasks != null ? String(s.pending_tasks) : '—' },
+  ]
+})
+
 async function loadAll() {
   loading.value = true
   try {
-    const resp = await schoolApi.getCampusDashboard({ hours: hours.value, days: days.value })
-    data.value = (resp.data?.data as CampusDashboard) || null
+    // [校园二期] 双路并行: 态势聚合 + 调度水位 (/stats/tpu, 各自失败降级不互相阻塞)
+    const [dash, tpuResp] = await Promise.all([
+      schoolApi.getCampusDashboard({ hours: hours.value, days: days.value }).catch(() => null),
+      schoolApi.getTpuStats().catch(() => null),
+    ])
+    if (dash) data.value = (dash.data?.data as CampusDashboard) || null
+    tpu.value = tpuResp ? (tpuResp.data?.data ?? null) : tpu.value
   } catch (e) {
     console.error('[CampusDashboard] load failed', e)
     ElMessage.error('大屏数据加载失败, 请检查设备连接')
@@ -330,4 +408,11 @@ onUnmounted(() => {
 .rank-meta strong { color: #303133; }
 .rank-bar-wrap { height: 6px; background: #f0f2f5; border-radius: 3px; overflow: hidden; }
 .rank-bar { height: 100%; background: linear-gradient(90deg, #409eff, #79bbff); border-radius: 3px; transition: width 0.4s; }
+/* [校园二期] 调度水位卡 */
+.sched-tag { margin-left: 10px; }
+.sched-tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.sched-tile { text-align: center; padding: 8px 0 6px; background: #fafbfc; border: 1px solid #f0f2f5; border-radius: 8px; }
+.sched-num { display: block; font-size: 20px; font-weight: 700; color: #303133; font-variant-numeric: tabular-nums; }
+.sched-label { color: #909399; font-size: 12px; }
+.sched-note { color: #c0c4cc; font-size: 11px; margin-top: 6px; }
 </style>

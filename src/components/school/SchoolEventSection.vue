@@ -50,9 +50,10 @@
         <el-table-column label="时间" width="150">
           <template #default="{ row }">{{ shortTime(row.createdAt) }}</template>
         </el-table-column>
-        <el-table-column label="" width="70" align="center">
+        <el-table-column label="" width="112" align="center">
           <template #default="{ row }">
             <el-button size="small" type="primary" link @click.stop="openDetail(row)">详情</el-button>
+            <el-button size="small" type="success" link @click.stop="goTrajectory(row)">轨迹</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -88,6 +89,7 @@
  * 类型计数 tiles + 事件表 + 详情抽屉, 三态完整 + 30s 自动刷新 (禁 mock)
  */
 import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { Refresh } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { alarmApi } from '@/api/alarm'
@@ -147,6 +149,16 @@ const detailTitle = computed(() => current.value ? `事件详情 · ${typeName(c
 function openDetail(row: AlarmEvent) {
   current.value = row
   detailVisible.value = true
+}
+
+const router = useRouter()
+/** [校园二期 2026-08-30] 跨镜追踪: 事件行 → 智能检索以文搜图预填
+ *  (nl=类型名+通道, RetrievalView 带 nl query 即预填, from 仅区分提示文案) */
+function goTrajectory(row: AlarmEvent) {
+  router.push({
+    path: '/retrieval',
+    query: { nl: `${typeName(row.type)} ${row.channelId}`, from: 'campus-event' },
+  })
 }
 
 async function load(silent = false) {

@@ -30,7 +30,7 @@ export const largeEventApi = {
   // ----- 容量档案 (§4.3.1) -----
   listCapacityProfiles(params: { scene_tag?: string } = {}) {
     return http.get<ApiResponse<{ profiles: CapacityProfile[]; count: number }>>(
-      '/api/v1/large-event/capacity-profiles',
+      '/large-event/capacity-profiles',
       { params }
     )
   },
@@ -39,36 +39,38 @@ export const largeEventApi = {
     body: Partial<CapacityProfile> & { region_id: string; design_capacity: number }
   ) {
     return http.post<ApiResponse<{ profile?: CapacityProfile; ok?: boolean }>>(
-      '/api/v1/large-event/capacity-profiles',
+      '/large-event/capacity-profiles',
       body
     )
   },
 
   deleteCapacityProfile(regionId: string) {
     return http.delete<ApiResponse<{ ok: boolean }>>(
-      `/api/v1/large-event/capacity-profiles/${encodeURIComponent(regionId)}`
+      `/large-event/capacity-profiles/${encodeURIComponent(regionId)}`
     )
   },
 
   // ----- 场景包 (§5) -----
   listScenePacks() {
     return http.get<ApiResponse<{ scene_packs: ScenePack[]; count: number }>>(
-      '/api/v1/large-event/scene-packs'
+      '/large-event/scene-packs'
     )
   },
 
   /** v1: 可用性校验 + 部署清单/缺口报告 (写侧配置下发留待 Phase 3) */
-  applyScenePack(packId: string) {
+  applyScenePack(packId: string, opts?: { deploy?: boolean; channel_ids?: number[] }) {
+    // v2 (2026-08-28): deploy=true → 后端实例化 LE 模板为联动规则 (幂等);
+    //   channel_ids 可选绑定通道 (空 = 全部通道)。缺省保持 v1 只读校验。
     return http.post<ApiResponse<ScenePackApplyResult>>(
-      `/api/v1/large-event/scene-packs/${encodeURIComponent(packId)}/apply`,
-      {}
+      `/large-event/scene-packs/${encodeURIComponent(packId)}/apply`,
+      opts ?? {}
     )
   },
 
   // ----- 流速矢量场 (§4.3.2, 箭头叠加层数据源) -----
   getFlowField(channelId: number) {
     return http.get<ApiResponse<FlowFieldResponse>>(
-      '/api/v1/metric/density/flow-field',
+      '/metric/density/flow-field',
       { params: { channel_id: channelId } }
     )
   },
@@ -76,7 +78,7 @@ export const largeEventApi = {
   // ----- 密度预测 (§4.3.4, 趋势曲线叠加) -----
   getDensityPredict(channelId: number, horizonMin = 15) {
     return http.get<ApiResponse<DensityPredictResponse>>(
-      '/api/v1/metric/density/predict',
+      '/metric/density/predict',
       { params: { channel_id: channelId, horizon_min: horizonMin } }
     )
   },
@@ -84,14 +86,14 @@ export const largeEventApi = {
   // ----- 既有密度端点 (v7.2) -----
   getDensityLatest(channelId: number) {
     return http.get<ApiResponse<DensityLatestResponse>>(
-      '/api/v1/metric/density/latest',
+      '/metric/density/latest',
       { params: { channel_id: channelId } }
     )
   },
 
   getDensityHeatmap(channelId: number, colorScheme = 'jet') {
     return http.get<ApiResponse<DensityHeatmapResponse>>(
-      '/api/v1/metric/density/heatmap',
+      '/metric/density/heatmap',
       { params: { channel_id: channelId, color_scheme: colorScheme } }
     )
   },
@@ -104,6 +106,6 @@ export const largeEventApi = {
   }) {
     return http.get<
       ApiResponse<{ count: number; history: DensityHistoryEntry[] }>
-    >('/api/v1/metric/density/history', { params })
+    >('/metric/density/history', { params })
   },
 }

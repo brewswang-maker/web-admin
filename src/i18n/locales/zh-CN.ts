@@ -94,6 +94,7 @@ const zhCN = {
     campusSecurity: '校园安检',
     campusDashboard: '校园态势大屏',
     campus3d: '3D 校园',
+        schoolScenePacks: '校园场景包',
     devices: '设备管理',
     channels: '通道管理',
     alarms: '告警中心',

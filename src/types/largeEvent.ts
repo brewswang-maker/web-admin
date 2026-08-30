@@ -60,12 +60,26 @@ export interface ScenePackAlgoCheck {
   display_name?: string
 }
 
+export interface ScenePackApplyDetail {
+  template_id: string
+  rule_id?: string
+  rule_name?: string
+  status: 'created' | 'skipped_exists' | 'template_missing' | 'add_failed' | string
+  error?: string
+}
+
 export interface ScenePackApplyResult {
   scene_pack_id: string
   scene_tag: string
   algo_check: ScenePackAlgoCheck[]
   missing_algos: string[]
   ready: boolean
+  /** apply v2 (2026-08-28): deploy=true 时 LE 模板实例化结果 */
+  deployed?: boolean
+  rules_created?: number
+  rules_skipped?: number
+  rules_failed?: string[]
+  instantiate_detail?: ScenePackApplyDetail[]
   [key: string]: unknown
 }
 

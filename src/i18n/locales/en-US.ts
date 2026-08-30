@@ -96,6 +96,7 @@ const enUS: MessageSchema = {
     campusSecurity: 'Campus Screening',
     campusDashboard: 'Campus Dashboard',
     campus3d: '3D Campus',
+        schoolScenePacks: 'Scene Packs',
     devices: 'Devices',
     channels: 'Channels',
     alarms: 'Alarms',

@@ -249,11 +249,14 @@ const nlForm = reactive({ nl: '', top_k: 10 })
 
 // [安检对标优化 2026-08-30] X 光判图"追溯"跳转预填 (from=screening-xray):
 //   ScreeningXray 无快照时 router.push(/retrieval?nl=...&from=xray)
+// [校园二期 2026-08-30] 放宽为带 nl 即预填 (校园事件"轨迹"按钮 from=campus-event)
 const route = useRoute()
-if (route.query.from === 'xray' && route.query.nl) {
+if (route.query.nl) {
   nlForm.nl = String(route.query.nl)
   activeTab.value = 'nl'
-  ElMessage.info('已从 X 光判图跳转, 关键字已预填 (点击搜索或回车执行)')
+  ElMessage.info(route.query.from === 'xray'
+    ? '已从 X 光判图跳转, 关键字已预填 (点击搜索或回车执行)'
+    : '已从校园事件跳转, 轨迹检索关键字已预填 (点击搜索或回车执行)')
 }
 
 // ── Tab 3 以图搜图 ──────────────────────────────────────────────

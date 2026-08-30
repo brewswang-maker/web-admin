@@ -1,15 +1,15 @@
 <template>
-  <div class="le-packs-page">
+  <div class="sc-packs-page">
     <!-- ===== 页头 ===== -->
     <div class="packs-header">
       <div>
-        <h2 class="packs-title">场景包</h2>
-        <div class="packs-sub">按活动类型一键校验算法可用性, 输出三圈布防与联动预案部署清单 (v1 只读校验)</div>
+        <h2 class="packs-title">校园场景包</h2>
+        <div class="packs-sub">按校园形态一键校验算法可用性, 输出三圈布防与联动预案部署清单 (对标海康/大华场景包订阅)</div>
       </div>
       <el-button :icon="Refresh" :loading="loading" @click="reload">刷新</el-button>
     </div>
 
-    <!-- ===== 错误态 (API 失败时给可见反馈, 不再呈现空白) ===== -->
+    <!-- ===== 错误态 ===== -->
     <el-result v-if="loadError" icon="warning" title="场景包加载失败" :sub-title="loadError">
       <template #extra>
         <el-button type="primary" @click="reload">重试</el-button>
@@ -17,8 +17,8 @@
       </template>
     </el-result>
 
-    <!-- ===== 骨架屏 (首次加载, 消除等待期空白) ===== -->
-    <el-row v-else-if="loading && packs.length === 0" :gutter="16">
+    <!-- ===== 骨架屏 ===== -->
+    <el-row v-else-if="loading && campusPacks.length === 0" :gutter="16">
       <el-col :span="8" v-for="i in 3" :key="i">
         <el-card class="pack-card">
           <el-skeleton :rows="5" animated />
@@ -27,18 +27,18 @@
     </el-row>
 
     <!-- ===== 空态 ===== -->
-    <el-empty v-else-if="packs.length === 0"
-              description="无可用场景包 (后端 ScenePackDefs 未返回数据)">
+    <el-empty v-else-if="campusPacks.length === 0"
+              description="无可用校园场景包 (后端 ScenePackDefs school_campus tag 未返回数据)">
       <el-button @click="reload">重新加载</el-button>
     </el-empty>
 
-    <!-- ===== 场景包卡片 (字段全部防御式访问, 单卡数据缺失不阻断渲染) ===== -->
+    <!-- ===== 场景包卡片 (防御式访问) ===== -->
     <el-row v-else :gutter="16">
-      <el-col :span="8" v-for="p in packs" :key="p.scene_pack_id">
+      <el-col :span="8" v-for="p in campusPacks" :key="p.scene_pack_id">
         <el-card shadow="hover" class="pack-card" @click="openDetail(p)">
           <div class="pack-head">
-            <div class="pack-icon" :class="sceneClass(p.scene_tag)">
-              <el-icon :size="22"><component :is="sceneIcon(p.scene_tag)" /></el-icon>
+            <div class="pack-icon" :class="packClass(p.scene_pack_id)">
+              <el-icon :size="22"><component :is="packIcon(p.scene_pack_id)" /></el-icon>
             </div>
             <div class="pack-title">
               <div class="pack-name">{{ p.display_name }}</div>
@@ -71,11 +71,11 @@
       </el-col>
     </el-row>
 
-    <!-- ===== 应用结果 (缺口报告) ===== -->
+    <!-- ===== 应用结果 (缺口报告 + 布防结果) ===== -->
     <el-dialog v-model="resultVisible" :title="`应用结果 — ${lastResult?.scene_pack_id ?? ''}`" width="620px">
       <template v-if="lastResult">
         <el-result :icon="lastResult.ready ? 'success' : 'warning'"
-                   :title="lastResult.ready ? '场景包就绪' : '存在算法缺口 (v1 仅校验, 不阻塞)'">
+                   :title="lastResult.ready ? '场景包就绪' : '存在算法缺口 (不阻塞布防)'">
           <template #sub-title>
             <span v-if="(lastResult.missing_algos?.length ?? 0) === 0">全部算法已注册, 可按 zones 清单布防</span>
             <span v-else>缺失: {{ lastResult.missing_algos?.join(', ') }}</span>
@@ -93,7 +93,6 @@
           <el-table-column prop="display_name" label="显示名" min-width="140" />
         </el-table>
 
-        <!-- apply v2 (2026-08-28): 布防结果 (deploy=true 时) -->
         <template v-if="lastResult.deployed">
           <el-divider />
           <div class="deploy-summary">
@@ -102,11 +101,11 @@
             <el-tag v-if="(lastResult.rules_failed?.length ?? 0) > 0" type="danger">
               失败 {{ lastResult.rules_failed?.length }}
             </el-tag>
-            <el-button size="small" link type="primary" @click="goRules">去事件规则页查看</el-button>
+            <el-button size="small" link type="primary" @click="goRules">去联动规则页查看</el-button>
           </div>
           <el-table v-if="(lastResult.instantiate_detail ?? []).length > 0"
                     :data="lastResult.instantiate_detail" size="small" max-height="200">
-            <el-table-column prop="template_id" label="LE 模板" min-width="170" />
+            <el-table-column prop="template_id" label="SC 模板" min-width="170" />
             <el-table-column label="状态" width="120" align="center">
               <template #default="{ row }">
                 <el-tag :type="row.status === 'created' ? 'success'
@@ -151,8 +150,8 @@
             <span class="tpl-name">{{ templateName(tid) }}</span>
           </div>
         </div>
-        <div v-if="leTemplateCount > 0" class="le-count">
-          LinkageEngine 大型活动模板库共 <strong>{{ leTemplateCount }}</strong> 个 LE-* 模板 (category=大型活动)
+        <div v-if="scTemplateCount > 0" class="sc-count">
+          LinkageEngine 校园模板库共 <strong>{{ scTemplateCount }}</strong> 个 SC-* 模板 (category=校园)
         </div>
       </template>
     </el-drawer>
@@ -161,22 +160,22 @@
 
 <script setup lang="ts">
 /**
- * 场景包 — EventGuard T2.5 (方案任务 5.3)
+ * 校园场景包 — [校园二期 2026-08-30]
  *
- * 五场景包卡片 (体育赛事/演唱会/音乐节露天/展会/马拉松, 对齐 ScenePackDefs.h) + el-drawer 详情
- * (algo_set / zones 三圈 / 阈值档位 / linkage_templates 与 LinkageEngine LE-* 名称匹配)
- * + 应用: 双模式 (仅校验 = v1 可用性校验+缺口报告; 校验并布防 = apply v2
- *   deploy=true 实例化 LE 模板为联动规则, 幂等, 详情见「事件规则」页)。
- * [FIX 2026-08-28] 三态完善: 骨架屏/错误态(el-result+重试)/空态(el-empty),
- * 此前加载慢或失败时页面呈现空白; 卡片字段全部防御式访问。
+ * 三个校园场景包卡片 (中小学校园日常/寄宿制校园/考试护考模式, 对齐 ScenePackDefs.h
+ * school_campus tag) + el-drawer 详情 (algo_set / 三圈 zones / 阈值档位 / SC-* 模板)
+ * + 应用: 双模式 (仅校验 = 缺口报告; 校验并布防 = deploy=true 实例化 SC 模板为联动规则,
+ *   幂等, 机器 tag 为 scene_pack/school_campus)。
+ * 数据源复用 /large-event/scene-packs SSOT 端点 (后端全量返回, 本页按 tag 过滤)。
+ * 三态完整 (骨架屏/错误态/空态), 范式对齐 large-event/ScenePacksView.vue。
  */
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
-  CircleCheckFilled, Link, Trophy, Mic, OfficeBuilding, Flag, Box, Refresh,
+  CircleCheckFilled, Link, Box, Moon, EditPen, Refresh,
 } from '@element-plus/icons-vue'
-import { largeEventApi } from '@/api/largeEvent'
+import { schoolApi } from '@/api/school'
 import { linkageApi } from '@/api/linkage'
 import type { RuleTemplate } from '@/api/linkage'
 import type { ScenePack, ScenePackApplyResult } from '@/types/largeEvent'
@@ -194,28 +193,28 @@ const activePack = ref<ScenePack | null>(null)
 const resultVisible = ref(false)
 const lastResult = ref<ScenePackApplyResult | null>(null)
 
-const leTemplateCount = ref(0)
+const scTemplateCount = ref(0)
 
-function sceneIcon(tag: string): Component {
-  if (tag.includes('stadium')) return Trophy
-  if (tag.includes('openair')) return Mic
-  if (tag.includes('expo')) return OfficeBuilding
-  if (tag.includes('marathon')) return Flag
+/** 只呈现校园场景包 (school_campus tag); 大型活动包在 /large-event/scene-packs 页 */
+const campusPacks = computed(() =>
+  packs.value.filter(p => p.scene_tag === 'school_campus'))
+
+function packIcon(packId: string): Component {
+  if (packId.includes('boarding')) return Moon
+  if (packId.includes('exam')) return EditPen
   return Box
 }
 
-function sceneClass(tag: string) {
-  if (tag.includes('stadium')) return 'sc-stadium'
-  if (tag.includes('openair')) return 'sc-openair'
-  if (tag.includes('expo')) return 'sc-expo'
-  if (tag.includes('marathon')) return 'sc-marathon'
-  return 'sc-generic'
+function packClass(packId: string) {
+  if (packId.includes('boarding')) return 'pk-boarding'
+  if (packId.includes('exam')) return 'pk-exam'
+  return 'pk-primary'
 }
 
 function circleLabel(circle: string) {
-  if (circle.includes('core')) return '核心圈 (赛场/舞台)'
-  if (circle.includes('alert')) return '警戒圈 (看台/缓冲)'
-  if (circle.includes('control')) return '管控圈 (外围道路)'
+  if (circle.includes('core')) return '核心圈 (教学/宿舍/考场)'
+  if (circle.includes('alert')) return '警戒圈 (校门/食堂/公共活动)'
+  if (circle.includes('control')) return '管控圈 (围墙/外围道路)'
   return circle
 }
 
@@ -227,9 +226,9 @@ async function fetchPacks() {
   loading.value = true
   loadError.value = ''
   try {
-    const res = await largeEventApi.listScenePacks()
+    const res = await schoolApi.listScenePacks()
     const body = res?.data
-    // 结构防御: 常规 {code,data:{scene_packs}}, 兼容 data 直为数组 / 顶层直为数组两种形态
+    // 结构防御: 常规 {code,data:{scene_packs}}, 兼容 data 直为数组 / 顶层直为数组
     const list: ScenePack[] = body?.data?.scene_packs
       ?? (Array.isArray(body?.data) ? body.data : [])
       ?? []
@@ -262,7 +261,7 @@ async function fetchTemplates() {
     const res = await linkageApi.getRuleTemplates()
     const list = res.data?.data ?? []
     templates.value = list
-    leTemplateCount.value = list.filter(t => t.template_id.startsWith('LE-')).length
+    scTemplateCount.value = list.filter(t => t.template_id.startsWith('SC-')).length
   } catch {
     templates.value = []
   }
@@ -277,7 +276,7 @@ async function confirmApply(p: ScenePack, deploy: boolean) {
   try {
     await ElMessageBox.confirm(
       deploy
-        ? `将按场景包「${p.display_name}」校验算法可用性, 并把 ${p.linkage_templates?.length ?? 0} 个 LE 联动模板实例化为规则 (幂等, 已存在跳过; 可在「事件规则」页查看)。继续?`
+        ? `将按场景包「${p.display_name}」校验算法可用性, 并把 ${p.linkage_templates?.length ?? 0} 个 SC 联动模板实例化为规则 (幂等, 已存在跳过; 可在「联动规则」页查看)。继续?`
         : `将按场景包「${p.display_name}」校验算法可用性并输出部署清单 (不写配置)。继续?`,
       deploy ? '校验并布防' : '仅校验',
       { confirmButtonText: deploy ? '布防' : '校验', cancelButtonText: '取消', type: 'info' }
@@ -287,7 +286,7 @@ async function confirmApply(p: ScenePack, deploy: boolean) {
   }
   applying.value = p.scene_pack_id
   try {
-    const res = await largeEventApi.applyScenePack(
+    const res = await schoolApi.applyScenePack(
       p.scene_pack_id, deploy ? { deploy: true } : undefined)
     lastResult.value = res.data?.data ?? null
     if (!lastResult.value) {
@@ -320,7 +319,7 @@ function statusText(s: string) {
 
 function goRules() {
   resultVisible.value = false
-  router.push('/large-event/rules')
+  router.push('/linkage')
 }
 
 onMounted(() => {
@@ -329,7 +328,7 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.le-packs-page { padding: 4px 0; }
+.sc-packs-page { padding: 4px 0; }
 .packs-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
 .packs-title { margin: 0; font-size: 18px; font-weight: 600; }
 .packs-sub { margin-top: 4px; font-size: 12px; color: var(--el-text-color-secondary); }
@@ -338,11 +337,9 @@ onMounted(() => {
 .pack-card { margin-bottom: 16px; cursor: pointer; }
 .pack-head { display: flex; gap: 12px; align-items: center; margin-bottom: 10px; }
 .pack-icon { width: 44px; height: 44px; border-radius: 8px; display: flex; align-items: center; justify-content: center; color: #fff; flex-shrink: 0; }
-.sc-stadium { background: #409eff; }
-.sc-openair { background: #e6a23c; }
-.sc-expo { background: #67c23a; }
-.sc-marathon { background: #f56c6c; }
-.sc-generic { background: #909399; }
+.pk-primary { background: #409eff; }
+.pk-boarding { background: #a855f7; }
+.pk-exam { background: #e6a23c; }
 .pack-name { font-weight: 600; font-size: 15px; }
 .pack-id { font-size: 12px; color: var(--el-text-color-secondary); font-family: 'JetBrains Mono', Consolas, monospace; }
 .pack-desc { font-size: 13px; color: var(--el-text-color-regular); line-height: 1.5; min-height: 40px; }
@@ -361,5 +358,5 @@ onMounted(() => {
 .tpl-list { display: flex; flex-direction: column; gap: 5px; }
 .tpl-item { display: flex; align-items: center; gap: 6px; }
 .tpl-name { font-size: 12px; color: var(--el-text-color-secondary); }
-.le-count { margin-top: 10px; font-size: 12px; color: var(--el-text-color-secondary); }
+.sc-count { margin-top: 10px; font-size: 12px; color: var(--el-text-color-secondary); }
 </style>
