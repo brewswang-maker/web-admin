@@ -97,6 +97,8 @@ const enUS: MessageSchema = {
     campusDashboard: 'Campus Dashboard',
     campus3d: '3D Campus',
     schoolScenePacks: 'Scene Packs',
+        // [加油站方案 2026-08-30] 一级菜单加油站
+        gasStationScenePacks: 'Gas Station Scene Packs',
     devices: 'Devices',
     channels: 'Channels',
     alarms: 'Alarms',
@@ -724,6 +726,8 @@ const enUS: MessageSchema = {
     ai: 'AI',
     screening: 'Security Screening',
     school: 'Campus',
+        // [加油站方案 2026-08-30] 一级菜单加油站
+        gasStation: 'Gas Station',
     largeEvent: 'Large Event',
     platform: 'Platform Management'
   },

@@ -480,6 +480,8 @@ import {
   DArrowLeft, DArrowRight, VideoPlay, Film, VideoPause, Camera, SetUp,
   Location, Share, ShoppingCart, Wallet, Position, Aim, MapLocation,
   School, Warning, Basketball, Clock, DataBoard, Box,
+  // [加油站方案 2026-08-30] 一级菜单加油站 (T6 硬红线 + EHS 闭环)
+  TakeawayBox, MagicStick,
 } from '@element-plus/icons-vue'
 import logoUrl from '@/assets/logo.png'
 import userAvatarUrl from '@/assets/photo2.jpg'
@@ -497,7 +499,7 @@ const alarmStore = useAlarmStore()
 const prefStore = usePreferenceStore()
 const { t } = useI18n()
 
-type PrimaryMenuKey = 'home' | 'location' | 'video' | 'alarm' | 'ai' | 'screening' | 'school' | 'large-event' | 'platform'
+type PrimaryMenuKey = 'home' | 'location' | 'video' | 'alarm' | 'ai' | 'screening' | 'school' | 'gas-station' | 'large-event' | 'platform'
 type SidebarItem = {
   path: string
   label: string
@@ -586,6 +588,15 @@ const primaryMenus = computed<PrimaryMenu[]>(() => [
       { path: '/school/dashboard', label: t('menu.campusDashboard'), icon: DataBoard },
       { path: '/school/campus3d', label: t('menu.campus3d'), icon: MapLocation },
       { path: '/school/scene-packs', label: t('menu.schoolScenePacks'), icon: Box },
+    ],
+  },
+  {
+    // [加油站方案 2026-08-30] 一级菜单「加油站」: 场景包子页 (T6 硬红线 + EHS 闭环)
+    //   设计: docs/plans/加油站整体解决方案设计_v1.0.md §4 (7 子模块规划, 本期先落场景包子页)
+    key: 'gas-station',
+    label: t('menuPrimary.gasStation'),
+    items: [
+      { path: '/gas-station/scene-packs', label: t('menu.gasStationScenePacks'), icon: Box },
     ],
   },
   {

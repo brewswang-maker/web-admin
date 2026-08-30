@@ -79,6 +79,8 @@ const CampusSecurityView = () => import('@/views/school/CampusSecurity.vue')
 const CampusDashboardView = () => import('@/views/school/CampusDashboard.vue')
 const Campus3DView = () => import('@/views/school/Campus3D.vue')
 const SchoolScenePacksView = () => import('@/views/school/SchoolScenePacks.vue')
+// [加油站方案 2026-08-30] 一级菜单加油站 (设计 docs/plans/加油站整体解决方案设计_v1.0.md §4)
+const GasScenePacksView = () => import('@/views/gas-station/GasScenePacks.vue')
 // 智能检索 (P0-B: P4-E 混合检索 / 以文搜图 / 以图搜图 三合一)
 const RetrievalView = () => import('@/views/RetrievalView.vue')
 
@@ -522,6 +524,13 @@ export const asyncRoutes: RouteRecordRaw[] = [
         name: 'SchoolScenePacks',
         component: SchoolScenePacksView,
         meta: { title: '校园场景包', icon: 'Box', roles: ['admin', 'user', 'viewer'] }
+      },
+      // ═══ [加油站方案 2026-08-30] 加油站一级模块场景包子页 ═══
+      {
+        path: 'gas-station/scene-packs',
+        name: 'GasScenePacks',
+        component: GasScenePacksView,
+        meta: { title: '加油站场景包', icon: 'Box', roles: ['admin', 'user', 'viewer'] }
       },
     ]
   },

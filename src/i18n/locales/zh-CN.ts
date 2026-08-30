@@ -95,6 +95,8 @@ const zhCN = {
     campusDashboard: '校园态势大屏',
     campus3d: '3D 校园',
     schoolScenePacks: '校园场景包',
+        // [加油站方案 2026-08-30] 一级菜单加油站 (T6 硬红线 + EHS 闭环)
+        gasStationScenePacks: '加油站场景包',
     devices: '设备管理',
     channels: '通道管理',
     alarms: '告警中心',
@@ -720,6 +722,8 @@ const zhCN = {
     ai: 'AI 智能',
     screening: '安检',
     school: '校园',
+        // [加油站方案 2026-08-30] 一级菜单加油站
+        gasStation: '加油站',
     largeEvent: '大型活动',
     platform: '平台管理'
   },
