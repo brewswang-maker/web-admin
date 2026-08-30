@@ -171,6 +171,7 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { Refresh, FullScreen, Monitor } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import LazyChart from '@/components/LazyChart.vue'
+import type { EChartsOption } from 'echarts'
 import { schoolApi, type CampusDashboard, type TpuStats } from '@/api/school'
 
 const pageRoot = ref<HTMLElement | null>(null)
@@ -181,6 +182,9 @@ const days = ref(7)
 const data = ref<CampusDashboard | null>(null)
 const tpu = ref<TpuStats | null>(null)
 let refreshTimer: ReturnType<typeof setInterval> | null = null
+// [校园二期增强 2026-08-30] 水位快刷新: 调度水位是准实时指标, 独立 10s 轻量拉取
+//   (不重拉态势聚合; 失败保留旧值, 由水位卡降级空态兼容)
+let tpuTimer: ReturnType<typeof setInterval> | null = null
 
 const TYPE_NAMES: Record<string, string> = {
   phone_call: '接打电话', loitering: '徘徊逗留', unattended_baggage: '遗留物', face_stranger: '陌生人',
@@ -244,7 +248,7 @@ const trendOption = computed(() => {
       { name: '告警', type: 'bar', barMaxWidth: 14, data: hrs.map(h => alarmMap.get(h) ?? 0),
         itemStyle: { color: '#f56c6c', borderRadius: [3, 3, 0, 0] } },
     ],
-  }
+  } as EChartsOption
 })
 
 const keyTrendOption = computed(() => {
@@ -260,7 +264,7 @@ const keyTrendOption = computed(() => {
       data: list.map(b => b.cnt), lineStyle: { color: '#e6a23c', width: 2 },
       itemStyle: { color: '#e6a23c' }, areaStyle: { color: 'rgba(230,162,60,0.15)' },
     }],
-  }
+  } as EChartsOption
 })
 
 const typePieOption = computed(() => {
@@ -274,7 +278,7 @@ const typePieOption = computed(() => {
       data: list.map(t => ({ name: TYPE_NAMES[t.key] || t.key, value: t.total })),
       label: { show: false }, emphasis: { label: { show: true, formatter: '{b}\n{c}' } },
     }],
-  }
+  } as EChartsOption
 })
 
 const channelBarOption = computed(() => {
@@ -289,7 +293,7 @@ const channelBarOption = computed(() => {
       type: 'bar', barMaxWidth: 16, data: list.map(c => c.total),
       itemStyle: { color: '#409eff', borderRadius: [0, 4, 4, 0] },
     }],
-  }
+  } as EChartsOption
 })
 
 const levelPieOption = computed(() => {
@@ -306,7 +310,7 @@ const levelPieOption = computed(() => {
       })),
       label: { color: '#606266', fontSize: 11, formatter: '{b} {c}' },
     }],
-  }
+  } as EChartsOption
 })
 
 const passageChannels = computed(() => {
@@ -360,6 +364,14 @@ async function loadAll() {
   loading.value = false
 }
 
+/** 水位快刷新: 仅拉 /stats/tpu (准实时: 利用率/队列/并发秒级变化) */
+async function refreshTpu() {
+  try {
+    const tpuResp = await schoolApi.getTpuStats()
+    tpu.value = tpuResp.data?.data ?? tpu.value
+  } catch { /* 保留旧值 */ }
+}
+
 function toggleFullscreen() {
   isFullscreen.value = !isFullscreen.value
 }
@@ -367,9 +379,11 @@ function toggleFullscreen() {
 onMounted(async () => {
   await loadAll()
   refreshTimer = setInterval(loadAll, 30000)
+  tpuTimer = setInterval(refreshTpu, 10000)
 })
 onUnmounted(() => {
   if (refreshTimer) clearInterval(refreshTimer)
+  if (tpuTimer) clearInterval(tpuTimer)
 })
 </script>
 

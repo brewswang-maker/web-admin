@@ -145,10 +145,17 @@ export const retrievalApi = {
     return r.data
   },
 
-  /** 以文搜图 (P3-3 端点) */
-  async searchByNL(nl: string, topK = 10): Promise<ApiResponse<{ items: ImageSearchItem[]; total?: number }>> {
+  /** 以文搜图 (P3-3 端点; [校园二期增强] 可选 startMs/endMs 毫秒时间窗, 后端 searchWithFilter 窗口裁剪) */
+  async searchByNL(
+    nl: string,
+    topK = 10,
+    opts?: { startMs?: number; endMs?: number },
+  ): Promise<ApiResponse<{ items: ImageSearchItem[]; total?: number }>> {
+    const params: Record<string, unknown> = { nl, top_k: topK }
+    if (opts?.startMs) params.start_ms = opts.startMs
+    if (opts?.endMs) params.end_ms = opts.endMs
     const r = await http.get<ApiResponse<{ items: ImageSearchItem[]; total?: number }>>(
-      '/images/search', { params: { nl, top_k: topK } }
+      '/images/search', { params }
     )
     return r.data
   },
@@ -166,6 +173,50 @@ export const retrievalApi = {
     )
     return r.data
   },
+
+  /** [校园二期增强 2026-08-30] 跨镜轨迹 (GET /retrieval/trajectory, P1-B 端点):
+   *  global_id 或 (camera_id+track_id) 二选一; 节点 = ReIDGallery 内存库 entries
+   *  × alarm_events 时空关联。诚实口径: gallery 内存态 LRU (默认 5min), 重启即失。 */
+  async getTrajectory(
+    q: { global_id?: number; camera_id?: number; track_id?: number; window_ms?: number },
+  ): Promise<ApiResponse<TrajectoryResult>> {
+    const params: Record<string, unknown> = {}
+    if (q.global_id) params.global_id = q.global_id
+    if (q.camera_id) params.camera_id = q.camera_id
+    if (q.track_id) params.track_id = q.track_id
+    if (q.window_ms) params.window_ms = q.window_ms
+    const r = await http.get<ApiResponse<TrajectoryResult>>('/retrieval/trajectory', { params })
+    return r.data
+  },
+}
+
+/** 跨镜轨迹节点 (后端 GET /retrieval/trajectory nodes[], ts 升序) */
+export interface TrajectoryNode {
+  camera_id: number
+  track_id: number
+  ts_ms: number
+  hit_count?: number
+  class_name?: string
+  /** 时空关联命中的告警 (±window_ms 内最近一条, 可能缺省) */
+  alarm_id?: string
+  alarm_type?: string
+  snapshot_path?: string
+  channel_id_str?: string
+  channel_name?: string
+  delta_ms?: number
+}
+
+export interface TrajectoryResult {
+  global_id: number
+  total: number
+  channel_count: number
+  nodes: TrajectoryNode[]
+  reason?: string
+  retention?: {
+    storage: string
+    window_ms: number
+    note: string
+  }
 }
 
 /** 从 ApiError/响应中提取 P0-A 501 指引 (供 UI 展示 CLIP 激活指引) */

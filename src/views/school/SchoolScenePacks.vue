@@ -93,6 +93,11 @@
           <el-table-column prop="display_name" label="显示名" min-width="140" />
         </el-table>
 
+        <!-- [校园二期增强] 无论是否布防均可跳规则页 (带 tag 过滤; 便于查看已布防的 SC 实例规则) -->
+        <div class="go-rules-row">
+          <el-button size="small" link type="primary" @click="goRules">去联动规则页查看 (标签 scene_pack) →</el-button>
+        </div>
+
         <template v-if="lastResult.deployed">
           <el-divider />
           <div class="deploy-summary">
@@ -319,7 +324,8 @@ function statusText(s: string) {
 
 function goRules() {
   resultVisible.value = false
-  router.push('/linkage')
+  // [校园二期增强 2026-08-30] 带 tag 过滤跳转 (LinkageRuleView 读 ?tag 预填 tagFilter)
+  router.push({ path: '/linkage', query: { tag: 'scene_pack' } })
 }
 
 onMounted(() => {
@@ -334,6 +340,7 @@ onMounted(() => {
 .packs-sub { margin-top: 4px; font-size: 12px; color: var(--el-text-color-secondary); }
 .err-hint { margin-top: 10px; font-size: 12px; color: var(--el-text-color-secondary); }
 .deploy-summary { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.go-rules-row { margin-top: 10px; display: flex; justify-content: flex-end; }
 .pack-card { margin-bottom: 16px; cursor: pointer; }
 .pack-head { display: flex; gap: 12px; align-items: center; margin-bottom: 10px; }
 .pack-icon { width: 44px; height: 44px; border-radius: 8px; display: flex; align-items: center; justify-content: center; color: #fff; flex-shrink: 0; }

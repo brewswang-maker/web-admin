@@ -152,13 +152,31 @@ function openDetail(row: AlarmEvent) {
 }
 
 const router = useRouter()
-/** [校园二期 2026-08-30] 跨镜追踪: 事件行 → 智能检索以文搜图预填
- *  (nl=类型名+通道, RetrievalView 带 nl query 即预填, from 仅区分提示文案) */
+/** [校园二期增强 2026-08-30] 轨迹跳转: metadata 带 track_id → 跨镜轨迹 tab 直查
+ *  (camera_id/track_id 时空关联, ReID 回溯窗口); 否则退化「以文搜图」
+ *  (类型名 + 通道显示名, 事件时间 ±30min 时间窗预填)。 */
 function goTrajectory(row: AlarmEvent) {
-  router.push({
-    path: '/retrieval',
-    query: { nl: `${typeName(row.type)} ${row.channelId}`, from: 'campus-event' },
-  })
+  const meta = (row.metadata ?? {}) as Record<string, unknown>
+  const trackId = Number(meta.track_id) || 0
+  const camId = Number(meta.channel_id)
+    || Number(String(row.channelId).replace(/\D/g, '')) || 0
+  if (trackId && camId) {
+    router.push({
+      path: '/retrieval',
+      query: { tab: 'trajectory', camera_id: String(camId), track_id: String(trackId) },
+    })
+    return
+  }
+  const ts = new Date(row.createdAt).getTime()
+  const query: Record<string, string> = {
+    nl: `${typeName(row.type)} ${row.channelName || row.deviceName || row.channelId}`,
+    from: 'campus-event',
+  }
+  if (ts) {
+    query.start = String(ts - 30 * 60_000)
+    query.end = String(ts + 30 * 60_000)
+  }
+  router.push({ path: '/retrieval', query })
 }
 
 async function load(silent = false) {

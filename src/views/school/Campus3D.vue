@@ -38,8 +38,8 @@
             </div>
           </template>
           <template v-if="alarmPoints.length">
-            <div v-for="(p, i) in alarmPoints" :key="p.alarmId" class="point-row"
-                 :class="{ active: selectedAlarmId === p.alarmId }"
+            <div v-for="(p, i) in alarmPoints" :key="p.id" class="point-row"
+                 :class="{ active: selectedAlarmId === p.id }"
                  @click="locatePoint(p)">
               <span class="point-idx">{{ i + 1 }}</span>
               <div class="point-body">
@@ -122,10 +122,15 @@ const circleRings = computed(() => {
     const found = Object.entries(zones).find(([k]) => k.includes(key))
     return found ? found[1] : []
   }
+  // fallback: 无场景包数据时的内置示意三圈 (品恩三圈核查范式, 圈层→区域语义)
+  const FALLBACK: Record<string, string[]> = {
+    control: ['围墙周界', '外围道路'],
+    alert: ['校门出入口', '食堂'],
+    core: ['教学楼', '图书馆'],
+  }
   return defs.map(d => ({
     ...d,
-    zones: zoneOf(d.key).length ? zoneOf(d.key)
-      : (d.key === 'core' ? ['teaching_building_*', 'library_*'] : []),
+    zones: zoneOf(d.key).length ? zoneOf(d.key) : FALLBACK[d.key] ?? [],
   }))
 })
 
@@ -162,7 +167,7 @@ const alarmPoints = computed(() => alarms.value.slice(0, 20))
 
 /** 点击定位: 选中告警 → 3D 场景对应设备 alarm 态 (devices3d 由 selectedAlarmId 驱动) */
 function locatePoint(p: AlarmEvent) {
-  selectedAlarmId.value = p.alarmId
+  selectedAlarmId.value = p.id
 }
 
 async function load(silent = false) {

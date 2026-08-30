@@ -2,7 +2,7 @@
   <div class="retrieval-view">
     <div class="page-header">
       <h2>智能检索</h2>
-      <span class="sub">混合检索 (P4-E) / 以文搜图 / 以图搜图 [P0-B 2026-08-30]</span>
+      <span class="sub">混合检索 (P4-E) / 以文搜图 / 以图搜图 [P0-B] / 跨镜轨迹 [校园二期]</span>
     </div>
 
     <el-tabs v-model="activeTab" class="retrieval-tabs">
@@ -72,6 +72,19 @@
           <el-form-item label="自然语言">
             <el-input v-model="nlForm.nl" placeholder="例: 昨天的火情 / 穿红色衣服的人在跑" @keyup.enter="runNL" />
           </el-form-item>
+          <!-- [校园二期增强] 时间窗: 走后端 searchWithFilter 窗口裁剪 (start_ms/end_ms) -->
+          <el-form-item label="时间范围">
+            <el-radio-group v-model="nlForm.timeRange" @change="onNlTimeRangeChange">
+              <el-radio-button value="all">全部</el-radio-button>
+              <el-radio-button value="1h">近 1 小时</el-radio-button>
+              <el-radio-button value="24h">近 24 小时</el-radio-button>
+              <el-radio-button value="7d">近 7 天</el-radio-button>
+              <el-radio-button v-if="nlForm.startMs || nlForm.endMs" value="custom">自定义窗</el-radio-button>
+            </el-radio-group>
+            <span v-if="nlForm.timeRange === 'custom'" class="hint" style="margin-left: 10px">
+              {{ formatTs(nlForm.startMs) }} ~ {{ formatTs(nlForm.endMs) }}
+            </span>
+          </el-form-item>
           <el-form-item label="Top-K">
             <el-input-number v-model="nlForm.top_k" :min="1" :max="100" />
           </el-form-item>
@@ -136,10 +149,79 @@
           <div class="hint">配置项: 环境变量 SHIELD_SOPHON_BMODEL_BASE (TPU-MLIR 转换产物, 见 P1-A 批次)</div>
         </el-alert>
       </el-tab-pane>
+
+      <!-- ════ Tab 4: 跨镜轨迹 [校园二期增强 2026-08-30] ════ -->
+      <el-tab-pane label="跨镜轨迹" name="trajectory">
+        <el-form label-width="110px" class="query-form">
+          <el-form-item label="Global ID">
+            <el-input-number v-model="trajForm.global_id" :min="0" :step="1" placeholder="0 = 不使用" style="width: 220px" />
+            <span class="hint" style="margin-left: 10px">与下方 通道+轨迹 ID 二选一</span>
+          </el-form-item>
+          <el-form-item label="通道 / 轨迹 ID">
+            <el-input-number v-model="trajForm.camera_id" :min="0" :controls="false" placeholder="camera_id" style="width: 160px" />
+            <el-input-number v-model="trajForm.track_id" :min="0" :controls="false" placeholder="track_id" style="width: 160px" class="ml" />
+          </el-form-item>
+          <el-form-item label="关联窗口(ms)">
+            <el-input-number v-model="trajForm.window_ms" :min="0" :step="1000" />
+            <span class="hint" style="margin-left: 10px">ReID 节点与告警的时空关联窗口</span>
+          </el-form-item>
+          <el-form-item>
+            <el-button type="primary" :loading="trajLoading" @click="runTrajectory">查询轨迹</el-button>
+          </el-form-item>
+        </el-form>
+
+        <el-alert type="info" :closable="false" class="tower-alert" title="轨迹数据口径 (诚实降级)">
+          ReID 特征库为内存态 LRU (默认回溯窗口约 5 分钟, 重启即失);
+          轨迹仅覆盖最近回溯窗口内的跨镜出现。历史事件请用「以文搜图」。
+        </el-alert>
+
+        <!-- 轨迹结果: 时间轴节点 (ts 升序) -->
+        <template v-if="trajResult">
+          <el-divider content-position="left">
+            轨迹 {{ trajResult.total }} 节点 · 跨 {{ trajResult.channel_count }} 通道 · global_id={{ trajResult.global_id }}
+          </el-divider>
+          <el-empty
+            v-if="!trajResult.total"
+            :description="trajEmptyText"
+          />
+          <el-timeline v-else class="traj-timeline">
+            <el-timeline-item
+              v-for="(n, i) in trajResult.nodes"
+              :key="i"
+              :timestamp="formatTs(n.ts_ms)"
+              :type="n.alarm_id ? 'danger' : 'primary'"
+            >
+              <div class="traj-node">
+                <el-image
+                  v-if="n.snapshot_path"
+                  :src="n.snapshot_path"
+                  fit="cover"
+                  class="traj-snap"
+                  :preview-src-list="[n.snapshot_path]"
+                  preview-teleported
+                >
+                  <template #error><div class="traj-snap traj-snap-fallback">无快照</div></template>
+                </el-image>
+                <div v-else class="traj-snap traj-snap-fallback">无快照</div>
+                <div class="traj-meta">
+                  <div class="traj-ch">{{ n.channel_name || n.channel_id_str || `camera ${n.camera_id}` }}</div>
+                  <div class="traj-line">
+                    track {{ n.track_id }}
+                    <el-tag v-if="n.alarm_type" size="small" type="danger" class="ml">
+                      {{ n.alarm_type }} (Δ{{ n.delta_ms }}ms)
+                    </el-tag>
+                  </div>
+                  <div class="traj-line hint">命中 {{ n.hit_count ?? 1 }} 次 · {{ n.class_name || 'person' }}</div>
+                </div>
+              </div>
+            </el-timeline-item>
+          </el-timeline>
+        </template>
+      </el-tab-pane>
     </el-tabs>
 
-    <!-- ════ 结果栅格 (共用) ════ -->
-    <template v-if="items.length">
+    <!-- ════ 结果栅格 (共用; 跨镜轨迹 tab 独立时间轴呈现, 不复用) ════ -->
+    <template v-if="items.length && activeTab !== 'trajectory'">
       <el-divider content-position="left">
         检索结果 {{ items.length }} 条 ({{ resultModeText }})
       </el-divider>
@@ -171,7 +253,7 @@
         </el-col>
       </el-row>
     </template>
-    <el-empty v-else-if="searched && !loading && !towerUnavailable" description="无匹配结果" />
+    <el-empty v-else-if="searched && !loading && !towerUnavailable && activeTab !== 'trajectory'" description="无匹配结果" />
 
     <!-- 详情弹窗 -->
     <el-dialog v-model="detailVisible" title="结果详情" width="560">
@@ -188,7 +270,8 @@
 /**
  * RetrievalView.vue — 智能检索前端 [P0-B 2026-08-30]
  *
- * 三 Tab (计划 P0-B): 混合检索 (P4-E) / 以文搜图 (P3-3) / 以图搜图 (P0-A)。
+ * 四 Tab: 混合检索 (P4-E) / 以文搜图 (P3-3) / 以图搜图 (P0-A) /
+ * 跨镜轨迹 ([校园二期增强 2026-08-30], GET /retrieval/trajectory)。
  * attr 条件编辑复用 P4-B 白名单契约 (api/attributeKeys) + P4-D key 类型分控件
  * 思路 (kind → 算子收敛); 结果栅格点击联动告警详情; 后端 501 时 UI 显式展示
  * CLIP 图像塔激活指引 (诚实降级口径)。
@@ -207,12 +290,13 @@ import {
   type RetrievalItem,
   type ImageSearchItem,
   type ImageTowerUnavailable,
+  type TrajectoryResult,
 } from '@/api/retrieval'
 import { allowedOps, getAttributeKeyDef, valueControlKind } from '@/api/attributeKeys'
 import { ApiError } from '@/api/http'
 
 const router = useRouter()
-const activeTab = ref<'hybrid' | 'nl' | 'image'>('hybrid')
+const activeTab = ref<'hybrid' | 'nl' | 'image' | 'trajectory'>('hybrid')
 const loading = ref(false)
 const searched = ref(false)
 
@@ -245,18 +329,55 @@ function parseEmbedding(text: string): number[] | null {
 }
 
 // ── Tab 2 以文搜图 ──────────────────────────────────────────────
-const nlForm = reactive({ nl: '', top_k: 10 })
+// [校园二期增强] timeRange 档位 → start_ms/end_ms (后端 searchWithFilter 窗口裁剪)
+const nlForm = reactive({ nl: '', top_k: 10, timeRange: 'all', startMs: 0, endMs: 0 })
+
+const NL_RANGE_MS: Record<string, number> = { '1h': 3600_000, '24h': 86_400_000, '7d': 604_800_000 }
+function onNlTimeRangeChange(v: string | number | boolean | undefined) {
+  const key = String(v)
+  if (NL_RANGE_MS[key]) {
+    nlForm.endMs = Date.now()
+    nlForm.startMs = nlForm.endMs - NL_RANGE_MS[key]
+  } else {
+    // all/custom: all 清窗, custom 保留已预填的具体值
+    if (key === 'all') { nlForm.startMs = 0; nlForm.endMs = 0 }
+  }
+}
+
+// ── Tab 4 跨镜轨迹 ([校园二期增强 2026-08-30]; 状态先声明, 供下方 route 预填引用) ──
+const trajForm = reactive({ global_id: 0, camera_id: 0, track_id: 0, window_ms: 30000 })
+const trajLoading = ref(false)
+const trajResult = ref<TrajectoryResult | null>(null)
+
+const trajEmptyText = computed(() =>
+  trajForm.global_id
+    ? '该 global_id 在 ReID 回溯窗口内无跨镜记录'
+    : '该通道/轨迹 ID 在 ReID 回溯窗口内无记录 (内存态 LRU 约 5min, 重启即失)')
 
 // [安检对标优化 2026-08-30] X 光判图"追溯"跳转预填 (from=screening-xray):
 //   ScreeningXray 无快照时 router.push(/retrieval?nl=...&from=xray)
-// [校园二期 2026-08-30] 放宽为带 nl 即预填 (校园事件"轨迹"按钮 from=campus-event)
+// [校园二期 2026-08-30] 放宽为带 nl 即预填 (校园事件"轨迹"按钮 from=campus-event);
+//   可选 start/end (ms) → 以文搜图时间窗; tab=trajectory + camera_id/track_id → 跨镜轨迹预填
 const route = useRoute()
-if (route.query.nl) {
+if (route.query.tab === 'trajectory' && (route.query.camera_id || route.query.global_id)) {
+  activeTab.value = 'trajectory'
+  trajForm.camera_id = Number(route.query.camera_id) || 0
+  trajForm.track_id = Number(route.query.track_id) || 0
+  if (route.query.global_id) trajForm.global_id = Number(route.query.global_id) || 0
+  ElMessage.info('已从校园事件跳转, 跨镜轨迹查询条件已预填 (点击查询执行)')
+} else if (route.query.nl) {
   nlForm.nl = String(route.query.nl)
   activeTab.value = 'nl'
+  const s = Number(route.query.start) || 0
+  const e = Number(route.query.end) || 0
+  if (s || e) {
+    nlForm.startMs = s
+    nlForm.endMs = e
+    nlForm.timeRange = 'custom'
+  }
   ElMessage.info(route.query.from === 'xray'
     ? '已从 X 光判图跳转, 关键字已预填 (点击搜索或回车执行)'
-    : '已从校园事件跳转, 轨迹检索关键字已预填 (点击搜索或回车执行)')
+    : '已从校园事件跳转, 轨迹检索条件已预填 (点击搜索或回车执行)')
 }
 
 // ── Tab 3 以图搜图 ──────────────────────────────────────────────
@@ -360,7 +481,34 @@ async function runNL() {
     ElMessage.warning('请输入自然语言查询')
     return
   }
-  await doSearch(() => retrievalApi.searchByNL(nlForm.nl.trim(), nlForm.top_k))
+  await doSearch(() => retrievalApi.searchByNL(nlForm.nl.trim(), nlForm.top_k, {
+    startMs: nlForm.startMs || undefined,
+    endMs: nlForm.endMs || undefined,
+  }))
+}
+
+/** [校园二期增强 2026-08-30] 跨镜轨迹查询: global_id 或 (camera_id+track_id) 二选一 */
+async function runTrajectory() {
+  if (!trajForm.global_id && !(trajForm.camera_id && trajForm.track_id)) {
+    ElMessage.warning('请填写 Global ID, 或 通道 + 轨迹 ID 组合')
+    return
+  }
+  trajLoading.value = true
+  trajResult.value = null
+  try {
+    const resp = await retrievalApi.getTrajectory({
+      global_id: trajForm.global_id || undefined,
+      camera_id: trajForm.camera_id || undefined,
+      track_id: trajForm.track_id || undefined,
+      window_ms: trajForm.window_ms || undefined,
+    })
+    trajResult.value = resp.data ?? null
+    if (!resp.data?.total) ElMessage.info('未查到轨迹节点 (见数据口径说明)')
+  } catch (err) {
+    ElMessage.error(err instanceof ApiError ? err.message : String(err))
+  } finally {
+    trajLoading.value = false
+  }
 }
 
 async function runByImage() {
@@ -381,13 +529,15 @@ async function runByImage() {
   )
 }
 
-async function doSearch(fn: () => Promise<{ data?: { items?: AnyItem[] } }>) {
+async function doSearch(fn: () => Promise<{ data?: unknown }>) {
   loading.value = true
   searched.value = true
   towerUnavailable.value = null
   try {
     const resp = await fn()
-    items.value = (resp.data?.items as AnyItem[]) || []
+    // unknown 中转: 各端点 item 结构不同 (RetrievalItem/ImageSearchItem), 渲染层按可选字段兼容
+    const body = resp.data as { items?: AnyItem[] } | null | undefined
+    items.value = body?.items ?? []
   } catch (err) {
     items.value = []
     handleError(err)
@@ -437,4 +587,12 @@ void valueControlKind
 .meta .sim { display: flex; align-items: center; gap: 6px; }
 .meta .line { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .detail-json { max-height: 380px; overflow: auto; background: var(--el-fill-color-light); padding: 8px; border-radius: 4px; }
+/* [校园二期增强] 跨镜轨迹时间轴 */
+.traj-timeline { max-width: 760px; padding-left: 4px; }
+.traj-node { display: flex; gap: 10px; align-items: flex-start; }
+.traj-snap { width: 72px; height: 90px; border-radius: 4px; flex-shrink: 0; background: var(--el-fill-color-light); }
+.traj-snap-fallback { display: flex; align-items: center; justify-content: center; color: var(--el-text-color-secondary); font-size: 12px; }
+.traj-meta { min-width: 0; }
+.traj-ch { font-weight: 600; font-size: 13px; }
+.traj-line { font-size: 12px; margin-top: 2px; }
 </style>

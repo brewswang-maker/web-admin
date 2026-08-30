@@ -34,6 +34,11 @@
             <el-option label="已启用" :value="true" />
             <el-option label="已停用" :value="false" />
           </el-select>
+          <!-- [校园二期增强 2026-08-30] 标签筛选: 选项从规则集动态聚合; 支持 ?tag= 预填 (场景包 goRules 联动) -->
+          <el-select v-model="tagFilter" placeholder="标签筛选" multiple collapse-tags
+                     style="width: 170px" clearable>
+            <el-option v-for="t in allRuleTags" :key="t" :label="t" :value="t" />
+          </el-select>
           <el-select v-model="sortBy" style="width: 140px" @change="fetchRules">
             <el-option label="优先级排序" value="priority" />
             <el-option label="创建时间" value="created_at" />
@@ -1129,6 +1134,7 @@
 
 <script setup lang="ts">
 import { ref, computed, reactive, onMounted, onUnmounted, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { FormInstance, FormRules } from 'element-plus'
 import { Search, Plus, Document, Link, Bell, Setting, ArrowDown, Download, Upload, Refresh, WarningFilled, DataLine } from '@element-plus/icons-vue'
@@ -1372,6 +1378,15 @@ const sortBy = ref('priority')
 const sortOrder = ref<'ascending' | 'descending'>('descending')
 const selectedRows = ref<LinkageRule[]>([])
 const tagFilter = ref<string[]>([])
+/** [校园二期增强 2026-08-30] 标签筛选选项: 从当前规则集动态聚合 (scene_pack/large_event/自定义);
+ *  跳过规则码型 tag (LE- 与 SC- 前缀的模板 id 派生标签), 保持选项为业务标签 */
+const allRuleTags = computed(() => {
+  const s = new Set<string>()
+  rules.value.forEach(r => (r.tags || []).forEach(t => {
+    if (!/^[A-Z]{2,}-/.test(t)) s.add(t)
+  }))
+  return [...s].sort()
+})
 const showArchived = ref(false) // [FIX P2-3] 是否显示归档规则
 
 // [FIX 2026-08-27 P0-PERIMETER v3] 越界绊线选项
@@ -2623,6 +2638,9 @@ function applyTimeTemplate(tmpl: TimeTemplate) {
 }
 
 onMounted(() => {
+  // [校园二期 2026-08-30] 场景包 goRules 跳转预填 tag 过滤 (?tag=scene_pack)
+  const qTag = useRoute().query.tag
+  if (qTag) tagFilter.value = [String(qTag)]
   fetchRules(); fetchOptions()
   if (mainTab.value === 'plans') fetchPlans()
   if (mainTab.value === 'cep') fetchCEPPatterns()
