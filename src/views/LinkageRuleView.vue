@@ -1844,8 +1844,13 @@ function getActionLabel(typeStr: string): string {
 async function fetchRules() {
   loading.value = true
   try {
-    // [FIX P0] 后端默认 page_size=20, 必须显式传大页获取全量规则 (后端读 page_size 下划线格式)
-    const res = await linkageApi.getRules({ page: 1, page_size: 500 } as any)
+    // [FIX 2026-08-31] 改用全量端点 /linkage/rules/all。
+    //   原先 getRules({page_size:500}) 被后端钳制为 100（RestApiHandlers
+    //   `if (page_size > 100) page_size = 100`），设备实测 157 条规则时
+    //   前 100 条之外的规则在列表页不可见也无法禁用，用户"全部停用"
+    //   后弹窗依旧（溢出的 30 条启用规则仍在匹配告警）。/all 无分页钳
+    //   制，与页面无分页表格的展示形态一致。
+    const res = await linkageApi.getAllRules()
     const d = (res.data as any)?.data ?? res.data
     rules.value = d?.items ?? (Array.isArray(d) ? d : [])
   } catch (e: any) {

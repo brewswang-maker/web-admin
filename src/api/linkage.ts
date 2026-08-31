@@ -477,6 +477,13 @@ export const linkageApi = {
     return http.get<ApiResponse<PageResponse<LinkageRule>>>('/linkage/rules', { params })
   },
 
+  /** 获取联动规则全量列表 (后端 /all 端点无分页钳制; 分页端点 page_size 上限 100,
+   *  规则数超 100 时前端用 getRules({page_size:500}) 只能拿到前 100 条,
+   *  溢出规则在列表页不可见也无法禁用 → 2026-08-31 '规则全禁仍有弹窗' 事故根因) */
+  getAllRules(params?: { enabled_only?: boolean | string }) {
+    return http.get<ApiResponse<{ items: LinkageRule[]; total: number }>>('/linkage/rules/all', { params })
+  },
+
   /** 获取联动规则详情 */
   getRule(id: string) {
     return http.get<ApiResponse<LinkageRule>>(`/linkage/rules/${id}`)
