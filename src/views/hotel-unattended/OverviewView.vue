@@ -119,6 +119,80 @@
           </el-card>
         </el-col>
       </el-row>
+
+      <el-row :gutter="16">
+        <!-- ===== 人员分类构成 (六分类: 人脸库统计 × 24h 通行聚合) ===== -->
+        <el-col :span="10">
+          <el-card shadow="never" class="section-card">
+            <template #header>
+              <div class="card-header">
+                <span>{{ t('hotel.person.composeTitle') }}</span>
+              </div>
+            </template>
+            <el-table :data="groupRows" v-loading="passLoading" size="small"
+                      show-summary :summary-method="groupSummary"
+                      :empty-text="t('hotel.person.composeEmpty')">
+              <el-table-column :label="t('hotel.person.colGroup')" min-width="100">
+                <template #default="{ row }">
+                  <div class="group-cell">
+                    <span class="group-dot" :style="{ background: row.color }" />
+                    <span>{{ row.label }}</span>
+                  </div>
+                </template>
+              </el-table-column>
+              <el-table-column :label="t('hotel.person.composeInDb')" width="72" align="center">
+                <template #default="{ row }"><span class="mono">{{ row.inDb }}</span></template>
+              </el-table-column>
+              <el-table-column :label="t('hotel.person.composePass24h')" width="84" align="center">
+                <template #default="{ row }">
+                  <strong :style="row.today > 0 ? { color: row.color } : undefined">{{ row.today }}</strong>
+                </template>
+              </el-table-column>
+            </el-table>
+          </el-card>
+        </el-col>
+
+        <!-- ===== 最近通行 (24h) ===== -->
+        <el-col :span="14">
+          <el-card shadow="never" class="section-card">
+            <template #header>
+              <div class="card-header">
+                <span>{{ t('hotel.person.passTitle') }}</span>
+              </div>
+            </template>
+            <el-table :data="recentPasses" v-loading="passLoading" size="small"
+                      :empty-text="t('hotel.person.passEmpty')">
+              <el-table-column :label="t('hotel.person.colName')" min-width="96" show-overflow-tooltip>
+                <template #default="{ row }">{{ row.name || t('hotel.person.unknownName') }}</template>
+              </el-table-column>
+              <el-table-column :label="t('hotel.person.colGroup')" width="84">
+                <template #default="{ row }">
+                  <el-tag :type="groupTagOf(row.pass_type).type" size="small" effect="light">
+                    {{ groupTagOf(row.pass_type).label }}
+                  </el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column prop="channel_id" :label="t('hotel.events.colChannel')" width="64" align="center" />
+              <el-table-column :label="t('hotel.person.colLive')" width="70" align="center">
+                <template #default="{ row }">
+                  <el-tag :type="row.is_live ? 'success' : 'danger'" size="small" effect="plain">
+                    {{ row.is_live ? t('hotel.person.liveOk') : t('hotel.person.liveFail') }}
+                  </el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column :label="t('hotel.person.colSimilarity')" width="76" align="center">
+                <template #default="{ row }">
+                  <span v-if="row.similarity != null">{{ (Number(row.similarity) * 100).toFixed(0) }}%</span>
+                  <span v-else>-</span>
+                </template>
+              </el-table-column>
+              <el-table-column :label="t('hotel.events.colTime')" width="150">
+                <template #default="{ row }">{{ fmtTime(tsToIso(row.timestamp)) }}</template>
+              </el-table-column>
+            </el-table>
+          </el-card>
+        </el-col>
+      </el-row>
     </template>
   </div>
 </template>
@@ -128,8 +202,10 @@
  * 值守总览 — 酒店无人值守 t8f D3 (方案 §5.7 视图 1)
  *
  * 4 KPI (今日拦截 / 布防包数 / 启用规则 / SSOT 事件覆盖) + 5 包布防状态
- * + 最近拦截记录。数据源全部复用既有端点 (large-event/scene-packs,
- * linkage/rules?tag=hotel_unattended, /alarms, event-types/metadata?scene=),
+ * + 最近拦截记录 + 人员六分类板块 (黑名单/白名单/访客/VIP/员工/自定义:
+ * 人脸库统计 + 24h 通行记录, 酒店人员体系)。数据源全部复用既有端点
+ * (large-event/scene-packs, linkage/rules?tag=hotel_unattended, /alarms,
+ * event-types/metadata?scene=, face/database/stats|pass-records),
  * 零后端专用接口。三态防御: 骨架屏 / 错误态可恢复 / 空态
  * (对齐 t8b-⑥ 修复后的 large-event ScenePacksView 规范)。
  */
@@ -139,10 +215,12 @@ import { ElMessage } from 'element-plus'
 import { useI18n } from 'vue-i18n'
 import { Refresh, Warning, Box, Bell, Aim } from '@element-plus/icons-vue'
 import type { Component } from 'vue'
-import { hotelUnattendedApi, pickHotelPacks, isHotelEvent, CORRIDOR_INTERCEPT_TYPES } from '@/api/hotelUnattended'
+import { hotelUnattendedApi, pickHotelPacks, isHotelEvent, CORRIDOR_INTERCEPT_TYPES,
+         PERSON_GROUPS, passTypeToGroup } from '@/api/hotelUnattended'
 import type { ScenePack } from '@/types/largeEvent'
 import type { LinkageRule } from '@/api/linkage'
 import type { AlarmEvent } from '@/types/alarm'
+import type { FaceDatabaseStats, FacePassRecord } from '@/api/face'
 
 const { t } = useI18n()
 const router = useRouter()
@@ -155,6 +233,9 @@ const events = ref<AlarmEvent[]>([])
 const eventMetaCount = ref(0)
 const ssotError = ref(false)
 const eventsLoading = ref(false)
+const faceStats = ref<FaceDatabaseStats | null>(null)
+const passRecords = ref<FacePassRecord[]>([])
+const passLoading = ref(false)
 
 // ── 派生统计 ──
 const corridorEvents = computed(() =>
@@ -171,6 +252,26 @@ const statCards = computed(() => [
 
 const recentEvents = computed(() =>
   events.value.filter(isHotelEvent).slice(0, 8))
+
+// ── 人员六分类派生 (库内人数 × 24h 通行聚合; pass_type 归并见 passTypeToGroup) ──
+const passByGroup = computed(() => {
+  const m: Record<string, number> = {}
+  for (const r of passRecords.value) {
+    const k = passTypeToGroup(r.pass_type)
+    if (k !== 'unknown') m[k] = (m[k] ?? 0) + 1
+  }
+  return m
+})
+const groupRows = computed(() =>
+  PERSON_GROUPS.map(g => ({
+    ...g,
+    label: t(g.i18nKey),
+    inDb: faceStats.value?.[g.key] ?? 0,
+    today: passByGroup.value[g.key] ?? 0,
+  })))
+const passTotal = computed(() =>
+  Object.values(passByGroup.value).reduce((a, b) => a + b, 0))
+const recentPasses = computed(() => passRecords.value.slice(0, 8))
 
 /** 包是否已布防: 任一规则 tags 含 scene_pack_id (apply 合并 tags, RestApiHandlers L21399) */
 function packLanded(p: ScenePack): boolean {
@@ -194,6 +295,26 @@ function fmtTime(iso: string) {
   if (Number.isNaN(d.getTime())) return iso
   const p = (n: number) => String(n).padStart(2, '0')
   return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
+}
+
+/** pass_type → 分类 tag (unknown/unknown_type → '未知' 灰 tag, 不参与六分类) */
+function groupTagOf(passType: unknown) {
+  const def = PERSON_GROUPS.find(g => g.key === passTypeToGroup(passType))
+  return def
+    ? { label: t(def.i18nKey), type: def.tagType }
+    : { label: t('hotel.person.unknown'), type: 'info' as const }
+}
+
+/** 秒/毫秒时间戳容错 → ISO (FacePassRecord.timestamp 单位随固件版本) */
+function tsToIso(ts: unknown): string {
+  const n = Number(ts)
+  if (!Number.isFinite(n) || n <= 0) return ''
+  return new Date(n > 1e12 ? n : n * 1000).toISOString()
+}
+
+/** 六分类构成表合计行 (第一列为人脸库总人数 + 24h 通行合计) */
+function groupSummary() {
+  return [t('hotel.person.composeFooter', { n: faceStats.value?.total ?? 0, m: passTotal.value }), '', '']
 }
 
 // ── 数据拉取 (主链路失败 → 错误态; 增强信息失败静默降级) ──
@@ -233,6 +354,21 @@ async function fetchSsot() {
   } catch { ssotError.value = true }
 }
 
+/** 人脸库统计 + 24h 通行记录 (人员分类增强信息, 失败静默降级不阻塞值守主链路) */
+async function fetchFace() {
+  passLoading.value = true
+  try {
+    const [s, p] = await Promise.all([
+      hotelUnattendedApi.listFaceStats(),
+      hotelUnattendedApi.listPassRecords({ hours: 24, limit: 200 }),
+    ])
+    faceStats.value = s.data?.data ?? null
+    // 实测后端 data 键为 records (face.ts 声明的 pass_records 与固件不符), 双键兼容
+    const d = p.data?.data as { pass_records?: FacePassRecord[]; records?: FacePassRecord[] } | undefined
+    passRecords.value = d?.pass_records ?? d?.records ?? []
+  } catch { /* 静默降级 */ } finally { passLoading.value = false }
+}
+
 async function reload() {
   loading.value = true
   loadError.value = ''
@@ -249,6 +385,7 @@ async function reload() {
   fetchRules()
   fetchEvents()
   fetchSsot()
+  fetchFace()
 }
 
 onMounted(() => { reload() })
@@ -279,4 +416,6 @@ onMounted(() => { reload() })
 .circle-footer { font-size: 12px; color: var(--el-text-color-secondary); }
 .mono { font-family: 'JetBrains Mono', Consolas, monospace; }
 .evt-key { font-size: 12px; color: var(--el-text-color-secondary); }
+.group-cell { display: flex; align-items: center; gap: 8px; }
+.group-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
 </style>

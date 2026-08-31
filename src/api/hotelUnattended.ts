@@ -25,6 +25,7 @@ import type { ApiResponse } from '@/types/common'
 import type { ScenePack, ScenePackApplyResult } from '@/types/largeEvent'
 import type { LinkageRule, RuleTemplate, RuleTriggerStat } from './linkage'
 import type { AlarmEvent } from '@/types/alarm'
+import type { FaceDatabaseResponse, FaceDatabaseStats, FacePassRecord } from './face'
 
 // ── 酒店无人值守场景常量 (SSOT: EventTypeAliases.h scene_tags / ScenePackDefs.h) ──
 
@@ -44,6 +45,43 @@ export const CORRIDOR_INTERCEPT_TYPES = ['tailgate', 'intrusion'] as const
 
 /** 酒店专属 HT-* 联动模板前缀 */
 export const HOTEL_TEMPLATE_PREFIX = 'HT-'
+
+// ── 人员分类 (SSOT: FaceGroupType 六分类, FaceDatabase.h / api/face.ts) ──
+// 酒店人员体系: 黑名单 / 白名单 / 访客 / VIP / 员工 / 自定义。
+// color 沿 Element 色板语义: 危险红/成功绿/信息青/警示金/主蓝/中性灰。
+
+export interface PersonGroupDef {
+  key: 'blacklist' | 'whitelist' | 'visitor' | 'vip' | 'staff' | 'custom'
+  /** i18n 键 (hotel.person.groups.*) */
+  i18nKey: string
+  color: string
+  /** el-tag type (分类标签着色) */
+  tagType: 'danger' | 'success' | 'warning' | 'primary' | 'info'
+}
+
+export const PERSON_GROUPS: readonly PersonGroupDef[] = [
+  { key: 'blacklist', i18nKey: 'hotel.person.groups.blacklist', color: '#f56c6c', tagType: 'danger' },
+  { key: 'whitelist', i18nKey: 'hotel.person.groups.whitelist', color: '#67c23a', tagType: 'success' },
+  { key: 'visitor',   i18nKey: 'hotel.person.groups.visitor',   color: '#00b8a9', tagType: 'success' },
+  { key: 'vip',       i18nKey: 'hotel.person.groups.vip',       color: '#e6a23c', tagType: 'warning' },
+  { key: 'staff',     i18nKey: 'hotel.person.groups.staff',     color: '#409eff', tagType: 'primary' },
+  { key: 'custom',    i18nKey: 'hotel.person.groups.custom',    color: '#909399', tagType: 'info' },
+]
+
+export type PersonGroupKey = PersonGroupDef['key']
+
+/**
+ * 通行记录 pass_type → 六分类 key (通行端点用 pass_type 而非 group_type;
+ * blacklist_hit 归黑名单, unknown/unknown_type 归 'unknown' 不参与六分类)。
+ */
+export function passTypeToGroup(passType: unknown): PersonGroupKey | 'unknown' {
+  const p = String(passType ?? '')
+  if (p === 'blacklist_hit') return 'blacklist'
+  if (p === 'whitelist' || p === 'visitor' || p === 'vip' || p === 'staff' || p === 'custom') {
+    return p
+  }
+  return 'unknown'
+}
 
 // ── API 封装 ──
 
@@ -86,6 +124,19 @@ export const hotelUnattendedApi = {
     return http.get<ApiResponse<{ items?: AlarmEvent[] }>>('/alarms', {
       params: { page: 1, pageSize: 500 },
     })
+  },
+
+  // ----- 人员分类 (人脸库六分类: 黑名单/白名单/访客/VIP/员工/自定义) -----
+  /** 人脸库六分类统计 (FaceDatabaseStats: 各分组人数) */
+  listFaceStats() {
+    return http.get<FaceDatabaseResponse<FaceDatabaseStats>>('/face/database/stats')
+  },
+
+  /** 通行记录 (pass_type 六分类 + blacklist_hit/unknown; hours 默认 24h) */
+  listPassRecords(params: { hours?: number; limit?: number } = {}) {
+    return http.get<FaceDatabaseResponse<{ pass_records: FacePassRecord[]; total: number }>>(
+      '/face/database/pass-records', { params }
+    )
   },
 
   /** SSOT 场景事件类型元数据 (scene=hotel_unattended 后端按 scene_tags 过滤) */

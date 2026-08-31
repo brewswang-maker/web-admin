@@ -754,6 +754,34 @@ const zhCN = {
 
   // [酒店员工无人值守 2026-08-30] 四视图页面文案 (t8f, 方案 §5.7)
   hotel: {
+    // [人员六分类 2026-08-31] 黑名单/白名单/访客/VIP/员工/自定义 — PERSON_GROUPS
+    // i18nKey 与 Overview (构成卡/最近通行) / CorridorEvents (分类列/筛选) 引用
+    person: {
+      groups: {
+        blacklist: '黑名单',
+        whitelist: '白名单',
+        visitor: '访客',
+        vip: 'VIP',
+        staff: '员工',
+        custom: '自定义',
+      },
+      unknown: '未知',
+      unknownName: '未知人员',
+      colGroup: '人员分类',
+      colName: '姓名',
+      colLive: '活体',
+      colSimilarity: '相似度',
+      groupFilterAll: '全部分类',
+      composeTitle: '人员分类构成',
+      composeInDb: '库内人数',
+      composePass24h: '24h 通行',
+      composeFooter: '合计 {n} 人 · 24h 通行 {m} 次',
+      composeEmpty: '人脸库统计不可用 (接口 404 或人脸库未启用)',
+      passTitle: '最近通行 (24h)',
+      passEmpty: '暂无通行记录',
+      liveOk: '通过',
+      liveFail: '未过',
+    },
     common: {
       loadFailed: '数据加载失败',
       errHint: '若设备刚完成升级, 请尝试 Ctrl+F5 / Cmd+Shift+R 强制刷新页面缓存',

@@ -758,6 +758,34 @@ const enUS: MessageSchema = {
 
   // [Hotel unattended 2026-08-30] four views page texts (t8f, solution §5.7)
   hotel: {
+    // [Person groups 2026-08-31] blacklist/whitelist/visitor/vip/staff/custom —
+    // referenced by PERSON_GROUPS i18nKey and Overview/CorridorEvents views
+    person: {
+      groups: {
+        blacklist: 'Blacklist',
+        whitelist: 'Whitelist',
+        visitor: 'Visitor',
+        vip: 'VIP',
+        staff: 'Staff',
+        custom: 'Custom',
+      },
+      unknown: 'Unknown',
+      unknownName: 'Unknown person',
+      colGroup: 'Group',
+      colName: 'Name',
+      colLive: 'Liveness',
+      colSimilarity: 'Similarity',
+      groupFilterAll: 'All groups',
+      composeTitle: 'Person Groups',
+      composeInDb: 'In DB',
+      composePass24h: '24h Passes',
+      composeFooter: 'Total {n} · {m} passes in 24h',
+      composeEmpty: 'Face database stats unavailable (API 404 or disabled)',
+      passTitle: 'Recent Passes (24h)',
+      passEmpty: 'No pass records',
+      liveOk: 'Pass',
+      liveFail: 'Fail',
+    },
     common: {
       loadFailed: 'Failed to load data',
       errHint: 'If the device was just upgraded, try Ctrl+F5 / Cmd+Shift+R to force refresh',

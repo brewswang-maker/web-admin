@@ -17,6 +17,10 @@
         <el-check-tag :checked="interceptOnly" @change="interceptOnly = !interceptOnly" class="chip-intercept">
           {{ t('hotel.events.interceptOnly') }}
         </el-check-tag>
+        <el-select v-model="selectedGroup" size="small" class="group-select" clearable
+                   :placeholder="t('hotel.person.groupFilterAll')">
+          <el-option v-for="g in groupOptions" :key="g.value" :label="g.label" :value="g.value" />
+        </el-select>
         <el-tooltip v-for="it in typeChips" :key="it.alarm_type"
                     :content="`${it.alarm_type} · ${it.severity_cn}`" placement="top">
           <el-check-tag :checked="selectedType === it.alarm_type"
@@ -69,6 +73,13 @@
           <template #default="{ row }">
             <span v-if="row.confidence != null">{{ (Number(row.confidence) * 100).toFixed(0) }}%</span>
             <span v-else>-</span>
+          </template>
+        </el-table-column>
+        <el-table-column :label="t('hotel.person.colGroup')" width="84">
+          <template #default="{ row }">
+            <el-tag :type="groupTagOf(eventGroup(row)).type" size="small" effect="light">
+              {{ groupTagOf(eventGroup(row)).label }}
+            </el-tag>
           </template>
         </el-table-column>
         <el-table-column prop="channelId" :label="t('hotel.events.colChannel')" width="70" align="center" />
@@ -131,13 +142,16 @@
  * /alarms 前端按场景键并集过滤 (对齐 large-event EventListView 范式)。
  * 行点击 → metadata 明细 drawer (fusion 插件拦截证据: person_ge2_ratio /
  * spoof_confidence / has_backpack / replay_attack 等, AlarmEvent.metadata 透传)。
+ * 人员分类列/筛选: group_type 六分类 (黑名单/白名单/访客/VIP/员工/自定义,
+ * hotel.person SSOT)。
  * 三态防御: 骨架屏 / 错误态可恢复 / 空态。
  */
 import { computed, onMounted, ref } from 'vue'
 import { Refresh } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { useI18n } from 'vue-i18n'
-import { hotelUnattendedApi, isHotelEvent, CORRIDOR_INTERCEPT_TYPES, CORRIDOR_METADATA_KEYS } from '@/api/hotelUnattended'
+import { hotelUnattendedApi, isHotelEvent, CORRIDOR_INTERCEPT_TYPES, CORRIDOR_METADATA_KEYS,
+         PERSON_GROUPS } from '@/api/hotelUnattended'
 import type { AlarmEvent } from '@/types/alarm'
 
 const { t } = useI18n()
@@ -148,6 +162,7 @@ const events = ref<AlarmEvent[]>([])
 const typeItems = ref<Array<{ alarm_type: string; display_name: string; severity_cn: string }>>([])
 const selectedType = ref('')
 const interceptOnly = ref(false)
+const selectedGroup = ref('')
 const page = ref(1)
 const pageSize = 20
 
@@ -159,9 +174,34 @@ const typeChips = computed(() => typeItems.value)
 
 const filteredEvents = computed(() =>
   events.value.filter(isHotelEvent).filter(a =>
-    interceptOnly.value
+    (interceptOnly.value
       ? (CORRIDOR_INTERCEPT_TYPES as readonly string[]).includes(String(a.type))
-      : true))
+      : true) &&
+    (!selectedGroup.value || groupOf(eventGroup(a)) === selectedGroup.value)))
+
+// ── 人员分类筛选 (group_type 来自事件 metadata, AlarmEvent 已归一透传) ──
+const groupOptions = computed(() =>
+  PERSON_GROUPS.map(g => ({ value: g.key, label: t(g.i18nKey) })))
+
+/** AlarmEvent 人员分类读取: 归一化顶层字段 (若有) → metadata.group_type 兜底 */
+function eventGroup(a: AlarmEvent): unknown {
+  const top = (a as { group_type?: unknown }).group_type
+  return top ?? (a.metadata as Record<string, unknown> | undefined)?.group_type
+}
+
+/** 事件 group_type → 六分类 key (未标注/非六分类值 → 'unknown') */
+function groupOf(groupType: unknown): string {
+  const g = String(groupType ?? '').toLowerCase()
+  return PERSON_GROUPS.some(p => p.key === g) ? g : 'unknown'
+}
+
+/** group_type → 分类 tag (unknown → '未知' 灰 tag, 不参与六分类) */
+function groupTagOf(groupType: unknown) {
+  const def = PERSON_GROUPS.find(g => g.key === groupOf(groupType))
+  return def
+    ? { label: t(def.i18nKey), type: def.tagType }
+    : { label: t('hotel.person.unknown'), type: 'info' as const }
+}
 
 const finalEvents = computed(() =>
   selectedType.value
@@ -257,6 +297,7 @@ async function fetchEvents() {
 function refreshAll() {
   page.value = 1
   selectedType.value = ''
+  selectedGroup.value = ''
   fetchTypes()
   fetchEvents()
 }
@@ -274,6 +315,7 @@ onMounted(() => { refreshAll() })
 .type-chips { display: flex; flex-wrap: wrap; gap: 8px; }
 .type-chips :deep(.el-check-tag) { height: 26px; padding: 0 10px; font-size: 12px; }
 .type-chips :deep(.el-check-tag.is-checked.chip-intercept) { background: #f56c6c; }
+.group-select { width: 116px; align-self: center; }
 .err-hint { margin-top: 10px; font-size: 12px; color: var(--el-text-color-secondary); }
 .card-header { display: flex; justify-content: space-between; align-items: center; }
 .hint { font-size: 12px; color: var(--el-text-color-secondary); font-weight: normal; }
