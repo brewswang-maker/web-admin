@@ -531,14 +531,27 @@ type SidebarItem = {
   label: string
   icon: Component
   iconFont?: string
+  // [场景账号 2026-08-31] 可选角色限制: 声明后仅与用户角色有交集才可见 (admin 恒通过)
+  roles?: string[]
 }
 type PrimaryMenu = {
   key: PrimaryMenuKey
   label: string
   items: SidebarItem[]
+  roles?: string[]
 }
 
-const primaryMenus = computed<PrimaryMenu[]>(() => [
+// [场景账号 2026-08-31] 菜单角色过滤: 未声明 roles 恒可见; admin 恒通过;
+//   声明后要求与当前用户角色有交集 (场景用户 scenario_* 仅见本场景组)
+function matchMenuRoles(roles?: string[]): boolean {
+  if (!roles || roles.length === 0) return true
+  if (auth.roles.includes('admin')) return true
+  return roles.some(role => auth.roles.includes(role))
+}
+
+const primaryMenus = computed<PrimaryMenu[]>(() => {
+  // 显式注解: 中间 filter/map 链需完整 PrimaryMenu 类型 (匿名推断会丢失可选 roles)
+  const menus: PrimaryMenu[] = [
   {
     key: 'home',
     label: t('menuPrimary.home'),
@@ -567,8 +580,10 @@ const primaryMenus = computed<PrimaryMenu[]>(() => [
     items: [{ path: '/alarms', label: t('menu.alarms'), icon: Bell }],
   },
   {
+    // [场景账号 2026-08-31] AI 智能组 admin 专属 (与组内 /algo-config 过滤对齐)
     key: 'ai',
     label: t('menuPrimary.ai'),
+    roles: ['admin'],
     items: [
       { path: '/dashboard', label: t('menu.dashboard'), icon: Odometer },
       { path: '/pipelines', label: t('menu.pipelineEditor'), icon: SetUp },
@@ -587,8 +602,10 @@ const primaryMenus = computed<PrimaryMenu[]>(() => [
     ].filter(item => item.path !== '/algo-config' || auth.hasRole('admin')),
   },
   {
+    // [场景账号 2026-08-31] 场景组仅对持对应 scenario_* 角色的用户可见
     key: 'screening',
     label: t('menuPrimary.screening'),
+    roles: ['scenario_screening'],
     items: [
       { path: '/screening/overview', label: t('menu.screeningOverview'), icon: DataAnalysis },
       { path: '/screening/channel-order', label: t('menu.screeningChannelOrder'), icon: Connection },
@@ -603,6 +620,7 @@ const primaryMenus = computed<PrimaryMenu[]>(() => [
     // [校园方案 2026-08-30] 一级菜单「校园」: 9 子模块 (总览/门禁/周界/行为/考勤/访客/安检/大屏/3D)
     key: 'school',
     label: t('menuPrimary.school'),
+    roles: ['scenario_school'],
     items: [
       { path: '/school/overview', label: t('menu.schoolOverview'), icon: School },
       { path: '/school/access', label: t('menu.schoolAccess'), icon: Lock },
@@ -622,6 +640,7 @@ const primaryMenus = computed<PrimaryMenu[]>(() => [
     //   T6 红线 (电话/吸烟不联锁) + EHS 闭环 + 安全 PLC 隔离
     key: 'gas-station',
     label: t('menuPrimary.gasStation'),
+    roles: ['scenario_gas_station'],
     items: [
       { path: '/gas-station/overview',    label: t('menu.gasStationOverview'),    icon: DataAnalysis },
       { path: '/gas-station/fueling',     label: t('menu.gasStationFueling'),     icon: TakeawayBox },
@@ -636,6 +655,7 @@ const primaryMenus = computed<PrimaryMenu[]>(() => [
   {
     key: 'large-event',
     label: t('menuPrimary.largeEvent'),
+    roles: ['scenario_large_event'],
     items: [
       { path: '/large-event/overview', label: t('menu.largeEventOverview'), icon: DataAnalysis },
       { path: '/large-event/density', label: t('menu.largeEventDensity'), icon: Position },
@@ -648,6 +668,7 @@ const primaryMenus = computed<PrimaryMenu[]>(() => [
   {
     key: 'hotel-unattended',
     label: t('menuPrimary.hotelUnattended'),
+    roles: ['scenario_hotel'],
     items: [
       { path: '/hotel-unattended/overview', label: t('menu.hotelOverview'), icon: Odometer },
       { path: '/hotel-unattended/corridor-events', label: t('menu.hotelCorridorEvents'), icon: Bell },
@@ -659,23 +680,30 @@ const primaryMenus = computed<PrimaryMenu[]>(() => [
     key: 'platform',
     label: t('menuPrimary.platform'),
     items: [
+      // [场景账号 2026-08-31] devices/topology/linkage/projects 全员可见 (守卫等效控制,
+      //   projects 仍叠加既有 auth.can); 其余 admin-only 项标 roles
       { path: '/devices', label: t('menu.devices'), icon: Monitor },
-      { path: '/scene-management', label: '3D场景管理', icon: MapLocation },
+      { path: '/scene-management', label: '3D场景管理', icon: MapLocation, roles: ['admin'] },
       { path: '/topology', label: t('menu.topology'), icon: Share },
       { path: '/linkage', label: t('menu.linkage'), icon: Connection },
       { path: '/projects', label: t('menu.projects'), icon: FolderOpened },
-      { path: '/teams', label: t('menu.team'), icon: User },
-      { path: '/upgrade', label: t('menu.ota'), icon: Upload },
-      { path: '/settings', label: t('menu.settings'), icon: Setting },
-      { path: '/audit', label: t('menu.audit'), icon: DocumentChecked },
-      { path: '/open-platform', label: t('menu.openPlatform'), icon: Link },
-      { path: '/users', label: t('menu.user'), icon: User },
-      { path: '/roles', label: t('menu.role'), icon: Avatar, iconFont: 'icon1-jiaoseguanli' },
-      { path: '/permissions', label: t('menu.permission'), icon: Lock },
-      { path: '/billing', label: t('menu.billing'), icon: Wallet },
+      { path: '/teams', label: t('menu.team'), icon: User, roles: ['admin'] },
+      { path: '/upgrade', label: t('menu.ota'), icon: Upload, roles: ['admin'] },
+      { path: '/settings', label: t('menu.settings'), icon: Setting, roles: ['admin'] },
+      { path: '/audit', label: t('menu.audit'), icon: DocumentChecked, roles: ['admin'] },
+      { path: '/open-platform', label: t('menu.openPlatform'), icon: Link, roles: ['admin'] },
+      { path: '/users', label: t('menu.user'), icon: User, roles: ['admin'] },
+      { path: '/roles', label: t('menu.role'), icon: Avatar, iconFont: 'icon1-jiaoseguanli', roles: ['admin'] },
+      { path: '/permissions', label: t('menu.permission'), icon: Lock, roles: ['admin'] },
+      { path: '/billing', label: t('menu.billing'), icon: Wallet, roles: ['admin'] },
     ].filter(item => item.path !== '/projects' || auth.can('projects', 'read')),
   },
-])
+  ]
+  return menus
+    .filter(menu => matchMenuRoles(menu.roles))
+    .map(menu => ({ ...menu, items: menu.items.filter(item => matchMenuRoles(item.roles)) }))
+    .filter(menu => menu.items.length > 0)
+})
 
 const activePrimaryKey = ref<PrimaryMenuKey>('home')
 const activePrimaryMenu = computed(() =>

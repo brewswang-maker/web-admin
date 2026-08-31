@@ -678,9 +678,16 @@ router.beforeEach(async (to, _from, next) => {
   }
 
   // 检查角色权限
+  // [场景账号 2026-08-31] 场景专属用户 (scenario_* 前缀) 等效普通用户:
+  //   追加 'user'/'viewer' 使其可进场景页与 devices/linkage/topology,
+  //   但 ['admin'] 路由 (用户/角色/权限/设置/OTA/审计等) 仍不可进
+  const userRoles = [...userStore.roles]
+  if (userRoles.some(role => role.startsWith('scenario_'))) {
+    userRoles.push('user', 'viewer')
+  }
   const requiredRoles = to.meta.roles as string[] | undefined
   if (requiredRoles && requiredRoles.length > 0) {
-    const hasPermission = requiredRoles.some(role => userStore.roles.includes(role))
+    const hasPermission = requiredRoles.some(role => userRoles.includes(role))
     if (!hasPermission) {
       console.warn('[Router] 无权限访问:', to.path)
       return next('/404')
