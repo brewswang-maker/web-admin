@@ -246,6 +246,15 @@ export default defineConfig(async () => {
     },
 
     // ─── 生产构建 ────────────────────────────────
+    // [FIX 2026-08-31] esbuild minifyIdentifiers 规避: 压缩标识符后 SituationScreen
+    //   多组件嵌套作用域出现重名 (openAlarmDetail 的 function J 被其它 render 闭包的
+    //   const J=Pl 干扰), 首页告警条目点击静默失效 (无 console/无请求/无弹窗);
+    //   dev 与 minify:false 产物均正常, 仅 minify 产物损坏。保留空白/语法压缩。
+    esbuild: {
+      minifyIdentifiers: false,
+      minifySyntax: true,
+      minifyWhitespace: true,
+    },
     build: {
       outDir: 'dist',
       assetsDir: 'assets',
@@ -264,6 +273,7 @@ export default defineConfig(async () => {
       cssMinify: 'lightningcss',
 
       // JS 压缩：esbuild（原生速度）
+      //   [FIX 2026-08-31] minifyIdentifiers 规避见下方顶层 esbuild 配置
       minify: 'esbuild',
 
       // v7.3: ECharts 整包 ~870KB、Element Plus ~766KB、Three.js ~531KB
