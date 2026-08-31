@@ -227,7 +227,7 @@ export const asyncRoutes: RouteRecordRaw[] = [
         path: 'situation',
         name: 'Situation',
         component: SituationScreen,
-        meta: { title: '态势大屏', icon: 'DataBoard', roles: ['admin'] }
+        meta: { title: '态势大屏', icon: 'DataBoard', roles: ['admin', 'user', 'viewer'] }
       },
       {
         path: 'scene-management',

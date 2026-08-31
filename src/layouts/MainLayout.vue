@@ -676,10 +676,13 @@ const primaryMenus = computed<PrimaryMenu[]>(() => {
       { path: '/hotel-unattended/rules', label: t('menu.hotelRules'), icon: List },
     ],
   },
-  // [视频周界 2026-08-31] 一级菜单 (vp, 方案 §6 三视图; 跨行业通用能力场景恒可见)
+  // [视频周界 2026-08-31] 一级菜单 (vp, 方案 §6 三视图; 跨行业通用能力场景)
+  //   [场景账号 2026-08-31] 标 admin/user/viewer: 普通用户可见不变,
+  //   scenario_* 单角色用户无交集被隐藏 (需求: 场景菜单恰 6 项)
   {
     key: 'video-perimeter',
     label: t('menuPrimary.videoPerimeter'),
+    roles: ['admin', 'user', 'viewer'],
     items: [
       { path: '/video-perimeter/overview', label: t('menu.perimeterOverview'), icon: Odometer },
       { path: '/video-perimeter/events', label: t('menu.perimeterEvents'), icon: Bell },
