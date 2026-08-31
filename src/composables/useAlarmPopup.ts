@@ -10,8 +10,10 @@
  *   5. 报警音效播放
  */
 import { ref, computed } from 'vue'
+import { ElMessage } from 'element-plus'
 import { useAlarmStore } from '@/stores/alarm'
 import { linkageApi, ACTION_TYPE_MAP } from '@/api/linkage'
+import { alarmApi } from '@/api/alarm'
 import type { LinkageRule, LinkageAction } from '@/api/linkage'
 import type { AlarmEvent } from '@/types/alarm'
 import { normalizeAlarmCore, ALARM_CATEGORY } from '@/types/alarm'
@@ -412,4 +414,24 @@ export function closePopup() {
     matchedRule.value = null
     linkageLogs.value = []
   }, 300)
+}
+
+// ── [UX 2026-08-31] 按 ID 打开告警详情弹窗 (统一入口) ──
+//   供首页态势屏/检索结果等只有告警 ID 的入口复用:
+//   先 GET /alarms/:id 拉全量 (条目数据通常缺 channelId/deviceId 等),
+//   再走 showAlarmPopup 完整链路 (normalize + 规则匹配 + 视频/快照/操作按钮)。
+export async function openAlarmDetailById(id: string) {
+  if (!id) return
+  try {
+    const res: any = await alarmApi.getDetail(id)
+    const detail = res?.data?.data ?? res?.data ?? res
+    if (!detail || (!detail.id && !detail.alarm_id)) {
+      ElMessage.warning('未找到该告警的详情数据')
+      return
+    }
+    await showAlarmPopup(detail)
+  } catch (e: any) {
+    console.error('[useAlarmPopup] openAlarmDetailById failed:', e)
+    ElMessage.error('打开告警详情失败: ' + (e?.message || ''))
+  }
 }

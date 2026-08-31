@@ -256,10 +256,11 @@
     <el-empty v-else-if="searched && !loading && !towerUnavailable && activeTab !== 'trajectory'" description="无匹配结果" />
 
     <!-- 详情弹窗 -->
-    <el-dialog v-model="detailVisible" title="结果详情" width="560">
+    <el-dialog v-model="detailVisible" title="结果详情" width="560"
+               :close-on-click-modal="false" :close-on-press-escape="false">
       <pre class="detail-json">{{ detailJson }}</pre>
       <template #footer>
-        <el-button @click="gotoAlarm">在告警中心打开</el-button>
+        <el-button @click="gotoAlarm">查看告警详情</el-button>
         <el-button type="primary" @click="detailVisible = false">关闭</el-button>
       </template>
     </el-dialog>
@@ -294,6 +295,8 @@ import {
 } from '@/api/retrieval'
 import { allowedOps, getAttributeKeyDef, valueControlKind } from '@/api/attributeKeys'
 import { ApiError } from '@/api/http'
+// [UX 2026-08-31] 1d: 检索结果 → 告警详情弹窗 (不再跳页报警中心)
+import { openAlarmDetailById } from '@/composables/useAlarmPopup'
 
 const router = useRouter()
 const activeTab = ref<'hybrid' | 'nl' | 'image' | 'trajectory'>('hybrid')
@@ -558,8 +561,11 @@ function openDetail(it: AnyItem) {
 }
 
 function gotoAlarm() {
+  // [UX 2026-08-31] 1d: 原“跳报警中心”改为就地弹出告警详情弹窗
+  //   (检索条目字段不全 → 按 id 拉全量后走全局 AlarmPopup)
   detailVisible.value = false
-  router.push({ path: '/alarms', query: detailAlarmId.value ? { alarm_id: detailAlarmId.value } : {} })
+  if (detailAlarmId.value) openAlarmDetailById(detailAlarmId.value)
+  else ElMessage.warning('该条目无告警 ID, 无法打开详情')
 }
 
 // valueControlKind 保留给后续按 key 分型渲染 value 控件 (P4-D 对齐扩展点)

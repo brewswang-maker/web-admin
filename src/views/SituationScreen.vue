@@ -232,9 +232,12 @@
                   v-for="alarm in latestAlarms"
                   :key="alarm.id"
                   :class="['alarm-table-row', 'alarm-row', alarm.level, { 'is-unhandled': alarm.status === '未处理' }]"
+                  role="button"
+                  :aria-label="t('situationScreen.viewDetail')"
+                  @click="openAlarmDetail(alarm)"
                 >
                   <span class="alarm-level"><b>{{ alarmLevelText(alarm.level) }}</b></span>
-                  <span class="alarm-snapshot">
+                  <span class="alarm-snapshot" @click.stop>
                     <el-image
                       v-if="getSnapshotUrl(alarm)"
                       :src="getSnapshotUrl(alarm)"
@@ -257,7 +260,7 @@
                       {{ alarmStatusText(alarm.status) }}
                     </el-tag>
                   </span>
-                  <button class="alarm-action" type="button" @click="goToAlarms">
+                  <button class="alarm-action" type="button" @click.stop="openAlarmDetail(alarm)">
                     {{ alarm.status === '已处置' ? t('situationScreen.viewDetail') : t('situationScreen.toHandle') }}
                   </button>
                 </div>
@@ -411,6 +414,8 @@ import { sceneApi } from '@/api/scene'
 import { DEFAULT_BUILDINGS, STADIUM_SCENE_META } from '@/components/scene3d/constants/defaultSceneData'
 import type { Building3DNode, SceneMeta } from '@/components/scene3d/types/scene3d'
 import { useWebSocket } from '@/composables/useWebSocket'
+// [UX 2026-08-31] 实时告警条目点击 → 弹出详情弹窗 (不再跳转报警中心)
+import { openAlarmDetailById } from '@/composables/useAlarmPopup'
 import Scene3D from '@/components/Scene3D.vue'
 import SceneEditPanel from '@/components/SceneEditPanel.vue'
 import flvjs from 'flv.js'
@@ -470,6 +475,12 @@ const latestAlarms = ref<Alarm[]>([])
 
 function goToAlarms() {
   router.push('/alarms')
+}
+
+// [UX 2026-08-31] 1a: 点击告警条目/处理按钮 → 就地弹出详情弹窗
+//   (条目仅有展示字段, 无 channelId/deviceId → 按 id 拉全量后走全局 AlarmPopup)
+function openAlarmDetail(alarm: Alarm) {
+  if (alarm?.id) openAlarmDetailById(alarm.id)
 }
 
 function alarmLevelText(level: string): string {
@@ -2708,6 +2719,8 @@ onUnmounted(() => {
   background: rgba(4, 24, 64, 0.3);
   font-size: 14px;
   transition: background-color 0.12s ease;
+  /* [UX 2026-08-31] 行可点击 → 详情弹窗 */
+  cursor: pointer;
 }
 
 .alarm-row:nth-child(odd) {

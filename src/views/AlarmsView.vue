@@ -113,7 +113,9 @@
 
     <!-- ===== [安检对标优化 2026-08-30] 复核标注 dialog ===== -->
     <!--   判定标注独立于处置工作流: verdict 写 false_alarm_feedback 并同步 status -->
-    <el-dialog v-model="reviewVisible" title="告警复核标注" width="480px">
+    <!-- [UX 2026-08-31] 告警类弹窗统一关闭策略: 禁遮罩点击/禁 ESC (需求 2d) -->
+    <el-dialog v-model="reviewVisible" title="告警复核标注" width="480px"
+               :close-on-click-modal="false" :close-on-press-escape="false">
       <div v-if="reviewTarget" class="review-body">
         <div class="review-target">
           {{ reviewTarget.description || reviewTarget.type }} · {{ reviewTarget.channelName || reviewTarget.channelId }}
@@ -229,6 +231,7 @@
         height="max(calc(100vh - 360px), 300px)"
         style="width: 100%"
         @selection-change="(val: any[]) => selected = val"
+        @row-click="onRowClickDetail"
         :default-sort="{ prop: 'createdAt', order: 'descending' }"
         row-key="id"
         v-loading="loading"
@@ -402,55 +405,13 @@
       </div>
     </el-card>
 
-    <!-- ===== 告警详情弹窗 ===== -->
-    <el-dialog
-      v-model="showDetailDialog"
-      title="告警详情"
-      width="640px"
-      destroy-on-close
-      class="alarm-detail-dialog"
-    >
-      <template v-if="detailAlarm">
-        <el-descriptions :column="2" border size="small">
-          <el-descriptions-item label="告警ID">
-            <span class="font-mono">{{ detailAlarm.id }}</span>
-          </el-descriptions-item>
-          <el-descriptions-item label="级别">
-            <el-tag :type="levelTagType(detailAlarm.severity)" size="small" effect="dark">
-              {{ severityLabel(detailAlarm.severity) }}
-            </el-tag>
-          </el-descriptions-item>
-          <el-descriptions-item label="类型">{{ detailAlarm.type }}</el-descriptions-item>
-          <el-descriptions-item label="设备">{{ detailAlarm.deviceName || detailAlarm.deviceId }}</el-descriptions-item>
-          <el-descriptions-item label="时间">{{ formatTime(detailAlarm.createdAt) }}</el-descriptions-item>
-          <el-descriptions-item label="置信度">
-            <span :style="{ color: confidenceColor(detailAlarm.aiConfidence), fontWeight: 600 }">
-              {{ Math.round((detailAlarm.aiConfidence ?? 0) * 100) }}%
-            </span>
-          </el-descriptions-item>
-          <el-descriptions-item label="描述" :span="2">
-            {{ detailAlarm.description || detailAlarm.title }}
-          </el-descriptions-item>
-          <el-descriptions-item label="AI推理路径" :span="2">
-            <div class="xai-detail">{{ detailAlarm.aiAnalysis || '无AI解释' }}</div>
-          </el-descriptions-item>
-          <el-descriptions-item label="关联记忆" :span="2">
-            {{ detailAlarm.memoryRefs || '无关联记忆' }}
-          </el-descriptions-item>
-          <el-descriptions-item label="处理状态">
-            <el-tag :type="statusTagType(detailAlarm.status)" size="small">
-              {{ statusLabel(detailAlarm.status) }}
-            </el-tag>
-          </el-descriptions-item>
-          <el-descriptions-item label="处理人">
-            {{ detailAlarm.handledBy || '-' }}
-          </el-descriptions-item>
-        </el-descriptions>
-      </template>
-    </el-dialog>
+    <!-- ===== 告警详情弹窗 [UX 2026-08-31 已拆除]: 详情统一走全局 AlarmPopup
+         (components/alarm/AlarmPopup.vue, 含快照/实时流/回放/AI研判/确认/误报),
+         由 handleDetail → showAlarmPopup 触发 -->
 
     <!-- ===== 证据链弹窗 ===== -->
-    <el-dialog v-model="showEvidenceDialog" title="告警证据链" width="720px" destroy-on-close>
+    <el-dialog v-model="showEvidenceDialog" title="告警证据链" width="720px" destroy-on-close
+               :close-on-click-modal="false" :close-on-press-escape="false">
       <div v-loading="evidenceLoading">
         <template v-if="evidenceData">
           <el-row :gutter="16">
@@ -592,6 +553,8 @@
       :title="inlineVideoTitle"
       width="760px"
       destroy-on-close
+      :close-on-click-modal="false"
+      :close-on-press-escape="false"
       @close="inlineVideoUrl = ''; inlineVideoMode = 'none'"
     >
       <div v-loading="inlineVideoLoading" style="min-height:300px">
@@ -645,6 +608,8 @@ import type { AlarmHandleForm, AlarmEvidence, AlarmEvent } from '@/types/alarm'
 import { normalizeAlarmCore } from '@/types/alarm'
 import { useAuthStore } from '@/stores/auth'
 import { useWebSocket } from '@/composables/useWebSocket'
+// [UX 2026-08-31] 1b: 列表行点击 → 全局告警详情弹窗 (与首页同套 AlarmPopup)
+import { showAlarmPopup } from '@/composables/useAlarmPopup'
 import { useRouter } from 'vue-router'
 import flvjs from 'flv.js'
 
@@ -673,8 +638,8 @@ const alarms = shallowRef<any[]>([])
 const totalAlarms = ref(0)
 
 // ── 详情弹窗 ──
-const showDetailDialog = ref(false)
-const detailAlarm = ref<any>(null)
+const showDetailDialog = ref(false) // [UX 2026-08-31] 已废弃: 原 detail dialog 拆除, 详情统一走全局 AlarmPopup
+void showDetailDialog
 
 // ── 证据链弹窗 ──
 const router = useRouter()
@@ -1410,8 +1375,16 @@ async function handleIgnore(row: any) {
 }
 
 function handleDetail(row: any) {
-  detailAlarm.value = row
-  showDetailDialog.value = true
+  // [UX 2026-08-31] 1b: 详情统一走全局 AlarmPopup (含快照/实时流/回放/AI研判/操作按钮),
+  //   替换原简版 descriptions 弹窗 — 与首页实时告警条目同一套弹窗
+  showAlarmPopup(row)
+}
+
+// [UX 2026-08-31] 整行点击 → 详情弹窗; 排除行内交互元素 (按钮/下拉/图片预览/链接/选择框)
+function onRowClickDetail(row: any, _column: unknown, event: Event) {
+  const target = event.target as HTMLElement | null
+  if (target?.closest('button, a, input, label, .el-dropdown, .el-switch, .el-checkbox, .el-image, .el-tag__close')) return
+  handleDetail(row)
 }
 
 // ── 证据链 ──
@@ -1619,6 +1592,10 @@ onUnmounted(() => {
 /* ============================================================
  * 告警中心 AlarmsView — v6.0 样式
  * ============================================================ */
+/* [UX 2026-08-31] 1b: 整行可点击 → 详情弹窗 */
+.alarms-page :deep(.el-table__row) {
+  cursor: pointer;
+}
 .alarms-page {
   /* padding: 20px 24px; */
   /* max-width: var(--content-max-width, 1440px); */

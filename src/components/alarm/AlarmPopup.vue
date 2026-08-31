@@ -1,7 +1,9 @@
 <template>
   <Teleport to="body">
     <transition name="alarm-popup">
-      <div v-if="popupVisible && currentAlarm" class="alarm-popup-overlay" @click.self="closePopup">
+<!-- [UX 2026-08-31] 遮罩点击不再关闭弹窗 (误触丢内容): 只能通过右上角 ✕
+     或底栏业务按钮 (确认/误报/静音) 或 60s 倒计时主动关闭 -->
+      <div v-if="popupVisible && currentAlarm" class="alarm-popup-overlay">
         <div
           class="alarm-popup"
           :class="{ 'alarm-flash': popupVisible }"
@@ -205,6 +207,23 @@
                           </template>
                           {{ targetNameLabel }}
                         </span>
+                      </div>
+                      <!-- [UX 2026-08-31] 处理记录: 历史告警/已处置告警打开时可见 (1c 详情感) -->
+                      <div class="alarm-popup__info-row">
+                        <span class="alarm-popup__info-key">状态：</span>
+                        <span class="alarm-popup__info-val">
+                          <el-tag :type="statusTagType(currentAlarm.status)" size="small" effect="plain">
+                            {{ statusLabel(currentAlarm.status) }}
+                          </el-tag>
+                        </span>
+                      </div>
+                      <div v-if="currentAlarm.handledBy" class="alarm-popup__info-row">
+                        <span class="alarm-popup__info-key">处理人：</span>
+                        <span class="alarm-popup__info-val">{{ currentAlarm.handledBy }}</span>
+                      </div>
+                      <div v-if="currentAlarm.handledAt" class="alarm-popup__info-row">
+                        <span class="alarm-popup__info-key">处理时间：</span>
+                        <span class="alarm-popup__info-val">{{ formatTime(currentAlarm.handledAt) }}</span>
                       </div>
                     </div>
                   </div>
@@ -755,10 +774,30 @@ function formatTime(isoStr: string): string {
   }
 }
 
+// ── 状态标签/文案 (处理记录显示用, 与 AlarmsView statusLabel 语义一致) ──
+const STATUS_CN: Record<string, string> = {
+  unhandled: '未处理', acknowledged: '已确认', disposed: '已处置',
+  closed: '已关闭', ignored: '已忽略', forwarded: '已转发',
+  escalated: '已升级', reassigned: '已转派', false_alarm: '误报',
+}
+function statusLabel(s?: string): string {
+  return STATUS_CN[s || ''] || s || '-'
+}
+function statusTagType(s?: string): 'success' | 'warning' | 'info' | 'danger' | 'primary' {
+  switch (s) {
+    case 'closed': case 'disposed': return 'success'
+    case 'acknowledged': return 'primary'
+    case 'ignored': case 'false_alarm': return 'info'
+    case 'escalated': case 'forwarded': return 'danger'
+    default: return 'warning'
+  }
+}
+
 // ── 键盘快捷键 ──
+// [UX 2026-08-31] ESC 不再关闭弹窗 (误触丢内容): 只能显式按钮关闭;
+//   保留 ←/→ 队列切换
 function onKeydown(e: KeyboardEvent) {
   if (!popupVisible.value) return
-  if (e.key === 'Escape') closePopup()
   if (e.key === 'ArrowLeft') prevAlarm()
   if (e.key === 'ArrowRight') nextAlarm()
 }

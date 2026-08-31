@@ -218,6 +218,8 @@ import { useRouter } from 'vue-router'
 import { locationApi, type DeviceLocation, type TrackPoint } from '@/api/location'
 import { http as _unused } from '@/api/http' // 保留以便后续需要
 import { useEventTypeNames } from '@/composables/useEventTypeNames'  // [P3-3] SSOT 事件类型名称
+// [UX 2026-08-31] 1d: 告警标记点击 → 全局告警详情弹窗 (不再只看摘要 InfoWindow)
+import { showAlarmPopup } from '@/composables/useAlarmPopup'
 
 // ── 高德地图 JS SDK ──
 const AMAP_KEY = '7fe207317aeae03b556a6cfa10e9ceb8'
@@ -632,10 +634,15 @@ function onAlarmMapMarker(e: Event) {
       border: 3px solid #fff;
       box-shadow: 0 0 12px ${color};
       animation: alarm-pulse 1s infinite;
+      cursor: pointer;
     "></div>`,
     offset: new AMap.Pixel(-12, -12),
   })
   map.add(marker)
+
+  // [UX 2026-08-31] 1d: 点击闪烁标记 → 弹出完整告警详情弹窗
+  //   (detail 为 WS 原始 payload, normalizeAlarmCore 直接兼容 snake_case)
+  marker.on('click', () => { showAlarmPopup(detail) })
 
   // [P3-3 FIX] 硬编码 alarmTypeCnMap → SSOT API 缓存
   const { getAlarmTypeName } = useEventTypeNames()
@@ -653,6 +660,7 @@ function onAlarmMapMarker(e: Event) {
         坐标: ${lat.toFixed(6)}, ${lng.toFixed(6)}<br/>
         时间: ${new Date(detail.timestamp_ms).toLocaleString()}<br/>
         ${detail.snapshot_url ? `<img src="${detail.snapshot_url}" style="width:100%;margin-top:4px;border-radius:4px;"/>` : ''}
+        <div style="margin-top:6px;color:#3294ED;font-size:12px;">💡 点击闪烁标记可打开完整详情弹窗</div>
       </div>
     </div>`,
     offset: new AMap.Pixel(0, -20),
