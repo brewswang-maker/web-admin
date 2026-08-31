@@ -45,8 +45,39 @@
         </el-col>
       </el-row>
 
+      <!-- ===== 运营质量 (vp3: 《研究报告》§8 复核闭环运营口径, AI 复核代理指标) ===== -->
+      <el-row :gutter="16" class="stat-row">
+        <el-col :span="24">
+          <el-card shadow="hover">
+            <template #header>
+              <div class="ops-head">
+                <span>{{ t('perimeter.overview.opsQuality') }}</span>
+                <span class="ops-note">{{ t('perimeter.overview.opsNote') }}</span>
+              </div>
+            </template>
+            <div class="ops-row">
+              <div class="ops-item">
+                <div class="stat-label">{{ t('perimeter.overview.aiReviewCoverage') }}</div>
+                <div class="stat-value">{{ ops.aiCoveragePct }}<span class="stat-unit">%</span></div>
+                <div class="ops-sub">{{ ops.reviewed }} / {{ ops.total }}</div>
+              </div>
+              <div class="ops-item">
+                <div class="stat-label">{{ t('perimeter.overview.aiFalseRatio') }}</div>
+                <div class="stat-value">{{ ops.aiFalsePct }}<span class="stat-unit">%</span></div>
+                <div class="ops-sub">{{ ops.aiFalse }} / {{ ops.reviewed }}</div>
+              </div>
+              <div class="ops-item">
+                <div class="stat-label">{{ t('perimeter.overview.humanFalseConfirmed') }}</div>
+                <div class="stat-value">{{ ops.humanFalse }}</div>
+                <div class="ops-sub">&nbsp;</div>
+              </div>
+            </div>
+          </el-card>
+        </el-col>
+      </el-row>
+
       <el-row :gutter="16">
-        <!-- ===== 事件类型分布 (8 键, PERIMETER_EVENT_TYPES 顺序) ===== -->
+        <!-- ===== 事件类型分布 (9 键, PERIMETER_EVENT_TYPES 顺序) ===== -->
         <el-col :span="14">
           <el-card shadow="hover" class="dist-card">
             <template #header>{{ t('perimeter.overview.typeDist') }}</template>
@@ -127,7 +158,28 @@ const stats = computed(() => {
   }
 })
 
-/** 8 事件键分布 (仅统计既有告警; pct 相对最大计数) */
+/** [vp3] 运营质量代理指标 (AI 复核口径——《研究报告》§8 复核闭环/误报密度;
+ *  真值库误报密度测量属 Roadmap R6, 此处为运营可视化代理口径) */
+const ops = computed(() => {
+  const total = alarms.value.length
+  const reviewed = alarms.value.filter(e => !!(e.aiConclusion ?? '').trim()).length
+  const aiFalse = alarms.value.filter(e => {
+    const c = (e.aiConclusion || '').toLowerCase()
+    return !!c && (c.includes('false_alarm') || c.includes('误报'))
+  }).length
+  const humanFalse = alarms.value.filter(e => e.status === 'false_alarm').length
+  const pct = (n: number, d: number) => (d > 0 ? Math.round((n / d) * 100) : 0)
+  return {
+    total,
+    reviewed,
+    aiFalse,
+    humanFalse,
+    aiCoveragePct: pct(reviewed, total),
+    aiFalsePct: pct(aiFalse, reviewed),
+  }
+})
+
+/** 9 事件键分布 (仅统计既有告警; pct 相对最大计数) */
 const typeDist = computed(() => {
   const counts = new Map<string, number>()
   for (const e of alarms.value) {
@@ -204,4 +256,9 @@ onMounted(reload)
 .pack-status-name { font-size: 14px; }
 .pack-status-id { font-size: 12px; color: var(--el-text-color-secondary); }
 .mono { font-family: Menlo, Consolas, monospace; }
+.ops-head { display: flex; justify-content: space-between; align-items: center; }
+.ops-note { font-size: 12px; color: var(--el-text-color-secondary); font-weight: 400; }
+.ops-row { display: flex; gap: 48px; padding: 4px 0; }
+.ops-item { min-width: 140px; }
+.ops-sub { font-size: 12px; color: var(--el-text-color-secondary); margin-top: 4px; }
 </style>

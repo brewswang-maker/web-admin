@@ -814,6 +814,7 @@ const zhCN = {
       aiTrue: '真事件',
       aiFalse: '误报',
       aiReviewed: '已复核',
+      reviewNone: '未复核',
       colStatus: '状态',
       colTime: '时间',
       detailTitle: '事件详情',
@@ -844,7 +845,13 @@ const zhCN = {
       packsStatus: '场景包布防状态',
       gotoPacks: '去布防',
       deployed: '已布防',
-      notDeployed: '未布防'
+      notDeployed: '未布防',
+      // [vp3 2026-09-01] 运营质量卡 (《研究报告》§8 复核闭环运营口径, AI 复核代理指标)
+      opsQuality: '运营质量 (AI 复核口径)',
+      opsNote: '代理指标: 基于 AI 复核结论与人工确认状态; 真值库误报密度测量见 Roadmap R6',
+      aiReviewCoverage: 'AI 复核闭环率',
+      aiFalseRatio: 'AI 误报占比',
+      humanFalseConfirmed: '人工误报确认'
     }
   },
 

@@ -818,6 +818,7 @@ const enUS: MessageSchema = {
       aiTrue: 'True',
       aiFalse: 'False',
       aiReviewed: 'Reviewed',
+      reviewNone: 'Unreviewed',
       colStatus: 'Status',
       colTime: 'Time',
       detailTitle: 'Event Detail',
@@ -848,7 +849,13 @@ const enUS: MessageSchema = {
       packsStatus: 'Scene Pack Deployment Status',
       gotoPacks: 'Deploy',
       deployed: 'Deployed',
-      notDeployed: 'Not Deployed'
+      notDeployed: 'Not Deployed',
+      // [vp3 2026-09-01] Ops quality card (report §8 review-loop ops proxy)
+      opsQuality: 'Ops Quality (AI Review Proxy)',
+      opsNote: 'Proxy metrics from AI review conclusions and human status; ground-truth false-alarm density see Roadmap R6',
+      aiReviewCoverage: 'AI Review Coverage',
+      aiFalseRatio: 'AI False-Alarm Ratio',
+      humanFalseConfirmed: 'Human Confirmed False'
     }
   },
 

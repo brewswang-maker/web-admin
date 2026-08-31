@@ -15,6 +15,14 @@
                    :placeholder="t('perimeter.events.allStatus')">
           <el-option v-for="s in STATUSES" :key="s" :value="s" :label="statusText(s)" />
         </el-select>
+        <!-- [vp3] AI 复核结论筛选 (《研究报告》§8 复核闭环运营口径) -->
+        <el-select v-model="aiFilter" size="default" class="filter-ai" clearable
+                   :placeholder="t('perimeter.events.colAiReview')">
+          <el-option value="true" :label="t('perimeter.events.aiTrue')" />
+          <el-option value="false" :label="t('perimeter.events.aiFalse')" />
+          <el-option value="reviewed" :label="t('perimeter.events.aiReviewed')" />
+          <el-option value="none" :label="t('perimeter.events.reviewNone')" />
+        </el-select>
         <el-button :icon="Refresh" :loading="loading" @click="reload">{{ t('common.refresh') }}</el-button>
       </div>
     </div>
@@ -120,15 +128,26 @@ const loading = ref(false)
 const loadError = ref('')
 const levelFilter = ref<AlarmLevel | ''>('')
 const statusFilter = ref<AlarmStatus | ''>('')
+const aiFilter = ref<'' | 'true' | 'false' | 'reviewed' | 'none'>('')  // [vp3]
 const drawerVisible = ref(false)
 const active = ref<AlarmEvent | null>(null)
 
 const filtered = computed(() =>
   events.value.filter(e =>
     (levelFilter.value === '' || e.level === levelFilter.value) &&
-    (statusFilter.value === '' || e.status === statusFilter.value)
+    (statusFilter.value === '' || e.status === statusFilter.value) &&
+    (aiFilter.value === '' || aiReviewKeyOf(e) === aiFilter.value)
   )
 )
+
+/** [vp3] AI 复核结论分类 (筛选与短标共用语义) */
+function aiReviewKeyOf(e: AlarmEvent): 'true' | 'false' | 'reviewed' | 'none' {
+  const c = (e.aiConclusion || '').toLowerCase()
+  if (!c) return 'none'
+  if (c.includes('false_alarm') || c.includes('误报')) return 'false'
+  if (c.includes('true_alarm') || c.includes('真告警') || c.includes('真实')) return 'true'
+  return 'reviewed'
+}
 
 /** [vp2] AI 复核结论短标 (aiConclusion 关键词判定, 与后端 parseVLMResponse 同语义:
  *  真告警/真实 → 真事件; 误报 → 误报; 其余非空 → 已复核) */
@@ -203,6 +222,7 @@ onMounted(reload)
 .events-filter { display: flex; gap: 8px; align-items: center; }
 .filter-level { width: 140px; }
 .filter-status { width: 150px; }
+.filter-ai { width: 130px; }
 .events-table { cursor: pointer; }
 .mono { font-family: Menlo, Consolas, monospace; }
 .snap-img { width: 100%; max-height: 260px; border-radius: 8px; margin-bottom: 14px; background: var(--el-fill-color-light); }
