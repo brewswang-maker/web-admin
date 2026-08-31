@@ -499,7 +499,7 @@ const alarmStore = useAlarmStore()
 const prefStore = usePreferenceStore()
 const { t } = useI18n()
 
-type PrimaryMenuKey = 'home' | 'location' | 'video' | 'alarm' | 'ai' | 'screening' | 'school' | 'gas-station' | 'large-event' | 'platform'
+type PrimaryMenuKey = 'home' | 'location' | 'video' | 'alarm' | 'ai' | 'screening' | 'school' | 'gas-station' | 'large-event' | 'hotel-unattended' | 'platform'
 type SidebarItem = {
   path: string
   label: string
@@ -616,6 +616,17 @@ const primaryMenus = computed<PrimaryMenu[]>(() => [
       { path: '/large-event/events', label: t('menu.largeEventEvents'), icon: Bell },
       { path: '/large-event/scene-packs', label: t('menu.largeEventPacks'), icon: FolderOpened },
       { path: '/large-event/rules', label: t('menu.largeEventRules'), icon: List },
+    ],
+  },
+  // [酒店员工无人值守 2026-08-30] 一级菜单 (t8f, 方案 §5.7 四视图)
+  {
+    key: 'hotel-unattended',
+    label: t('menuPrimary.hotelUnattended'),
+    items: [
+      { path: '/hotel-unattended/overview', label: t('menu.hotelOverview'), icon: Odometer },
+      { path: '/hotel-unattended/corridor-events', label: t('menu.hotelCorridorEvents'), icon: Bell },
+      { path: '/hotel-unattended/scene-packs', label: t('menu.hotelPacks'), icon: FolderOpened },
+      { path: '/hotel-unattended/rules', label: t('menu.hotelRules'), icon: List },
     ],
   },
   {

@@ -61,6 +61,11 @@ const LargeEventDensityView = () => import('@/views/large-event/DensityScreenVie
 const LargeEventEventsView = () => import('@/views/large-event/EventListView.vue')
 const LargeEventScenePacksView = () => import('@/views/large-event/ScenePacksView.vue')
 const LargeEventRulesView = () => import('@/views/large-event/RulesView.vue') // [EventGuard apply v2 2026-08-28] 事件规则聚合页
+// 酒店员工无人值守 (t8f 2026-08-30 — 方案: docs/plans/hotel-unattended-solution-v1.0.md §5.7)
+const HotelOverviewView = () => import('@/views/hotel-unattended/OverviewView.vue')
+const HotelCorridorEventsView = () => import('@/views/hotel-unattended/CorridorEventsView.vue')
+const HotelScenePacksView = () => import('@/views/hotel-unattended/ScenePacksView.vue')
+const HotelRulesView = () => import('@/views/hotel-unattended/RulesView.vue')
 // 安检场景 (Phase 2 S1-3/S1-4 — 2026-08-27)
 const ScreeningOverviewView = () => import('@/views/screening/ScreeningOverview.vue')
 const ScreeningChannelOrderView = () => import('@/views/screening/ScreeningChannelOrder.vue')
@@ -425,6 +430,31 @@ export const asyncRoutes: RouteRecordRaw[] = [
         name: 'LargeEventRules',
         component: LargeEventRulesView,
         meta: { title: '事件规则', icon: 'List', roles: ['admin', 'user', 'viewer'] }
+      },
+      // ── 酒店员工无人值守 (t8f 2026-08-30) ──
+      {
+        path: 'hotel-unattended/overview',
+        name: 'HotelOverview',
+        component: HotelOverviewView,
+        meta: { title: '无人值守总览', icon: 'Odometer', roles: ['admin', 'user', 'viewer'] }
+      },
+      {
+        path: 'hotel-unattended/corridor-events',
+        name: 'HotelCorridorEvents',
+        component: HotelCorridorEventsView,
+        meta: { title: '通道事件', icon: 'Bell', roles: ['admin', 'user', 'viewer'] }
+      },
+      {
+        path: 'hotel-unattended/scene-packs',
+        name: 'HotelScenePacks',
+        component: HotelScenePacksView,
+        meta: { title: '酒店场景包', icon: 'FolderOpened', roles: ['admin', 'user'] }
+      },
+      {
+        path: 'hotel-unattended/rules',
+        name: 'HotelRules',
+        component: HotelRulesView,
+        meta: { title: '联动规则', icon: 'List', roles: ['admin', 'user', 'viewer'] }
       },
       // ── 安检场景 (Phase 2 S1-3/S1-4) ──
       {
