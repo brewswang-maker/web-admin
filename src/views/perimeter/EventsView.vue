@@ -53,6 +53,14 @@
       <el-table-column :label="t('perimeter.events.colConfidence')" width="110" align="center">
         <template #default="{ row }">{{ pct(row.confidence) }}</template>
       </el-table-column>
+      <el-table-column :label="t('perimeter.events.colAiReview')" width="120" align="center">
+        <template #default="{ row }">
+          <el-tooltip v-if="aiReviewOf(row)" :content="row.aiConclusion" placement="top">
+            <el-tag :type="aiReviewTagType(row)" size="small" effect="plain">{{ aiReviewOf(row) }}</el-tag>
+          </el-tooltip>
+          <span v-else>—</span>
+        </template>
+      </el-table-column>
       <el-table-column :label="t('perimeter.events.colStatus')" width="110" align="center">
         <template #default="{ row }">
           <el-tag :type="statusTagType(row.status)" size="small">{{ statusText(row.status) }}</el-tag>
@@ -121,6 +129,22 @@ const filtered = computed(() =>
     (statusFilter.value === '' || e.status === statusFilter.value)
   )
 )
+
+/** [vp2] AI 复核结论短标 (aiConclusion 关键词判定, 与后端 parseVLMResponse 同语义:
+ *  真告警/真实 → 真事件; 误报 → 误报; 其余非空 → 已复核) */
+function aiReviewOf(e: AlarmEvent): string {
+  const c = (e.aiConclusion || '').toLowerCase()
+  if (!c) return ''
+  if (c.includes('false_alarm') || c.includes('误报')) return t('perimeter.events.aiFalse')
+  if (c.includes('true_alarm') || c.includes('真告警') || c.includes('真实')) return t('perimeter.events.aiTrue')
+  return t('perimeter.events.aiReviewed')
+}
+function aiReviewTagType(e: AlarmEvent): 'danger' | 'success' | 'info' {
+  const c = (e.aiConclusion || '').toLowerCase()
+  if (c.includes('false_alarm') || c.includes('误报')) return 'info'
+  if (c.includes('true_alarm') || c.includes('真告警') || c.includes('真实')) return 'danger'
+  return 'info'
+}
 
 function levelText(lv: string): string {
   return t(`perimeter.events.level_${lv}`)

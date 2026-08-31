@@ -804,7 +804,7 @@ const enUS: MessageSchema = {
     },
     events: {
       title: 'Perimeter Event Search',
-      subtitle: '{n} perimeter events (8 event-type union)',
+      subtitle: '{n} perimeter events (9 event-type union)',
       allLevels: 'All Levels',
       allStatus: 'All Statuses',
       loadFailed: 'Failed to load events',
@@ -814,6 +814,10 @@ const enUS: MessageSchema = {
       colDesc: 'Description',
       colChannel: 'Channel',
       colConfidence: 'Confidence',
+      colAiReview: 'AI Review',
+      aiTrue: 'True',
+      aiFalse: 'False',
+      aiReviewed: 'Reviewed',
       colStatus: 'Status',
       colTime: 'Time',
       detailTitle: 'Event Detail',
@@ -833,7 +837,7 @@ const enUS: MessageSchema = {
     },
     overview: {
       title: 'Perimeter Overview',
-      subtitle: 'Cross-industry perimeter guard view (8 event types × 4 scene packs)',
+      subtitle: 'Cross-industry perimeter guard view (9 event types × 4 scene packs)',
       loadFailed: 'Failed to load overview',
       todayAlarms: 'Today Perimeter Events',
       unhandled: 'Unhandled',

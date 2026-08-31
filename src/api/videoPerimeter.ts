@@ -30,11 +30,13 @@ import type { AlarmEvent } from '@/types/alarm'
 /** 场景 tag (apply 合并 tags 之一, 规则过滤主键) */
 export const PERIMETER_SCENE_TAG = 'video_perimeter'
 
-/** video_perimeter 场景 8 事件键 (EventTypeAliases.h 既有行补 tag, 2026-08-31;
- *  对齐海康四类检测分类学: 区域入侵/穿越警戒面/进入区域/离开区域 + 外延) */
+/** video_perimeter 场景 9 事件键 (EventTypeAliases.h 既有行补 tag: 8 键 2026-08-31
+ *  vp 轮 + loitering 2026-08-31 vp2 轮事前预警域; 对齐海康四类检测分类学:
+ *  区域入侵/穿越警戒面/进入区域/离开区域 + 外延; P1 VLM 周界复核同款 9 键) */
 export const PERIMETER_EVENT_TYPES = [
   'intrusion', 'tripwire', 'climbing', 'tailgate',
   'gathering', 'field_intrusion', 'object_removal', 'vehicle_detected',
+  'loitering',
 ] as const
 
 /** 周界专属 VP-* 联动模板前缀 */

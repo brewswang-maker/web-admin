@@ -800,7 +800,7 @@ const zhCN = {
     },
     events: {
       title: '周界事件检索',
-      subtitle: '共 {n} 条周界事件 (8 事件键并集)',
+      subtitle: '共 {n} 条周界事件 (9 事件键并集)',
       allLevels: '全部级别',
       allStatus: '全部状态',
       loadFailed: '事件加载失败',
@@ -810,6 +810,10 @@ const zhCN = {
       colDesc: '描述',
       colChannel: '通道',
       colConfidence: '置信度',
+      colAiReview: 'AI 复核',
+      aiTrue: '真事件',
+      aiFalse: '误报',
+      aiReviewed: '已复核',
       colStatus: '状态',
       colTime: '时间',
       detailTitle: '事件详情',
@@ -829,7 +833,7 @@ const zhCN = {
     },
     overview: {
       title: '周界总览态势',
-      subtitle: '周界防范能力跨行业视图 (8 事件键 × 4 场景包)',
+      subtitle: '周界防范能力跨行业视图 (9 事件键 × 4 场景包)',
       loadFailed: '总览数据加载失败',
       todayAlarms: '今日周界事件',
       unhandled: '未处理',
