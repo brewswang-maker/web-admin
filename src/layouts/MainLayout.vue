@@ -525,7 +525,7 @@ const alarmStore = useAlarmStore()
 const prefStore = usePreferenceStore()
 const { t } = useI18n()
 
-type PrimaryMenuKey = 'home' | 'location' | 'video' | 'alarm' | 'ai' | 'screening' | 'school' | 'gas-station' | 'large-event' | 'hotel-unattended' | 'platform'
+type PrimaryMenuKey = 'home' | 'location' | 'video' | 'alarm' | 'ai' | 'screening' | 'school' | 'gas-station' | 'large-event' | 'hotel-unattended' | 'video-perimeter' | 'platform'
 type SidebarItem = {
   path: string
   label: string
@@ -674,6 +674,16 @@ const primaryMenus = computed<PrimaryMenu[]>(() => {
       { path: '/hotel-unattended/corridor-events', label: t('menu.hotelCorridorEvents'), icon: Bell },
       { path: '/hotel-unattended/scene-packs', label: t('menu.hotelPacks'), icon: FolderOpened },
       { path: '/hotel-unattended/rules', label: t('menu.hotelRules'), icon: List },
+    ],
+  },
+  // [视频周界 2026-08-31] 一级菜单 (vp, 方案 §6 三视图; 跨行业通用能力场景恒可见)
+  {
+    key: 'video-perimeter',
+    label: t('menuPrimary.videoPerimeter'),
+    items: [
+      { path: '/video-perimeter/overview', label: t('menu.perimeterOverview'), icon: Odometer },
+      { path: '/video-perimeter/events', label: t('menu.perimeterEvents'), icon: Bell },
+      { path: '/video-perimeter/packs', label: t('menu.perimeterPacks'), icon: FolderOpened },
     ],
   },
   {

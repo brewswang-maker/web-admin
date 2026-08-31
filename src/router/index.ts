@@ -66,6 +66,10 @@ const HotelOverviewView = () => import('@/views/hotel-unattended/OverviewView.vu
 const HotelCorridorEventsView = () => import('@/views/hotel-unattended/CorridorEventsView.vue')
 const HotelScenePacksView = () => import('@/views/hotel-unattended/ScenePacksView.vue')
 const HotelRulesView = () => import('@/views/hotel-unattended/RulesView.vue')
+// 视频周界 (vp 2026-08-31 — 方案: docs/plans/video-perimeter-solution-v1.0.md §6)
+const PerimeterOverviewView = () => import('@/views/perimeter/OverviewView.vue')
+const PerimeterEventsView = () => import('@/views/perimeter/EventsView.vue')
+const PerimeterScenePacksView = () => import('@/views/perimeter/ScenePacksView.vue')
 // 安检场景 (Phase 2 S1-3/S1-4 — 2026-08-27)
 const ScreeningOverviewView = () => import('@/views/screening/ScreeningOverview.vue')
 const ScreeningChannelOrderView = () => import('@/views/screening/ScreeningChannelOrder.vue')
@@ -455,6 +459,25 @@ export const asyncRoutes: RouteRecordRaw[] = [
         name: 'HotelRules',
         component: HotelRulesView,
         meta: { title: '联动规则', icon: 'List', roles: ['admin', 'user', 'viewer'] }
+      },
+      // ── 视频周界 (vp 2026-08-31, 跨行业通用能力场景) ──
+      {
+        path: 'video-perimeter/overview',
+        name: 'PerimeterOverview',
+        component: PerimeterOverviewView,
+        meta: { title: '周界总览', icon: 'Odometer', roles: ['admin', 'user', 'viewer'] }
+      },
+      {
+        path: 'video-perimeter/events',
+        name: 'PerimeterEvents',
+        component: PerimeterEventsView,
+        meta: { title: '周界事件', icon: 'Bell', roles: ['admin', 'user', 'viewer'] }
+      },
+      {
+        path: 'video-perimeter/packs',
+        name: 'PerimeterScenePacks',
+        component: PerimeterScenePacksView,
+        meta: { title: '周界布防', icon: 'FolderOpened', roles: ['admin', 'user'] }
       },
       // ── 安检场景 (Phase 2 S1-3/S1-4) ──
       {
