@@ -70,6 +70,9 @@ const HotelRulesView = () => import('@/views/hotel-unattended/RulesView.vue')
 const PerimeterOverviewView = () => import('@/views/perimeter/OverviewView.vue')
 const PerimeterEventsView = () => import('@/views/perimeter/EventsView.vue')
 const PerimeterScenePacksView = () => import('@/views/perimeter/ScenePacksView.vue')
+const PerimeterRulesView = () => import('@/views/perimeter/RulesView.vue') // [vp4 2026-09-01] 事件规则聚合页
+const SchoolRulesView = () => import('@/views/school/RulesView.vue')       // [vp4 2026-09-01] 校园事件规则
+const GasRulesView = () => import('@/views/gas-station/RulesView.vue')     // [vp4 2026-09-01] 加油站事件规则
 // 安检场景 (Phase 2 S1-3/S1-4 — 2026-08-27)
 const ScreeningOverviewView = () => import('@/views/screening/ScreeningOverview.vue')
 const ScreeningChannelOrderView = () => import('@/views/screening/ScreeningChannelOrder.vue')
@@ -479,6 +482,13 @@ export const asyncRoutes: RouteRecordRaw[] = [
         component: PerimeterScenePacksView,
         meta: { title: '周界布防', icon: 'FolderOpened', roles: ['admin', 'user'] }
       },
+      {
+        // [vp4 2026-09-01] 周界事件规则聚合 (范式对齐 HotelRules/LargeEventRules)
+        path: 'video-perimeter/rules',
+        name: 'PerimeterRules',
+        component: PerimeterRulesView,
+        meta: { title: '周界事件规则', icon: 'List', roles: ['admin', 'user', 'viewer'] }
+      },
       // ── 安检场景 (Phase 2 S1-3/S1-4) ──
       {
         // [安检对标优化 2026-08-30] 运行大屏 (对标海康可视化安检中枢)
@@ -585,12 +595,26 @@ export const asyncRoutes: RouteRecordRaw[] = [
         component: SchoolScenePacksView,
         meta: { title: '校园场景包', icon: 'Box', roles: ['admin', 'user', 'viewer'] }
       },
+      {
+        // [vp4 2026-09-01] 校园事件规则聚合 (范式对齐 HotelRules)
+        path: 'school/rules',
+        name: 'SchoolRules',
+        component: SchoolRulesView,
+        meta: { title: '校园事件规则', icon: 'List', roles: ['admin', 'user', 'viewer'] }
+      },
       // ═══ [加油站方案 2026-08-30] 加油站一级模块场景包子页 ═══
       {
         path: 'gas-station/scene-packs',
         name: 'GasScenePacks',
         component: GasScenePacksView,
         meta: { title: '加油站场景包', icon: 'Box', roles: ['admin', 'user', 'viewer'] }
+      },
+      {
+        // [vp4 2026-09-01] 加油站事件规则聚合 (范式对齐 HotelRules)
+        path: 'gas-station/rules',
+        name: 'GasRules',
+        component: GasRulesView,
+        meta: { title: '加油站事件规则', icon: 'List', roles: ['admin', 'user', 'viewer'] }
       },
       // [加油站方案 2026-08-30] 加油站 7 子页 (总览/加油区/卸油区/周界/油罐区/态势大屏/3D)
       {

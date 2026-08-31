@@ -632,6 +632,7 @@ const primaryMenus = computed<PrimaryMenu[]>(() => {
       { path: '/school/dashboard', label: t('menu.campusDashboard'), icon: DataBoard },
       { path: '/school/campus3d', label: t('menu.campus3d'), icon: MapLocation },
       { path: '/school/scene-packs', label: t('menu.schoolScenePacks'), icon: Box },
+      { path: '/school/rules', label: t('menu.schoolRules'), icon: List },
     ],
   },
   {
@@ -650,6 +651,7 @@ const primaryMenus = computed<PrimaryMenu[]>(() => {
       { path: '/gas-station/dashboard',   label: t('menu.gasStationDashboard'),   icon: DataBoard },
       { path: '/gas-station/gas3d',       label: t('menu.gasStationGas3D'),       icon: MapLocation },
       { path: '/gas-station/scene-packs', label: t('menu.gasStationScenePacks'),  icon: Box },
+      { path: '/gas-station/rules',      label: t('menu.gasStationRules'), icon: List },
     ],
   },
   {
@@ -676,7 +678,7 @@ const primaryMenus = computed<PrimaryMenu[]>(() => {
       { path: '/hotel-unattended/rules', label: t('menu.hotelRules'), icon: List },
     ],
   },
-  // [视频周界 2026-08-31] 一级菜单 (vp, 方案 §6 三视图; 跨行业通用能力场景)
+  // [视频周界 2026-08-31] 一级菜单 (vp, 方案 §6; vp4 2026-09-01 补事件规则页四视图; 跨行业通用能力场景)
   //   [场景账号 2026-08-31] 标 admin/user/viewer: 普通用户可见不变,
   //   scenario_* 单角色用户无交集被隐藏 (需求: 场景菜单恰 6 项)
   {
@@ -687,6 +689,7 @@ const primaryMenus = computed<PrimaryMenu[]>(() => {
       { path: '/video-perimeter/overview', label: t('menu.perimeterOverview'), icon: Odometer },
       { path: '/video-perimeter/events', label: t('menu.perimeterEvents'), icon: Bell },
       { path: '/video-perimeter/packs', label: t('menu.perimeterPacks'), icon: FolderOpened },
+      { path: '/video-perimeter/rules', label: t('menu.perimeterRules'), icon: List },
     ],
   },
   {

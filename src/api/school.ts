@@ -8,6 +8,7 @@
 import { http } from './http'
 import type { ApiResponse } from '@/types/common'
 import type { ScenePack, ScenePackApplyResult } from '@/types/largeEvent'
+import type { LinkageRule, RuleTemplate, RuleTriggerStat } from './linkage'
 
 /** campus_dashboard 响应 (与后端端点实测结构一致) */
 export interface CampusDashBucket { hr: number; cnt: number }
@@ -126,6 +127,49 @@ export const schoolApi = {
       `/large-event/scene-packs/${encodeURIComponent(packId)}/apply`,
       opts ?? {})
   },
+
+  // ─── [vp4 2026-09-01] 联动规则 / 模板 (RulesView 数据源, 范式对齐 hotel) ───
+  /** 校园规则全集 (apply 布防产物, tag=school_campus 过滤) */
+  listRules() {
+    return http.get<ApiResponse<{ items: LinkageRule[] }>>('/linkage/rules', {
+      params: { tag: SCHOOL_SCENE_TAG },
+    })
+  },
+
+  /** 全量规则模板 (前端取 SC-* 前缀做落地对照; {items,total}/裸数组双兼容) */
+  listRuleTemplates() {
+    return http.get<ApiResponse<RuleTemplate[] | { items: RuleTemplate[]; total: number }>>(
+      '/linkage/rule-templates')
+  },
+
+  /** 规则触发统计 (增强信息, 失败可静默降级) */
+  listRuleStats() {
+    return http.get<ApiResponse<{ rules: RuleTriggerStat[] }>>('/linkage/rule-stats')
+  },
+}
+
+/** [vp4 2026-09-01] 校园场景常量 (SSOT: ScenePackDefs.h school_campus 包组) ──
+ *  场景 tag (apply 合并 tags 之一, 规则过滤主键) */
+export const SCHOOL_SCENE_TAG = 'school_campus'
+
+/** 校园专属 SC-* 联动模板前缀 */
+export const SCHOOL_TEMPLATE_PREFIX = 'SC-'
+
+/** 从全量场景包中过滤校园 3 包 (防御式: 响应结构异常时返回空数组) */
+export function pickSchoolPacks(body: unknown): ScenePack[] {
+  const d = (body as { data?: { scene_packs?: ScenePack[] } })?.data
+  const list = Array.isArray(d?.scene_packs) ? d.scene_packs : []
+  return list.filter(p => p?.scene_tag === SCHOOL_SCENE_TAG)
+}
+
+/** SC-* 联动模板过滤; body 双兼容: 新后端 {items,total} / 旧固件裸数组 */
+export function pickSchoolTemplates(body: unknown): RuleTemplate[] {
+  const list = Array.isArray(body)
+    ? body
+    : (body as { items?: RuleTemplate[] } | null | undefined)?.items
+  return (Array.isArray(list) ? list : []).filter(
+    t => t?.template_id?.startsWith(SCHOOL_TEMPLATE_PREFIX)
+  )
 }
 
 /** 校园事件分组 SSOT — 与设计文档 §4.2 对齐 (子页列表过滤共用)

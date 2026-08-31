@@ -22,7 +22,7 @@
 import { http } from './http'
 import type { ApiResponse } from '@/types/common'
 import type { ScenePack, ScenePackApplyResult } from '@/types/largeEvent'
-import type { LinkageRule, RuleTemplate } from './linkage'
+import type { LinkageRule, RuleTemplate, RuleTriggerStat } from './linkage'
 import type { AlarmEvent } from '@/types/alarm'
 
 // ── 视频周界场景常量 (SSOT: EventTypeAliases.h scene_tags / ScenePackDefs.h) ──
@@ -66,6 +66,11 @@ export const videoPerimeterApi = {
     return http.get<ApiResponse<{ items: LinkageRule[] }>>('/linkage/rules', {
       params: { tag: PERIMETER_SCENE_TAG },
     })
+  },
+
+  /** 规则触发统计 (增强信息, 失败可静默降级) */
+  listRuleStats() {
+    return http.get<ApiResponse<{ rules: RuleTriggerStat[] }>>('/linkage/rule-stats')
   },
 
   /** 全量规则模板 (前端取 VP-* 前缀 6 条做落地对照; data {items,total}[t8g]/裸数组双兼容) */

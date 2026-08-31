@@ -13,6 +13,7 @@
 import { http } from './http'
 import type { ApiResponse } from '@/types/common'
 import type { ScenePack, ScenePackApplyResult } from '@/types/largeEvent'
+import type { LinkageRule, RuleTemplate, RuleTriggerStat } from './linkage'
 
 /** 加油站 T6 红线提示常量 (前端卡片顶部展示) */
 export const GAS_T6_REDLINE = 'T6 硬红线: 打电话/吸烟 — 仅声光+TTS, 不联动工艺联锁'
@@ -45,4 +46,48 @@ export const gasStationApi = {
       `/large-event/scene-packs/${encodeURIComponent(packId)}/apply`,
       opts ?? {})
   },
+
+  // ─── [vp4 2026-09-01] 联动规则 / 模板 (RulesView 数据源, 范式对齐 hotel) ───
+  /** 加油站规则全集 (apply 布防产物, tag=gas_station 过滤) */
+  listRules() {
+    return http.get<ApiResponse<{ items: LinkageRule[] }>>('/linkage/rules', {
+      params: { tag: GAS_SCENE_TAG },
+    })
+  },
+
+  /** 全量规则模板 (前端取 GS-* 前缀做落地对照; {items,total}/裸数组双兼容) */
+  listRuleTemplates() {
+    return http.get<ApiResponse<RuleTemplate[] | { items: RuleTemplate[]; total: number }>>(
+      '/linkage/rule-templates')
+  },
+
+  /** 规则触发统计 (增强信息, 失败可静默降级) */
+  listRuleStats() {
+    return http.get<ApiResponse<{ rules: RuleTriggerStat[] }>>('/linkage/rule-stats')
+  },
+}
+
+// ── [vp4 2026-09-01] 加油站场景常量 (SSOT: ScenePackDefs.h gas_station 包组) ──
+
+/** 场景 tag (apply 合并 tags 之一, 规则过滤主键) */
+export const GAS_SCENE_TAG = 'gas_station'
+
+/** 加油站专属 GS-* 联动模板前缀 */
+export const GAS_TEMPLATE_PREFIX = 'GS-'
+
+/** 从全量场景包中过滤加油站 3 包 (防御式: 响应结构异常时返回空数组) */
+export function pickGasPacks(body: unknown): ScenePack[] {
+  const d = (body as { data?: { scene_packs?: ScenePack[] } })?.data
+  const list = Array.isArray(d?.scene_packs) ? d.scene_packs : []
+  return list.filter(p => p?.scene_tag === GAS_SCENE_TAG)
+}
+
+/** GS-* 联动模板过滤; body 双兼容: 新后端 {items,total} / 旧固件裸数组 */
+export function pickGasTemplates(body: unknown): RuleTemplate[] {
+  const list = Array.isArray(body)
+    ? body
+    : (body as { items?: RuleTemplate[] } | null | undefined)?.items
+  return (Array.isArray(list) ? list : []).filter(
+    t => t?.template_id?.startsWith(GAS_TEMPLATE_PREFIX)
+  )
 }
