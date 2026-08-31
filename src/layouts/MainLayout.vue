@@ -8,20 +8,46 @@
       </button>
 
       <div class="header-left">
-        <nav class="primary-nav" aria-label="主导航">
+        <div class="primary-nav-wrap">
+          <!-- [布局优化] 一级导航溢出时显示滚动箭头，避免"平台管理"等尾部菜单被截断丢失 -->
           <button
-            v-for="item in primaryMenus"
-            :key="item.key"
+            v-if="navCanLeft"
             type="button"
-            class="primary-nav-item"
-            :class="{ 'is-active': item.key === activePrimaryKey }"
-            :aria-current="item.key === activePrimaryKey ? 'page' : undefined"
-            @click="selectPrimary(item.key)"
+            class="nav-scroll-btn nav-scroll-left"
+            aria-label="向左滚动主导航"
+            @click="scrollPrimaryNav(-1)"
           >
-            {{ item.label }}
-            <span class="line" aria-hidden="true">|</span>
+            <el-icon><DArrowLeft /></el-icon>
           </button>
-        </nav>
+          <nav
+            ref="primaryNavRef"
+            class="primary-nav"
+            aria-label="主导航"
+            @scroll.passive="updateNavOverflow"
+          >
+            <button
+              v-for="item in primaryMenus"
+              :key="item.key"
+              type="button"
+              class="primary-nav-item"
+              :class="{ 'is-active': item.key === activePrimaryKey }"
+              :aria-current="item.key === activePrimaryKey ? 'page' : undefined"
+              @click="selectPrimary(item.key)"
+            >
+              {{ item.label }}
+              <span class="line" aria-hidden="true">|</span>
+            </button>
+          </nav>
+          <button
+            v-if="navCanRight"
+            type="button"
+            class="nav-scroll-btn nav-scroll-right"
+            aria-label="向右滚动主导航"
+            @click="scrollPrimaryNav(1)"
+          >
+            <el-icon><DArrowRight /></el-icon>
+          </button>
+        </div>
         <!-- <div class="global-search" @click="showSearch = true">
           <el-icon><Search /></el-icon>
           <span class="search-hint">{{ $t('search.hint') }}</span>
@@ -660,6 +686,25 @@ const pendingMenuPath = ref<string | null>(null)
 const routeLoading = ref(false)
 let navigationSequence = 0
 
+// ── [布局优化] 一级导航溢出检测与滚动：菜单 11 项较宽，溢出时两端显示滚动箭头 ──
+const primaryNavRef = ref<HTMLElement | null>(null)
+const navCanLeft = ref(false)
+const navCanRight = ref(false)
+
+function updateNavOverflow() {
+  const el = primaryNavRef.value
+  if (!el) return
+  navCanLeft.value = el.scrollLeft > 1
+  navCanRight.value = el.scrollLeft + el.clientWidth < el.scrollWidth - 1
+}
+
+function scrollPrimaryNav(direction: 1 | -1) {
+  primaryNavRef.value?.scrollBy({ left: direction * 280, behavior: 'smooth' })
+}
+
+// 语言切换 / 菜单集合变化后重测溢出状态
+watch(primaryMenus, () => nextTick(updateNavOverflow))
+
 function findPrimaryKey(path: string): PrimaryMenuKey | undefined {
   return primaryMenus.value.find(menu => menu.items.some(item => path === item.path || path.startsWith(`${item.path}/`)))?.key
 }
@@ -814,12 +859,15 @@ function handleKeydown(e: KeyboardEvent) {
 
 onMounted(() => {
   window.addEventListener('keydown', handleKeydown)
+  window.addEventListener('resize', updateNavOverflow)
+  nextTick(updateNavOverflow)
   // 初始化未处理告警数，驱动侧边栏徽章
   alarmStore.fetchUnhandledCount().catch(() => {})
 })
 
 onUnmounted(() => {
   window.removeEventListener('keydown', handleKeydown)
+  window.removeEventListener('resize', updateNavOverflow)
 })
 
 // ── 用户菜单 ──
@@ -1237,7 +1285,17 @@ function handleUserCommand(command: string) {
   align-items: center;
   min-width: 0;
   flex: 1;
-  margin-left:50px;
+  margin-left: 8px;
+  height: 100%;
+}
+
+/* 一级导航溢出包裹层：溢出时两端显示滚动箭头（渐变底与顶部栏同色，保证可读） */
+.primary-nav-wrap {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+  min-width: 0;
+  flex: 1;
   height: 100%;
 }
 
@@ -1246,8 +1304,39 @@ function handleUserCommand(command: string) {
   align-items: stretch;
   align-self: stretch;
   min-width: 0;
+  flex: 1;
   overflow-x: auto;
   scrollbar-width: none;
+}
+
+.nav-scroll-btn {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  padding: 0 8px;
+  border: 0;
+  cursor: pointer;
+  color: #0094D2;
+  background: transparent;
+  transition: color 0.18s ease;
+}
+
+.nav-scroll-btn:hover,
+.nav-scroll-btn:focus-visible {
+  color: #00E4FF;
+}
+
+.nav-scroll-left {
+  left: 0;
+  background: linear-gradient(90deg, rgba(3, 43, 104, 0.95) 45%, rgba(3, 43, 104, 0));
+}
+
+.nav-scroll-right {
+  right: 0;
+  background: linear-gradient(270deg, rgba(3, 43, 104, 0.95) 45%, rgba(3, 43, 104, 0));
 }
 
 .primary-nav::-webkit-scrollbar {
@@ -1256,7 +1345,7 @@ function handleUserCommand(command: string) {
 
 .primary-nav-item {
   position: relative;
-  padding: 0 35px;
+  padding: 0 20px;
   border: 0;
   background: transparent;
   color: #0094D2;
