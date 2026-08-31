@@ -1138,7 +1138,7 @@ import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { FormInstance, FormRules } from 'element-plus'
 import { Search, Plus, Document, Link, Bell, Setting, ArrowDown, Download, Upload, Refresh, WarningFilled, DataLine } from '@element-plus/icons-vue'
-import { linkageApi, ACTION_TYPE_MAP, ACTION_TYPE_REVERSE_MAP, getTargetForActionType } from '@/api/linkage'
+import { linkageApi, ACTION_TYPE_MAP, ACTION_TYPE_REVERSE_MAP, getTargetForActionType, unwrapRuleTemplates } from '@/api/linkage'
 import { regionApi } from '@/api/region'  // [FIX 2026-08-28] 画板绊线自动创建 (createTripwireWithMirror)
 import type { LinkageRule, LinkageAction, LinkageLog, ActionLogEntry, TimeTemplate, LinkagePlan, CEPPattern, ConditionNode, RuleConflict, RuleTriggerStat } from '@/api/linkage'
 import { useLinkageOptions } from '@/composables/useLinkageOptions'
@@ -2197,8 +2197,7 @@ async function openTemplateLibrary() {
   loadEventCoverage() // 预加载事件可测性矩阵
   try {
     const res = await linkageApi.getRuleTemplates()
-    const data = (res as any)?.data?.data ?? (res as any)?.data ?? []
-    templateList.value = Array.isArray(data) ? data : []
+    templateList.value = unwrapRuleTemplates((res as any)?.data?.data)
   } catch {
     templateList.value = []
   } finally { templateLoading.value = false }

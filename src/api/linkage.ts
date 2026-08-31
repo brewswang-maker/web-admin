@@ -87,6 +87,17 @@ export function getTargetForActionType(typeStr: string): number {
   return 0
 }
 
+/**
+ * rule-templates 响应 data 双兼容解包 [酒店无人值守 t8g 2026-08-31]:
+ * 新后端返回 {items,total} 对象 (RestApiHandlers rule-templates GET), 旧固件返回
+ * 裸数组 — 统一收敛到 RuleTemplate[], 视图层零感知, 前后端部署顺序无关。
+ */
+export function unwrapRuleTemplates(body: unknown): RuleTemplate[] {
+  if (Array.isArray(body)) return body as RuleTemplate[]
+  const items = (body as { items?: RuleTemplate[] } | null | undefined)?.items
+  return Array.isArray(items) ? items : []
+}
+
 // ── 后端数据模型 (与 LinkageEngine.h 对齐) ──
 
 /** 时间条件 */
@@ -584,9 +595,9 @@ export const linkageApi = {
 
   // ── 规则模板库 ──
 
-  /** 获取所有规则模板 */
+  /** 获取所有规则模板 (data 为 {items,total} [t8g] 或旧固件裸数组, 用 unwrapRuleTemplates 解包) */
   getRuleTemplates() {
-    return http.get<ApiResponse<RuleTemplate[]>>('/linkage/rule-templates')
+    return http.get<ApiResponse<RuleTemplate[] | { items: RuleTemplate[]; total: number }>>('/linkage/rule-templates')
   },
 
   /** 从模板创建规则 */
@@ -603,8 +614,8 @@ export const linkageApi = {
 
   /** 导出所有规则模板为 JSON */
   async exportRuleTemplates(): Promise<Blob> {
-    const resp = await http.get<ApiResponse<RuleTemplate[]>>('/linkage/rule-templates')
-    const templates = resp.data?.data ?? []
+    const resp = await http.get<ApiResponse<RuleTemplate[] | { items: RuleTemplate[]; total: number }>>('/linkage/rule-templates')
+    const templates = unwrapRuleTemplates(resp.data?.data)
     return new Blob([JSON.stringify({ schema_version: TEMPLATE_SCHEMA_VERSION, version: TEMPLATE_SCHEMA_VERSION, exported_at: new Date().toISOString(), templates }, null, 2)], { type: 'application/json' })
   },
 

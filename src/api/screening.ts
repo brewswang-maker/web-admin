@@ -194,11 +194,12 @@ export const screeningApi = {
 
   /**
    * GET /linkage/rule-templates — 模板列表
-   * 后端仅支持 scene 过滤 (L14387); category 过滤由前端本地执行
+   * 后端仅支持 scene 过滤 (L14387→现 L15883); category 过滤由前端本地执行
    * (scene=security_screening 返回含安检事件标签的全集, 再按分类收敛)。
+   * [t8g] data 为 {items,total} 对象 (新后端) 或裸数组 (旧固件), 解包双兼容。
    */
   listTemplates(params?: { scene?: string; category?: string }) {
-    return http.get<ApiResponse<ScreeningRuleTemplate[]>>(
+    return http.get<ApiResponse<ScreeningRuleTemplate[] | { items: ScreeningRuleTemplate[]; total: number }>>(
       '/linkage/rule-templates',
       { params }
     )

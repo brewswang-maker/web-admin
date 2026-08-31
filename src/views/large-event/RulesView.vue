@@ -183,7 +183,7 @@ import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { CircleCheckFilled, Refresh, Box } from '@element-plus/icons-vue'
-import { linkageApi } from '@/api/linkage'
+import { linkageApi, unwrapRuleTemplates } from '@/api/linkage'
 import type { LinkageRule, RuleTriggerStat, RuleTemplate } from '@/api/linkage'
 import { largeEventApi } from '@/api/largeEvent'
 import type { ScenePack } from '@/types/largeEvent'
@@ -260,8 +260,8 @@ async function fetchAll() {
   } catch { stats.value = [] }
   try {
     const res = await linkageApi.getRuleTemplates()
-    const list = res.data?.data ?? []
-    leTemplates.value = (Array.isArray(list) ? list : []).filter(
+    const list = unwrapRuleTemplates(res.data?.data)
+    leTemplates.value = list.filter(
       (t: RuleTemplate) => t.template_id?.startsWith('LE-'))
   } catch { leTemplates.value = [] }
   try {

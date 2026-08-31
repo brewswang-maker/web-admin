@@ -173,8 +173,11 @@ async function loadTemplates() {
   try {
     // 后端仅支持 scene 过滤 (RestApiHandlers L14387); category 前端本地过滤双保险
     const resp = await screeningApi.listTemplates({ scene: 'security_screening' })
+    // [t8g] data 双兼容: {items,total} 对象 (新后端) / 裸数组 (旧固件)
     const all = resp.data?.data
-    const list = Array.isArray(all) ? all : []
+    const list = Array.isArray(all)
+      ? all
+      : (all as { items?: ScreeningRuleTemplate[] } | null)?.items ?? []
     templates.value = list.filter(t => t.category === '安检')
     if (templates.value.length === 0 && list.length > 0) {
       console.warn('[ScreeningRules] scene 过滤返回', list.length, '个模板但无 category=安检 项')

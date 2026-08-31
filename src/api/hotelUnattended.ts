@@ -71,9 +71,9 @@ export const hotelUnattendedApi = {
     })
   },
 
-  /** 全量规则模板 (前端取 HT-* 前缀 18 条做落地对照) */
+  /** 全量规则模板 (前端取 HT-* 前缀 18 条做落地对照; data {items,total}[t8g]/裸数组双兼容) */
   listRuleTemplates() {
-    return http.get<ApiResponse<RuleTemplate[]>>('/linkage/rule-templates')
+    return http.get<ApiResponse<RuleTemplate[] | { items: RuleTemplate[]; total: number }>>('/linkage/rule-templates')
   },
 
   /** 规则触发统计 (增强信息, 失败可静默降级) */
@@ -110,8 +110,14 @@ export function pickHotelPacks(body: unknown): ScenePack[] {
   return list.filter(p => p?.scene_tag === HOTEL_SCENE_TAG)
 }
 
-/** HT-* 联动模板过滤 (18 条) */
-export function pickHotelTemplates(list: RuleTemplate[] | undefined): RuleTemplate[] {
+/**
+ * HT-* 联动模板过滤 (18 条); body 双兼容 [t8g]: 新后端 {items,total} 对象 /
+ * 旧固件裸数组, 与 api/linkage.ts unwrapRuleTemplates 同式。
+ */
+export function pickHotelTemplates(body: unknown): RuleTemplate[] {
+  const list = Array.isArray(body)
+    ? body
+    : (body as { items?: RuleTemplate[] } | null | undefined)?.items
   return (Array.isArray(list) ? list : []).filter(
     t => t?.template_id?.startsWith(HOTEL_TEMPLATE_PREFIX)
   )

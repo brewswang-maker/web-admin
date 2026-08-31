@@ -181,7 +181,7 @@ import {
   CircleCheckFilled, Link, Box, Moon, EditPen, Refresh,
 } from '@element-plus/icons-vue'
 import { schoolApi } from '@/api/school'
-import { linkageApi } from '@/api/linkage'
+import { linkageApi, unwrapRuleTemplates } from '@/api/linkage'
 import type { RuleTemplate } from '@/api/linkage'
 import type { ScenePack, ScenePackApplyResult } from '@/types/largeEvent'
 import type { Component } from 'vue'
@@ -264,7 +264,7 @@ function reload() {
 async function fetchTemplates() {
   try {
     const res = await linkageApi.getRuleTemplates()
-    const list = res.data?.data ?? []
+    const list = unwrapRuleTemplates(res.data?.data)
     templates.value = list
     scTemplateCount.value = list.filter(t => t.template_id.startsWith('SC-')).length
   } catch {
