@@ -42,61 +42,67 @@
         </el-table>
       </el-card>
 
-      <!-- Right: Configuration Area -->
+      <!-- Middle: 已配置算法列表 (独立栏, 三栏布局: 通道列表 | 算法列表 | 编辑区;
+          结构与左侧通道列表一致 — 表格化/可滚动/单行高亮; 数据源调度 algo_plugin 拆分) -->
+      <el-card shadow="never" class="panel-mid algo-card">
+        <template #header>
+          <div class="config-header">
+            <span>已配置算法</span>
+            <span v-if="selected" class="algo-card-sub">{{ selected.name }}</span>
+            <el-switch v-if="selected" v-model="form.enabled" :active-text="$t('enable', '启用')" :inactive-text="$t('disable', '停用')" />
+          </div>
+        </template>
+        <el-table v-if="selected" :data="algoRows" size="small" class="algo-table" height="100%"
+          highlight-current-row :row-class-name="algoRowClassName"
+          @row-click="selectAlgoRow"
+          empty-text="该通道尚未配置算法 — 在右侧编辑区选择算法后点击「保存配置」">
+          <el-table-column label="算法" min-width="110">
+            <template #default="{ row }">
+              <el-tag size="small" type="primary">{{ row.algoName }}</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="模式" width="62" align="center">
+            <template #default="{ row }">{{ row.mode === 'streaming' ? '连续' : '抓拍' }}</template>
+          </el-table-column>
+          <el-table-column label="间隔" width="62" align="center" prop="interval" />
+          <el-table-column label="状态" width="56" align="center">
+            <template #default="{ row }">
+              <el-tag :type="row.enabled ? 'success' : 'info'" size="small" effect="dark">
+                {{ row.enabled ? 'ON' : 'OFF' }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="事件规则" width="118" align="center">
+            <template #default="{ row }">
+              <el-badge :value="row.ruleCount" :hidden="!row.ruleCount" type="info">
+                <el-button size="small" type="primary" link title="添加事件规则" @click.stop="openAddRuleDialog(row)">
+                  <el-icon><Plus /></el-icon>
+                </el-button>
+              </el-badge>
+              <el-button size="small" type="danger" link :disabled="!row.ruleCount" title="删除事件规则" @click.stop="removeAlgoRules(row)">
+                <el-icon><Delete /></el-icon>
+              </el-button>
+            </template>
+          </el-table-column>
+          <el-table-column label="操作" width="52" align="center">
+            <template #default="{ row }">
+              <el-button size="small" type="primary" link title="编辑参数" @click.stop="selectAlgoRow(row)">
+                <el-icon><Edit /></el-icon>
+              </el-button>
+            </template>
+          </el-table-column>
+        </el-table>
+        <el-empty v-else :description="$t('selectChannelHint', '请先选择通道查看已配置算法')" :image-size="80" />
+      </el-card>
+
+      <!-- Right: 编辑区 (算法参数编辑 + ROI 绘制区, 与算法列表分栏) -->
       <div class="panel-right">
         <el-card v-if="!selected" shadow="never" class="empty-state">
           <el-empty :description="$t('selectChannelHint', '请从左侧选择一个通道进行配置')" />
         </el-card>
 
         <template v-else>
-          <!-- ① 已配置算法 (独立卡, 与编辑区视觉分区; 数据源 /inference/channels 调度记录,
-              algo_plugin 逗号分隔多算法串拆分逐行, 行内高亮选中 → 定位编辑区) -->
-          <el-card shadow="never" class="algo-card">
-            <template #header>
-              <div class="config-header">
-                <span>已配置算法</span>
-                <span class="algo-card-sub">{{ selected.channelId }} - {{ selected.name }}</span>
-                <el-switch v-model="form.enabled" :active-text="$t('enable', '启用')" :inactive-text="$t('disable', '停用')" />
-              </div>
-            </template>
-            <el-table :data="algoRows" size="small" class="algo-table" max-height="106"
-              highlight-current-row :row-class-name="algoRowClassName"
-              @row-click="selectAlgoRow"
-              empty-text="该通道尚未配置算法 — 在下方编辑区选择算法后点击「保存配置」">
-              <el-table-column label="算法" min-width="200">
-                <template #default="{ row }">
-                  <el-tag size="small" type="primary">{{ row.algoName }}</el-tag>
-                </template>
-              </el-table-column>
-              <el-table-column label="事件规则" width="252">
-                <template #default="{ row }">
-                  <el-badge :value="row.ruleCount" :hidden="!row.ruleCount" type="info" class="rule-badge">
-                    <span class="rule-badge-label">事件规则</span>
-                  </el-badge>
-                  <el-button size="small" type="primary" link @click.stop="openAddRuleDialog(row)">添加事件规则</el-button>
-                  <el-button size="small" type="danger" link :disabled="!row.ruleCount" @click.stop="removeAlgoRules(row)">删除事件规则</el-button>
-                </template>
-              </el-table-column>
-              <el-table-column label="推理模式" width="84" align="center">
-                <template #default="{ row }">{{ row.mode === 'streaming' ? '连续' : '抓拍' }}</template>
-              </el-table-column>
-              <el-table-column label="间隔(ms)" width="84" align="center" prop="interval" />
-              <el-table-column label="状态" width="68" align="center">
-                <template #default="{ row }">
-                  <el-tag :type="row.enabled ? 'success' : 'info'" size="small" effect="dark">
-                    {{ row.enabled ? 'ON' : 'OFF' }}
-                  </el-tag>
-                </template>
-              </el-table-column>
-              <el-table-column label="操作" width="64" align="center">
-                <template #default="{ row }">
-                  <el-button size="small" type="primary" link @click.stop="selectAlgoRow(row)">编辑</el-button>
-                </template>
-              </el-table-column>
-            </el-table>
-          </el-card>
-
-          <!-- ② 算法参数编辑 (独立卡; 仅当前选中算法; 字段序: 算法→模式→间隔→置信度→NMS;
+          <!-- ② 算法参数编辑 (仅当前选中算法; 字段序: 算法→模式→间隔→置信度→NMS;
               校验: 置信度/NMS 0~1, 间隔 ≥100ms, 未通过字段下红提示且不触发保存) -->
           <el-card ref="editCardRef" shadow="never" class="edit-card">
             <template #header>
@@ -174,7 +180,7 @@
                   v-if="selected"
                   :model-value="regions"
                   :background-image-url="roiBackgroundUrl"
-                  :canvas-width="600" :canvas-height="240"
+                  :canvas-width="720" :canvas-height="405"
                   :types="['detection_zone', 'exclusion_zone']"
                   @update:model-value="onRegionsChange"
                 />
@@ -244,7 +250,7 @@
                   v-if="selected"
                   :model-value="countingZoneRois"
                   :background-image-url="roiBackgroundUrl"
-                  :canvas-width="600" :canvas-height="240"
+                  :canvas-width="720" :canvas-height="405"
                   :types="['counting_zone']"
                   @update:model-value="onCountingZonesChange"
                 />
@@ -300,7 +306,7 @@
  */
 import { ref, reactive, computed, onMounted, nextTick } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Refresh } from '@element-plus/icons-vue'
+import { Refresh, Plus, Delete, Edit } from '@element-plus/icons-vue'
 import { channelApi } from '@/api/channel'
 import { startSchedule, stopSchedule, getInferenceChannels } from '@/api/inference'
 import type { ScheduledChannel } from '@/api/inference'
@@ -1083,21 +1089,23 @@ async function saveConfig() {
 .layout-body { flex: 1; display: flex; gap: 12px; padding: 12px 24px; overflow: hidden; }
 .panel-left { width: var(--panel-left-width); flex-shrink: 0; overflow-y: auto; }
 .panel-left :deep(.el-card__body) { padding: 0; }
+/* [2026-09-01] 三栏布局: 通道列表 | 算法列表 | 编辑区; 中列全高表格内滚动,
+   右列(编辑+ROI 两卡)定高无滚动; 画布 720x405 (16:9 上限) */
+.panel-mid { width: 480px; flex-shrink: 0; display: flex; flex-direction: column; overflow: hidden; }
+.panel-mid :deep(.el-card__body) { flex: 1; overflow: hidden; padding: 0; display: flex; flex-direction: column; }
+.panel-mid .algo-table { flex: 1; }
 .panel-title { font-weight: 600; font-size: 14px; display: flex; justify-content: space-between; align-items: center; }
 .text-muted { color: var(--text-secondary); font-size: 12px; }
 .panel-right { flex: 1; display: flex; flex-direction: column; gap: 10px; overflow-y: auto; }
 .empty-state { flex: 1; display: flex; align-items: center; justify-content: center; }
-.algo-card :deep(.el-card__body), .edit-card :deep(.el-card__body), .roi-card :deep(.el-card__body) { padding: 10px 20px; }
-.algo-card :deep(.el-card__header), .edit-card :deep(.el-card__header), .roi-card :deep(.el-card__header) { padding: 6px 20px; }
-/* [2026-09-01] 单屏高度预算: 三卡禁止 flex 压缩 (编辑卡内容完整呈现),
-   预算分解: 算法表 106 + 画布 240 + 表单紧凑化 → 1080P 视口总高 ≤ 可用区且无滚动 */
-.algo-card, .edit-card, .roi-card { flex-shrink: 0; }
+.edit-card :deep(.el-card__body), .roi-card :deep(.el-card__body) { padding: 10px 20px; }
+.edit-card :deep(.el-card__header), .roi-card :deep(.el-card__header) { padding: 6px 20px; }
+/* [2026-09-01] 右列高度预算: 编辑卡(~200) + ROI 卡(header+tabs+画布 405+列表) ≈ 800 ≤ 883 可视 → 无滚动 */
+.edit-card, .roi-card { flex-shrink: 0; }
 .algo-card-sub { flex: 1; text-align: right; margin-right: 12px; font-weight: 400; font-size: 12px; color: var(--text-secondary); }
 .algo-table { width: 100%; }
 .algo-table :deep(.current-algo-row) td { background: var(--el-color-primary-light-9) !important; }
 .algo-table :deep(.el-table__row) { cursor: pointer; }
-.rule-badge { margin-right: 10px; vertical-align: middle; }
-.rule-badge-label { font-size: 12px; color: var(--text-secondary); padding: 0 4px; }
 .edit-card .algo-id-text { margin-left: 10px; font-size: 12px; color: var(--text-secondary); }
 .edit-actions { display: flex; justify-content: flex-end; gap: 12px; margin-top: 2px; padding-top: 8px; border-top: 1px solid var(--border-light); }
 /* 事件规则添加 dialog */
