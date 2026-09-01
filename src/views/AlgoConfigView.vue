@@ -404,6 +404,8 @@ function selectAlgoRow(row: { algoId: string; algoName: string; mode: 'snapshot'
   editForm.mode = row.mode
   editForm.interval = row.interval
   formErrors.interval = ''; formErrors.confidence = ''; formErrors.nms = ''
+  // [FIX 2026-09-01] 切换算法行 → 重载该算法的检测区域 (按 algo_id 隔离展示)
+  loadRegions()
   nextTick(() => editCardRef.value?.$el?.scrollIntoView?.({ behavior: 'smooth', block: 'center' }))
 }
 
@@ -597,13 +599,16 @@ async function loadRegions() {
   // (getTripwiresByChannelStr 精确匹配), 前后端统一在此对齐。
   const chStrNoSuffix = stripChSuffix(chIdStr)
   try {
+    // [FIX 2026-09-01] 检测区域按当前选中算法隔离 (后端 getRegions(ch, algo_id) 支持,
+    // 插件消费即按单 ID 精确查询): 未选中算法时载入空列表, 杜绝 "画一个区域所有算法都有" 观感
+    const curAlgo = (editForm.algoId || '').split(',')[0].trim()
     const [rRes, tRes, pRes, czRes] = await Promise.all([
-      regionApi.listRegions({ channel_id: chId }),
+      regionApi.listRegions(curAlgo ? { channel_id: chId, algo_id: curAlgo } : { channel_id: chId }),
       regionApi.listTripwires({ channel_id: chId }),
       // 🆕 v5.0: 通道主路径 channel_id_str (GB28181 完整编码)
       regionApi.listPassageways({
         channel_id_str: chStrNoSuffix,
-        algo_id: form.algorithm || 'shield.algo.perimeter.tailgating'
+        algo_id: (editForm.algoId || form.algorithm || 'shield.algo.perimeter.tailgating').split(',')[0].trim()
       }),
       regionApi.listCountingZones({ channel_id: chId })
     ])
@@ -613,7 +618,7 @@ async function loadRegions() {
     // 编辑器 RoiData {roi_id,roi_name,roi_type,polygon:number[]一维,is_active} —
     // 之前直接透传二维结构, 编辑器按一维消费 → 已保存区域渲染错乱/不显示,
     // 且 roi_id undefined → 新画区域与存量无法区分。
-    const rawRegions: any[] = rRes.data?.data?.regions ?? rRes.data?.regions ?? []
+    const rawRegions: any[] = curAlgo ? (rRes.data?.data?.regions ?? rRes.data?.regions ?? []) : []
     regions.value = rawRegions.map((r: any) => ({
       roi_id: `reg_${r.id}`,
       roi_name: r.name,
@@ -697,8 +702,10 @@ async function onRegionsChange(updated: any[]) {
   const chIdStr = selected.value.channelId
   const chIdNum = Number(chIdStr)
   const chId = Number.isFinite(chIdNum) && Number.isSafeInteger(chIdNum) ? chIdNum : 0
-  // algo_id 跟随当前调度算法 (检测区域语义: 该算法的检测过滤范围)
-  const algoId = form.algorithm || 'yolov8n'
+  // [FIX 2026-09-01] algo_id 必须是当前选中算法的单个 ID:
+  // 之前 form.algorithm 是调度完整串 (onChannelSelect 赋值 algo_plugin 整串),
+  // 整串写入 region.algo_id → 插件按单 ID 精确匹配永远失败 (区域对所有算法无效)
+  const algoId = (editForm.algoId || form.algorithm || 'yolov8n').split(',')[0].trim()
   const prevIds = new Set(lastLoadedRegions.value.map((r) => r.roi_id))
   const nextIds = new Set(updated.map((r) => String(r.roi_id || '')))
   let changed = 0
