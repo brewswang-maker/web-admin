@@ -259,7 +259,7 @@
               :src="getSnapshotUrl(row)"
               loading="lazy"
               style="width:56px;height:32px;object-fit:cover;border-radius:4px;cursor:pointer"
-              @click="previewImageUrl = getSnapshotUrl(row); previewVisible = true"
+              @click="openSnapshotPreview(row)"
               @error="() => console.warn('[AlarmsView] snapshot load failed:', getSnapshotUrl(row))"
             />
             <span v-else class="text-secondary" style="font-size:11px">无</span>
@@ -532,12 +532,18 @@
       </div>
     </el-dialog>
 
-    <!-- 图片预览 -->
-    <el-image-viewer
-      v-if="previewVisible"
-      :url-list="[previewImageUrl]"
-      @close="previewVisible = false"
-    />
+    <!-- 图片预览 + 检测框标注 (vp6 P1-3 2026-09-01: el-image-viewer 无叠层能力,
+         改 dialog + SnapshotAnnotated SVG overlay, 检测直报链 detections 像素坐标
+         在组件内按图像自然尺寸归一化) -->
+    <el-dialog
+      v-model="previewVisible"
+      title="告警快照"
+      width="760px"
+      destroy-on-close
+      align-center
+    >
+      <SnapshotAnnotated :src="previewImageUrl" :metadata="previewMeta ?? undefined" />
+    </el-dialog>
 
     <!-- Gallery 灯箱预览 (支持左右切换) -->
     <el-image-viewer
@@ -610,6 +616,7 @@ import { useAuthStore } from '@/stores/auth'
 import { useWebSocket } from '@/composables/useWebSocket'
 // [UX 2026-08-31] 1b: 列表行点击 → 全局告警详情弹窗 (与首页同套 AlarmPopup)
 import { showAlarmPopup } from '@/composables/useAlarmPopup'
+import SnapshotAnnotated from '@/views/perimeter/SnapshotAnnotated.vue'
 import { useRouter } from 'vue-router'
 import flvjs from 'flv.js'
 
@@ -650,6 +657,18 @@ const evidenceAlarmId = ref('')
 const analyzeLoading = ref(false)
 const previewVisible = ref(false)
 const previewImageUrl = ref('')
+// [vp6 P1-3 2026-09-01] 预览快照的标注 metadata (store normalizeAlarm 已兜底合并
+//   原始键; 此处再防御字符串形态 — 历史/直赋值链不至于又断)
+const previewMeta = ref<Record<string, unknown> | null>(null)
+function openSnapshotPreview(row: any) {
+  previewImageUrl.value = getSnapshotUrl(row)
+  let m = row?.metadata
+  if (typeof m === 'string') {
+    try { m = JSON.parse(m) } catch { m = null }
+  }
+  previewMeta.value = m && typeof m === 'object' && !Array.isArray(m) ? m : null
+  previewVisible.value = true
+}
 // [P3-VP2] 视图切换 + 证据库
 const viewMode = ref<'table' | 'gallery'>('table')
 const galleryItems = computed(() => {

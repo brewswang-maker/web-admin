@@ -1,9 +1,9 @@
 <template>
-  <div class="snap-annotated">
+  <div ref="rootRef" class="snap-annotated">
     <!-- [fix 2026-09-01 真机探针] 融合告警等程序化链路 snapshot_url 为空但
          bbox/target_label 已落库: 空图时渲染网格占位底 + overlay 照常画框,
          标注可视化不再被无快照阻断 (src 由父组件判空传入) -->
-    <el-image v-if="src" :src="src" :preview-src-list="[src]" fit="fill" class="snap-img" />
+    <el-image v-if="src" :src="src" :preview-src-list="[src]" fit="fill" class="snap-img" @load="onImgLoad" />
     <div v-else class="snap-placeholder">{{ t('perimeter.events.annotPlaceholder') }}</div>
     <!-- 检测框叠加: bbox 为归一化 [x1,y1,x2,y2], SVG viewBox 0-100 + none 保真映射;
          object-fit:fill 拉伸图像与 SVG 同步形变 → 坐标恒对齐 (标注精确性优先,
@@ -32,10 +32,22 @@
  * fill+preserveAspectRatio="none" 组合保证框与目标像素级对齐;
  * vector-effect: non-scaling-stroke 防非均匀缩放导致的描边粗细变形。
  */
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 const { t } = useI18n()
+
+// 图像自然尺寸 (检测直报链 detections 为原图像素坐标, 归一化基准;
+// 真机 1920x1080 快照实证)
+const rootRef = ref<HTMLElement>()
+const imgNat = ref<{ w: number; h: number }>({ w: 0, h: 0 })
+function onImgLoad() {
+  // 容器内局部查询 (同页多实例时全局 querySelector 会取错图)
+  const img = rootRef.value?.querySelector('img') as HTMLImageElement | null
+  if (img?.naturalWidth && img?.naturalHeight) {
+    imgNat.value = { w: img.naturalWidth, h: img.naturalHeight }
+  }
+}
 
 const props = defineProps<{
   /** 快照图 URL (可空: 空串时渲染网格占位底, overlay 仍画框) */
@@ -44,19 +56,37 @@ const props = defineProps<{
   metadata?: Record<string, unknown>
 }>()
 
-/** 归一化检测框 [x1,y1,x2,y2]; 防御式校验 (缺失/越界/退化一律不渲染) */
+/** 归一化检测框 [x1,y1,x2,y2]; 防御式校验 (缺失/越界/退化一律不渲染)。
+ *  [vp6 收尾补测 2026-09-01] 检测直报链兜底: metadata.bbox 缺失时回退
+ *  detections[0] / 数组形态 metadata 首元素 (原图像素坐标 x1/y1/x2/y2),
+ *  任一坐标 >1 判像素 → 按图像自然尺寸归一化 (未加载完先不出框, @load 后重算) */
 const box = computed<number[] | null>(() => {
-  const b = props.metadata?.bbox
+  const m = (props.metadata || {}) as Record<string, unknown>
+  let b = m.bbox as unknown
+  if (!Array.isArray(b) || b.length < 4) {
+    const det = Array.isArray(m.detections) ? m.detections[0] : null
+    const cand = (det && typeof det === 'object' ? det : (typeof m.x1 === 'number' ? m : null)) as Record<string, unknown> | null
+    if (cand && ['x1', 'y1', 'x2', 'y2'].every(k => typeof cand[k] === 'number')) {
+      b = [cand.x1, cand.y1, cand.x2, cand.y2]
+    }
+  }
   if (!Array.isArray(b) || b.length < 4) return null
-  const [x1, y1, x2, y2] = b.map(Number)
-  if (![x1, y1, x2, y2].every(n => Number.isFinite(n) && n >= 0 && n <= 1)) return null
+  let [x1, y1, x2, y2] = b.map(Number)
+  if (![x1, y1, x2, y2].every(n => Number.isFinite(n))) return null
   if (x2 <= x1 || y2 <= y1) return null
+  if ([x1, y1, x2, y2].some(v => v > 1)) {
+    const { w, h } = imgNat.value
+    if (!w || !h) return null
+    x1 /= w; y1 /= h; x2 /= w; y2 /= h
+  }
+  if (![x1, y1, x2, y2].every(n => n >= 0 && n <= 1)) return null
   return [x1, y1, x2, y2]
 })
 
-/** 目标标签角标 (英文模型标签, target_label / normalize 双键兼容) */
+/** 目标标签角标 (英文模型标签; target_label / targetLabel / class_name 三级回退) */
 const label = computed(() => {
-  const v = props.metadata?.target_label ?? props.metadata?.targetLabel
+  const m = (props.metadata || {}) as Record<string, unknown>
+  const v = m.target_label ?? m.targetLabel ?? m.class_name
   return typeof v === 'string' && v.trim() ? v.trim() : ''
 })
 

@@ -140,6 +140,7 @@
                     :key="`snap-${currentAlarm?.id || 'none'}`"
                     :image-url="snapshotImageUrl"
                     :bbox="popupBbox"
+                    :detections="popupDetections"
                     :target-label="popupTargetLabel"
                   />
                 </el-tab-pane>
@@ -678,6 +679,11 @@ const popupBbox = computed<number[]>(() => {
     return [cand.x1 as number, cand.y1 as number, cand.x2 as number, cand.y2 as number]
   }
   return []
+})
+/** [任务4] 告警 metadata.detections 完整数组 (多检测目标 → 多红框) */
+const popupDetections = computed<any[]>(() => {
+  const m = (currentAlarm.value?.metadata || {}) as Record<string, unknown>
+  return Array.isArray(m.detections) ? (m.detections as any[]) : []
 })
 const popupTargetLabel = computed(() => {
   const m = (currentAlarm.value?.metadata || {}) as Record<string, unknown>

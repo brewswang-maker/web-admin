@@ -243,9 +243,14 @@ async function reload() {
     //   原始键兜底), SnapshotAnnotated 据此渲染检测框叠加
     events.value = list.map(e => {
       const n = normalizeAlarmCore(e)
-      const rawMeta = (e as { metadata?: Record<string, unknown> })?.metadata
+      // [vp6 收尾补测 2026-09-01] metadata 三形态兼容: REST 端点不同分页下返回
+      //   JSON 字符串或对象 (真机实测同端点两形态并存), 字符串先 parse 再合并
+      let rawMeta = (e as { metadata?: unknown })?.metadata
+      if (typeof rawMeta === 'string') {
+        try { rawMeta = JSON.parse(rawMeta) } catch { rawMeta = undefined }
+      }
       if (rawMeta && typeof rawMeta === 'object' && !Array.isArray(rawMeta)) {
-        n.metadata = { ...rawMeta, ...n.metadata }
+        n.metadata = { ...(rawMeta as Record<string, unknown>), ...n.metadata }
       }
       return n
     }).filter(e => isPerimeterEvent(e?.type))
