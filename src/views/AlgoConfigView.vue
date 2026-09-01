@@ -55,21 +55,12 @@
               <div>已配置算法</div>
               <div v-if="selected" class="algo-mid-channel">{{ selected.name }}</div>
             </div>
-            <!-- [UX 2026-09-01] 分割按钮: 主入口「+ 绑定事件规则」(弹出未绑定规则列表抽屉),
-                 下拉保留「新增裸算法」旧逻辑 (tooltip 说明推荐用事件规则) -->
-            <el-dropdown v-if="selected" split-button type="primary" size="small" trigger="click"
-              class="algo-add-split" :title="$t('bindRuleHint', '推荐使用事件规则, 因其包含完整的事件类型、动作、冷却等可运行配置')"
-              @click="openBindRuleDrawer" @command="onAddMenuCmd">
-              + 绑定事件规则
-              <template #dropdown>
-                <el-dropdown-menu>
-                  <el-dropdown-item command="bind">绑定事件规则 (推荐)</el-dropdown-item>
-                  <el-dropdown-item command="algo" divided :title="$t('bindRuleHint', '推荐使用事件规则, 因其包含完整的事件类型、动作、冷却等可运行配置')">
-                    新增裸算法 (兼容旧逻辑)
-                  </el-dropdown-item>
-                </el-dropdown-menu>
-              </template>
-            </el-dropdown>
+            <!-- [UX 2026-09-01] 主入口「+ 绑定事件规则」: 弹出未绑定规则列表抽屉。
+                 裸算法入口已移除: 无规则订阅时推理不启动/告警被抑制,
+                 裸算法无法触发弹窗/语音播报/事件快照/事件录像 (全在规则 actions 上) -->
+            <el-button v-if="selected" type="primary" size="small" class="algo-add-btn"
+              :title="$t('bindRuleHint', '推荐使用事件规则, 因其包含完整的事件类型、动作、冷却等可运行配置')"
+              @click="openBindRuleDrawer">+ 绑定事件规则</el-button>
             <el-button v-else type="primary" link size="small" disabled>+ 绑定事件规则</el-button>
           </div>
         </template>
@@ -77,7 +68,7 @@
           row-key="algoId"
           highlight-current-row :row-class-name="algoRowClassName"
           @row-click="selectAlgoRow"
-          empty-text="该通道尚未配置算法 — 在右侧编辑区选择算法后点击「保存配置」">
+          empty-text="该通道尚未配置算法 — 请点击「+ 绑定事件规则」为通道添加算法">
           <el-table-column label="算法" min-width="110">
             <template #default="{ row }">
               <div class="algo-name-cell">
@@ -120,11 +111,10 @@
         <template v-else>
           <!-- ② 算法参数编辑 (仅当前选中算法; 字段序: 算法→模式→间隔→置信度→NMS;
               校验: 置信度/NMS 0~1, 间隔 ≥100ms, 未通过字段下红提示且不触发保存) -->
-          <el-card ref="editCardRef" shadow="never" class="edit-card" :class="{ 'edit-card--adding': addingAlgo }">
+          <el-card ref="editCardRef" shadow="never" class="edit-card">
             <template #header>
               <div class="config-header">
-                <span>{{ addingAlgo ? '新增算法' : '算法参数编辑' }}</span>
-                <el-tag v-if="addingAlgo" size="small" type="warning">选择算法后保存</el-tag>
+                <span>算法参数编辑</span>
                 <el-tag v-if="editForm.algoId" size="small" type="primary" :title="isAlgoFallback(editForm.algoId) ? '该算法未注册中文名' : ''">{{ editForm.algoName }}</el-tag>
               </div>
             </template>
@@ -134,9 +124,8 @@
                   <el-tag type="primary" size="small" :title="isAlgoFallback(editForm.algoId) ? '该算法未注册中文名' : ''">{{ editForm.algoName }}</el-tag>
                   <span class="algo-id-text">{{ editForm.algoId }}</span>
                 </template>
-                <el-select v-else ref="algoSelectRef" v-model="form.algorithm" :placeholder="$t('selectAlgo', '选择算法 (新配置)')" style="width:100%" @change="addingAlgo = false">
-                  <el-option v-for="a in algorithmOptions" :key="a.value" :label="a.label" :value="a.value" />
-                </el-select>
+                <!-- [UX 2026-09-01] 裸算法下拉已移除: 新增算法统一走「+ 绑定事件规则」 -->
+                <span v-else class="text-muted">该通道暂无算法 — 请点击「+ 绑定事件规则」添加</span>
               </el-form-item>
               <el-row :gutter="16">
                 <el-col :span="9">
@@ -180,7 +169,7 @@
             </el-form>
             <div class="edit-actions">
               <el-button @click="resetEditForm">{{ $t('reset', '重置') }}</el-button>
-              <el-button type="primary" :loading="saving" :disabled="!editForm.algoId && !form.algorithm" @click="saveConfig">{{ $t('save', '保存配置') }}</el-button>
+              <el-button type="primary" :loading="saving" :disabled="!editForm.algoId" @click="saveConfig">{{ $t('save', '保存配置') }}</el-button>
             </div>
           </el-card>
 
@@ -626,7 +615,6 @@ function algoRowClassName({ row }: { row: { algoId: string } }) {
 
 /** 点击列表行/编辑 → 高亮 + 填充编辑表单 + 滚动定位到编辑卡 */
 function selectAlgoRow(row: { algoId: string; algoName: string; mode: 'snapshot' | 'streaming'; interval: number }) {
-  addingAlgo.value = false
   currentAlgoId.value = row.algoId
   editForm.algoId = row.algoId
   editForm.algoName = row.algoName
@@ -645,24 +633,6 @@ function resetEditForm() {
   }
   formErrors.interval = ''; formErrors.confidence = ''; formErrors.nms = ''
   ElMessage.info('已重置')
-}
-
-/** [UX 对齐效果图] + 新增算法: 清空编辑区进入新增模式 (右侧下拉选算法后保存即追加)
- *  [FIX 2026-09-01 点击无反应] 增加可见反馈: 编辑卡切「新增算法」标题+高亮边框+提示语+自动聚焦下拉 */
-const addingAlgo = ref(false)
-const algoSelectRef = ref()
-function addNewAlgo() {
-  currentAlgoId.value = ''
-  editForm.algoId = ''
-  editForm.algoName = ''
-  form.algorithm = ''
-  formErrors.interval = ''; formErrors.confidence = ''; formErrors.nms = ''
-  addingAlgo.value = true
-  ElMessage.info('已进入新增模式：请选择算法标签并配置参数，然后点击「保存配置」')
-  nextTick(() => {
-    editCardRef.value?.$el?.scrollIntoView?.({ behavior: 'smooth', block: 'center' })
-    algoSelectRef.value?.focus?.()
-  })
 }
 
 /** [FIX 2026-09-01 一对一启停] 行内开关: 启用=算法加入调度串 / 禁用=移出串并记入禁用集合
@@ -1122,12 +1092,6 @@ async function reloadBindRules() {
 }
 function onBindSelectionChange(rows: LinkageRule[]) {
   bindSelection.value = rows
-}
-
-/** 分割按钮下拉命令: bind=绑定抽屉 / algo=裸算法旧流程 */
-function onAddMenuCmd(cmd: string) {
-  if (cmd === 'bind') openBindRuleDrawer()
-  else if (cmd === 'algo') addNewAlgo()
 }
 
 /** 绑定动作: 遍历勾选项补齐 source_cond 后 PUT; 算法不一致的一次性预检跳过 + warning */
@@ -1669,7 +1633,7 @@ async function loadChannelSnapshot(channelId: string) {
   } catch { roiBackgroundUrl.value = '' }
 }
 
-/** 保存配置: 校验 → 启用推理调度 (编辑保留原算法串 / 新增追加; 停用走列表行内启禁用) */
+/** 保存配置: 校验 → 启用推理调度 (仅编辑既有算法串; 新增算法走「+ 绑定事件规则」, 停用走行内开关) */
 async function saveConfig() {
   if (!selected.value) return
   if (!validateAll()) {
@@ -1681,14 +1645,14 @@ async function saveConfig() {
   const ch = selected.value
   try {
     const sc = scheduledMap.value.get(ch.channelId)
-    // [UX 对齐效果图] 保存即启用: 编辑模式保留原多算法串; 新增模式 (下拉新选) 追加进串
+    // [UX 2026-09-01] 保存即启用: 保留原多算法串 (裸算法新增模式已移除 —
+    // 无规则订阅时推理不启动/告警被抑制, 裸算法无法产生任何联动效果)
     let algoPluginStr = sc?.algo_plugin || ''
-    if (form.algorithm) {
-      const ids = algoPluginStr ? algoPluginStr.split(',').map((s) => s.trim()).filter(Boolean) : []
-      if (!ids.includes(form.algorithm)) ids.push(form.algorithm)
-      algoPluginStr = ids.join(',')
+    if (!algoPluginStr) {
+      ElMessage.warning('该通道暂无算法, 请通过「+ 绑定事件规则」添加 (事件规则含完整可运行配置)')
+      saving.value = false
+      return
     }
-    if (!algoPluginStr) algoPluginStr = 'yolov8n'
     const deviceId = ch.deviceId || ch.parentDeviceId || ch.channelId
     await startSchedule(
       ch.channelId,
@@ -1700,7 +1664,6 @@ async function saveConfig() {
     ch.algoPlugin = algoPluginStr
     ch.inferenceEnabled = true
     ch.interval = editForm.interval
-    addingAlgo.value = false
     ElMessage.success(`通道 ${ch.name} 配置已保存, 推理调度已启动`)
     await loadData() // 刷新调度记录 → 算法列表/间隔/模式同步
   } catch (e: any) {
@@ -1733,9 +1696,6 @@ async function saveConfig() {
 .panel-right { flex: 1; display: flex; flex-direction: column; gap: 10px; overflow-y: auto; }
 .empty-state { flex: 1; display: flex; align-items: center; justify-content: center; }
 .edit-card :deep(.el-card__body), .roi-card :deep(.el-card__body) { padding: 10px 20px; }
-/* [FIX 2026-09-01] 新增算法模式: 编辑卡高亮提示用户操作焦点已切换 */
-.edit-card--adding { border-color: var(--el-color-warning); }
-.edit-card--adding :deep(.el-card__header) { color: var(--el-color-warning); }
 .edit-card :deep(.el-card__header), .roi-card :deep(.el-card__header) { padding: 6px 20px; }
 /* [2026-09-01] 右列高度预算: 编辑卡(~200) + ROI 卡(header+tabs+画布 405+列表) ≈ 800 ≤ 883 可视 → 无滚动 */
 .edit-card, .roi-card { flex-shrink: 0; }
@@ -1784,9 +1744,8 @@ async function saveConfig() {
 .rule-drawer-item-name { font-weight: 600; font-size: 13px; flex: 1; min-width: 0; }
 .rule-drawer-form :deep(.el-form-item) { margin-bottom: 10px; }
 .rule-drawer-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
-/* [UX 2026-09-01] 中栏 header 分割按钮 (绑定事件规则 主 + 新增裸算法 兼容入口) */
-.algo-add-split { vertical-align: middle; }
-.algo-add-split :deep(.el-button) { padding: 5px 10px; font-size: 12px; }
+/* [UX 2026-09-01] 中栏 header「+ 绑定事件规则」主入口按钮 */
+.algo-add-btn { padding: 5px 10px; font-size: 12px; }
 /* 绑定事件规则抽屉: 搜索 + 勾选表格 + 分页 + 底部动作 */
 .bind-rule-body { display: flex; flex-direction: column; gap: 10px; padding: 0 4px; }
 .bind-rule-search { flex: 0 0 auto; }
