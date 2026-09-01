@@ -136,7 +136,7 @@ import type { Component } from 'vue'
 import {
   videoPerimeterApi, pickPerimeterPacks, isPerimeterEvent, PERIMETER_EVENT_TYPES,
 } from '@/api/videoPerimeter'
-import type { AlarmEvent } from '@/types/alarm'
+import { normalizeAlarmCore, type AlarmEvent } from '@/types/alarm'
 import type { ScenePack } from '@/types/largeEvent'
 
 const { t } = useI18n()
@@ -190,13 +190,15 @@ const typeDist = computed(() => {
   return entries.map(([type, count]) => ({ type, count, pct: Math.round((count / max) * 100) }))
 })
 
-/** 已布防包判定: 规则字段防御式探测 (scene_pack_id / source_pack / tags) */
+/** 已布防包判定: 规则字段防御式探测 (scene_pack_id / source_pack / tags)
+ *  [修复 2026-09-01] 保留完整 pack id — 原 replace 剩前缀得 'wall_v1' 与
+ *  模板比较用的完整 'video_perimeter_wall_v1' 永不匹配 → 全部误显示未布防 */
 const deployedPackIds = computed(() => {
   const ids = new Set<string>()
   for (const r of rules.value) {
     const pid = r.scene_pack_id ?? r.source_pack
       ?? (r.tags ?? []).find(tg => String(tg).startsWith('video_perimeter_'))
-    if (pid) ids.add(String(pid).replace(/^video_perimeter_/, ''))
+    if (pid) ids.add(String(pid))
   }
   return ids
 })
@@ -218,7 +220,10 @@ async function reload() {
       videoPerimeterApi.listRules(),
     ])
     const ad = (alarmRes.data as { data?: { items?: AlarmEvent[] } })?.data
-    alarms.value = (Array.isArray(ad?.items) ? ad.items : []).filter(e => isPerimeterEvent(e?.type))
+    // [normalize 修复 2026-09-01] 原始响应字段是 alarm_type (无 type/createdAt/status),
+    //   直接过滤/统计全落空 → 今日事件 0/分布空; 统一走 normalizeAlarmCore (SSOT)
+    alarms.value = (Array.isArray(ad?.items) ? ad.items : [])
+      .map(e => normalizeAlarmCore(e)).filter(e => isPerimeterEvent(e?.type))
     packs.value = pickPerimeterPacks(packRes.data)
     const rd = (ruleRes.data as { data?: { items?: RuleLite[] } })?.data
     rules.value = Array.isArray(rd?.items) ? rd.items : []
