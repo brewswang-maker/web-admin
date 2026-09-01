@@ -31,7 +31,7 @@
     <!-- ===== 4 包卡片 (字段全部防御式访问) ===== -->
     <el-row v-else :gutter="16">
       <el-col :span="12" v-for="p in packs" :key="p.scene_pack_id">
-        <el-card shadow="hover" class="pack-card" @click="openDetail(p)">
+        <el-card shadow="hover" class="pack-card" :class="{ 'pack-card--deployed': deployedCount(p.scene_pack_id) > 0 }" @click="openDetail(p)">
           <div class="pack-head">
             <div class="pack-icon">
               <el-icon :size="22"><component :is="packIcon(p.scene_pack_id)" /></el-icon>
@@ -48,6 +48,13 @@
             </div>
           </div>
           <div class="pack-meta">
+            <!-- [UX 2026-09-02 对齐效果图状态色] 已布防/未布防徽标 (按规则 tags 反查, 同总览口径) -->
+            <el-tag v-if="deployedCount(p.scene_pack_id) > 0" size="small" type="success" effect="light">
+              {{ t('perimeter.packs.deployedN', `已布防 · ${deployedCount(p.scene_pack_id)} 条规则`) }}
+            </el-tag>
+            <el-tag v-else size="small" type="info" effect="plain">
+              {{ t('perimeter.packs.notDeployed', '未布防') }}
+            </el-tag>
             <el-tag size="small" type="info">{{ t('perimeter.packs.algoN', { n: p.algo_set?.length ?? 0 }) }}</el-tag>
             <el-tag size="small" type="info">{{ t('perimeter.packs.tplN', { n: p.linkage_templates?.length ?? 0 }) }}</el-tag>
             <el-tag size="small" type="info">ETA ~{{ p.deploy_eta_min ?? '—' }}min</el-tag>
@@ -179,6 +186,16 @@ const lastResult = ref<ScenePackApplyResult | null>(null)
 const drawerVisible = ref(false)
 const activePack = ref<ScenePack | null>(null)
 
+/** [UX 2026-09-02] 已布防判定 (规则 tags 含 scene_pack_id, 同总览 deployedPackIds 口径);
+ *  拉取失败静默 — 徽标退化为「未布防」不阻塞主卡片 */
+const rules = ref<Array<{ tags?: string[]; scene_pack_id?: string; source_pack?: string }>>([])
+
+function deployedCount(packId: string): number {
+  return rules.value.filter(r =>
+    (r.scene_pack_id ?? r.source_pack ?? (r.tags ?? []).find(tg => String(tg).startsWith('video_perimeter_'))) === packId
+  ).length
+}
+
 function packIcon(id: string): Component {
   if (id.includes('gate')) return Guide
   if (id.includes('forbidden')) return Warning
@@ -217,6 +234,11 @@ async function reload() {
   } finally {
     loading.value = false
   }
+  // 已布防徽标数据 (增强信息, 失败静默)
+  try {
+    const res = await videoPerimeterApi.listRules()
+    rules.value = res.data?.data?.items ?? []
+  } catch { rules.value = [] }
 }
 
 function openDetail(p: ScenePack) {
@@ -256,6 +278,8 @@ onMounted(reload)
 .packs-title { margin: 0 0 4px; font-size: 20px; }
 .packs-sub { color: var(--el-text-color-secondary); font-size: 13px; }
 .pack-card { margin-bottom: 16px; cursor: pointer; }
+.pack-card--deployed { border-color: var(--el-color-success-light-5); }
+.pack-card--deployed .pack-icon { background: var(--el-color-success-light-9); color: var(--el-color-success); }
 .pack-head { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
 .pack-icon { width: 44px; height: 44px; border-radius: 10px; display: flex; align-items: center; justify-content: center; background: var(--el-color-primary-light-9); color: var(--el-color-primary); flex-shrink: 0; }
 .pack-name { font-size: 16px; font-weight: 600; }

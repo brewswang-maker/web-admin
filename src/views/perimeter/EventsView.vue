@@ -7,17 +7,25 @@
         <div class="events-sub">{{ t('perimeter.events.subtitle', { n: filtered.length }) }}</div>
       </div>
       <div class="events-filter">
+        <!-- [UX 2026-09-02 对齐效果图] 关键词搜索 (300ms 防抖) + 类型筛选中文下拉 -->
+        <el-input v-model="keywordInput" size="default" clearable class="filter-kw"
+          :placeholder="t('perimeter.events.searchHint', '搜索描述 / 设备 / 事件类型')"
+          :prefix-icon="Search" @input="onKeywordInput" />
+        <el-select v-model="typeFilter" size="default" class="filter-type" clearable filterable
+                   :placeholder="t('perimeter.events.allTypes', '全部类型')" @change="page = 1">
+          <el-option v-for="ty in typeOptions" :key="ty" :value="ty" :label="zh(ty)" />
+        </el-select>
         <el-select v-model="levelFilter" size="default" class="filter-level" clearable
-                   :placeholder="t('perimeter.events.allLevels')">
+                   :placeholder="t('perimeter.events.allLevels')" @change="page = 1">
           <el-option v-for="lv in LEVELS" :key="lv" :value="lv" :label="levelText(lv)" />
         </el-select>
         <el-select v-model="statusFilter" size="default" class="filter-status" clearable
-                   :placeholder="t('perimeter.events.allStatus')">
+                   :placeholder="t('perimeter.events.allStatus')" @change="page = 1">
           <el-option v-for="s in STATUSES" :key="s" :value="s" :label="statusText(s)" />
         </el-select>
         <!-- [vp3] AI 复核结论筛选 (《研究报告》§8 复核闭环运营口径) -->
         <el-select v-model="aiFilter" size="default" class="filter-ai" clearable
-                   :placeholder="t('perimeter.events.colAiReview')">
+                   :placeholder="t('perimeter.events.colAiReview')" @change="page = 1">
           <el-option value="true" :label="t('perimeter.events.aiTrue')" />
           <el-option value="false" :label="t('perimeter.events.aiFalse')" />
           <el-option value="reviewed" :label="t('perimeter.events.aiReviewed')" />
@@ -42,8 +50,8 @@
     <!-- ===== 空态 ===== -->
     <el-empty v-else-if="filtered.length === 0" :description="t('perimeter.events.empty')" />
 
-    <!-- ===== 事件表格 ===== -->
-    <el-table v-else :data="filtered" size="default" @row-click="openDetail" class="events-table">
+    <!-- ===== 事件表格 (前端分页) ===== -->
+    <el-table v-else :data="paged" size="default" @row-click="openDetail" class="events-table">
       <el-table-column :label="t('perimeter.events.colLevel')" width="90" align="center">
         <template #default="{ row }">
           <el-tag :type="levelTagType(row.level)" size="small" effect="dark">{{ levelText(row.level) }}</el-tag>
@@ -51,7 +59,10 @@
       </el-table-column>
       <el-table-column :label="t('perimeter.events.colType')" width="150">
         <template #default="{ row }">
-          <span class="mono">{{ row.type }}</span>
+          <!-- [UX 2026-09-02] 中文名展示 (SSOT canonical), tooltip 保留裸 key 便于检索 -->
+          <el-tooltip :content="row.type" placement="top" :disabled="zh(row.type) === row.type">
+            <span class="type-cell">{{ zh(row.type) }}</span>
+          </el-tooltip>
         </template>
       </el-table-column>
       <el-table-column prop="description" :label="t('perimeter.events.colDesc')" min-width="240" show-overflow-tooltip />
@@ -99,6 +110,13 @@
       </el-table-column>
     </el-table>
 
+    <!-- ===== 分页 (筛选/搜索变化自动重置页码) ===== -->
+    <div v-if="filtered.length > 0" class="events-pager">
+      <el-pagination v-model:current-page="page" v-model:page-size="pageSize"
+        :total="filtered.length" :page-sizes="[10, 20, 50]" layout="total, sizes, prev, pager, next"
+        background size="small" />
+    </div>
+
     <!-- ===== 详情抽屉 (抓拍 + 元数据) ===== -->
     <el-drawer v-model="drawerVisible" :title="t('perimeter.events.detailTitle')" size="480px">
       <template v-if="active">
@@ -110,7 +128,7 @@
 
         <el-descriptions :column="1" border size="small" class="detail-desc">
           <el-descriptions-item :label="t('perimeter.events.colType')">
-            <span class="mono">{{ active.type }}</span>
+            <span :title="active.type">{{ zh(active.type) }}</span>
           </el-descriptions-item>
           <el-descriptions-item :label="t('perimeter.events.colDesc')">{{ active.description }}</el-descriptions-item>
           <el-descriptions-item :label="t('perimeter.events.colChannel')">
@@ -136,14 +154,17 @@
  */
 import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Refresh, ArrowDown } from '@element-plus/icons-vue'
+import { Refresh, ArrowDown, Search } from '@element-plus/icons-vue'
+import { useDebounceFn } from '@vueuse/core'
 import { videoPerimeterApi, isPerimeterEvent } from '@/api/videoPerimeter'
 import { normalizeAlarmCore, type AlarmEvent, type AlarmLevel, type AlarmStatus } from '@/types/alarm'
 import { useAlarmRowActions } from '@/composables/useAlarmRowActions'
+import { useEventTypeZh } from '@/composables/useEventTypeZh'
 import SnapshotAnnotated from './SnapshotAnnotated.vue'
 
 const { t } = useI18n()
 const { openAlarmPopup, handleAlarmRow } = useAlarmRowActions()
+const { zh, ensure: ensureEventTypes } = useEventTypeZh()
 
 /** 处理成功后行内回写状态 (避免整表刷新, 与 AlarmsView row.status 回写同范式) */
 function onHandled(id: string, status: string) {
@@ -160,16 +181,49 @@ const loadError = ref('')
 const levelFilter = ref<AlarmLevel | ''>('')
 const statusFilter = ref<AlarmStatus | ''>('')
 const aiFilter = ref<'' | 'true' | 'false' | 'reviewed' | 'none'>('')  // [vp3]
+// [UX 2026-09-02] 关键词搜索 (300ms 防抖) + 类型筛选 + 前端分页
+const keywordInput = ref('')
+const keyword = ref('')
+const typeFilter = ref<AlarmEvent['type'] | ''>('')
+const page = ref(1)
+const pageSize = ref(20)
 const drawerVisible = ref(false)
 const active = ref<AlarmEvent | null>(null)
 
-const filtered = computed(() =>
-  events.value.filter(e =>
-    (levelFilter.value === '' || e.level === levelFilter.value) &&
-    (statusFilter.value === '' || e.status === statusFilter.value) &&
-    (aiFilter.value === '' || aiReviewKeyOf(e) === aiFilter.value)
-  )
-)
+const typeOptions = computed(() => {
+  const set = new Set<string>()
+  for (const e of events.value) if (e.type) set.add(String(e.type))
+  return [...set].sort()
+})
+
+/** 搜索防抖 (300ms): 输入中不触发过滤计算, 提交后重置分页 */
+const onKeywordInput = useDebounceFn(() => {
+  keyword.value = keywordInput.value.trim()
+  page.value = 1
+}, 300)
+
+const filtered = computed(() => {
+  const kw = keyword.value.toLowerCase()
+  return events.value.filter(e => {
+    if (levelFilter.value !== '' && e.level !== levelFilter.value) return false
+    if (statusFilter.value !== '' && e.status !== statusFilter.value) return false
+    if (typeFilter.value !== '' && e.type !== typeFilter.value) return false
+    if (aiFilter.value !== '' && aiReviewKeyOf(e) !== aiFilter.value) return false
+    if (kw) {
+      const hay = `${e.description ?? ''} ${e.channelName ?? ''} ${e.channelId ?? ''} ${e.type ?? ''} ${zh(String(e.type ?? ''))}`.toLowerCase()
+      if (!hay.includes(kw)) return false
+    }
+    return true
+  })
+})
+
+/** 分页切片: 任一筛选变化 → filtered 变化 → 越界页码自动回收 */
+const paged = computed(() => {
+  const maxPage = Math.max(1, Math.ceil(filtered.value.length / pageSize.value))
+  if (page.value > maxPage) page.value = maxPage
+  const start = (page.value - 1) * pageSize.value
+  return filtered.value.slice(start, start + pageSize.value)
+})
 
 /** [vp3] AI 复核结论分类 (筛选与短标共用语义) */
 function aiReviewKeyOf(e: AlarmEvent): 'true' | 'false' | 'reviewed' | 'none' {
@@ -266,7 +320,10 @@ function openDetail(row: AlarmEvent) {
   drawerVisible.value = true
 }
 
-onMounted(reload)
+onMounted(() => {
+  reload()
+  ensureEventTypes() // 事件类型中文名预热 (非阻塞)
+})
 </script>
 
 <style scoped>
@@ -274,11 +331,15 @@ onMounted(reload)
 .events-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 16px; }
 .events-title { margin: 0 0 4px; font-size: 20px; }
 .events-sub { color: var(--el-text-color-secondary); font-size: 13px; }
-.events-filter { display: flex; gap: 8px; align-items: center; }
-.filter-level { width: 140px; }
-.filter-status { width: 150px; }
-.filter-ai { width: 130px; }
+.events-filter { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.filter-kw { width: 210px; }
+.filter-type { width: 150px; }
+.filter-level { width: 130px; }
+.filter-status { width: 140px; }
+.filter-ai { width: 120px; }
 .events-table { cursor: pointer; }
+.type-cell { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: inline-block; max-width: 100%; }
+.events-pager { display: flex; justify-content: flex-end; margin-top: 12px; }
 .act-handle { margin-left: 8px; }
 .mono { font-family: Menlo, Consolas, monospace; }
 /* .snap-img 已由 SnapshotAnnotated.vue 自带样式接管 (vp6 P1-3) */

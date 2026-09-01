@@ -6,7 +6,13 @@
         <h2 class="rules-title">{{ t('perimeter.rules.title') }}</h2>
         <div class="rules-sub">{{ t('perimeter.rules.subtitle') }}</div>
       </div>
-      <el-button :icon="Refresh" :loading="loading" @click="reload">{{ t('common.refresh') }}</el-button>
+      <div class="rules-toolbar">
+        <!-- [UX 2026-09-02 对齐效果图] 规则搜索 (300ms 防抖, 规则名/ID/事件类型) -->
+        <el-input v-model="kwInput" size="default" clearable class="rules-kw"
+          :placeholder="t('perimeter.rules.searchHint', '搜索规则名 / 事件类型')"
+          :prefix-icon="Search" @input="onKwInput" />
+        <el-button :icon="Refresh" :loading="loading" @click="reload">{{ t('common.refresh') }}</el-button>
+      </div>
     </div>
 
     <!-- ===== 错误态 ===== -->
@@ -87,10 +93,13 @@
           </el-table-column>
           <el-table-column :label="t('perimeter.rules.colEventTypes')" min-width="200">
             <template #default="{ row }">
+              <!-- [UX 2026-09-02] 中文名展示 (SSOT canonical), tooltip 保留裸 key -->
               <el-tag v-for="et in (row.source_cond?.event_types ?? []).slice(0, 2)"
-                      :key="et" size="small" effect="plain" class="evt-tag">{{ et }}</el-tag>
+                      :key="et" size="small" effect="plain" class="evt-tag">
+                <span :title="et">{{ zh(et) }}</span>
+              </el-tag>
               <el-tooltip v-if="(row.source_cond?.event_types?.length ?? 0) > 2"
-                          :content="(row.source_cond?.event_types ?? []).join(', ')" placement="top">
+                          :content="zhAll(row.source_cond?.event_types ?? [])" placement="top">
                 <el-tag size="small" type="info" effect="plain">
                   +{{ (row.source_cond?.event_types?.length ?? 0) - 2 }}
                 </el-tag>
@@ -102,7 +111,7 @@
               <template v-if="(row.source_cond?.channel_ids?.length ?? 0) > 0">
                 <el-tag v-for="c in row.source_cond.channel_ids.slice(0, 3)"
                         :key="c" size="small" type="warning" effect="plain" class="ch-tag">
-                  ch{{ c }}
+                  {{ t('perimeter.rules.channelN', { n: c }) }}
                 </el-tag>
                 <span v-if="row.source_cond.channel_ids.length > 3" class="more-ch">
                   +{{ row.source_cond.channel_ids.length - 3 }}
@@ -118,9 +127,11 @@
           </el-table-column>
           <el-table-column :label="t('perimeter.rules.colStatus')" width="90" align="center">
             <template #default="{ row }">
-              <el-tag :type="row.enabled ? 'success' : 'info'" size="small">
-                {{ row.enabled ? t('perimeter.rules.enabled') : t('perimeter.rules.disabled') }}
-              </el-tag>
+              <!-- [UX 2026-09-02 对齐效果图] 行内启停开关 (PUT /linkage/rules/{id}; loading 防连点, 失败回滚) -->
+              <el-switch size="small" :model-value="row.enabled"
+                :loading="togglingId === row.id" :disabled="togglingId === row.id"
+                :style="togglingId === row.id ? 'opacity: 0.7' : ''"
+                @change="toggleRule(row)" />
             </template>
           </el-table-column>
           <el-table-column :label="t('perimeter.rules.colTriggerStat')" width="170">
@@ -132,8 +143,9 @@
             </template>
           </el-table-column>
           <el-table-column :label="t('perimeter.rules.colAction')" width="100" align="center">
-            <template #default>
-              <el-button size="small" link type="primary" @click="goLinkage">{{ t('perimeter.rules.goEdit') }}</el-button>
+            <template #default="{ row }">
+              <!-- [FEAT 2026-09-02] 单条就地编辑: 点哪条只编辑哪条 -->
+              <el-button size="small" link type="primary" @click="openRuleEdit(row)">{{ t('common.edit') }}</el-button>
             </template>
           </el-table-column>
         </el-table>
@@ -161,6 +173,10 @@
           </el-tooltip>
         </div>
       </el-card>
+
+      <!-- [FEAT 2026-09-02] 单条规则就地编辑抽屉 (共用组件, 点哪条只编辑哪条) -->
+      <RuleEditDrawer v-model:visible="ruleEditVisible" :rule="ruleEditing"
+        @saved="fetchAll" @deleted="fetchAll" @goto-platform="goLinkage" />
     </template>
   </div>
 </template>
@@ -182,13 +198,18 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { CircleCheckFilled, Refresh, Box } from '@element-plus/icons-vue'
+import { ElMessage } from 'element-plus'
+import { useDebounceFn } from '@vueuse/core'
+import { CircleCheckFilled, Refresh, Box, Search } from '@element-plus/icons-vue'
 import { videoPerimeterApi, pickPerimeterPacks, pickPerimeterTemplates } from '@/api/videoPerimeter'
-import type { LinkageRule, RuleTemplate, RuleTriggerStat } from '@/api/linkage'
+import RuleEditDrawer from '@/components/RuleEditDrawer.vue'
+import { linkageApi, type LinkageRule, type RuleTemplate, type RuleTriggerStat } from '@/api/linkage'
+import { useEventTypeZh } from '@/composables/useEventTypeZh'
 import type { ScenePack } from '@/types/largeEvent'
 
 const { t } = useI18n()
 const router = useRouter()
+const { zh, zhAll, ensure: ensureEventTypes } = useEventTypeZh()
 
 const loading = ref(false)
 const loadError = ref('')
@@ -197,15 +218,33 @@ const stats = ref<RuleTriggerStat[]>([])
 const vpTemplates = ref<RuleTemplate[]>([])
 const packs = ref<ScenePack[]>([])
 const packFilter = ref('')
+// [UX 2026-09-02] 规则搜索 (300ms 防抖) + 行内启停开关状态
+const kwInput = ref('')
+const keyword = ref('')
+const togglingId = ref('')
 
 const enabledCount = computed(() => rules.value.filter(r => r.enabled).length)
 const totalTriggers = computed(() =>
   rules.value.reduce((sum, r) => sum + (statOf(r)?.trigger_count ?? 0), 0))
 
-const filteredRules = computed(() =>
-  packFilter.value
+/** 搜索防抖 (300ms) */
+const onKwInput = useDebounceFn(() => {
+  keyword.value = kwInput.value.trim().toLowerCase()
+}, 300)
+
+const filteredRules = computed(() => {
+  let list = packFilter.value
     ? rules.value.filter(r => r.tags?.includes(packFilter.value))
-    : rules.value)
+    : rules.value
+  const kw = keyword.value
+  if (kw) {
+    list = list.filter(r => {
+      const types = ((r.source_cond?.event_types ?? []) as string[]).map(zh).join(' ')
+      return `${r.name ?? ''} ${r.id ?? ''} ${types}`.toLowerCase().includes(kw)
+    })
+  }
+  return list
+})
 
 const landmarkedCount = computed(() =>
   vpTemplates.value.filter(tpl => isLanded(tpl.template_id)).length)
@@ -260,16 +299,49 @@ async function fetchAll() {
   } catch { packs.value = [] }
 }
 
+/** [UX 2026-09-02] 行内启停: PUT /linkage/rules/{id}; 失败回滚 + error toast (loading 防连点) */
+async function toggleRule(rule: LinkageRule) {
+  if (togglingId.value) return
+  const next = !rule.enabled
+  togglingId.value = rule.id
+  try {
+    await linkageApi.updateRule(rule.id, { enabled: next } as Partial<LinkageRule>)
+    rule.enabled = next
+    const stateTxt = next ? t('perimeter.rules.stateOn', '启用') : t('perimeter.rules.stateOff', '停用')
+    ElMessage.success(t('perimeter.rules.toggleOk', `规则「${rule.name || rule.id}」已${stateTxt}`))
+  } catch (e: unknown) {
+    const msg = (e as Error)?.message ?? String(e)
+    ElMessage.error(t('perimeter.rules.toggleFail', `规则「${rule.name || rule.id}」启停失败: ${msg}`))
+  } finally {
+    togglingId.value = ''
+  }
+}
+
 function reload() { fetchAll() }
+// ─── [FEAT 2026-09-02] 单条规则就地编辑 (共用 RuleEditDrawer) ─────────────
+const ruleEditVisible = ref(false)
+const ruleEditing = ref<LinkageRule | null>(null)
+
+/** 点哪条规则的「编辑」, 抽屉只加载并编辑那一条 */
+function openRuleEdit(row: LinkageRule) {
+  ruleEditing.value = row
+  ruleEditVisible.value = true
+}
+
 function goLinkage() { router.push('/linkage') }
 function goPacks() { router.push('/video-perimeter/packs') }
 
-onMounted(() => { fetchAll() })
+onMounted(() => {
+  fetchAll()
+  ensureEventTypes() // 事件类型中文名预热 (非阻塞)
+})
 </script>
 
 <style scoped>
 .vp-rules-page { padding: 4px 0; }
-.rules-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+.rules-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; gap: 12px; flex-wrap: wrap; }
+.rules-toolbar { display: flex; gap: 8px; align-items: center; }
+.rules-kw { width: 220px; }
 .rules-title { margin: 0; font-size: 18px; font-weight: 600; }
 .rules-sub { margin-top: 4px; font-size: 12px; color: var(--el-text-color-secondary); }
 .stat-row { margin-bottom: 12px; }
