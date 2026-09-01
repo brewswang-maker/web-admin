@@ -102,7 +102,10 @@
     <!-- ===== 详情抽屉 (抓拍 + 元数据) ===== -->
     <el-drawer v-model="drawerVisible" :title="t('perimeter.events.detailTitle')" size="480px">
       <template v-if="active">
-        <SnapshotAnnotated v-if="active.snapshotUrl" :src="active.snapshotUrl" :metadata="active.metadata" />
+        <!-- [fix 2026-09-01 真机探针] 渲染条件扩为 有快照 || 有 bbox: 融合等
+             程序化告警无快照但标注数据在位, 占位底+overlay 仍可定位目标 -->
+        <SnapshotAnnotated v-if="active.snapshotUrl || hasBox(active.metadata)"
+                           :src="active.snapshotUrl ?? ''" :metadata="active.metadata" />
         <el-empty v-else :description="t('perimeter.events.noSnapshot')" :image-size="80" />
 
         <el-descriptions :column="1" border size="small" class="detail-desc">
@@ -213,6 +216,11 @@ function statusTagType(s: string): 'danger' | 'warning' | 'info' | 'success' {
 }
 function pct(c: number | undefined): string {
   return `${Math.round((c ?? 0) * 100)}%`
+}
+
+/** [vp6 P1-3] 合法 bbox 判定 (与 SnapshotAnnotated 内部校验同口径: 数组≥4) */
+function hasBox(md?: Record<string, unknown>): boolean {
+  return Array.isArray(md?.bbox) && (md.bbox as unknown[]).length >= 4
 }
 function fmtTime(s: string | undefined): string {
   if (!s) return '—'

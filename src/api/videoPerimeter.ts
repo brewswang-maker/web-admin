@@ -21,6 +21,7 @@
  */
 
 import { http } from './http'
+import { getAuthToken } from '@/utils/auth'
 import type { ApiResponse } from '@/types/common'
 import type { ScenePack, ScenePackApplyResult } from '@/types/largeEvent'
 import type { LinkageRule, RuleTemplate, RuleTriggerStat } from './linkage'
@@ -118,9 +119,15 @@ export const videoPerimeterApi = {
   },
 
   // ----- 融合 (vp6 P1-1: 多模态 D-S 融合引擎状态, OverviewView 状态卡) -----
-  /** GET /api/v1/fusion/status — 融合引擎统计+权重 (TokenStore 鉴权同常规端点) */
+  /** GET /api/v1/fusion/status — 融合引擎统计+权重。
+   *  [fix 2026-09-01 真机实测] 设备端 HttpServer/DrogonHttpAdapter 的 handler
+   *  req = body∪query∪path, 不透传 Authorization 头 → axios 拦截器的 header
+   *  传法恒 401 (与 auth/me 等 req.value("token") 式样端点同一约束), 故显式
+   *  query token 传递。 */
   getFusionStatus() {
-    return http.get<ApiResponse<FusionStatus>>('/fusion/status')
+    const token = getAuthToken()
+    return http.get<ApiResponse<FusionStatus>>(
+      `/fusion/status${token ? `?token=${encodeURIComponent(token)}` : ''}`)
   },
 }
 

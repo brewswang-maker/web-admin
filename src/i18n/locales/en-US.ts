@@ -831,6 +831,7 @@ const enUS: MessageSchema = {
       actIgnore: 'Ignore',
       detailTitle: 'Event Detail',
       noSnapshot: 'No snapshot',
+      annotPlaceholder: 'No snapshot · annotated schematic',
       aiConclusion: 'AI Conclusion',
       level_critical: 'Critical',
       level_high: 'High',

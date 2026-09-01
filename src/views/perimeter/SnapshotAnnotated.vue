@@ -1,6 +1,10 @@
 <template>
   <div class="snap-annotated">
-    <el-image :src="src" :preview-src-list="[src]" fit="fill" class="snap-img" />
+    <!-- [fix 2026-09-01 真机探针] 融合告警等程序化链路 snapshot_url 为空但
+         bbox/target_label 已落库: 空图时渲染网格占位底 + overlay 照常画框,
+         标注可视化不再被无快照阻断 (src 由父组件判空传入) -->
+    <el-image v-if="src" :src="src" :preview-src-list="[src]" fit="fill" class="snap-img" />
+    <div v-else class="snap-placeholder">{{ t('perimeter.events.annotPlaceholder') }}</div>
     <!-- 检测框叠加: bbox 为归一化 [x1,y1,x2,y2], SVG viewBox 0-100 + none 保真映射;
          object-fit:fill 拉伸图像与 SVG 同步形变 → 坐标恒对齐 (标注精确性优先,
          轻度纵横比形变可接受, 对齐 LiveView 检测框叠加语义) -->
@@ -29,9 +33,12 @@
  * vector-effect: non-scaling-stroke 防非均匀缩放导致的描边粗细变形。
  */
 import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
+
+const { t } = useI18n()
 
 const props = defineProps<{
-  /** 快照图 URL (空串时由父组件渲染 el-empty, 不进本组件) */
+  /** 快照图 URL (可空: 空串时渲染网格占位底, overlay 仍画框) */
   src: string
   /** normalize 后告警 metadata (bbox/target_label; 兜底合并在 EventsView 完成) */
   metadata?: Record<string, unknown>
@@ -71,6 +78,21 @@ function clampPct(v: number, min: number, max: number): string {
 }
 .snap-img { width: 100%; height: 100%; display: block; }
 .snap-img :deep(img) { width: 100%; height: 100%; object-fit: fill; }
+/* [fix 2026-09-01] 无快照占位底: 网格线模拟取景坐标系, 保证框位置可读 */
+.snap-placeholder {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+  background-color: var(--el-fill-color-darker);
+  background-image:
+    linear-gradient(var(--el-border-color-lighter) 1px, transparent 1px),
+    linear-gradient(90deg, var(--el-border-color-lighter) 1px, transparent 1px);
+  background-size: 12.5% 16.6%;
+}
 .ann-overlay {
   position: absolute;
   inset: 0;

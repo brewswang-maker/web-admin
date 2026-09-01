@@ -827,6 +827,7 @@ const zhCN = {
       actIgnore: '忽略',
       detailTitle: '事件详情',
       noSnapshot: '无抓拍快照',
+      annotPlaceholder: '无快照 · 标注示意',
       aiConclusion: 'AI 结论',
       level_critical: '紧急',
       level_high: '高',
