@@ -315,14 +315,28 @@
           </div>
 
           <!-- 普通条件卡片 -->
-          <div v-for="cond in conditionDefs" :key="cond.type" class="condition-card">
+          <div v-for="cond in conditionDefs" :key="cond.type" class="condition-card" :class="{ 'is-enabled': form.conditions[cond.type].enabled }">
             <div class="cond-header" @click="toggleCollapse(cond.type)">
               <div class="cond-title">
-                <el-switch v-model="form.conditions[cond.type].enabled" size="small" @click.stop />
                 <span class="cond-icon">{{ cond.icon }}</span>
                 <span class="cond-label">{{ cond.label }}</span>
               </div>
-              <el-icon :class="{ 'is-rotated': !collapsedConditions[cond.type] }"><ArrowDown /></el-icon>
+              <!-- [任务5] 左侧 “单个设备” / “全部” 文字 + el-switch (右侧),
+                   开关颜色随状态变化: 开=绿(#67c23a) / 关=灰, 动画过渡 -->
+              <div class="cond-switch-zone" @click.stop>
+                <span class="cond-switch-side" :class="{ active: !form.conditions[cond.type].enabled }">全部</span>
+                <el-switch
+                  v-model="form.conditions[cond.type].enabled"
+                  size="small"
+                  inline-prompt
+                  active-text=""
+                  inactive-text=""
+                  :active-color="'#67c23a'"
+                  :inactive-color="'#dcdfe6'"
+                />
+                <span class="cond-switch-side" :class="{ active: form.conditions[cond.type].enabled }">单个设备</span>
+              </div>
+              <el-icon class="cond-arrow" :class="{ 'is-rotated': !collapsedConditions[cond.type] }" @click.stop="toggleCollapse(cond.type)"><ArrowDown /></el-icon>
             </div>
 
             <div v-show="!collapsedConditions[cond.type]" class="cond-body">
@@ -2071,9 +2085,10 @@ async function handleSave() {
         if (base !== c && !stringChannels.includes(c)) stringChannels.push(c)
       }
     }
+    // [任务5] 事件源 / 设备过滤 关闭态: device_ids/channel_ids 设空数组 (不限维度生效)
     const source_cond = {
-      channel_ids: numericChannels,
-      device_ids: stringChannels,
+      channel_ids: esc.enabled ? numericChannels : [],
+      device_ids: esc.enabled ? stringChannels : [],
       event_types,
       min_severity: etc.config.minSeverity,
       min_confidence: etc.config.minConfidence / 100,
@@ -2840,16 +2855,31 @@ watch(mainTab, (tab) => {
   border-radius: var(--radius-lg, 8px);
   margin-bottom: 8px;
   overflow: hidden;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
+/* [任务5] 启用态: 左边框高亮 + 微阴影, 作为明确视觉反馈 */
+.condition-card.is-enabled { border-left: 3px solid #67c23a; box-shadow: 0 0 0 1px rgba(103,194,58,0.08); }
 .cond-header {
-  display: flex; align-items: center; justify-content: space-between;
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
   padding: 10px 12px; cursor: pointer;
+  transition: background 0.2s ease;
 }
 .cond-header:hover { background: rgba(255,255,255,0.02); }
-.cond-title { display: flex; align-items: center; gap: 8px; }
+.cond-title { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
 .cond-icon { font-size: 14px; }
 .cond-label { font-size: 13px; font-weight: 600; }
-.cond-body { padding: 8px 12px 12px; border-top: 1px solid var(--app-border); }
+/* [任务5] 开关区域: 「全部 / switch / 单个设备」 水平布局 */
+.cond-switch-zone { display: flex; align-items: center; gap: 8px; flex: 1; justify-content: flex-end; }
+.cond-switch-side { font-size: 12px; color: var(--app-text-secondary); transition: color 0.2s ease, font-weight 0.2s ease; }
+.cond-switch-side.active { color: var(--el-color-primary); font-weight: 600; }
+.cond-arrow { font-size: 12px; color: var(--app-text-secondary); transition: transform 0.25s ease, color 0.2s ease; flex: 0 0 auto; }
+.cond-arrow.is-rotated { transform: rotate(180deg); color: var(--el-color-primary); }
+/* [任务5] 展开/收起过渡 */
+.cond-body { padding: 8px 12px 12px; border-top: 1px solid var(--app-border); animation: condExpand 0.22s ease-out; }
+@keyframes condExpand {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
 .cond-form-item { margin-bottom: 8px; }
 .cond-hint { font-size: 12px; color: var(--app-text-secondary); margin-bottom: 6px; }
 .is-rotated { transform: rotate(180deg); }
