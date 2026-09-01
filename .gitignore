@@ -44,3 +44,8 @@ public/models/*.glb
 public/models/*.glb.gz
 public/models/*.glb.*
 
+# 验证脚本 + 探针/部署脚本 (一次性产物, 不入版本库)
+verify_5tasks.mjs
+.vp8_deploy_web.sh
+.vp_snap_check.jpg
+
