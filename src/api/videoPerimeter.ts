@@ -14,6 +14,7 @@
  *        video_perimeter 场景事件键并集过滤, 对齐 large-event EventListView 范式)
  *   GET  /api/v1/event-types/metadata?scene=video_perimeter  [EventTypeAliases.h
  *        scene_tags] SSOT 场景事件类型动态拉取 (8 键, 2026-08-31 补 tag)
+ *   GET  /api/v1/fusion/status  [vp6 P1-1] 多模态融合引擎统计 (OverviewView 状态卡)
  *
  * 注意: 相对路径 (不带 /api/v1 前缀) — 由 http 实例 baseURL 统一拼接,
  *       规避 baseURL 双前缀陷阱 (同 api/hotelUnattended.ts 范式)。
@@ -47,6 +48,19 @@ export const PERIMETER_EVENT_TYPES = [
 
 /** 周界专属 VP-* 联动模板前缀 */
 export const PERIMETER_TEMPLATE_PREFIX = 'VP-'
+
+/** [vp6 P1-1] 多模态融合引擎状态 (GET /api/v1/fusion/status, D-S 五模态) */
+export interface FusionStatus {
+  initialized: boolean
+  strategy: string
+  total_fusions: number
+  alerts_generated: number
+  false_positives_filtered: number
+  cross_validated_alerts: number
+  avg_fusion_latency_ms: number
+  video_reduction_pct: number
+  weights: Record<string, number>
+}
 
 // ── API 封装 ──
 
@@ -101,6 +115,12 @@ export const videoPerimeterApi = {
         severity_level: number
       }> }>
     }>>('/event-types/metadata', { params: { scene: PERIMETER_SCENE_TAG } })
+  },
+
+  // ----- 融合 (vp6 P1-1: 多模态 D-S 融合引擎状态, OverviewView 状态卡) -----
+  /** GET /api/v1/fusion/status — 融合引擎统计+权重 (TokenStore 鉴权同常规端点) */
+  getFusionStatus() {
+    return http.get<ApiResponse<FusionStatus>>('/fusion/status')
   },
 }
 

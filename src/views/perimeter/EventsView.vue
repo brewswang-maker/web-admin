@@ -102,8 +102,7 @@
     <!-- ===== 详情抽屉 (抓拍 + 元数据) ===== -->
     <el-drawer v-model="drawerVisible" :title="t('perimeter.events.detailTitle')" size="480px">
       <template v-if="active">
-        <el-image v-if="active.snapshotUrl" :src="active.snapshotUrl"
-                  :preview-src-list="[active.snapshotUrl]" fit="contain" class="snap-img" />
+        <SnapshotAnnotated v-if="active.snapshotUrl" :src="active.snapshotUrl" :metadata="active.metadata" />
         <el-empty v-else :description="t('perimeter.events.noSnapshot')" :image-size="80" />
 
         <el-descriptions :column="1" border size="small" class="detail-desc">
@@ -138,6 +137,7 @@ import { Refresh, ArrowDown } from '@element-plus/icons-vue'
 import { videoPerimeterApi, isPerimeterEvent } from '@/api/videoPerimeter'
 import { normalizeAlarmCore, type AlarmEvent, type AlarmLevel, type AlarmStatus } from '@/types/alarm'
 import { useAlarmRowActions } from '@/composables/useAlarmRowActions'
+import SnapshotAnnotated from './SnapshotAnnotated.vue'
 
 const { t } = useI18n()
 const { openAlarmPopup, handleAlarmRow } = useAlarmRowActions()
@@ -229,7 +229,18 @@ async function reload() {
     // [normalize 修复 2026-09-01] 原始响应字段是 alarm_type (无 type), 直接
     //   过滤 e?.type 全落空 → 事件列表恒空; 统一走 normalizeAlarmCore (SSOT
     //   归一化, alarm_type→type) 再过滤, 表格列 createdAt/snapshotUrl/status 同步受益
-    events.value = list.map(e => normalizeAlarmCore(e)).filter(e => isPerimeterEvent(e?.type))
+    // [vp6 P1-3 2026-09-01] 快照标注兜底合并: normalizeAlarmCore 的 metadata 是
+    //   白名单重建结构, 不含后端新增的 bbox/target_label 等任意键; types/alarm.ts
+    //   属用户红线零触碰 → 在此从原始行 metadata 展开 (normalize 白名单键优先,
+    //   原始键兜底), SnapshotAnnotated 据此渲染检测框叠加
+    events.value = list.map(e => {
+      const n = normalizeAlarmCore(e)
+      const rawMeta = (e as { metadata?: Record<string, unknown> })?.metadata
+      if (rawMeta && typeof rawMeta === 'object' && !Array.isArray(rawMeta)) {
+        n.metadata = { ...rawMeta, ...n.metadata }
+      }
+      return n
+    }).filter(e => isPerimeterEvent(e?.type))
   } catch (e) {
     loadError.value = e instanceof Error ? e.message : String(e)
   } finally {
@@ -257,6 +268,6 @@ onMounted(reload)
 .events-table { cursor: pointer; }
 .act-handle { margin-left: 8px; }
 .mono { font-family: Menlo, Consolas, monospace; }
-.snap-img { width: 100%; max-height: 260px; border-radius: 8px; margin-bottom: 14px; background: var(--el-fill-color-light); }
+/* .snap-img 已由 SnapshotAnnotated.vue 自带样式接管 (vp6 P1-3) */
 .detail-desc { margin-top: 4px; }
 </style>

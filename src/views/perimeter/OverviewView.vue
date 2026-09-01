@@ -76,6 +76,47 @@
         </el-col>
       </el-row>
 
+      <!-- ===== 多模态融合 (vp6 P1-1: D-S 五模态融合引擎状态) ===== -->
+      <el-row :gutter="16" class="stat-row">
+        <el-col :span="24">
+          <el-card shadow="hover">
+            <template #header>
+              <div class="ops-head">
+                <span>{{ t('perimeter.overview.fusionCard') }}</span>
+                <span class="ops-note">{{ t('perimeter.overview.fusionNote') }}</span>
+              </div>
+            </template>
+            <div class="ops-row">
+              <div class="ops-item">
+                <div class="stat-label">{{ t('perimeter.overview.fusionTotal') }}</div>
+                <div class="stat-value">{{ fusion.total_fusions }}</div>
+                <div class="ops-sub">&nbsp;</div>
+              </div>
+              <div class="ops-item">
+                <div class="stat-label">{{ t('perimeter.overview.fusionAlerts') }}</div>
+                <div class="stat-value">{{ fusion.alerts_generated }}</div>
+                <div class="ops-sub">&nbsp;</div>
+              </div>
+              <div class="ops-item">
+                <div class="stat-label">{{ t('perimeter.overview.fusionCross') }}</div>
+                <div class="stat-value">{{ fusion.cross_validated_alerts }}</div>
+                <div class="ops-sub">&nbsp;</div>
+              </div>
+              <div class="ops-item">
+                <div class="stat-label">{{ t('perimeter.overview.fusionLatency') }}</div>
+                <div class="stat-value">{{ fusion.avg_fusion_latency_ms.toFixed(1) }}<span class="stat-unit">ms</span></div>
+                <div class="ops-sub">&nbsp;</div>
+              </div>
+              <div class="ops-item">
+                <div class="stat-label">{{ t('perimeter.overview.fusionFpFiltered') }}</div>
+                <div class="stat-value">{{ fusion.false_positives_filtered }}</div>
+                <div class="ops-sub">&nbsp;</div>
+              </div>
+            </div>
+          </el-card>
+        </el-col>
+      </el-row>
+
       <el-row :gutter="16">
         <!-- ===== 事件类型分布 (19 键 vp5, PERIMETER_EVENT_TYPES 顺序) ===== -->
         <el-col :span="14">
@@ -135,6 +176,7 @@ import { Refresh, Watch, Guide, Warning, UserFilled } from '@element-plus/icons-
 import type { Component } from 'vue'
 import {
   videoPerimeterApi, pickPerimeterPacks, isPerimeterEvent, PERIMETER_EVENT_TYPES,
+  type FusionStatus,
 } from '@/api/videoPerimeter'
 import { normalizeAlarmCore, type AlarmEvent } from '@/types/alarm'
 import type { ScenePack } from '@/types/largeEvent'
@@ -148,6 +190,19 @@ const packs = ref<ScenePack[]>([])
 const rules = ref<RuleLite[]>([])
 const loading = ref(false)
 const loadError = ref('')
+
+/** [vp6 P1-1] 多模态融合引擎状态 (拉取失败静默降级为零值, 不阻塞总览主指标) */
+const fusion = ref<FusionStatus>({
+  initialized: false,
+  strategy: 'adaptive',
+  total_fusions: 0,
+  alerts_generated: 0,
+  false_positives_filtered: 0,
+  cross_validated_alerts: 0,
+  avg_fusion_latency_ms: 0,
+  video_reduction_pct: 0,
+  weights: {},
+})
 
 const stats = computed(() => {
   const todayPrefix = new Date().toISOString().slice(0, 10)
@@ -227,6 +282,12 @@ async function reload() {
     packs.value = pickPerimeterPacks(packRes.data)
     const rd = (ruleRes.data as { data?: { items?: RuleLite[] } })?.data
     rules.value = Array.isArray(rd?.items) ? rd.items : []
+    // [vp6 P1-1] 融合状态独立拉取 (失败静默, 老固件无此端点时零值展示)
+    try {
+      const fs = await videoPerimeterApi.getFusionStatus()
+      const fd = (fs.data as { data?: FusionStatus })?.data
+      if (fd) fusion.value = fd
+    } catch { /* 老固件降级 */ }
   } catch (e) {
     loadError.value = e instanceof Error ? e.message : String(e)
   } finally {

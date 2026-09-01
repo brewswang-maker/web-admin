@@ -57,7 +57,37 @@
               </div>
             </template>
 
-            <el-form :model="form" label-width="86px" size="default" class="config-form">
+            <!-- [FIX 2026-09-01] 已配置算法列表: 选择通道即列出当前摄像头使用的
+                 算法 (数据源 /inference/channels 调度记录), 点编辑定位到下方表单 -->
+            <div class="algo-list-block">
+              <div class="algo-list-title">已配置算法</div>
+              <el-table :data="algoList" size="small" class="algo-list-table"
+                empty-text="该通道尚未配置算法 — 在下方选择算法后点击「保存配置」">
+                <el-table-column label="算法" min-width="150">
+                  <template #default="{ row }">
+                    <el-tag v-for="a in row.algoNames" :key="a" size="small" type="primary" class="algo-name-tag">{{ a }}</el-tag>
+                  </template>
+                </el-table-column>
+                <el-table-column label="推理模式" width="90" align="center">
+                  <template #default="{ row }">{{ row.mode === 'streaming' ? '连续' : '抓拍' }}</template>
+                </el-table-column>
+                <el-table-column label="间隔(ms)" width="90" align="center" prop="interval" />
+                <el-table-column label="状态" width="76" align="center">
+                  <template #default="{ row }">
+                    <el-tag :type="row.enabled ? 'success' : 'info'" size="small" effect="dark">
+                      {{ row.enabled ? 'ON' : 'OFF' }}
+                    </el-tag>
+                  </template>
+                </el-table-column>
+                <el-table-column label="操作" width="70" align="center">
+                  <template #default="{ row }">
+                    <el-button size="small" type="primary" link @click="editAlgoRow">编辑</el-button>
+                  </template>
+                </el-table-column>
+              </el-table>
+            </div>
+
+            <el-form ref="formRef" :model="form" label-width="86px" size="default" class="config-form">
               <!-- [FIX 2026-08-28 1080P 单屏] 3 行表单压缩为 2 行, 减少纵向占用 -->
               <el-row :gutter="16">
                 <el-col :span="10">
@@ -108,9 +138,10 @@
               <el-tab-pane :label="$t('detectionZone', '检测区域')" name="region">
                 <RoiPolygonEditor
                   v-if="selected"
-                  :model-value="regions as any"
+                  :model-value="regions"
                   :background-image-url="roiBackgroundUrl"
                   :canvas-width="620" :canvas-height="310"
+                  :types="['detection_zone', 'exclusion_zone']"
                   @update:model-value="onRegionsChange"
                 />
               </el-tab-pane>
@@ -215,7 +246,7 @@
  * 2. 从 GET /inference/channels 加载已绑定算法的推理状态
  * 3. 保存时调用 POST /inference/schedule/start 或 /stop 控制后端推理调度
  */
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted, nextTick } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Refresh } from '@element-plus/icons-vue'
 import { channelApi } from '@/api/channel'
@@ -224,7 +255,7 @@ import type { ScheduledChannel } from '@/api/inference'
 import algorithmsApi from '@/api/algorithms'
 import type { AlgorithmInfo } from '@/api/algorithms'
 import { regionApi } from '@/api/region'
-import type { RegionDef, TripwireDef, PassagewayDef, SuppressMode, CountingZoneDef } from '@/types/region'
+import type { TripwireDef, PassagewayDef, SuppressMode, CountingZoneDef } from '@/types/region'
 import RoiPolygonEditor from '@/components/RoiPolygonEditor.vue'
 import TripwireEditor from '@/components/TripwireEditor.vue'
 import PassagewayEditor from '@/components/PassagewayEditor.vue'
@@ -253,6 +284,32 @@ const scheduledMap = ref<Map<string, ScheduledChannel>>(new Map())
 const selected = ref<ChannelItem | null>(null)
 const loading = ref(false)
 const saving = ref(false)
+const formRef = ref()
+
+// [FIX 2026-09-01] 已配置算法列表: 当前通道的调度记录映射为可编辑列表项
+// (后端调度模型为一通道一算法, 列表最多 1 条; 空态提示去下方表单配置)
+const algoList = computed(() => {
+  if (!selected.value) return []
+  const sc = scheduledMap.value.get(selected.value.channelId)
+  if (!sc) return []
+  return [{
+    algoPlugin: sc.algo_plugin,
+    // [FIX 2026-09-01] 调度 algo_plugin 支持逗号分隔多算法串 (实测 intrusion,yolo26s)
+    // → 拆开逐个映射中文名, 独立 tag 展示
+    algoNames: String(sc.algo_plugin || '').split(',').map((s) => s.trim()).filter(Boolean)
+      .map((id) => algorithmOptions.value.find((a) => a.value === id)?.label || id),
+    mode: (sc as any).inference_mode === 'streaming' ? 'streaming' : 'snapshot',
+    interval: sc.interval_ms,
+    enabled: sc.enabled,
+    running: sc.running,
+  }]
+})
+
+function editAlgoRow() {
+  // 表单已由 onChannelSelect 用调度记录填充, 编辑仅定位聚焦
+  nextTick(() => formRef.value?.$el?.scrollIntoView?.({ behavior: 'smooth', block: 'center' }))
+  ElMessage.info('已在下方表单中编辑该算法参数')
+}
 
 const form = reactive({
   enabled: false,
@@ -266,7 +323,11 @@ const form = reactive({
 // 🆕 v7.1 (28 算法补齐 P0-A5): 区域/绊线/计数区持久化
 // 🆕 v5.0 (尾随区域版): + 通道 (passageway)
 const roiTab = ref<'region' | 'tripwire' | 'passageway' | 'counting'>('region')
-const regions = ref<RegionDef[]>([])
+// [FIX 2026-09-01] 存编辑器 RoiData 映射 (含 roi_id/backend_id), 非后端 RegionDef 原始结构
+const regions = ref<any[]>([])
+// [FIX 2026-09-01] 载入快照: 编辑器 emit 的是全量列表, 需与最近一次后端载入
+// 结果 diff (新增 → create / 被移除 → delete)
+const lastLoadedRegions = ref<any[]>([])
 const tripwires = ref<TripwireDef[]>([])
 const passageways = ref<PassagewayDef[]>([])
 
@@ -303,9 +364,22 @@ async function loadRegions() {
       }),
       regionApi.listCountingZones({ channel_id: chId })
     ])
-    // [FIX 2026-08-28] http 封装不剥业务壳 (拦截器 return response):
+    // [FIX 2026-09-01] http 封装不剥业务壳 (拦截器 return response):
     // res.data = {code, data:{...}, message} → 必须取 res.data.data.xxx
-    regions.value = rRes.data?.data?.regions ?? rRes.data?.regions ?? []
+    // 载入映射: 后端 RegionDef {id,name,polygon:[[x,y]...],enabled} →
+    // 编辑器 RoiData {roi_id,roi_name,roi_type,polygon:number[]一维,is_active} —
+    // 之前直接透传二维结构, 编辑器按一维消费 → 已保存区域渲染错乱/不显示,
+    // 且 roi_id undefined → 新画区域与存量无法区分。
+    const rawRegions: any[] = rRes.data?.data?.regions ?? rRes.data?.regions ?? []
+    regions.value = rawRegions.map((r: any) => ({
+      roi_id: `reg_${r.id}`,
+      roi_name: r.name,
+      roi_type: 'detection_zone',
+      polygon: (r.polygon ?? []).flat(),
+      is_active: r.enabled,
+      backend_id: r.id,
+    }))
+    lastLoadedRegions.value = regions.value.map((r: any) => ({ ...r }))
     // GET /algos/tripwires 后端仅支持 int32 channel_id (GB 超大数全部存 0),
     // 会混出其他通道的绊线 → 本地按 channel_id_str 过滤
     tripwires.value = (tRes.data?.data?.tripwires ?? tRes.data?.tripwires ?? []).filter(
@@ -368,26 +442,60 @@ async function deleteCountingZoneById(id: number) {
 }
 
 async function onRegionsChange(updated: any[]) {
-  // 简化: 接受前端已编辑的 ROI, 同步到后端 (此处用 RoiPolygonEditor 内部 v-model)
+  // [FIX 2026-09-01] 保存链路重写 — 之前三重断裂导致画完区域无法保存:
+  //   ① 条件 `if (!r.id && r.algo_id)` 恒 false: 编辑器 RoiData 无 id/algo_id
+  //      字段 → createRegion 从未被调用 (保存无效根因);
+  //   ② polygon 格式: 编辑器产一维 [x1,y1,...], 后端要二维 [[x,y]...],
+  //      旧代码 map(p => [p[0],p[1]]) 对 number 取下标 → 全 undefined → 400;
+  //   ③ 删除未同步: 编辑器 removeRoi 也走本回调, 旧代码无 delete 分支。
+  // 坐标系: 编辑器 canvasToNormalized 输出 1920×1080 尺度, 与计数区同链路
+  // (createCountingZone 真机验证一致), 后端 RegionStore 原样存储。
   if (!selected.value) return
-  const chIdNum = Number(selected.value.channelId)
+  const chIdStr = selected.value.channelId
+  const chIdNum = Number(chIdStr)
   const chId = Number.isFinite(chIdNum) && Number.isSafeInteger(chIdNum) ? chIdNum : 0
-  // 仅对新创建的调用 create
-  for (const r of updated) {
-    if (!r.id && r.algo_id) {
+  // algo_id 跟随当前调度算法 (检测区域语义: 该算法的检测过滤范围)
+  const algoId = form.algorithm || 'yolov8n'
+  const prevIds = new Set(lastLoadedRegions.value.map((r) => r.roi_id))
+  const nextIds = new Set(updated.map((r) => String(r.roi_id || '')))
+  let changed = 0
+  // ① 删除: 载入快照中有、新列表没有 → deleteRegion
+  for (const prev of lastLoadedRegions.value) {
+    if (!nextIds.has(prev.roi_id) && prev.backend_id) {
       try {
-        await regionApi.createRegion({
-          channel_id: chId,
-          algo_id: r.algo_id,
-          name: r.roi_name ?? r.name ?? 'ROI',
-          region_type: 'detection_zone',
-          polygon: (r.polygon ?? []).map((p: any) => [p[0], p[1]] as [number, number]),
-          enabled: r.is_active ?? true
-        })
-      } catch (e) {
-        console.warn('[AlgoConfigView] createRegion failed', e)
+        await regionApi.deleteRegion(prev.backend_id)
+        changed++
+      } catch (e: any) {
+        console.warn('[AlgoConfigView] deleteRegion failed', e)
+        ElMessage.error(`删除区域失败: ${e?.message ?? e}`)
       }
     }
+  }
+  // ② 新建: roi_id 非 reg_ 前缀 (编辑器新生成 roi_<ts>) → createRegion
+  for (const r of updated) {
+    const rid = String(r.roi_id || '')
+    if (rid.startsWith('reg_') || prevIds.has(rid)) continue
+    const pts = r.polygon ?? []
+    if (pts.length < 6) continue // 至少 3 点 (一维 6 个数)
+    const polygon: [number, number][] = []
+    for (let i = 0; i + 1 < pts.length; i += 2) polygon.push([pts[i], pts[i + 1]])
+    try {
+      await regionApi.createRegion({
+        channel_id: chId,
+        algo_id: algoId,
+        name: r.roi_name ?? '检测区域',
+        region_type: r.roi_type === 'exclusion_zone' ? 'exclusion_zone' : 'detection_zone',
+        polygon,
+        enabled: r.is_active ?? true,
+      })
+      changed++
+    } catch (e: any) {
+      console.warn('[AlgoConfigView] createRegion failed', e)
+      ElMessage.error(`保存检测区域失败: ${e?.message ?? e}`)
+    }
+  }
+  if (changed > 0) {
+    ElMessage.success(changed === 1 ? '检测区域已保存' : `已保存 ${changed} 处检测区域变更`)
   }
   await loadRegions()
 }
@@ -737,6 +845,11 @@ async function saveConfig() {
 .config-card :deep(.el-card__header), .roi-card :deep(.el-card__header) { padding: 10px 20px; }
 .config-header { display: flex; justify-content: space-between; align-items: center; font-weight: 600; font-size: 14px; }
 .config-form .form-hint { margin-left: 12px; color: var(--text-secondary); font-size: 12px; }
+/* [FIX 2026-09-01] 已配置算法列表块 */
+.algo-list-block { margin-bottom: 12px; }
+.algo-list-title { font-size: 13px; font-weight: 600; color: var(--text-primary); margin-bottom: 6px; }
+.algo-list-table { width: 100%; }
+.algo-list-table .algo-name-tag { margin-right: 6px; margin-bottom: 2px; }
 /* [FIX 2026-08-28 1080P 单屏] 画布 wrap 默认 aspect-ratio 16/9 撑满整行宽 →
    画布高达 600+px 必滚动; 限宽居中后高度可控 (~405px)。
    !important: 实测 scoped 后代选择器在设备端被组件自身规则压过, 直接加保险。 */

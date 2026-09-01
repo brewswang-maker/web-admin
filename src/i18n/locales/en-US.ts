@@ -865,7 +865,15 @@ const enUS: MessageSchema = {
       opsNote: 'Proxy metrics from AI review conclusions and human status; ground-truth false-alarm density see Roadmap R6',
       aiReviewCoverage: 'AI Review Coverage',
       aiFalseRatio: 'AI False-Alarm Ratio',
-      humanFalseConfirmed: 'Human Confirmed False'
+      humanFalseConfirmed: 'Human Confirmed False',
+      // [vp6 P1-1] Multi-modal fusion status card
+      fusionCard: 'Multi-Modal Fusion (D-S Evidence)',
+      fusionNote: 'Video/Radar/Thermal/Audio/IoT D-S fusion — heterogeneous signals share the video alarm pipeline',
+      fusionTotal: 'Total Fusions',
+      fusionAlerts: 'Fusion Alerts',
+      fusionCross: 'Cross-Validated Alerts',
+      fusionLatency: 'Avg Fusion Latency',
+      fusionFpFiltered: 'FP Filtered'
     },
     // [vp4 2026-09-01] Event rules aggregation page (aligned with hotel.rules)
     rules: {

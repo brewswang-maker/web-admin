@@ -861,7 +861,15 @@ const zhCN = {
       opsNote: '代理指标: 基于 AI 复核结论与人工确认状态; 真值库误报密度测量见 Roadmap R6',
       aiReviewCoverage: 'AI 复核闭环率',
       aiFalseRatio: 'AI 误报占比',
-      humanFalseConfirmed: '人工误报确认'
+      humanFalseConfirmed: '人工误报确认',
+      // [vp6 P1-1] 多模态融合状态卡
+      fusionCard: '多模态融合 (D-S 证据)',
+      fusionNote: '视频/雷达/热成像/音频/IoT 五模态 D-S 融合 — 异构信号与视频告警同构全链',
+      fusionTotal: '融合推理次数',
+      fusionAlerts: '融合告警',
+      fusionCross: '交叉验证告警',
+      fusionLatency: '平均融合延迟',
+      fusionFpFiltered: '误报排除'
     },
     // [vp4 2026-09-01] 事件规则聚合页 (范式对齐 hotel.rules)
     rules: {
