@@ -11,7 +11,7 @@ import { ref, reactive } from 'vue'
 import { useAlarmStore } from '@/stores/alarm'
 import { settingsApi } from '@/api/settings'
 import { alarmApi } from '@/api/alarm'
-import { showAlarmPopup, pushLinkageLog, normalizeAlarmPayload, playAlarmSound } from './useAlarmPopup'
+import { showAlarmPopup, pushLinkageLog, normalizeAlarmPayload, playAlarmSound, findMatchingRule } from './useAlarmPopup'
 import { useChannelStore } from '@/stores/channel'
 
 // ── 单例状态（模块级，不随组件销毁） ──
@@ -273,7 +273,7 @@ function doConnect() {
   }
 }
 
-function handleAlarm(alarm: any) {
+async function handleAlarm(alarm: any) {
   if (!alarm) {
     console.warn('[useGlobalAlarm] handleAlarm called with null payload')
     return
@@ -318,15 +318,23 @@ function handleAlarm(alarm: any) {
 
     // 3. 弹窗防抖: 同一通道+同一类型在 POPUP_DEBOUNCE_MS 内不重复弹窗
     //    (参考: TP-LINK 30s / 海康可配置 / 小米 3-10min)
+    //    [规则驱动弹窗 2026-09-01] 弹窗前置联动规则门槛: findMatchingRule 与后端
+    //    LinkageEngine 同语义 (event_types/通道/severity/confidence/时间条件),
+    //    无命中规则 (场景未布防或告警类型未配规则) 则不弹 — 未创建事件规则的
+    //    告警不应触发报警弹窗 (无人值守未布防时 person_detected 持续弹窗扰民)。
+    //    告警仍入库/预热拉流; TTS 保持既有独立策略不动。
     const debounceKey = `${normalized.channelId || ''}:${normalized.type || ''}`
     const now = Date.now()
     const lastTime = lastPopupTime.get(debounceKey) || 0
     if (now - lastTime < popupDebounceMs) {
       console.log('[useGlobalAlarm] popup debounced, key:', debounceKey,
         'elapsed:', Math.round((now - lastTime) / 1000) + 's')
-    } else {
+    } else if (await findMatchingRule(normalized)) {
       lastPopupTime.set(debounceKey, now)
       showAlarmPopup(normalized)
+    } else {
+      console.log('[useGlobalAlarm] popup suppressed (no matching linkage rule), type:',
+        normalized.type, 'ch:', normalized.channelId)
     }
 
     // 4. 每条告警都播报 TTS（不依赖联动规则的 tts_broadcast 动作）

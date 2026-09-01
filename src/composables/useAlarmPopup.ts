@@ -91,7 +91,8 @@ function checkTimeCondition(rule: LinkageRule): boolean {
 }
 
 // ── 联动规则匹配 ──
-async function findMatchingRule(alarm: AlarmEvent): Promise<LinkageRule | null> {
+// [规则驱动弹窗 2026-09-01] 导出供 useGlobalAlarm 弹窗前置门槛复用
+export async function findMatchingRule(alarm: AlarmEvent): Promise<LinkageRule | null> {
   try {
     const now = Date.now()
     if (!cachedRules || now - ruleCacheTime > RULE_CACHE_TTL_MS) {
