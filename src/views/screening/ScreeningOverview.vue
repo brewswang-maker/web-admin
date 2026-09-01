@@ -243,7 +243,7 @@ import { deviceApi } from '@/api/device'
 import eventTypesApi from '@/api/eventTypes'
 import { screeningApi } from '@/api/screening'
 import type { EventTypeMetadataItem } from '@/api/eventTypes'
-import type { AlarmEvent, AlarmLevel } from '@/types/alarm'
+import { normalizeAlarmCore, type AlarmEvent, type AlarmLevel } from '@/types/alarm'
 
 // ── dashboard 响应结构 (与 RestApiHandlers GET /stats/screening_dashboard 实测对齐) ──
 
@@ -516,7 +516,9 @@ async function loadAll(silent = false) {
   if (evtR.status === 'fulfilled') {
     const all = (evtR.value.data?.data as any)?.items || []
     const keys = new Set(screeningEventTypes.value.map(t => t.alarm_type))
-    events.value = all.filter((e: AlarmEvent) => keys.has(e.type))
+    // [normalize 修复 2026-09-01] 原始响应字段是 alarm_type (无 type), 直接
+    //   keys.has(e.type) 全落空 → 事件恒空; 先走 normalizeAlarmCore (SSOT) 再过滤
+    events.value = all.map((e: AlarmEvent) => normalizeAlarmCore(e)).filter(e => keys.has(e.type))
     loadZoneCounts()
   } else { failed++; console.error('[ScreeningOverview] events failed', evtR.reason) }
   loadFailed.value = failed === 3

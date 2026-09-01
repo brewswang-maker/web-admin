@@ -116,7 +116,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Refresh } from '@element-plus/icons-vue'
 import { videoPerimeterApi, isPerimeterEvent } from '@/api/videoPerimeter'
-import type { AlarmEvent, AlarmLevel, AlarmStatus } from '@/types/alarm'
+import { normalizeAlarmCore, type AlarmEvent, type AlarmLevel, type AlarmStatus } from '@/types/alarm'
 
 const { t } = useI18n()
 
@@ -198,7 +198,10 @@ async function reload() {
     const res = await videoPerimeterApi.listAlarms()
     const d = (res.data as { data?: { items?: AlarmEvent[] } })?.data
     const list = Array.isArray(d?.items) ? d.items : []
-    events.value = list.filter(e => isPerimeterEvent(e?.type))
+    // [normalize 修复 2026-09-01] 原始响应字段是 alarm_type (无 type), 直接
+    //   过滤 e?.type 全落空 → 事件列表恒空; 统一走 normalizeAlarmCore (SSOT
+    //   归一化, alarm_type→type) 再过滤, 表格列 createdAt/snapshotUrl/status 同步受益
+    events.value = list.map(e => normalizeAlarmCore(e)).filter(e => isPerimeterEvent(e?.type))
   } catch (e) {
     loadError.value = e instanceof Error ? e.message : String(e)
   } finally {
