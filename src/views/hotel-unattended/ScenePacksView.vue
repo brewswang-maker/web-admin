@@ -29,7 +29,7 @@
       <el-button @click="reload">{{ t('common.reload') }}</el-button>
     </el-empty>
 
-    <!-- ===== 5 包卡片 (字段全部防御式访问) ===== -->
+    <!-- ===== 6 包卡片 ([P1-2 v2.1] 恰 5→6, 字段全部防御式访问) ===== -->
     <el-row v-else :gutter="16">
       <el-col :span="8" v-for="p in packs" :key="p.scene_pack_id">
         <el-card shadow="hover" class="pack-card" @click="openDetail(p)">
@@ -159,7 +159,8 @@
 /**
  * 场景包管理 — 酒店无人值守 t8f D3 (方案 §5.7 视图 3)
  *
- * 5 包卡片 (corridor/guestfloor/linen/night_patrol/contractor, 对齐
+ * 6 包卡片 (corridor/guestfloor/linen/night_patrol/contractor/receiving,
+ * [P1-2 v2.1] 恰 5→6: +receiving §5.4-C 收货补包, 对齐
  * ScenePackDefs.h hotel_unattended 包组) + el-drawer 详情 (algo_set /
  * zones / 阈值档位 / HT-* linkage_templates 匹配) + apply: 双模式
  * (仅校验 = 可用性校验+缺口报告; 校验并布防 = apply v2 deploy=true
@@ -171,7 +172,7 @@ import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useI18n } from 'vue-i18n'
 import {
-  CircleCheckFilled, Link, Refresh, School, House, Brush, Moon, UserFilled, Box,
+  CircleCheckFilled, Link, Refresh, School, House, Brush, Moon, UserFilled, Van, Box,
 } from '@element-plus/icons-vue'
 import type { Component } from 'vue'
 import { hotelUnattendedApi, pickHotelPacks, pickHotelTemplates } from '@/api/hotelUnattended'
@@ -200,6 +201,7 @@ function packIcon(packId: string): Component {
   if (packId.includes('linen')) return Brush
   if (packId.includes('night')) return Moon
   if (packId.includes('contractor')) return UserFilled
+  if (packId.includes('receiving')) return Van      // [P1-2 v2.1] 收货补包
   return Box
 }
 
@@ -208,6 +210,7 @@ function packClass(packId: string) {
   if (packId.includes('guestfloor')) return 'pk-guestfloor'
   if (packId.includes('linen')) return 'pk-linen'
   if (packId.includes('night')) return 'pk-night'
+  if (packId.includes('receiving')) return 'pk-receiving'  // [P1-2 v2.1] 收货补包
   return 'pk-contractor'
 }
 
@@ -328,6 +331,7 @@ onMounted(() => { reload() })
 .pk-linen { background: #e6a23c; }
 .pk-night { background: #626aef; }
 .pk-contractor { background: #909399; }
+.pk-receiving { background: #00b2a9; }
 .pack-name { font-weight: 600; font-size: 15px; }
 .pack-id { font-size: 12px; color: var(--el-text-color-secondary); font-family: 'JetBrains Mono', Consolas, monospace; }
 .pack-desc { font-size: 13px; color: var(--el-text-color-regular); line-height: 1.5; min-height: 40px; }

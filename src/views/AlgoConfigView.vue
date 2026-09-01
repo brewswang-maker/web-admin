@@ -57,26 +57,32 @@
               </div>
             </template>
 
-            <el-form :model="form" label-width="110px" size="default" class="config-form">
-              <el-row :gutter="24">
-                <el-col :span="12">
+            <el-form :model="form" label-width="86px" size="default" class="config-form">
+              <!-- [FIX 2026-08-28 1080P 单屏] 3 行表单压缩为 2 行, 减少纵向占用 -->
+              <el-row :gutter="16">
+                <el-col :span="10">
                   <el-form-item :label="$t('inferenceAlgo', '推理算法')">
                     <el-select v-model="form.algorithm" :placeholder="$t('selectAlgo', '选择算法')" style="width:100%">
                       <el-option v-for="a in algorithmOptions" :key="a.value" :label="a.label" :value="a.value" />
                     </el-select>
                   </el-form-item>
                 </el-col>
-                <el-col :span="12">
+                <el-col :span="7">
                   <el-form-item :label="$t('inferenceMode', '推理模式')">
-                    <el-radio-group v-model="form.inferenceMode">
-                      <el-radio value="snapshot">Snapshot {{ $t('snapshotMode', '抓拍') }}</el-radio>
-                      <el-radio value="streaming">Streaming {{ $t('streamingMode', '连续') }}</el-radio>
+                    <el-radio-group v-model="form.inferenceMode" size="small">
+                      <el-radio value="snapshot">抓拍</el-radio>
+                      <el-radio value="streaming">连续</el-radio>
                     </el-radio-group>
+                  </el-form-item>
+                </el-col>
+                <el-col :span="7">
+                  <el-form-item :label="$t('inferenceInterval', '推理间隔')">
+                    <el-input-number v-model="form.interval" :min="50" :max="10000" :step="50" size="small" controls-position="right" style="width: 100%" />
                   </el-form-item>
                 </el-col>
               </el-row>
 
-              <el-row :gutter="24">
+              <el-row :gutter="16">
                 <el-col :span="12">
                   <el-form-item :label="$t('confidenceThreshold', '置信度阈值')">
                     <el-slider v-model="form.confidence" :min="0.1" :max="1" :step="0.05" show-input input-size="small" />
@@ -88,11 +94,6 @@
                   </el-form-item>
                 </el-col>
               </el-row>
-
-              <el-form-item :label="$t('inferenceInterval', '推理间隔')">
-                <el-input-number v-model="form.interval" :min="50" :max="10000" :step="50" controls-position="right" />
-                <span class="form-hint">ms ({{ $t('perFrameInterval', '每帧间隔') }})</span>
-              </el-form-item>
             </el-form>
           </el-card>
 
@@ -108,21 +109,34 @@
                 <RoiPolygonEditor
                   v-if="selected"
                   :model-value="regions as any"
-                  :device-id="String(selected.channelId)"
+                  :background-image-url="roiBackgroundUrl"
+                  :canvas-width="620" :canvas-height="310"
                   @update:model-value="onRegionsChange"
                 />
               </el-tab-pane>
               <el-tab-pane :label="$t('tripwire', '绊线')" name="tripwire">
                 <TripwireEditor
                   v-if="selected"
+                  :image-url="roiBackgroundUrl"
+                  :saved="tripwires.filter(t => !(t.channel_id_str || '').endsWith('_ch0'))"
+                  :editing="editingTripwire ? { point_a: editingTripwire.point_a, point_b: editingTripwire.point_b, direction: editingTripwire.direction, name: editingTripwire.name } : null"
                   @confirm="onTripwireConfirm"
                 />
+                <div v-if="editingTripwire" class="pw-mig-hint" style="margin-top: 4px">
+                  正在编辑「{{ editingTripwire.name }}」— 画布已载入旧线，确认后替换保存；
+                  <el-button text size="small" @click="editingTripwire = null">取消编辑</el-button>
+                </div>
                 <div v-if="tripwires.length" class="tripwire-list">
                   <div v-for="tw in tripwires" :key="tw.id" class="tripwire-list__item">
-                    <span>{{ tw.name }} ({{ tw.direction }})</span>
-                    <el-button text size="small" type="danger" @click="deleteTripwire(tw.id)">
-                      {{ $t('delete', '删除') }}
-                    </el-button>
+                    <span>{{ tw.name }}{{ (tw.channel_id_str || '').endsWith('_ch0') ? ' (镜像)' : '' }} ({{ tw.direction }})</span>
+                    <span v-if="!(tw.channel_id_str || '').endsWith('_ch0')">
+                      <el-button text size="small" type="primary" @click="editingTripwire = tw">
+                        {{ $t('edit', '编辑') }}
+                      </el-button>
+                      <el-button text size="small" type="danger" @click="deleteTripwire(tw.id)">
+                        {{ $t('delete', '删除') }}
+                      </el-button>
+                    </span>
                   </div>
                 </div>
               </el-tab-pane>
@@ -133,6 +147,7 @@
                 </div>
                 <PassagewayEditor
                   v-if="selected"
+                  :image-url="roiBackgroundUrl"
                   @confirm="onPassagewayConfirm"
                 />
                 <div v-if="passageways.length" class="tripwire-list">
@@ -150,8 +165,31 @@
                 </div>
               </el-tab-pane>
               <el-tab-pane :label="$t('countingZone', '计数区')" name="counting">
-                <div class="roi-placeholder">
-                  <div class="roi-hint">{{ $t('countingZoneHint', '计数区沿用 ROI 多边形编辑器 + target_class 配置') }}</div>
+                <!-- [FIX 2026-08-28] 计数区实装: 矩形拖拽绘制 + target_class 配置
+                     (后端 CountingZoneDef: polygon + target_class; 通道维度按 int32
+                      channel_id, GB 场景统一 0, 列表为全部通道计数区) -->
+                <div class="counting-config-row">
+                  <span class="counting-label">目标类别</span>
+                  <el-select v-model="countingTargetClass" size="small" style="width: 140px">
+                    <el-option v-for="c in countingTargetOptions" :key="c.value" :label="c.label" :value="c.value" />
+                  </el-select>
+                  <span class="pw-mig-hint">在画面上拖拽对角两点绘制矩形，松手自动创建</span>
+                </div>
+                <RoiPolygonEditor
+                  v-if="selected"
+                  :model-value="countingZoneRois"
+                  :background-image-url="roiBackgroundUrl"
+                  :canvas-width="620" :canvas-height="310"
+                  :types="['counting_zone']"
+                  @update:model-value="onCountingZonesChange"
+                />
+                <div v-if="countingZoneList.length" class="tripwire-list">
+                  <div v-for="cz in countingZoneList" :key="cz.id" class="tripwire-list__item">
+                    <span>{{ cz.name }} ({{ cz.target_class }})</span>
+                    <el-button text size="small" type="danger" @click="deleteCountingZoneById(cz.id)">
+                      {{ $t('delete', '删除') }}
+                    </el-button>
+                  </div>
                 </div>
               </el-tab-pane>
             </el-tabs>
@@ -186,7 +224,7 @@ import type { ScheduledChannel } from '@/api/inference'
 import algorithmsApi from '@/api/algorithms'
 import type { AlgorithmInfo } from '@/api/algorithms'
 import { regionApi } from '@/api/region'
-import type { RegionDef, TripwireDef, PassagewayDef, SuppressMode } from '@/types/region'
+import type { RegionDef, TripwireDef, PassagewayDef, SuppressMode, CountingZoneDef } from '@/types/region'
 import RoiPolygonEditor from '@/components/RoiPolygonEditor.vue'
 import TripwireEditor from '@/components/TripwireEditor.vue'
 import PassagewayEditor from '@/components/PassagewayEditor.vue'
@@ -232,34 +270,108 @@ const regions = ref<RegionDef[]>([])
 const tripwires = ref<TripwireDef[]>([])
 const passageways = ref<PassagewayDef[]>([])
 
+// [FIX 2026-08-28] 计数区实装: 编辑器状态 (RoiData[]) + 后端列表
+const countingZoneRois = ref<any[]>([])
+const countingZoneList = ref<CountingZoneDef[]>([])
+const countingTargetClass = ref('person')
+const countingTargetOptions = [
+  { label: '行人', value: 'person' },
+  { label: '汽车', value: 'car' },
+  { label: '公车', value: 'bus' },
+  { label: '卡车', value: 'truck' },
+  { label: '摩托', value: 'motorbike' },
+  { label: '自行车', value: 'bicycle' },
+]
+
 async function loadRegions() {
   if (!selected.value) return
   // GB28181 完整编码可能是超大数, int32 查询降级为 0 (passageway 走 string 主路径)
   const chIdStr = selected.value.channelId
   const chIdNum = Number(chIdStr)
   const chId = Number.isFinite(chIdNum) && Number.isSafeInteger(chIdNum) ? chIdNum : 0
+  // 插件侧 (AlgoConfig.channel_id_str) 用不带 _ch0 子码的 GB 完整编码查询
+  // (getTripwiresByChannelStr 精确匹配), 前后端统一在此对齐。
+  const chStrNoSuffix = stripChSuffix(chIdStr)
   try {
-    const [rRes, tRes, pRes] = await Promise.all([
+    const [rRes, tRes, pRes, czRes] = await Promise.all([
       regionApi.listRegions({ channel_id: chId }),
       regionApi.listTripwires({ channel_id: chId }),
       // 🆕 v5.0: 通道主路径 channel_id_str (GB28181 完整编码)
       regionApi.listPassageways({
-        channel_id_str: chIdStr,
+        channel_id_str: chStrNoSuffix,
         algo_id: form.algorithm || 'shield.algo.perimeter.tailgating'
-      })
+      }),
+      regionApi.listCountingZones({ channel_id: chId })
     ])
-    regions.value = rRes.data?.regions ?? []
-    tripwires.value = tRes.data?.tripwires ?? []
-    passageways.value = pRes.data?.passageways ?? []
+    // [FIX 2026-08-28] http 封装不剥业务壳 (拦截器 return response):
+    // res.data = {code, data:{...}, message} → 必须取 res.data.data.xxx
+    regions.value = rRes.data?.data?.regions ?? rRes.data?.regions ?? []
+    // GET /algos/tripwires 后端仅支持 int32 channel_id (GB 超大数全部存 0),
+    // 会混出其他通道的绊线 → 本地按 channel_id_str 过滤
+    tripwires.value = (tRes.data?.data?.tripwires ?? tRes.data?.tripwires ?? []).filter(
+      (t) => stripChSuffix(t.channel_id_str || '') === chStrNoSuffix
+    )
+    passageways.value = (pRes.data?.data?.passageways ?? pRes.data?.passageways ?? []).filter(
+      (p) => stripChSuffix(p.channel_id_str || '') === chStrNoSuffix
+    )
+    // 计数区 (int32 维度, GB 场景全 0 → 列表为全部; 名称带通道尾 4 位便于区分)
+    countingZoneList.value = czRes.data?.data?.counting_zones ?? czRes.data?.counting_zones ?? []
+    countingZoneRois.value = countingZoneList.value.map((cz) => ({
+      roi_id: `cz_${cz.id}`,
+      roi_name: cz.name,
+      roi_type: 'counting_zone',
+      polygon: (cz.polygon ?? []).flat(),
+      is_active: cz.enabled,
+    }))
   } catch (e: any) {
     ElMessage.warning(`加载区域失败: ${e?.message ?? e}`)
+  }
+}
+
+/** 计数区: 编辑器确认新矩形后自动创建 (roi_id 不带 cz_ 前缀 = 本次新建) */
+async function onCountingZonesChange(updated: any[]) {
+  if (!selected.value) return
+  const chIdStr = selected.value.channelId
+  const chIdNum = Number(chIdStr)
+  const chId = Number.isFinite(chIdNum) && Number.isSafeInteger(chIdNum) ? chIdNum : 0
+  for (const r of updated) {
+    if (String(r.roi_id || '').startsWith('cz_')) continue  // 已有后端记录
+    const pts = r.polygon ?? []
+    if (pts.length < 4) continue
+    const polygon: [number, number][] = []
+    for (let i = 0; i + 1 < pts.length; i += 2) polygon.push([pts[i], pts[i + 1]])
+    try {
+      await regionApi.createCountingZone({
+        channel_id: chId,
+        algo_id: 'shield.algo.perimeter.counting',
+        name: `${countingTargetClass.value}_${chIdStr.slice(-4)}`,
+        polygon,
+        target_class: countingTargetClass.value,
+        enabled: true,
+      })
+      ElMessage.success('计数区已添加')
+    } catch (e: any) {
+      ElMessage.error(`计数区创建失败: ${e?.message ?? e}`)
+    }
+  }
+  await loadRegions()
+}
+
+async function deleteCountingZoneById(id: number) {
+  try {
+    await regionApi.deleteCountingZone(id)
+    ElMessage.success('已删除')
+    await loadRegions()
+  } catch (e: any) {
+    ElMessage.error(`删除失败: ${e?.message ?? e}`)
   }
 }
 
 async function onRegionsChange(updated: any[]) {
   // 简化: 接受前端已编辑的 ROI, 同步到后端 (此处用 RoiPolygonEditor 内部 v-model)
   if (!selected.value) return
-  const chId = Number(selected.value.channelId)
+  const chIdNum = Number(selected.value.channelId)
+  const chId = Number.isFinite(chIdNum) && Number.isSafeInteger(chIdNum) ? chIdNum : 0
   // 仅对新创建的调用 create
   for (const r of updated) {
     if (!r.id && r.algo_id) {
@@ -280,17 +392,49 @@ async function onRegionsChange(updated: any[]) {
   await loadRegions()
 }
 
+/** 剥离 GB28181 通道编码的 _ch0/_ch1 子码后缀 — 与后端插件查询串对齐
+ *  (InferenceScheduler 传给插件的 channel_id_str 不带子码后缀) */
+function stripChSuffix(chId: string): string {
+  return chId.replace(/_ch\d+$/, '')
+}
+
+// [FIX 2026-08-28] 替换式编辑: 编辑按钮只载入画布, 确认时先删旧 (主+镜像) 再建新
+const editingTripwire = ref<TripwireDef | null>(null)
+
 async function onTripwireConfirm(payload: {
   point_a: [number, number]
   point_b: [number, number]
   direction: 'both' | 'a_to_b' | 'b_to_a'
 }) {
   if (!selected.value) return
-  const chId = Number(selected.value.channelId)
-  const algoId = form.algorithm || 'shield.algo.perimeter.tripwire'
+  const chIdStr = selected.value.channelId
+  const chIdNum = Number(chIdStr)
+  const chId = Number.isFinite(chIdNum) && Number.isSafeInteger(chIdNum) ? chIdNum : 0
+  // [FIX 2026-08-28] algo_id 固定为绊线判定插件 id — 用户所选算法(form.algorithm)
+  // 存进去会与 tripwire_detector.getAlgoId() 不一致 → 插件按算法精确查库恒空
+  // → 判定退回内置默认线 (绊线加了不弹窗根因之一)。存量错 algo_id 数据由
+  // 插件端空 algo 查询兼容 (validateRegionStore [FIX 2026-08-28])。
+  const algoId = 'shield.algo.perimeter.tripwire'
+  const isReplace = !!editingTripwire.value
   try {
-    await regionApi.createTripwire({
+    // 替换式编辑: 先删旧绊线 (主形态 + _ch0 镜像), 确保不残留旧线
+    if (editingTripwire.value) {
+      const old = editingTripwire.value
+      const mirror = tripwires.value.find(
+        (t) => (t.channel_id_str || '') === `${old.channel_id_str || ''}_ch0`
+      )
+      const ids = [old.id, ...(mirror ? [mirror.id] : [])]
+      await Promise.all(ids.map((id) => regionApi.deleteTripwire(id).catch(() => null)))
+      editingTripwire.value = null
+    }
+    // [FIX 2026-08-28] 双镜像创建: 主形态 + _ch0 镜像各一条 —
+    //   只建主形态时子码流实例永远查不到 (GATE-MISS 半失效)
+    await regionApi.createTripwireWithMirror({
       channel_id: chId,
+      // [FIX 2026-08-28] 补传 channel_id_str (GB 完整编码, 剥 _ch0 后缀):
+      //   后端 upsert 原样落库, 插件 getTripwiresByChannelStr 精确匹配此键;
+      //   之前没传 → 落库空串 → 插件永远查不到 (GATE-MISS 静默失效)。
+      channel_id_str: stripChSuffix(chIdStr),
       algo_id: algoId,
       name: `${algoId.split('.').pop()}_${Date.now() % 10000}`,
       point_a: payload.point_a,
@@ -298,10 +442,10 @@ async function onTripwireConfirm(payload: {
       direction: payload.direction,
       enabled: true
     })
-    ElMessage.success('绊线已添加')
+    ElMessage.success(isReplace ? '绊线已更新' : '绊线已添加')
     await loadRegions()
   } catch (e: any) {
-    ElMessage.error(`添加绊线失败: ${e?.message ?? e}`)
+    ElMessage.error(`保存绊线失败: ${e?.message ?? e}`)
   }
 }
 
@@ -326,11 +470,16 @@ async function onPassagewayConfirm(payload: {
   if (!selected.value) return
   const chIdStr = selected.value.channelId
   const chIdNum = Number(chIdStr)
-  const algoId = form.algorithm || 'shield.algo.perimeter.tailgating'
+  // [FIX 2026-08-28] algo_id 固定为尾随判定插件 id — 用户所选算法(form.algorithm)
+  // 存进去会与 tailgating_detector.getAlgoId() 不一致 → 插件按算法精确查库恒空
+  // → 永远 fallback 预置闸机线 (通道多边形从不生效根因)。存量错 algo_id
+  // 数据由插件端空 algo 查询兼容 (refreshPassageways [FIX 2026-08-28])。
+  const algoId = 'shield.algo.perimeter.tailgating'
   try {
     await regionApi.createPassageway({
       channel_id: Number.isFinite(chIdNum) && Number.isSafeInteger(chIdNum) ? chIdNum : 0,
-      channel_id_str: chIdStr,
+      // [FIX 2026-08-28] 剥 _ch0 后缀: 插件 getPassagewaysByChannelStr 精确匹配
+      channel_id_str: stripChSuffix(chIdStr),
       algo_id: algoId,
       name: `pw_${Date.now() % 10000}`,
       transit_polygon: payload.transit_polygon,
@@ -358,10 +507,11 @@ async function deletePassageway(id: number) {
 }
 
 async function migrateTripwires() {
-  const algoId = form.algorithm || 'shield.algo.perimeter.tailgating'
+  // [FIX 2026-08-28] 同 createPassageway: 迁移目标算法固定为尾随插件 id
+  const algoId = 'shield.algo.perimeter.tailgating'
   try {
     const res = await regionApi.migratePassageways(algoId)
-    const n = res.data?.migrated ?? 0
+    const n = res.data?.data?.migrated ?? res.data?.migrated ?? 0
     ElMessage.success(n > 0 ? `已迁移 ${n} 条老绊线为通道` : '无可迁移的老绊线 (或已全部迁移)')
     await loadRegions()
   } catch (e: any) {
@@ -479,7 +629,42 @@ function onChannelSelect(row: ChannelItem | null) {
     form.inferenceMode = row.inferenceMode
     // 🆕 v7.1: 加载该通道的 ROI/绊线/计数区
     loadRegions()
+    // [FIX 2026-08-28] 加载通道快照作绘制背景 (与联动规则页同链路)
+    loadChannelSnapshot(row.channelId)
+  } else {
+    roiBackgroundUrl.value = ''
   }
+}
+
+// [FIX 2026-08-28] ROI/绊线/通行区绘制背景: 通道快照 — 与 LinkageRuleView 同链路。
+// 后端 /snapshot 返回 JSON {data:{url}} (nginx alias /snapshots/);
+// ZLM 偶发 0 字节 JPEG, preload 校验失败重试一次。
+const roiBackgroundUrl = ref('')
+async function fetchSnapshotUrl(channelId: string): Promise<string> {
+  const res = await fetch(`/api/v1/channels/${channelId}/snapshot`, { credentials: 'include' })
+  if (!res.ok) return ''
+  const j = await res.json().catch(() => null)
+  const url = j?.data?.url || j?.url || ''
+  return url ? String(url) : ''
+}
+function preloadSnapshot(url: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    const img = new Image()
+    img.onload = () => resolve(true)
+    img.onerror = () => resolve(false)
+    img.src = url
+  })
+}
+async function loadChannelSnapshot(channelId: string) {
+  if (!channelId) { roiBackgroundUrl.value = ''; return }
+  try {
+    let url = await fetchSnapshotUrl(channelId)
+    if (url && !(await preloadSnapshot(url))) {
+      const retryUrl = await fetchSnapshotUrl(channelId)
+      if (retryUrl && (await preloadSnapshot(retryUrl))) url = retryUrl
+    }
+    roiBackgroundUrl.value = url
+  } catch { roiBackgroundUrl.value = '' }
 }
 
 function rowClassName({ row }: { row: ChannelItem }) {
@@ -538,26 +723,34 @@ async function saveConfig() {
   --text-primary: #1d2129; --text-secondary: #6b7785; --panel-left-width: 380px;
   display: flex; flex-direction: column; height: 100%; background: var(--bg-page);
 }
-.page-header { padding: 16px 24px; background: var(--bg-card); border-bottom: 1px solid var(--border-light); }
-.page-title { margin: 0 0 4px; font-size: 18px; color: var(--text-primary); }
-.page-desc { font-size: 13px; color: var(--text-secondary); }
-.layout-body { flex: 1; display: flex; gap: 16px; padding: 16px 24px; overflow: hidden; }
+.page-header { padding: 10px 24px; background: var(--bg-card); border-bottom: 1px solid var(--border-light); }
+.page-title { margin: 0 0 2px; font-size: 17px; color: var(--text-primary); }
+.page-desc { font-size: 12px; color: var(--text-secondary); }
+.layout-body { flex: 1; display: flex; gap: 12px; padding: 12px 24px; overflow: hidden; }
 .panel-left { width: var(--panel-left-width); flex-shrink: 0; overflow-y: auto; }
 .panel-left :deep(.el-card__body) { padding: 0; }
 .panel-title { font-weight: 600; font-size: 14px; display: flex; justify-content: space-between; align-items: center; }
 .text-muted { color: var(--text-secondary); font-size: 12px; }
-.panel-right { flex: 1; display: flex; flex-direction: column; gap: 16px; overflow-y: auto; }
+.panel-right { flex: 1; display: flex; flex-direction: column; gap: 12px; overflow-y: auto; }
 .empty-state { flex: 1; display: flex; align-items: center; justify-content: center; }
-.config-card :deep(.el-card__body), .roi-card :deep(.el-card__body) { padding: 20px 24px; }
+.config-card :deep(.el-card__body), .roi-card :deep(.el-card__body) { padding: 12px 20px; }
+.config-card :deep(.el-card__header), .roi-card :deep(.el-card__header) { padding: 10px 20px; }
 .config-header { display: flex; justify-content: space-between; align-items: center; font-weight: 600; font-size: 14px; }
 .config-form .form-hint { margin-left: 12px; color: var(--text-secondary); font-size: 12px; }
+/* [FIX 2026-08-28 1080P 单屏] 画布 wrap 默认 aspect-ratio 16/9 撑满整行宽 →
+   画布高达 600+px 必滚动; 限宽居中后高度可控 (~405px)。
+   !important: 实测 scoped 后代选择器在设备端被组件自身规则压过, 直接加保险。 */
+.roi-card :deep(.tripwire-canvas-wrap),
+.roi-card :deep(.pw-canvas-wrap) { max-width: 720px !important; margin: 0 auto !important; }
+.counting-config-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.counting-config-row .counting-label { font-size: 13px; color: var(--text-secondary); }
+.tripwire-list { margin-top: 10px; display: flex; flex-direction: column; gap: 4px; max-height: 108px; overflow-y: auto; }
 .roi-placeholder {
   height: 260px; background: var(--bg-page); border: 2px dashed var(--border-light);
   border-radius: 8px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px;
 }
 .roi-message { font-size: 15px; color: var(--text-primary); font-weight: 500; }
 .roi-hint { font-size: 12px; color: var(--text-secondary); }
-.tripwire-list { margin-top: 12px; display: flex; flex-direction: column; gap: 6px; }
 .tripwire-list__item {
   display: flex; align-items: center; justify-content: space-between;
   padding: 6px 10px; background: var(--bg-page); border-radius: 4px;
@@ -567,7 +760,7 @@ async function saveConfig() {
   .pw-mig-hint { font-size: 12px; color: #909399; }
 }
 .bottom-bar {
-  padding: 12px 24px; background: var(--bg-card); border-top: 1px solid var(--border-light);
+  padding: 8px 24px; background: var(--bg-card); border-top: 1px solid var(--border-light);
   display: flex; justify-content: flex-end; gap: 12px;
 }
 </style>

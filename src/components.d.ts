@@ -105,6 +105,7 @@ declare module 'vue' {
     FloatingPreview: typeof import('./components/video/FloatingPreview.vue')['default']
     FolderOpened: typeof import('@element-plus/icons-vue')['FolderOpened']
     FullScreen: typeof import('@element-plus/icons-vue')['FullScreen']
+    GasEventSection: typeof import('./components/gas-station/GasEventSection.vue')['default']
     Grid: typeof import('@element-plus/icons-vue')['Grid']
     ImageUpload: typeof import('./components/ImageUpload.vue')['default']
     LazyChart: typeof import('./components/LazyChart.vue')['default']

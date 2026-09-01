@@ -75,6 +75,9 @@ const suppressMode = ref<SuppressMode>('off')
 const sensitivity = ref(60)
 const canvasW = ref(640)
 const canvasH = ref(360)
+// [FIX 2026-08-28] 背景图缓存 (同 TripwireEditor): 异步 onload drawImage 会覆盖
+// 刚绘制的多边形/顶点 → 改为缓存 bgImg 同步垫底绘制, 加载完成后重绘。
+const bgImg = ref<HTMLImageElement | null>(null)
 
 const canConfirm = computed(() => points.value.length >= 3)
 const tip = computed(() => {
@@ -101,7 +104,14 @@ const sensHint = computed(() => {
   return '超员≥2 · 投票 5/8 · 置信 0.55 · 窗 10s'
 })
 
-watch(() => props.imageUrl, draw)
+watch(() => props.imageUrl, (url) => {
+  bgImg.value = null
+  if (!url) { draw(); return }
+  const img = new Image()
+  img.crossOrigin = 'anonymous'
+  img.onload = () => { bgImg.value = img; draw() }  // 加载完成重绘, 背景垫底
+  img.src = url
+}, { immediate: true })
 watch([directionIn, suppressMode, sensitivity], draw)
 
 onMounted(() => {
@@ -157,19 +167,20 @@ function draw() {
   if (!c) return
   const ctx = c.getContext('2d')!
   ctx.clearRect(0, 0, c.width, c.height)
-  // 背景图
-  if (props.imageUrl) {
-    const img = new Image()
-    img.crossOrigin = 'anonymous'
-    img.onload = () => ctx.drawImage(img, 0, 0, c.width, c.height)
-    img.src = props.imageUrl
-  } else {
+  // 背景图 (同步绘制, 永远垫在多边形/顶点之下)
+  if (bgImg.value) {
+    ctx.drawImage(bgImg.value, 0, 0, c.width, c.height)
+  } else if (!props.imageUrl) {
     ctx.fillStyle = '#1f1f1f'
     ctx.fillRect(0, 0, c.width, c.height)
     ctx.fillStyle = '#666'
     ctx.font = '14px sans-serif'
     ctx.textAlign = 'center'
     ctx.fillText('(无背景图, 点击标出通道区域顶点)', c.width / 2, c.height / 2)
+  } else {
+    // 背景加载中: 铺深色底防白闪
+    ctx.fillStyle = '#1f1f1f'
+    ctx.fillRect(0, 0, c.width, c.height)
   }
   const pts = points.value
   if (pts.length === 0) return

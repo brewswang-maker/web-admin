@@ -113,6 +113,13 @@
           </el-button>
         </div>
         <div class="right-toolbar">
+          <!-- [P0-4 v2.1 §7.5] 采集同意留痕徽标 (悬停显示同意时间) -->
+          <el-tooltip v-if="consentRecord" :content="consentRecord.consented_at" placement="top">
+            <el-tag type="success" size="small" effect="plain">
+              <el-icon style="vertical-align: -2px"><CircleCheck /></el-icon>
+              {{ t('faceConsent.consentBadge') }}
+            </el-tag>
+          </el-tooltip>
           <el-button type="success" @click="handleAdd">
             <el-icon><Plus /></el-icon> 添加人员
           </el-button>
@@ -346,6 +353,32 @@
         <el-button type="primary" @click="showDetailDialog = false; handleEdit(detailRecord!)">编辑</el-button>
       </template>
     </el-dialog>
+
+    <!-- [P0-4 v2.1 §7.5] 人脸信息采集单独同意对话框 (人脸办法 2025 对位, T1 验收单项) -->
+    <el-dialog
+      v-model="showConsentDialog"
+      :title="t('faceConsent.dialogTitle')"
+      width="560px"
+      :close-on-click-modal="false"
+    >
+      <div class="consent-notice">
+        <p class="consent-lead">{{ t('faceConsent.noticeTitle') }}</p>
+        <ul class="consent-list">
+          <li>{{ t('faceConsent.purpose') }}</li>
+          <li>{{ t('faceConsent.method') }}</li>
+          <li>{{ t('faceConsent.scope') }}</li>
+          <li>{{ t('faceConsent.retention') }}</li>
+          <li>{{ t('faceConsent.withdraw') }}</li>
+        </ul>
+        <el-checkbox v-model="consentChecked">{{ t('faceConsent.agreeLabel') }}</el-checkbox>
+      </div>
+      <template #footer>
+        <el-button @click="handleConsentRefuse">{{ t('faceConsent.refuseBtn') }}</el-button>
+        <el-button type="primary" :disabled="!consentChecked" @click="handleConsentAgree">
+          {{ t('faceConsent.agreeBtn') }}
+        </el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -355,6 +388,9 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { User, Warning, CircleCheck, UserFilled, Search, Plus, Upload, Download, Delete, Trophy, Suitcase, Setting } from '@element-plus/icons-vue'
 import faceApi, { FaceRecord, FaceDatabaseStats, FaceGroupTypeStr } from '@/api/face'
 import { evaluateImageQuality, evaluateImageQualityFromDataUrl } from '@/utils/imageQuality'
+import { useI18n } from 'vue-i18n'
+
+const { t } = useI18n()
 
 const loading = ref(false)
 const cleaning = ref(false)
@@ -401,6 +437,53 @@ const uploadRef = ref()
 const importFileData = ref('')
 const currentImageFile = ref<File | null>(null)
 
+// [P0-4 v2.1 §7.5] 人脸采集单独同意: 启用采集前弹窗告知 (目的/方式/范围/期限/撤回)
+// + localStorage 版本化留痕 (无后端审计写入端点, AuditLogger 为进程内 C++ API)
+const FACE_CONSENT_KEY = 'face_consent_record_v1'
+const FACE_CONSENT_VERSION = '2025-1'
+const consentRecord = ref<{ version: string; consented_at: string } | null>(null)
+const showConsentDialog = ref(false)
+const consentChecked = ref(false)
+let pendingConsentAction: (() => void) | null = null
+
+function readConsentRecord() {
+  try {
+    const raw = localStorage.getItem(FACE_CONSENT_KEY)
+    if (!raw) return
+    const parsed = JSON.parse(raw)
+    if (parsed && parsed.version === FACE_CONSENT_VERSION && parsed.consented_at) {
+      consentRecord.value = parsed
+    }
+  } catch (e) { console.warn('FaceConsent read failed:', e) }
+}
+
+// 采集类入口统一门控: 已单独同意则直行, 否则弹告知对话框后续接原操作
+function ensureFaceConsent(action: () => void) {
+  if (consentRecord.value) { action(); return }
+  pendingConsentAction = action
+  consentChecked.value = false
+  showConsentDialog.value = true
+}
+
+function handleConsentAgree() {
+  if (!consentChecked.value) return
+  const record = { version: FACE_CONSENT_VERSION, consented_at: new Date().toISOString() }
+  try { localStorage.setItem(FACE_CONSENT_KEY, JSON.stringify(record)) } catch (e) { console.warn('FaceConsent persist failed:', e) }
+  consentRecord.value = record
+  showConsentDialog.value = false
+  ElMessage.success(t('faceConsent.consentedMsg'))
+  const action = pendingConsentAction
+  pendingConsentAction = null
+  action?.()
+}
+
+function handleConsentRefuse() {
+  showConsentDialog.value = false
+  pendingConsentAction = null
+  consentChecked.value = false
+  ElMessage.info(t('faceConsent.refusedMsg'))
+}
+
 async function loadStats() {
   try {
     const res = await faceApi.getStats()
@@ -437,7 +520,9 @@ function handleCloseDialog() {
   })
 }
 
-function handleAdd() {
+function handleAdd() { ensureFaceConsent(doAdd) }
+
+function doAdd() {
   handleCloseDialog()
   showAddDialog.value = true
 }
@@ -447,7 +532,9 @@ function handleDetail(row: FaceRecord) {
   showDetailDialog.value = true
 }
 
-function handleEdit(row: FaceRecord) {
+function handleEdit(row: FaceRecord) { ensureFaceConsent(() => doEdit(row)) }
+
+function doEdit(row: FaceRecord) {
   editingRecord.value = row
   currentImageFile.value = null
   Object.assign(formData, {
@@ -585,7 +672,7 @@ async function handleToggleStatus(row: FaceRecord) {
   }
 }
 
-function handleBatchImport() { showImportDialog.value = true; importFileData.value = '' }
+function handleBatchImport() { ensureFaceConsent(() => { showImportDialog.value = true; importFileData.value = '' }) }
 
 function handleFileChange(file: any) {
   const reader = new FileReader()
@@ -662,7 +749,7 @@ function formatDate(timestamp: number) {
   return new Date(timestamp * 1000).toLocaleString('zh-CN')
 }
 
-onMounted(() => { loadStats(); loadRecords() })
+onMounted(() => { readConsentRecord(); loadStats(); loadRecords() })
 </script>
 
 <style scoped>
@@ -699,4 +786,9 @@ onMounted(() => { loadStats(); loadRecords() })
 .image-preview .el-button { position: absolute; top: 5px; right: 5px; }
 .detail-header { display: flex; align-items: center; gap: 20px; }
 .detail-header-info h3 { margin: 0 0 6px 0; font-size: 18px; color: #303133; }
+/* [P0-4 v2.1 §7.5] 单独同意告知样式 */
+.consent-notice { font-size: 14px; color: #303133; }
+.consent-lead { margin: 0 0 10px; font-weight: 600; }
+.consent-list { margin: 0 0 14px; padding-left: 18px; }
+.consent-list li { margin-bottom: 8px; line-height: 1.6; }
 </style>

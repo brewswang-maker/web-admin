@@ -24,6 +24,8 @@ export interface RegionDef {
 export interface TripwireDef {
   id: number
   channel_id: number
+  /** GB28181 完整 20 位编码 (后端主查询键; 不带 _ch0 子码后缀) */
+  channel_id_str?: string
   algo_id: string
   name: string
   /** 归一化坐标 [0,1] */

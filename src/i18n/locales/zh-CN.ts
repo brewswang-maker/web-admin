@@ -997,6 +997,9 @@ const zhCN = {
       passEmpty: '暂无通行记录',
       liveOk: '通过',
       liveFail: '未过',
+      // [P1-1 v2.1] 构成卡分组点击联动 (通行同组过滤 + 事件同组筛选入口)
+      viewGroupEvents: '查看该分类事件',
+      clearGroupFilter: '清除筛选',
     },
     common: {
       loadFailed: '数据加载失败',
@@ -1008,12 +1011,12 @@ const zhCN = {
     },
     overview: {
       title: '值守总览',
-      subtitle: '员工通道拦截态势 · 5 包布防状态 · 远程集中值守事件流 (少人化 + 分时段无人值守)',
+      subtitle: '员工通道拦截态势 · 6 包布防状态 · 远程集中值守事件流 (少人化 + 分时段无人值守)',
       kpiIntercept: '通道拦截 (列表内)',
       kpiPacks: '已布防包数',
       kpiRules: '启用规则',
       kpiSsot: 'SSOT 事件覆盖',
-      packStatus: '5 包布防状态',
+      packStatus: '6 包布防状态',
       goPacks: '去场景包布防',
       noPacks: '无酒店场景包 (后端 ScenePackDefs 未返回 hotel_unattended 包组)',
       armed: '已布防',
@@ -1136,6 +1139,24 @@ const zhCN = {
     confirm: '确定要退出登录吗?',
     confirmBtn: '退出',
     cancelBtn: '取消'
+  },
+  // [P0-4 v2.1 §7.5] 人脸采集单独同意告知 (人脸识别技术应用安全管理办法 2025 对位, T1 验收单项)
+  // 插入位置说明: logout 与 faceRealtime 之间, 避开 vp4 手改区段 (nav/rule 文案)
+  faceConsent: {
+    dialogTitle: '人脸信息采集告知与单独同意',
+    noticeTitle: '在启用人脸信息采集前, 请阅读并确认以下告知事项:',
+    purpose: '处理目的: 场所出入管理与安全防范 (如尾随/陌生人识别告警)',
+    method: '处理方式: 在本设备本地提取人脸特征值并与库内登记照比对, 不上云',
+    scope: '处理范围: 仅限本页面登记人员的注册照与现场抓拍照',
+    retention: '保存期限: 记录到期自动禁用 (访客默认有效期), 删除记录时即删',
+    withdraw: '撤回方式: 删除对应人员记录即视为撤回同意, 特征值随记录一并删除',
+    agreeLabel: '我已阅读并理解上述告知, 单独同意启用人脸信息采集',
+    agreeBtn: '同意并继续',
+    refuseBtn: '拒绝',
+    refusedMsg: '未获得单独同意, 已取消本次采集操作',
+    consentedMsg: '已同意并留存采集同意记录',
+    consentBadge: '已同意采集',
+    consentVersion: '2025-1'
   },
   faceRealtime: {
     title: '实时人脸事件流',

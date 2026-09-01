@@ -1001,6 +1001,9 @@ const enUS: MessageSchema = {
       passEmpty: 'No pass records',
       liveOk: 'Pass',
       liveFail: 'Fail',
+      // [P1-1 v2.1] Group click linkage from compose card (pass filter + event filter entry)
+      viewGroupEvents: 'View events of this group',
+      clearGroupFilter: 'Clear filter',
     },
     common: {
       loadFailed: 'Failed to load data',
@@ -1012,12 +1015,12 @@ const enUS: MessageSchema = {
     },
     overview: {
       title: 'Duty Overview',
-      subtitle: 'Staff corridor intercepts · 5-pack arming status · remote centralized duty event stream',
+      subtitle: 'Staff corridor intercepts · 6-pack arming status · remote centralized duty event stream',
       kpiIntercept: 'Corridor Intercepts',
       kpiPacks: 'Packs Armed',
       kpiRules: 'Enabled Rules',
       kpiSsot: 'SSOT Event Coverage',
-      packStatus: '5-Pack Arming Status',
+      packStatus: '6-Pack Arming Status',
       goPacks: 'Deploy at Scene Packs',
       noPacks: 'No hotel scene packs (backend ScenePackDefs returned no hotel_unattended group)',
       armed: 'Armed',
@@ -1140,6 +1143,24 @@ const enUS: MessageSchema = {
     confirm: 'Are you sure you want to sign out?',
     confirmBtn: 'Sign Out',
     cancelBtn: 'Cancel'
+  },
+  // [P0-4 v2.1 §7.5] Face collection separate consent (PIPL 2025 face-recognition rules, T1 acceptance item)
+  // Inserted between logout and faceRealtime, away from vp4 hand-edited sections (nav/rule text)
+  faceConsent: {
+    dialogTitle: 'Face Data Collection Notice & Separate Consent',
+    noticeTitle: 'Before enabling face data collection, please read and confirm the following:',
+    purpose: 'Purpose: premises access management and security (e.g. tailgating/stranger alerts)',
+    method: 'Method: face features are extracted and matched locally on this device, never uploaded to cloud',
+    scope: 'Scope: only enrollment photos and on-site captures of persons registered on this page',
+    retention: 'Retention: records auto-disabled on expiry (visitors have default validity), deleted when record is deleted',
+    withdraw: 'Withdrawal: deleting the person record withdraws consent, features are removed with it',
+    agreeLabel: 'I have read and understood the notice above, and separately consent to enabling face data collection',
+    agreeBtn: 'Agree & Continue',
+    refuseBtn: 'Decline',
+    refusedMsg: 'Separate consent not given, collection operation cancelled',
+    consentedMsg: 'Consent recorded and retained',
+    consentBadge: 'Consent on file',
+    consentVersion: '2025-1'
   },
   faceRealtime: {
     title: 'Real-time Face Events',

@@ -3,13 +3,15 @@
  * @brief 酒店员工无人值守 REST API 客户端 — t8f D3 (方案: docs/plans/hotel-unattended-solution-v1.0.md §5.7)
  *
  * 后端端点复用 (box-sdk/src/core/RestApiHandlers.cpp, 场景包/联动端点对全部 SSOT 包通用):
- *   GET  /api/v1/large-event/scene-packs              [L21305] 全量 18 包, 前端按
- *        scene_tag === 'hotel_unattended' 过滤出 5 包 (后端不过滤, count 含全部)
+ *   GET  /api/v1/large-event/scene-packs              [L21305] 全量 19 包, 前端按
+ *        scene_tag === 'hotel_unattended' 过滤出 6 包 (后端不过滤, count 含全部;
+ *        [P1-2 v2.1] 恰 5→6: +hotel_unattended_receiving_v1 §5.4-C 收货补包)
  *   POST /api/v1/large-event/scene-packs/:id/apply    [L21332] apply v2 幂等布防
- *        (deploy=true → stable rule_id "le-{pack}-{tid}"; 酒店 5 包 id 直接可用)
+ *        (deploy=true → stable rule_id "le-{pack}-{tid}"; 酒店 6 包 id 直接可用)
  *   GET  /api/v1/linkage/rules?tag=hotel_unattended   apply 合并 tag 含 scene_tag 本身
  *        [L21396-21403], 按 tag=hotel_unattended 过滤即酒店规则全集
- *   GET  /api/v1/linkage/rule-templates               [L15883] 全量模板, 前端取 HT-* 18 条
+ *   GET  /api/v1/linkage/rule-templates               [L15883] 全量模板, 前端取 HT-* 21 条
+ *        ([P1-2 v2.1] 18→21: +HT-receiving-unauthorized/loitering/tailgate)
  *   GET  /api/v1/linkage/rule-stats                   触发统计 (RulesView 增强信息)
  *   GET  /api/v1/alarms                               告警列表 (CorridorEvents 前端按
  *        hotel_unattended 场景事件键并集过滤, 对齐 large-event EventListView 范式)
@@ -86,7 +88,7 @@ export function passTypeToGroup(passType: unknown): PersonGroupKey | 'unknown' {
 // ── API 封装 ──
 
 export const hotelUnattendedApi = {
-  // ----- 场景包 (复用 SSOT 端点, 前端按 scene_tag 过滤 5 包) -----
+  // ----- 场景包 (复用 SSOT 端点, 前端按 scene_tag 过滤 6 包) -----
   listScenePacks() {
     return http.get<ApiResponse<{ scene_packs: ScenePack[]; count: number }>>(
       '/large-event/scene-packs'
@@ -154,7 +156,7 @@ export const hotelUnattendedApi = {
 
 // ── 前端组合辅助 (多数据源聚合, 视图层共用) ──
 
-/** 从全量场景包中过滤酒店 5 包 (防御式: 响应结构异常时返回空数组) */
+/** 从全量场景包中过滤酒店 6 包 (防御式: 响应结构异常时返回空数组) */
 export function pickHotelPacks(body: unknown): ScenePack[] {
   const d = (body as { data?: { scene_packs?: ScenePack[] } })?.data
   const list = Array.isArray(d?.scene_packs) ? d.scene_packs : []

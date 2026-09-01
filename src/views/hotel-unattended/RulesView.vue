@@ -173,8 +173,9 @@
  *   - 规则实例: GET /linkage/rules?tag=hotel_unattended (apply v2 布防产物,
  *     稳定 rule_id "le-{pack}-{tid}"; tag=scene_tag 本身, RestApiHandlers L21399)
  *   - 触发统计: GET /linkage/rule-stats (trigger_count / last_trigger_ms)
- *   - HT 模板落地对照: GET /linkage/rule-templates 中 HT-* 18 条 × 规则 tags 交叉
- *   - 包过滤: 规则 tags 含 scene_pack_id (5 包 radio)
+ *   - HT 模板落地对照: GET /linkage/rule-templates 中 HT-* 21 条 × 规则 tags 交叉
+ *     ([P1-2 v2.1] 18→21: +HT-receiving-* 收货通道 3 条 §5.4-C 补包)
+ *   - 包过滤: 规则 tags 含 scene_pack_id (6 包 radio)
  * 编辑跳转系统联动规则页 /linkage (不在本页重复实现编辑器)。
  * 三态防御: 骨架屏 / 错误态可恢复 / 空态。
  */

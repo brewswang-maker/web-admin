@@ -46,8 +46,11 @@ export interface ScenePack {
   scene_tag: string
   description: string
   algo_set: string[]
-  /** 三圈布防: core_circle / alert_circle / control_circle → 区域名列表 */
+  /** 三圈布防: core_circle / alert_circle / control_circle → 区域名列表
+   *  [加油站三期] 加油站 3 包 key 为 gas_station_{core,alert,control}_circle */
   zones: Record<string, string[]>
+  /** [加油站三期 2026-08-30] 三圈半径 (米): Gas3D 动态半径数据源, 仅加油站 3 包非空 */
+  circle_radii_m?: Record<string, number>
   threshold_profile: string
   linkage_templates: string[]
   deploy_eta_min: number

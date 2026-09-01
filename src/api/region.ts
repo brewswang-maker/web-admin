@@ -25,41 +25,56 @@ import type { RegionDef, TripwireDef, CountingZoneDef, PassagewayDef } from '@/t
 export const regionApi = {
   // ----- Regions -----
   listRegions(params: { channel_id: number; algo_id?: string } = { channel_id: 0 }) {
-    return http.get<{ regions: RegionDef[] }>('/api/v1/algos/regions', { params })
+    return http.get<{ regions: RegionDef[] }>('/algos/regions', { params })
   },
   createRegion(body: Omit<RegionDef, 'id' | 'created_at' | 'updated_at'>) {
-    return http.post<{ id: number; region: RegionDef }>('/api/v1/algos/regions', body)
+    return http.post<{ id: number; region: RegionDef }>('/algos/regions', body)
   },
   deleteRegion(id: number) {
-    return http.delete<{ ok: boolean }>(`/api/v1/algos/regions/${id}`)
+    return http.delete<{ ok: boolean }>(`/algos/regions/${id}`)
   },
 
   // ----- Tripwires -----
   listTripwires(params: { channel_id: number; algo_id?: string } = { channel_id: 0 }) {
-    return http.get<{ tripwires: TripwireDef[] }>('/api/v1/algos/tripwires', { params })
+    return http.get<{ tripwires: TripwireDef[] }>('/algos/tripwires', { params })
   },
   createTripwire(body: Omit<TripwireDef, 'id' | 'created_at' | 'updated_at'>) {
-    return http.post<{ id: number; tripwire: TripwireDef }>('/api/v1/algos/tripwires', body)
+    return http.post<{ id: number; tripwire: TripwireDef }>('/algos/tripwires', body)
+  },
+  /** [FIX 2026-08-28] 双流实例适配: 同一绊线写主形态 + _ch0 镜像两条, 返回主形态 id。
+   *  背景: GB28181 主/子码流是两个推理实例, 插件分别以不带/带 _ch0 的
+   *  channel_id_str 精确查询绊线 (RegionStore 无后缀归一) → 单条记录必有一半
+   *  实例 miss (日志表现 GATE-MISS)。镜像创建失败不阻塞 (主形态仍可用)。 */
+  async createTripwireWithMirror(body: Omit<TripwireDef, 'id' | 'created_at' | 'updated_at'>): Promise<number> {
+    const res = await http.post<{ id: number }>('/algos/tripwires', body)
+    // [FIX 2026-08-28] http 拦截器不剥业务壳: id 在 res.data.data.id
+    const mainId = res.data?.data?.id ?? res.data?.id ?? 0
+    if (body.channel_id_str) {
+      try {
+        await http.post('/algos/tripwires', { ...body, channel_id_str: `${body.channel_id_str}_ch0` })
+      } catch { /* 镜像失败不阻塞 */ }
+    }
+    return mainId
   },
   deleteTripwire(id: number) {
-    return http.delete<{ ok: boolean }>(`/api/v1/algos/tripwires/${id}`)
+    return http.delete<{ ok: boolean }>(`/algos/tripwires/${id}`)
   },
 
   // ----- Counting zones -----
   listCountingZones(params: { channel_id: number; algo_id?: string } = { channel_id: 0 }) {
     return http.get<{ counting_zones: CountingZoneDef[] }>(
-      '/api/v1/algos/counting-zones',
+      '/algos/counting-zones',
       { params }
     )
   },
   createCountingZone(body: Omit<CountingZoneDef, 'id' | 'created_at'>) {
     return http.post<{ id: number; counting_zone: CountingZoneDef }>(
-      '/api/v1/algos/counting-zones',
+      '/algos/counting-zones',
       body
     )
   },
   deleteCountingZone(id: number) {
-    return http.delete<{ ok: boolean }>(`/api/v1/algos/counting-zones/${id}`)
+    return http.delete<{ ok: boolean }>(`/algos/counting-zones/${id}`)
   },
 
   // ----- 🆕 v5.0 [Tailgating 区域版]: Passageways (多边形通行区) -----
@@ -67,20 +82,20 @@ export const regionApi = {
     params: { channel_id?: number; channel_id_str?: string; algo_id?: string } = {}
   ) {
     return http.get<{ passageways: PassagewayDef[] }>(
-      '/api/v1/algos/passageways',
+      '/algos/passageways',
       { params }
     )
   },
   createPassageway(body: Omit<PassagewayDef, 'id' | 'created_at' | 'updated_at'>) {
-    return http.post<PassagewayDef>('/api/v1/algos/passageways', body)
+    return http.post<PassagewayDef>('/algos/passageways', body)
   },
   deletePassageway(id: number) {
-    return http.delete<{ ok: boolean }>(`/api/v1/algos/passageways/${id}`)
+    return http.delete<{ ok: boolean }>(`/algos/passageways/${id}`)
   },
   /** 手动触发老绊线迁移 (幂等, detector 首帧也会自动触发) */
   migratePassageways(algoId: string) {
     return http.post<{ algo_id: string; migrated: number }>(
-      '/api/v1/algos/passageways/migrate',
+      '/algos/passageways/migrate',
       { algo_id: algoId }
     )
   },
@@ -96,6 +111,6 @@ export const regionApi = {
         confirmed_tracks: number
         last_update_ms: number
       }
-    }>('/api/v1/algos/regions/stats')
+    }>('/algos/regions/stats')
   }
 }

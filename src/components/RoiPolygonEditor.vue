@@ -3,11 +3,7 @@
     <!-- 工具栏 -->
     <div class="roi-toolbar">
       <el-radio-group v-model="currentType" size="small" :disabled="disabled">
-        <el-radio-button value="detection_zone">检测区域</el-radio-button>
-        <el-radio-button value="exclusion_zone">排除区域</el-radio-button>
-        <el-radio-button value="tripwire">绊线</el-radio-button>
-        <el-radio-button value="directional_line">方向线</el-radio-button>
-        <el-radio-button value="counting_zone">计数区域</el-radio-button>
+        <el-radio-button v-for="t in availableTypes" :key="t" :value="t">{{ typeButtonLabel(t) }}</el-radio-button>
       </el-radio-group>
 
       <div class="roi-toolbar__actions">
@@ -108,6 +104,10 @@ const props = withDefaults(defineProps<{
   canvasWidth?: number
   canvasHeight?: number
   disabled?: boolean
+  /** 可用 ROI 类型过滤 (RoiType 字符串数组, 缺省=全部)
+   *  [FIX 2026-08-28] 联动规则页只支持多边形 ROI (后端空间条件仅做 pointInPolygon),
+   *  绊线/方向线/计数区类型在那边不可生效 → 调用方传 types 限制可选 */
+  types?: string[]
 }>(), {
   normalizeWidth: 1920,
   normalizeHeight: 1080,
@@ -132,6 +132,19 @@ const selectedRoiIndex = ref(-1)
 const currentType = ref<RoiType>(RoiType.DETECTION_ZONE)
 const currentDirection = ref<RoiDirection>(RoiDirection.BOTH)
 const snapshotLoading = ref(false)
+
+// 类型过滤: types prop 未传 = 全部; 传入时只列白名单内类型
+const ALL_TYPES: RoiType[] = [
+  RoiType.DETECTION_ZONE, RoiType.EXCLUSION_ZONE, RoiType.TRIPWIRE,
+  RoiType.DIRECTIONAL_LINE, RoiType.COUNTING_ZONE,
+]
+const availableTypes = computed<RoiType[]>(() => {
+  if (!props.types || props.types.length === 0) return ALL_TYPES
+  return ALL_TYPES.filter(t => props.types!.includes(t as string))
+})
+watch(availableTypes, list => {
+  if (list.length && !list.includes(currentType.value)) currentType.value = list[0]
+}, { immediate: true })
 
 // 各类型所需最少点数
 const minPoints = computed(() => {
@@ -172,6 +185,17 @@ const drawHint = computed(() => {
 })
 
 // 类型颜色映射
+function typeButtonLabel(type: RoiType): string {
+  const map: Record<string, string> = {
+    [RoiType.DETECTION_ZONE]: '检测区域',
+    [RoiType.EXCLUSION_ZONE]: '排除区域',
+    [RoiType.TRIPWIRE]: '绊线',
+    [RoiType.DIRECTIONAL_LINE]: '方向线',
+    [RoiType.COUNTING_ZONE]: '计数区域',
+  }
+  return map[type] || '未知'
+}
+
 function typeColor(type: RoiType): string {
   const map: Record<string, string> = {
     [RoiType.DETECTION_ZONE]: '#0F9D58',
@@ -293,7 +317,15 @@ function getCanvasPoint(e: MouseEvent) {
 }
 
 function onMouseDown(e: MouseEvent) {
-  if (props.disabled || !drawing.value) return
+  if (props.disabled) return
+  // [FIX 2026-08-28] 未点"开始绘制"时点击画布自动进入绘制模式 —
+  //   与算法配置页 TripwireEditor 交互对齐 (直接落点), 避免用户直接点画布
+  //   无反应、"确认添加"按钮永远灰的困惑。
+  if (!drawing.value) {
+    drawing.value = true
+    points.value = []
+    selectedRoiIndex.value = -1
+  }
   dragging.value = true
   const p = getCanvasPoint(e)
   if (p && points.value.length < maxPoints.value) {

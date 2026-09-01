@@ -47,7 +47,7 @@
       </el-row>
 
       <el-row :gutter="16">
-        <!-- ===== 5 包布防状态 ===== -->
+        <!-- ===== 6 包布防状态 ([P1-2 v2.1] 恰 5→6) ===== -->
         <el-col :span="10">
           <el-card shadow="never" class="section-card">
             <template #header>
@@ -131,7 +131,9 @@
             </template>
             <el-table :data="groupRows" v-loading="passLoading" size="small"
                       show-summary :summary-method="groupSummary"
-                      :empty-text="t('hotel.person.composeEmpty')">
+                      :empty-text="t('hotel.person.composeEmpty')"
+                      class="group-compose-table"
+                      @row-click="onGroupRowClick" :row-class-name="groupRowClass">
               <el-table-column :label="t('hotel.person.colGroup')" min-width="100">
                 <template #default="{ row }">
                   <div class="group-cell">
@@ -157,7 +159,24 @@
           <el-card shadow="never" class="section-card">
             <template #header>
               <div class="card-header">
-                <span>{{ t('hotel.person.passTitle') }}</span>
+                <span>
+                  {{ t('hotel.person.passTitle') }}
+                  <template v-if="selectedGroupDef">
+                    ·
+                    <el-tag :type="selectedGroupDef.tagType" size="small" effect="light">
+                      {{ t(selectedGroupDef.i18nKey) }}
+                    </el-tag>
+                  </template>
+                </span>
+                <!-- [P1-1 v2.1] 构成卡分组点击联动: 同组过滤通行 + 跳转事件同组筛选 -->
+                <span v-if="selectedGroupDef" class="pass-filter-actions">
+                  <el-button link type="primary" size="small" @click="goGroupEvents">
+                    <el-icon><Aim /></el-icon> {{ t('hotel.person.viewGroupEvents') }}
+                  </el-button>
+                  <el-button link size="small" @click="selectedGroup = ''">
+                    {{ t('hotel.person.clearGroupFilter') }}
+                  </el-button>
+                </span>
               </div>
             </template>
             <el-table :data="recentPasses" v-loading="passLoading" size="small"
@@ -201,7 +220,7 @@
 /**
  * 值守总览 — 酒店无人值守 t8f D3 (方案 §5.7 视图 1)
  *
- * 4 KPI (今日拦截 / 布防包数 / 启用规则 / SSOT 事件覆盖) + 5 包布防状态
+ * 4 KPI (今日拦截 / 布防包数 / 启用规则 / SSOT 事件覆盖) + 6 包布防状态
  * + 最近拦截记录 + 人员六分类板块 (黑名单/白名单/访客/VIP/员工/自定义:
  * 人脸库统计 + 24h 通行记录, 酒店人员体系)。数据源全部复用既有端点
  * (large-event/scene-packs, linkage/rules?tag=hotel_unattended, /alarms,
@@ -217,6 +236,7 @@ import { Refresh, Warning, Box, Bell, Aim } from '@element-plus/icons-vue'
 import type { Component } from 'vue'
 import { hotelUnattendedApi, pickHotelPacks, isHotelEvent, CORRIDOR_INTERCEPT_TYPES,
          PERSON_GROUPS, passTypeToGroup } from '@/api/hotelUnattended'
+import type { PersonGroupKey } from '@/api/hotelUnattended'
 import type { ScenePack } from '@/types/largeEvent'
 import type { LinkageRule } from '@/api/linkage'
 import type { AlarmEvent } from '@/types/alarm'
@@ -271,7 +291,31 @@ const groupRows = computed(() =>
   })))
 const passTotal = computed(() =>
   Object.values(passByGroup.value).reduce((a, b) => a + b, 0))
-const recentPasses = computed(() => passRecords.value.slice(0, 8))
+const recentPasses = computed(() =>
+  passRecords.value
+    // [P1-1 v2.1] 构成卡分组点击联动: 选中分组时仅显示同组通行 (口径: passTypeToGroup SSOT)
+    .filter(r => !selectedGroup.value || passTypeToGroup(r.pass_type) === selectedGroup.value)
+    .slice(0, 8))
+
+// ── [P1-1 v2.1] 构成卡分组点击联动 (点击行 → 通行同组过滤 + 事件同组筛选入口) ──
+const selectedGroup = ref<PersonGroupKey | ''>('')
+const selectedGroupDef = computed(() =>
+  PERSON_GROUPS.find(g => g.key === selectedGroup.value) ?? null)
+
+function onGroupRowClick(row: { key?: string }) {
+  const k = row?.key as PersonGroupKey | undefined
+  if (!k || !PERSON_GROUPS.some(g => g.key === k)) return
+  selectedGroup.value = selectedGroup.value === k ? '' : k
+}
+
+function groupRowClass({ row }: { row: { key?: string } }) {
+  return selectedGroup.value && row?.key === selectedGroup.value ? 'group-row--active' : ''
+}
+
+function goGroupEvents() {
+  if (!selectedGroup.value) return
+  router.push({ name: 'HotelCorridorEvents', query: { group: selectedGroup.value } })
+}
 
 /** 包是否已布防: 任一规则 tags 含 scene_pack_id (apply 合并 tags, RestApiHandlers L21399) */
 function packLanded(p: ScenePack): boolean {
@@ -418,4 +462,8 @@ onMounted(() => { reload() })
 .evt-key { font-size: 12px; color: var(--el-text-color-secondary); }
 .group-cell { display: flex; align-items: center; gap: 8px; }
 .group-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
+/* [P1-1 v2.1] 构成卡行可点击 + 选中高亮 */
+.group-compose-table :deep(tbody tr) { cursor: pointer; }
+.group-compose-table :deep(tr.group-row--active > td) { background: var(--el-fill-color-light); }
+.pass-filter-actions { display: inline-flex; align-items: center; gap: 2px; }
 </style>
