@@ -335,9 +335,15 @@ async function handleAlarm(alarm: any) {
     } else {
       console.log('[useGlobalAlarm] popup suppressed (no matching linkage rule), type:',
         normalized.type, 'ch:', normalized.channelId)
+      // [规则驱动告警 2026-09-01] TTS 与弹窗同门槛: 未命中规则的告警整链静默
+      //   (不弹窗不播报) — 用户决策「这些都依赖事件规则」
+      return
     }
 
-    // 4. 每条告警都播报 TTS（不依赖联动规则的 tts_broadcast 动作）
+    // 4. TTS 语音播报 — [规则驱动告警 2026-09-01] 已随弹窗门槛规则化: 走到这里
+    //    必然命中已创建联动规则 (防抖命中的重复告警仍播报, 与弹窗防抖解耦);
+    //    仍不依赖规则是否配置 tts_broadcast 动作 (联动动作的播报经 WS 下方
+    //    action==='tts_broadcast' 分支下发, 与本地面板播报并存)
     speakAlarm(normalized)
   } catch (e) {
     console.error('[useGlobalAlarm] handleAlarm exception:', e)
