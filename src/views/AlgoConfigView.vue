@@ -49,82 +49,116 @@
         </el-card>
 
         <template v-else>
-          <el-card shadow="never" class="config-card">
+          <!-- ① 已配置算法 (独立卡, 与编辑区视觉分区; 数据源 /inference/channels 调度记录,
+              algo_plugin 逗号分隔多算法串拆分逐行, 行内高亮选中 → 定位编辑区) -->
+          <el-card shadow="never" class="algo-card">
             <template #header>
               <div class="config-header">
-                <span>{{ selected.channelId }} - {{ selected.name }}</span>
+                <span>已配置算法</span>
+                <span class="algo-card-sub">{{ selected.channelId }} - {{ selected.name }}</span>
                 <el-switch v-model="form.enabled" :active-text="$t('enable', '启用')" :inactive-text="$t('disable', '停用')" />
               </div>
             </template>
+            <el-table :data="algoRows" size="small" class="algo-table" max-height="106"
+              highlight-current-row :row-class-name="algoRowClassName"
+              @row-click="selectAlgoRow"
+              empty-text="该通道尚未配置算法 — 在下方编辑区选择算法后点击「保存配置」">
+              <el-table-column label="算法" min-width="200">
+                <template #default="{ row }">
+                  <el-tag size="small" type="primary">{{ row.algoName }}</el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column label="事件规则" width="252">
+                <template #default="{ row }">
+                  <el-badge :value="row.ruleCount" :hidden="!row.ruleCount" type="info" class="rule-badge">
+                    <span class="rule-badge-label">事件规则</span>
+                  </el-badge>
+                  <el-button size="small" type="primary" link @click.stop="openAddRuleDialog(row)">添加事件规则</el-button>
+                  <el-button size="small" type="danger" link :disabled="!row.ruleCount" @click.stop="removeAlgoRules(row)">删除事件规则</el-button>
+                </template>
+              </el-table-column>
+              <el-table-column label="推理模式" width="84" align="center">
+                <template #default="{ row }">{{ row.mode === 'streaming' ? '连续' : '抓拍' }}</template>
+              </el-table-column>
+              <el-table-column label="间隔(ms)" width="84" align="center" prop="interval" />
+              <el-table-column label="状态" width="68" align="center">
+                <template #default="{ row }">
+                  <el-tag :type="row.enabled ? 'success' : 'info'" size="small" effect="dark">
+                    {{ row.enabled ? 'ON' : 'OFF' }}
+                  </el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column label="操作" width="64" align="center">
+                <template #default="{ row }">
+                  <el-button size="small" type="primary" link @click.stop="selectAlgoRow(row)">编辑</el-button>
+                </template>
+              </el-table-column>
+            </el-table>
+          </el-card>
 
-            <!-- [FIX 2026-09-01] 已配置算法列表: 选择通道即列出当前摄像头使用的
-                 算法 (数据源 /inference/channels 调度记录), 点编辑定位到下方表单 -->
-            <div class="algo-list-block">
-              <div class="algo-list-title">已配置算法</div>
-              <el-table :data="algoList" size="small" class="algo-list-table"
-                empty-text="该通道尚未配置算法 — 在下方选择算法后点击「保存配置」">
-                <el-table-column label="算法" min-width="150">
-                  <template #default="{ row }">
-                    <el-tag v-for="a in row.algoNames" :key="a" size="small" type="primary" class="algo-name-tag">{{ a }}</el-tag>
-                  </template>
-                </el-table-column>
-                <el-table-column label="推理模式" width="90" align="center">
-                  <template #default="{ row }">{{ row.mode === 'streaming' ? '连续' : '抓拍' }}</template>
-                </el-table-column>
-                <el-table-column label="间隔(ms)" width="90" align="center" prop="interval" />
-                <el-table-column label="状态" width="76" align="center">
-                  <template #default="{ row }">
-                    <el-tag :type="row.enabled ? 'success' : 'info'" size="small" effect="dark">
-                      {{ row.enabled ? 'ON' : 'OFF' }}
-                    </el-tag>
-                  </template>
-                </el-table-column>
-                <el-table-column label="操作" width="70" align="center">
-                  <template #default="{ row }">
-                    <el-button size="small" type="primary" link @click="editAlgoRow">编辑</el-button>
-                  </template>
-                </el-table-column>
-              </el-table>
-            </div>
-
-            <el-form ref="formRef" :model="form" label-width="86px" size="default" class="config-form">
-              <!-- [FIX 2026-08-28 1080P 单屏] 3 行表单压缩为 2 行, 减少纵向占用 -->
+          <!-- ② 算法参数编辑 (独立卡; 仅当前选中算法; 字段序: 算法→模式→间隔→置信度→NMS;
+              校验: 置信度/NMS 0~1, 间隔 ≥100ms, 未通过字段下红提示且不触发保存) -->
+          <el-card ref="editCardRef" shadow="never" class="edit-card">
+            <template #header>
+              <div class="config-header">
+                <span>算法参数编辑</span>
+                <el-tag v-if="editForm.algoId" size="small" type="primary">{{ editForm.algoName }}</el-tag>
+              </div>
+            </template>
+            <el-form :model="editForm" label-width="92px" size="default" class="edit-form" @submit.prevent>
+              <el-form-item label="算法">
+                <template v-if="editForm.algoId">
+                  <el-tag type="primary" size="small">{{ editForm.algoName }}</el-tag>
+                  <span class="algo-id-text">{{ editForm.algoId }}</span>
+                </template>
+                <el-select v-else v-model="form.algorithm" :placeholder="$t('selectAlgo', '选择算法 (新配置)')" style="width:100%">
+                  <el-option v-for="a in algorithmOptions" :key="a.value" :label="a.label" :value="a.value" />
+                </el-select>
+              </el-form-item>
               <el-row :gutter="16">
-                <el-col :span="10">
-                  <el-form-item :label="$t('inferenceAlgo', '推理算法')">
-                    <el-select v-model="form.algorithm" :placeholder="$t('selectAlgo', '选择算法')" style="width:100%">
-                      <el-option v-for="a in algorithmOptions" :key="a.value" :label="a.label" :value="a.value" />
-                    </el-select>
-                  </el-form-item>
-                </el-col>
-                <el-col :span="7">
+                <el-col :span="9">
                   <el-form-item :label="$t('inferenceMode', '推理模式')">
-                    <el-radio-group v-model="form.inferenceMode" size="small">
+                    <el-radio-group v-model="editForm.mode" size="small">
                       <el-radio value="snapshot">抓拍</el-radio>
                       <el-radio value="streaming">连续</el-radio>
                     </el-radio-group>
                   </el-form-item>
                 </el-col>
-                <el-col :span="7">
-                  <el-form-item :label="$t('inferenceInterval', '推理间隔')">
-                    <el-input-number v-model="form.interval" :min="50" :max="10000" :step="50" size="small" controls-position="right" style="width: 100%" />
+                <el-col :span="9">
+                  <el-form-item :label="$t('inferenceInterval', '检测间隔')" :error="formErrors.interval">
+                    <el-input-number v-model="editForm.interval" :min="100" :max="10000" :step="100" size="small"
+                      controls-position="right" style="width: 100%" @change="validateEditField('interval')" />
                   </el-form-item>
                 </el-col>
               </el-row>
-
               <el-row :gutter="16">
                 <el-col :span="12">
-                  <el-form-item :label="$t('confidenceThreshold', '置信度阈值')">
-                    <el-slider v-model="form.confidence" :min="0.1" :max="1" :step="0.05" show-input input-size="small" />
+                  <!-- [2026-09-01] 滑块+数字输入并排 (替代 show-input): 行高 56→38, 单屏预算关键项 -->
+                  <el-form-item :label="$t('confidenceThreshold', '置信度阈值')" :error="formErrors.confidence">
+                    <div class="slider-row">
+                      <el-slider v-model="editForm.confidence" :min="0" :max="1" :step="0.05" class="slider-main"
+                        @input="validateEditField('confidence')" />
+                      <el-input-number v-model="editForm.confidence" :min="0" :max="1" :step="0.05" size="small"
+                        controls-position="right" class="slider-num" @change="validateEditField('confidence')" />
+                    </div>
                   </el-form-item>
                 </el-col>
                 <el-col :span="12">
-                  <el-form-item :label="$t('nmsThreshold', 'NMS 阈值')">
-                    <el-slider v-model="form.nmsThreshold" :min="0.1" :max="1" :step="0.05" show-input input-size="small" />
+                  <el-form-item :label="$t('nmsThreshold', 'NMS 阈值')" :error="formErrors.nms">
+                    <div class="slider-row">
+                      <el-slider v-model="editForm.nms" :min="0" :max="1" :step="0.05" class="slider-main"
+                        @input="validateEditField('nms')" />
+                      <el-input-number v-model="editForm.nms" :min="0" :max="1" :step="0.05" size="small"
+                        controls-position="right" class="slider-num" @change="validateEditField('nms')" />
+                    </div>
                   </el-form-item>
                 </el-col>
               </el-row>
             </el-form>
+            <div class="edit-actions">
+              <el-button @click="resetEditForm">{{ $t('reset', '重置') }}</el-button>
+              <el-button type="primary" :loading="saving" :disabled="!editForm.algoId && !form.algorithm" @click="saveConfig">{{ $t('save', '保存配置') }}</el-button>
+            </div>
           </el-card>
 
           <el-card shadow="never" class="roi-card">
@@ -140,7 +174,7 @@
                   v-if="selected"
                   :model-value="regions"
                   :background-image-url="roiBackgroundUrl"
-                  :canvas-width="620" :canvas-height="310"
+                  :canvas-width="600" :canvas-height="240"
                   :types="['detection_zone', 'exclusion_zone']"
                   @update:model-value="onRegionsChange"
                 />
@@ -210,7 +244,7 @@
                   v-if="selected"
                   :model-value="countingZoneRois"
                   :background-image-url="roiBackgroundUrl"
-                  :canvas-width="620" :canvas-height="310"
+                  :canvas-width="600" :canvas-height="240"
                   :types="['counting_zone']"
                   @update:model-value="onCountingZonesChange"
                 />
@@ -229,11 +263,29 @@
       </div>
     </div>
 
-    <!-- Bottom Actions -->
-    <div class="bottom-bar">
-      <el-button @click="resetForm">{{ $t('reset', '重置') }}</el-button>
-      <el-button type="primary" @click="saveConfig" :loading="saving">{{ $t('save', '保存配置') }}</el-button>
-    </div>
+    <!-- ④ 单设备算法事件规则: 添加 dialog (事件类型 SSOT /event-types/canonical 多选,
+        逐条 POST /linkage/rules, payload 含 channel_id/device_id/algo_id/event_type) -->
+    <el-dialog v-model="ruleDialogVisible" title="添加事件规则" width="560px" class="rule-dialog">
+      <div class="rule-dialog-target">
+        算法 <el-tag size="small" type="primary">{{ ruleTargetAlgoName }}</el-tag>
+        <span class="rule-dialog-sub">通道: {{ selected?.name ?? '-' }} (device_id: {{ selected?.deviceId || selected?.parentDeviceId || '-' }})</span>
+      </div>
+      <el-input v-model="ruleFilter" placeholder="搜索事件类型 (中文名 / key)" clearable size="small" class="rule-filter" />
+      <div class="rule-check-wrap" v-loading="ruleTypesLoading">
+        <el-checkbox-group v-model="ruleSelected">
+          <el-checkbox v-for="t in filteredEventTypes" :key="t.key" :value="t.key" :label="t.key" class="rule-check-item">
+            {{ t.name_zh }}
+            <span class="rule-check-key">{{ t.key }}</span>
+          </el-checkbox>
+        </el-checkbox-group>
+        <el-empty v-if="!ruleTypesLoading && filteredEventTypes.length === 0" description="无匹配事件类型" :image-size="60" />
+      </div>
+      <template #footer>
+        <span class="rule-dialog-count">已勾选 {{ ruleSelected.length }} 项</span>
+        <el-button @click="ruleDialogVisible = false">取消</el-button>
+        <el-button type="primary" :disabled="ruleSelected.length === 0" :loading="ruleSaving" @click="confirmAddRules">保存</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -247,13 +299,15 @@
  * 3. 保存时调用 POST /inference/schedule/start 或 /stop 控制后端推理调度
  */
 import { ref, reactive, computed, onMounted, nextTick } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh } from '@element-plus/icons-vue'
 import { channelApi } from '@/api/channel'
 import { startSchedule, stopSchedule, getInferenceChannels } from '@/api/inference'
 import type { ScheduledChannel } from '@/api/inference'
 import algorithmsApi from '@/api/algorithms'
 import type { AlgorithmInfo } from '@/api/algorithms'
+import eventTypesApi, { type CanonicalEventType } from '@/api/eventTypes'
+import { linkageApi, type LinkageRule } from '@/api/linkage'
 import { regionApi } from '@/api/region'
 import type { TripwireDef, PassagewayDef, SuppressMode, CountingZoneDef } from '@/types/region'
 import RoiPolygonEditor from '@/components/RoiPolygonEditor.vue'
@@ -284,31 +338,214 @@ const scheduledMap = ref<Map<string, ScheduledChannel>>(new Map())
 const selected = ref<ChannelItem | null>(null)
 const loading = ref(false)
 const saving = ref(false)
-const formRef = ref()
+const editCardRef = ref()
+const currentAlgoId = ref('')
 
-// [FIX 2026-09-01] 已配置算法列表: 当前通道的调度记录映射为可编辑列表项
-// (后端调度模型为一通道一算法, 列表最多 1 条; 空态提示去下方表单配置)
-const algoList = computed(() => {
+// [2026-09-01] 编辑区模型: 仅当前选中算法; 参数为通道级调度共享
+// (后端 ScheduledChannel 无独立 per-algo 参数; 保存时 algo_plugin 保留原完整串不破坏多算法配置)
+const editForm = reactive({
+  algoId: '',
+  algoName: '',
+  mode: 'snapshot' as 'snapshot' | 'streaming',
+  interval: 1000,
+  confidence: 0.5,
+  nms: 0.45,
+})
+const formErrors = reactive({ interval: '', confidence: '', nms: '' })
+
+function validateEditField(field: 'interval' | 'confidence' | 'nms') {
+  if (field === 'interval') {
+    formErrors.interval = !(editForm.interval >= 100 && editForm.interval <= 100000)
+      ? '检测间隔必须 ≥ 100ms' : ''
+  } else if (field === 'confidence') {
+    const v = Number(editForm.confidence)
+    formErrors.confidence = !(v >= 0 && v <= 1) ? '置信度必须在 0 ~ 1 之间' : ''
+  } else {
+    const v = Number(editForm.nms)
+    formErrors.nms = !(v >= 0 && v <= 1) ? 'NMS 阈值必须在 0 ~ 1 之间' : ''
+  }
+}
+function validateAll(): boolean {
+  validateEditField('interval'); validateEditField('confidence'); validateEditField('nms')
+  return !formErrors.interval && !formErrors.confidence && !formErrors.nms
+}
+
+// ① 已配置算法行: algo_plugin 逗号分隔串拆分逐行 + 事件规则计数
+const algoRows = computed(() => {
   if (!selected.value) return []
   const sc = scheduledMap.value.get(selected.value.channelId)
   if (!sc) return []
-  return [{
-    algoPlugin: sc.algo_plugin,
-    // [FIX 2026-09-01] 调度 algo_plugin 支持逗号分隔多算法串 (实测 intrusion,yolo26s)
-    // → 拆开逐个映射中文名, 独立 tag 展示
-    algoNames: String(sc.algo_plugin || '').split(',').map((s) => s.trim()).filter(Boolean)
-      .map((id) => algorithmOptions.value.find((a) => a.value === id)?.label || id),
+  return String(sc.algo_plugin || '').split(',').map((s) => s.trim()).filter(Boolean).map((id) => ({
+    algoId: id,
+    algoName: algorithmOptions.value.find((a) => a.value === id)?.label || id,
     mode: (sc as any).inference_mode === 'streaming' ? 'streaming' : 'snapshot',
     interval: sc.interval_ms,
     enabled: sc.enabled,
     running: sc.running,
-  }]
+    ruleCount: algoRuleCounts.value.get(id) ?? 0,
+  }))
 })
 
-function editAlgoRow() {
-  // 表单已由 onChannelSelect 用调度记录填充, 编辑仅定位聚焦
-  nextTick(() => formRef.value?.$el?.scrollIntoView?.({ behavior: 'smooth', block: 'center' }))
-  ElMessage.info('已在下方表单中编辑该算法参数')
+function algoRowClassName({ row }: { row: { algoId: string } }) {
+  return currentAlgoId.value === row.algoId ? 'current-algo-row' : ''
+}
+
+/** 点击列表行/编辑 → 高亮 + 填充编辑表单 + 滚动定位到编辑卡 */
+function selectAlgoRow(row: { algoId: string; algoName: string; mode: 'snapshot' | 'streaming'; interval: number }) {
+  currentAlgoId.value = row.algoId
+  editForm.algoId = row.algoId
+  editForm.algoName = row.algoName
+  editForm.mode = row.mode
+  editForm.interval = row.interval
+  formErrors.interval = ''; formErrors.confidence = ''; formErrors.nms = ''
+  nextTick(() => editCardRef.value?.$el?.scrollIntoView?.({ behavior: 'smooth', block: 'center' }))
+}
+
+function resetEditForm() {
+  if (currentAlgoId.value) {
+    const row = algoRows.value.find((r) => r.algoId === currentAlgoId.value)
+    if (row) { selectAlgoRow(row); ElMessage.info('已重置为当前配置'); return }
+  }
+  formErrors.interval = ''; formErrors.confidence = ''; formErrors.nms = ''
+  ElMessage.info('已重置')
+}
+
+// ④ 单设备算法事件规则: badge 计数 + 添加 dialog + 删除二次确认
+const algoRuleCounts = ref<Map<string, number>>(new Map())
+const channelRules = ref<LinkageRule[]>([])
+const canonicalTypes = ref<CanonicalEventType[]>([])
+const ruleTypesLoading = ref(false)
+const ruleDialogVisible = ref(false)
+const ruleTargetAlgo = ref('')
+const ruleFilter = ref('')
+const ruleSelected = ref<string[]>([])
+const ruleSaving = ref(false)
+
+const ruleTargetAlgoName = computed(() =>
+  algoRows.value.find((r) => r.algoId === ruleTargetAlgo.value)?.algoName || ruleTargetAlgo.value)
+const filteredEventTypes = computed(() => {
+  const kw = ruleFilter.value.trim().toLowerCase()
+  if (!kw) return canonicalTypes.value
+  return canonicalTypes.value.filter((t) =>
+    t.name_zh.toLowerCase().includes(kw) || t.key.toLowerCase().includes(kw))
+})
+
+/** 拉取当前通道全部联动规则 → 按算法计数 (badge) 并缓存规则列表供删除用 */
+async function loadRuleCounts() {
+  if (!selected.value) return
+  try {
+    const res = await linkageApi.getAllRules()
+    const items: LinkageRule[] = res.data?.data?.items ?? (res.data as any)?.items ?? []
+    channelRules.value = items
+    const chIdStr = selected.value.channelId
+    const chNum = Number(chIdStr)
+    const chId = Number.isFinite(chNum) && Number.isSafeInteger(chNum) ? chNum : 0
+    const sc = scheduledMap.value.get(chIdStr)
+    const algoIds = String(sc?.algo_plugin || '').split(',').map((s) => s.trim()).filter(Boolean)
+    const counts = new Map<string, number>()
+    for (const r of items) {
+      const src: any = (r as any).source_cond ?? {}
+      const chList: number[] = src.channel_ids ?? []
+      // GB 通道 int32 降 0 与其他通道规则可能同 0 → 算法 id 是主匹配键, 通道命中宽松处理
+      const chHit = chList.length === 0 || chList.includes(chId)
+      if (!chHit) continue
+      for (const a of (src.algorithm_ids ?? []) as string[]) {
+        if (algoIds.includes(a)) counts.set(a, (counts.get(a) ?? 0) + 1)
+      }
+    }
+    algoRuleCounts.value = counts
+  } catch (e: any) {
+    console.warn('[AlgoConfigView] 规则计数加载失败', e)
+  }
+}
+
+async function openAddRuleDialog(row: { algoId: string }) {
+  ruleTargetAlgo.value = row.algoId
+  ruleSelected.value = []
+  ruleFilter.value = ''
+  ruleDialogVisible.value = true
+  if (canonicalTypes.value.length === 0) {
+    ruleTypesLoading.value = true
+    try {
+      const r = await eventTypesApi.list()
+      canonicalTypes.value = r.data?.data?.types ?? (r.data as any)?.types ?? []
+    } catch (e: any) {
+      ElMessage.error(`事件类型加载失败: ${e?.message ?? e}`)
+    } finally {
+      ruleTypesLoading.value = false
+    }
+  }
+}
+
+async function confirmAddRules() {
+  if (!selected.value || ruleSelected.value.length === 0) return
+  ruleSaving.value = true
+  try {
+    const chIdStr = selected.value.channelId
+    const chNum = Number(chIdStr)
+    const chId = Number.isFinite(chNum) && Number.isSafeInteger(chNum) ? chNum : 0
+    const deviceId = selected.value.deviceId || selected.value.parentDeviceId || ''
+    let ok = 0
+    for (const key of ruleSelected.value) {
+      const typeName = canonicalTypes.value.find((t) => t.key === key)?.name_zh || key
+      try {
+        await linkageApi.createRule({
+          id: `evt_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+          name: `${typeName}_${chIdStr.slice(-4)}`,
+          description: `算法配置页单设备事件规则: 通道 ${selected.value.name} × 算法 ${ruleTargetAlgo.value}`,
+          enabled: true,
+          priority: 50,
+          cooldown_ms: 5000,
+          source_cond: {
+            channel_ids: [chId],
+            device_ids: deviceId ? [deviceId] : [],
+            event_types: [key],
+            algorithm_ids: [ruleTargetAlgo.value],
+            min_severity: 0,
+            min_confidence: 0,
+          },
+          actions: [{
+            // 后端 LinkageEngine 要求 actions 非空 (empty → 业务码 1001 拒绝):
+            // 默认挂 CLIENT_SHOW_LIVE 弹出实时视频 (告警弹窗标准动作)
+            type: 100, target: 0, name: '弹出实时视频', enabled: true,
+            channel_id: chIdStr, device_id: deviceId, delay_ms: 0,
+          }],
+          tags: ['algo-config'],
+          created_by: 'admin',
+        } as any)
+        ok++
+      } catch (e: any) {
+        console.warn('[AlgoConfigView] 创建事件规则失败', key, e)
+      }
+    }
+    if (ok > 0) ElMessage.success(`已添加 ${ok} 条事件规则 (设备 ${deviceId || '-'})`)
+    if (ok < ruleSelected.value.length) ElMessage.warning(`${ruleSelected.value.length - ok} 条添加失败, 详见控制台`)
+    ruleDialogVisible.value = false
+    await loadRuleCounts()
+  } finally {
+    ruleSaving.value = false
+  }
+}
+
+async function removeAlgoRules(row: { algoId: string; algoName: string; ruleCount: number }) {
+  if (!row.ruleCount) return
+  const ids = channelRules.value
+    .filter((r) => ((r as any).source_cond?.algorithm_ids ?? []).includes(row.algoId))
+    .map((r) => r.id)
+  if (ids.length === 0) { await loadRuleCounts(); return }
+  try {
+    await ElMessageBox.confirm(
+      `将删除算法「${row.algoName}」绑定的 ${ids.length} 条事件规则, 删除后不可恢复。`,
+      '删除事件规则',
+      { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' }
+    )
+  } catch { return } // 用户取消
+  let ok = 0
+  for (const id of ids) {
+    try { await linkageApi.deleteRule(id); ok++ } catch (e) { console.warn('[AlgoConfigView] 删除规则失败', id, e) }
+  }
+  ElMessage.success(ok > 0 ? `已删除 ${ok} 条事件规则` : '删除失败, 详见控制台')
+  await loadRuleCounts()
 }
 
 const form = reactive({
@@ -728,17 +965,29 @@ async function loadData() {
 
 function onChannelSelect(row: ChannelItem | null) {
   selected.value = row
+  currentAlgoId.value = ''
+  editForm.algoId = ''; editForm.algoName = ''
   if (row) {
     form.enabled = row.inferenceEnabled
-    form.algorithm = row.algoPlugin || 'yolov8n'
+    form.algorithm = row.algoPlugin || ''
     form.confidence = row.confidence
     form.nmsThreshold = row.nmsThreshold
     form.interval = row.interval
-    form.inferenceMode = row.inferenceMode
+    // 编辑区默认首行算法 (无调度记录则保持空 → 下拉新配置)
+    const first = algoRows.value[0]
+    if (first) {
+      currentAlgoId.value = first.algoId
+      editForm.algoId = first.algoId
+      editForm.algoName = first.algoName
+      editForm.mode = first.mode
+      editForm.interval = first.interval
+    }
     // 🆕 v7.1: 加载该通道的 ROI/绊线/计数区
     loadRegions()
     // [FIX 2026-08-28] 加载通道快照作绘制背景 (与联动规则页同链路)
     loadChannelSnapshot(row.channelId)
+    // ④ 事件规则计数 (badge)
+    loadRuleCounts()
   } else {
     roiBackgroundUrl.value = ''
   }
@@ -779,44 +1028,41 @@ function rowClassName({ row }: { row: ChannelItem }) {
   return selected.value?.channelId === row.channelId ? 'current-row' : ''
 }
 
-function resetForm() {
-  if (selected.value) onChannelSelect(selected.value)
-  ElMessage.info('已重置为原始配置')
-}
-
-function clearRoi() {
-  ElMessage.info('ROI 区域已清除，将使用全帧检测')
-}
-
-/** 保存配置：根据启用/停用调用后端推理调度 API */
+/** 保存配置: 校验 → start/stop 推理调度 (algo_plugin 保留原完整串, 不破坏多算法配置) */
 async function saveConfig() {
   if (!selected.value) return
+  if (!validateAll()) {
+    ElMessage.warning('参数校验未通过, 请修正红色提示项')
+    return
+  }
   saving.value = true
 
   const ch = selected.value
   try {
+    const sc = scheduledMap.value.get(ch.channelId)
+    // 保存时保留调度原多算法串 (编辑表单仅改参数, 不改算法集合; 新配置走下拉 form.algorithm)
+    const algoPluginStr = sc?.algo_plugin || form.algorithm || 'yolov8n'
     if (form.enabled) {
       // 启用推理调度
       const deviceId = ch.deviceId || ch.parentDeviceId || ch.channelId
       await startSchedule(
         ch.channelId,
         deviceId,
-        form.interval,
-        form.algorithm || 'yolov8n',
-        { confidence: form.confidence, nmsThreshold: form.nmsThreshold, inferenceMode: form.inferenceMode }
+        editForm.interval,
+        algoPluginStr,
+        { confidence: editForm.confidence, nmsThreshold: editForm.nms, inferenceMode: editForm.mode }
       )
-      ch.algoPlugin = form.algorithm
+      ch.algoPlugin = algoPluginStr
       ch.inferenceEnabled = true
-      ch.interval = form.interval
-      ch.inferenceMode = form.inferenceMode
-      ElMessage.success(`通道 ${ch.name} 推理调度已启动 — 算法将在后台持续运行`)
+      ch.interval = editForm.interval
+      ElMessage.success(`通道 ${ch.name} 推理调度已启动 — 参数已保存`)
     } else {
       // 停用推理调度
       await stopSchedule(ch.channelId)
       ch.inferenceEnabled = false
-      ch.algoPlugin = ''
       ElMessage.success(`通道 ${ch.name} 推理调度已停止`)
     }
+    await loadData() // 刷新调度记录 → 算法列表/间隔/模式同步
   } catch (e: any) {
     ElMessage.error(`配置保存失败: ${e?.message || e}`)
   } finally {
@@ -839,22 +1085,47 @@ async function saveConfig() {
 .panel-left :deep(.el-card__body) { padding: 0; }
 .panel-title { font-weight: 600; font-size: 14px; display: flex; justify-content: space-between; align-items: center; }
 .text-muted { color: var(--text-secondary); font-size: 12px; }
-.panel-right { flex: 1; display: flex; flex-direction: column; gap: 12px; overflow-y: auto; }
+.panel-right { flex: 1; display: flex; flex-direction: column; gap: 10px; overflow-y: auto; }
 .empty-state { flex: 1; display: flex; align-items: center; justify-content: center; }
-.config-card :deep(.el-card__body), .roi-card :deep(.el-card__body) { padding: 12px 20px; }
-.config-card :deep(.el-card__header), .roi-card :deep(.el-card__header) { padding: 10px 20px; }
+.algo-card :deep(.el-card__body), .edit-card :deep(.el-card__body), .roi-card :deep(.el-card__body) { padding: 10px 20px; }
+.algo-card :deep(.el-card__header), .edit-card :deep(.el-card__header), .roi-card :deep(.el-card__header) { padding: 6px 20px; }
+/* [2026-09-01] 单屏高度预算: 三卡禁止 flex 压缩 (编辑卡内容完整呈现),
+   预算分解: 算法表 106 + 画布 240 + 表单紧凑化 → 1080P 视口总高 ≤ 可用区且无滚动 */
+.algo-card, .edit-card, .roi-card { flex-shrink: 0; }
+.algo-card-sub { flex: 1; text-align: right; margin-right: 12px; font-weight: 400; font-size: 12px; color: var(--text-secondary); }
+.algo-table { width: 100%; }
+.algo-table :deep(.current-algo-row) td { background: var(--el-color-primary-light-9) !important; }
+.algo-table :deep(.el-table__row) { cursor: pointer; }
+.rule-badge { margin-right: 10px; vertical-align: middle; }
+.rule-badge-label { font-size: 12px; color: var(--text-secondary); padding: 0 4px; }
+.edit-card .algo-id-text { margin-left: 10px; font-size: 12px; color: var(--text-secondary); }
+.edit-actions { display: flex; justify-content: flex-end; gap: 12px; margin-top: 2px; padding-top: 8px; border-top: 1px solid var(--border-light); }
+/* 事件规则添加 dialog */
+.rule-dialog-target { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
+.rule-dialog-sub { font-size: 12px; color: var(--text-secondary); }
+.rule-filter { margin-bottom: 8px; }
+.rule-check-wrap { max-height: 320px; overflow-y: auto; border: 1px solid var(--border-light); border-radius: 6px; padding: 8px; }
+.rule-check-wrap :deep(.el-checkbox-group) { display: flex; flex-wrap: wrap; gap: 2px 12px; }
+.rule-check-item { margin-right: 8px; }
+.rule-check-key { font-size: 11px; color: var(--text-secondary); margin-left: 4px; }
+.rule-dialog-count { float: left; line-height: 32px; font-size: 12px; color: var(--text-secondary); }
 .config-header { display: flex; justify-content: space-between; align-items: center; font-weight: 600; font-size: 14px; }
-.config-form .form-hint { margin-left: 12px; color: var(--text-secondary); font-size: 12px; }
-/* [FIX 2026-09-01] 已配置算法列表块 */
-.algo-list-block { margin-bottom: 12px; }
-.algo-list-title { font-size: 13px; font-weight: 600; color: var(--text-primary); margin-bottom: 6px; }
-.algo-list-table { width: 100%; }
-.algo-list-table .algo-name-tag { margin-right: 6px; margin-bottom: 2px; }
+.edit-form :deep(.el-form-item) { margin-bottom: 8px; }
+.edit-form :deep(.el-form-item__error) { padding-top: 1px; }
+/* 滑块+数字输入并排行 (替代 show-input 省行高) */
+.slider-row { display: flex; align-items: center; gap: 10px; width: 100%; }
+.slider-row .slider-main { flex: 1; }
+.slider-row .slider-num { width: 96px; flex-shrink: 0; }
 /* [FIX 2026-08-28 1080P 单屏] 画布 wrap 默认 aspect-ratio 16/9 撑满整行宽 →
    画布高达 600+px 必滚动; 限宽居中后高度可控 (~405px)。
    !important: 实测 scoped 后代选择器在设备端被组件自身规则压过, 直接加保险。 */
 .roi-card :deep(.tripwire-canvas-wrap),
-.roi-card :deep(.pw-canvas-wrap) { max-width: 720px !important; margin: 0 auto !important; }
+.roi-card :deep(.pw-canvas-wrap),
+.roi-card :deep(.roi-canvas-wrap) { max-width: 720px !important; margin: 0 auto !important; overflow: hidden; }
+/* [2026-09-01] 绘制区单屏无滚动: ROI 卡自身内容定高 (tabs+画布 240+列表限高),
+   卡内不产生滚动; 右栏仅在低于 1080P 视口时兜底滚动 */
+.roi-card :deep(.el-tabs__content) { overflow: visible; }
+.roi-card :deep(.el-tabs__header) { margin-bottom: 8px; }
 .counting-config-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
 .counting-config-row .counting-label { font-size: 13px; color: var(--text-secondary); }
 .tripwire-list { margin-top: 10px; display: flex; flex-direction: column; gap: 4px; max-height: 108px; overflow-y: auto; }
@@ -871,9 +1142,5 @@ async function saveConfig() {
 .pw-toolbar-row {
   display: flex; align-items: center; gap: 10px; margin-bottom: 8px;
   .pw-mig-hint { font-size: 12px; color: #909399; }
-}
-.bottom-bar {
-  padding: 8px 24px; background: var(--bg-card); border-top: 1px solid var(--border-light);
-  display: flex; justify-content: flex-end; gap: 12px;
 }
 </style>
