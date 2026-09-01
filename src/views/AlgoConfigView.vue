@@ -55,10 +55,26 @@
               <div>已配置算法</div>
               <div v-if="selected" class="algo-mid-channel">{{ selected.name }}</div>
             </div>
-            <el-button type="primary" link size="small" :disabled="!selected" @click="addNewAlgo">+ 新增算法</el-button>
+            <!-- [UX 2026-09-01] 分割按钮: 主入口「+ 绑定事件规则」(弹出未绑定规则列表抽屉),
+                 下拉保留「新增裸算法」旧逻辑 (tooltip 说明推荐用事件规则) -->
+            <el-dropdown v-if="selected" split-button type="primary" size="small" trigger="click"
+              class="algo-add-split" :title="$t('bindRuleHint', '推荐使用事件规则, 因其包含完整的事件类型、动作、冷却等可运行配置')"
+              @click="openBindRuleDrawer" @command="onAddMenuCmd">
+              + 绑定事件规则
+              <template #dropdown>
+                <el-dropdown-menu>
+                  <el-dropdown-item command="bind">绑定事件规则 (推荐)</el-dropdown-item>
+                  <el-dropdown-item command="algo" divided :title="$t('bindRuleHint', '推荐使用事件规则, 因其包含完整的事件类型、动作、冷却等可运行配置')">
+                    新增裸算法 (兼容旧逻辑)
+                  </el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
+            <el-button v-else type="primary" link size="small" disabled>+ 绑定事件规则</el-button>
           </div>
         </template>
         <el-table v-if="selected" :data="algoRows" size="small" class="algo-table" height="100%"
+          row-key="algoId"
           highlight-current-row :row-class-name="algoRowClassName"
           @row-click="selectAlgoRow"
           empty-text="该通道尚未配置算法 — 在右侧编辑区选择算法后点击「保存配置」">
@@ -74,32 +90,18 @@
           <el-table-column label="模式" width="62" align="center">
             <template #default="{ row }">{{ row.mode === 'streaming' ? '连续' : '抓拍' }}</template>
           </el-table-column>
-          <el-table-column label="间隔" width="62" align="center" prop="interval" />
           <el-table-column label="启禁用" width="72" align="center">
             <template #default="{ row }">
-              <el-switch size="small" :model-value="row.enabled" @change="toggleAlgoEnabled(row)" />
+              <!-- @click.stop: 防冒泡触发行点击 (选中+滚动编辑卡干扰); 切换进行中防连点 -->
+              <div @click.stop>
+                <el-switch size="small" :model-value="row.enabled"
+                  :loading="togglingId === row.algoId" :disabled="togglingId === row.algoId"
+                  @change="toggleAlgoEnabled(row)" />
+              </div>
             </template>
           </el-table-column>
-          <el-table-column label="事件规则" width="118" align="center">
+          <el-table-column label="操作" width="52" align="center">
             <template #default="{ row }">
-              <el-badge :value="row.ruleCount" :hidden="!row.ruleCount" type="info">
-                <el-button size="small" type="primary" link title="添加事件规则" @click.stop="openAddRuleDialog(row)">
-                  <el-icon><Plus /></el-icon>
-                </el-button>
-              </el-badge>
-                <el-button size="small" type="warning" link :disabled="!row.ruleCount" title="编辑事件规则" @click.stop="openRuleDrawer(row)">
-                  <el-icon><Edit /></el-icon>
-                </el-button>
-              <el-button size="small" type="danger" link :disabled="!row.ruleCount" title="删除事件规则" @click.stop="removeAlgoRules(row)">
-                <el-icon><Delete /></el-icon>
-              </el-button>
-            </template>
-          </el-table-column>
-          <el-table-column label="操作" width="80" align="center">
-            <template #default="{ row }">
-              <el-button size="small" type="primary" link title="编辑参数" @click.stop="selectAlgoRow(row)">
-                <el-icon><Edit /></el-icon>
-              </el-button>
               <el-button size="small" type="danger" link title="删除该算法" @click.stop="removeAlgo(row)">
                 <el-icon><Delete /></el-icon>
               </el-button>
@@ -118,10 +120,11 @@
         <template v-else>
           <!-- ② 算法参数编辑 (仅当前选中算法; 字段序: 算法→模式→间隔→置信度→NMS;
               校验: 置信度/NMS 0~1, 间隔 ≥100ms, 未通过字段下红提示且不触发保存) -->
-          <el-card ref="editCardRef" shadow="never" class="edit-card">
+          <el-card ref="editCardRef" shadow="never" class="edit-card" :class="{ 'edit-card--adding': addingAlgo }">
             <template #header>
               <div class="config-header">
-                <span>算法参数编辑</span>
+                <span>{{ addingAlgo ? '新增算法' : '算法参数编辑' }}</span>
+                <el-tag v-if="addingAlgo" size="small" type="warning">选择算法后保存</el-tag>
                 <el-tag v-if="editForm.algoId" size="small" type="primary" :title="isAlgoFallback(editForm.algoId) ? '该算法未注册中文名' : ''">{{ editForm.algoName }}</el-tag>
               </div>
             </template>
@@ -131,7 +134,7 @@
                   <el-tag type="primary" size="small" :title="isAlgoFallback(editForm.algoId) ? '该算法未注册中文名' : ''">{{ editForm.algoName }}</el-tag>
                   <span class="algo-id-text">{{ editForm.algoId }}</span>
                 </template>
-                <el-select v-else v-model="form.algorithm" :placeholder="$t('selectAlgo', '选择算法 (新配置)')" style="width:100%">
+                <el-select v-else ref="algoSelectRef" v-model="form.algorithm" :placeholder="$t('selectAlgo', '选择算法 (新配置)')" style="width:100%" @change="addingAlgo = false">
                   <el-option v-for="a in algorithmOptions" :key="a.value" :label="a.label" :value="a.value" />
                 </el-select>
               </el-form-item>
@@ -376,6 +379,61 @@
         <el-button type="primary" :loading="ruleDrawerLoading" @click="reloadRuleDrawer">刷新</el-button>
       </template>
     </el-drawer>
+
+    <!-- ⑥ 绑定事件规则抽屉: 从全量规则中筛「未绑定本通道」条目 → 勾选 → 补齐
+         source_cond (channel_ids/device_ids 空则填本通道) → PUT /linkage/rules/{id} -->
+    <el-drawer v-model="bindRuleVisible" direction="rtl" size="720px"
+      :with-header="true" :show-close="true" :close-on-click-modal="false"
+      class="bind-rule-drawer" :title="`绑定事件规则 — ${selected?.name ?? ''}`">
+      <div class="bind-rule-body" v-loading="bindRuleLoading">
+        <el-input v-model="bindRuleFilter" clearable size="small" class="bind-rule-search"
+          :placeholder="$t('bindRuleSearch', '搜索规则名 / 事件类型 / 算法名')">
+          <template #prefix><el-icon><Search /></el-icon></template>
+        </el-input>
+        <el-table v-if="bindRuleFiltered.length > 0" :data="bindRulePageItems" size="small" row-key="id"
+          class="bind-rule-table" empty-text="无匹配规则" @selection-change="onBindSelectionChange">
+          <el-table-column type="selection" width="38" reserve-selection />
+          <el-table-column :label="$t('ruleName', '规则名称')" min-width="130" show-overflow-tooltip prop="name" />
+          <el-table-column :label="$t('eventType', '事件类型')" min-width="120">
+            <template #default="{ row }">
+              <span :title="((row.source_cond?.event_types ?? []) as string[]).map(eventTypeZh).join('、')">{{ bindEventTypesOf(row) }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column :label="$t('algo', '所属算法')" min-width="120">
+            <template #default="{ row }">
+              <span :title="((row.source_cond?.algorithm_ids ?? []) as string[]).join('、')">{{ bindAlgosOf(row) }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column :label="$t('priority', '优先级')" width="58" align="center" prop="priority" />
+          <el-table-column :label="$t('status', '状态')" width="62" align="center">
+            <template #default="{ row }">
+              <el-tag :type="row.enabled ? 'success' : 'info'" size="small" effect="plain">
+                {{ row.enabled ? '启用' : '停用' }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column :label="$t('scope', '作用范围')" min-width="110">
+            <template #default="{ row }">{{ bindScopeOf(row) }}</template>
+          </el-table-column>
+        </el-table>
+        <el-empty v-if="!bindRuleLoading && bindRuleFiltered.length === 0"
+          :description="bindRuleAll.length === 0 ? '暂无可绑定的事件规则' : '该摄像头已绑定全部可用事件规则'" :image-size="70">
+          <el-button type="primary" size="small" @click="gotoLinkageView">前往联动规则管理新建</el-button>
+        </el-empty>
+        <div v-if="bindRuleFiltered.length > bindPageSize" class="bind-rule-page">
+          <el-pagination v-model:current-page="bindPage" :page-size="bindPageSize"
+            :total="bindRuleFiltered.length" layout="total, prev, pager, next" small background />
+        </div>
+      </div>
+      <template #footer>
+        <span class="bind-rule-count">已勾选 {{ bindSelection.length }} 项</span>
+        <el-button size="small" @click="bindRuleVisible = false">取消</el-button>
+        <el-button size="small" type="primary" :disabled="bindSelection.length === 0"
+          :loading="bindSaving" @click="confirmBindRules">
+          绑定到本通道 ({{ bindSelection.length }})
+        </el-button>
+      </template>
+    </el-drawer>
   </div>
 </template>
 
@@ -389,6 +447,7 @@
  * 3. 保存时调用 POST /inference/schedule/start 或 /stop 控制后端推理调度
  */
 import { ref, reactive, computed, onMounted, nextTick } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh, Plus, Delete, Edit, Search, CaretBottom } from '@element-plus/icons-vue'
 import { channelApi } from '@/api/channel'
@@ -506,18 +565,57 @@ function validateAll(): boolean {
 }
 
 // ① 已配置算法行: algo_plugin 逗号分隔串拆分逐行 + 事件规则计数
+// [FIX 2026-09-01 一对一启停] 后端 ScheduledChannel 为通道级模型 (algo_plugin 串=启用集合,
+// 无 per-algo 开关) → 行开关改为: 启用=加入串 / 禁用=移出串, 禁用集合存 localStorage
+// (刷新/后端重启后仍显示禁用行并可一键恢复; 推理行为由串本身保证, 不依赖 localStorage)
+const ALGO_DISABLED_KEY = 'algo_disabled_by_channel'
+function loadDisabledMap(): Record<string, string[]> {
+  try { return JSON.parse(localStorage.getItem(ALGO_DISABLED_KEY) || '{}') } catch { return {} }
+}
+function saveDisabledMap(m: Record<string, string[]>) {
+  try { localStorage.setItem(ALGO_DISABLED_KEY, JSON.stringify(m)) } catch { /* 隐私模式忽略 */ }
+}
+function disabledListOf(chId: string): string[] {
+  const active = String(scheduledMap.value.get(chId)?.algo_plugin || '').split(',').map((s) => s.trim()).filter(Boolean)
+  return (loadDisabledMap()[chId] ?? []).filter((id) => !active.includes(id))
+}
+// [FIX 2026-09-01 稳定行序] 显示顺序持久化: 禁用/启用行原地保留不跳位
+// (否则禁用行后接到底部 → 后续行上移, 连续点击时"点上行动下行"错位感)
+const ALGO_ORDER_KEY = 'algo_order_by_channel'
+function loadOrderMap(): Record<string, string[]> {
+  try { return JSON.parse(localStorage.getItem(ALGO_ORDER_KEY) || '{}') } catch { return {} }
+}
+function saveOrderMap(m: Record<string, string[]>) {
+  try { localStorage.setItem(ALGO_ORDER_KEY, JSON.stringify(m)) } catch { /* ignore */ }
+}
+/** 合并显示顺序: 已知顺序优先保留, 新出现 id 按串序追加尾部, 已删除 id 自动剔除 */
+function stableAlgoOrder(chId: string, activeIds: string[], disabledIds: string[]): string[] {
+  const orderMap = loadOrderMap()
+  const known = orderMap[chId] ?? []
+  const keep = new Set([...activeIds, ...disabledIds])
+  const merged = known.filter((id) => keep.has(id))
+  for (const id of [...activeIds, ...disabledIds]) if (!merged.includes(id)) merged.push(id)
+  if (merged.join(',') !== known.join(',')) {
+    orderMap[chId] = merged
+    saveOrderMap(orderMap)
+  }
+  return merged
+}
+
 const algoRows = computed(() => {
   if (!selected.value) return []
   const sc = scheduledMap.value.get(selected.value.channelId)
-  if (!sc) return []
-  return String(sc.algo_plugin || '').split(',').map((s) => s.trim()).filter(Boolean).map((id) => ({
+  const activeIds = String(sc?.algo_plugin || '').split(',').map((s) => s.trim()).filter(Boolean)
+  // 串内=启用行; 禁用记忆中不在串内的=禁用行; 按稳定顺序渲染 (原地启停不跳位)
+  const all = stableAlgoOrder(selected.value.channelId, activeIds, disabledListOf(selected.value.channelId))
+  return all.map((id) => ({
     algoId: id,
     // [FIX 2026-09-01] 解析链: 统一走 algoNameOf (目录全量映射 → SSOT 兑底表 → options → 裸 id)
     algoName: algoNameOf(id),
-    mode: (sc as any).inference_mode === 'streaming' ? 'streaming' : 'snapshot',
-    interval: sc.interval_ms,
-    enabled: sc.enabled,
-    running: sc.running,
+    mode: (sc as any)?.inference_mode === 'streaming' ? 'streaming' : 'snapshot',
+    interval: sc?.interval_ms ?? 1000,
+    enabled: activeIds.includes(id),
+    running: sc?.running ?? false,
     ruleCount: algoRuleCounts.value.get(id) ?? 0,
   }))
 })
@@ -528,6 +626,7 @@ function algoRowClassName({ row }: { row: { algoId: string } }) {
 
 /** 点击列表行/编辑 → 高亮 + 填充编辑表单 + 滚动定位到编辑卡 */
 function selectAlgoRow(row: { algoId: string; algoName: string; mode: 'snapshot' | 'streaming'; interval: number }) {
+  addingAlgo.value = false
   currentAlgoId.value = row.algoId
   editForm.algoId = row.algoId
   editForm.algoName = row.algoName
@@ -548,37 +647,64 @@ function resetEditForm() {
   ElMessage.info('已重置')
 }
 
-/** [UX 对齐效果图] + 新增算法: 清空编辑区进入新增模式 (右侧下拉选算法后保存即追加) */
+/** [UX 对齐效果图] + 新增算法: 清空编辑区进入新增模式 (右侧下拉选算法后保存即追加)
+ *  [FIX 2026-09-01 点击无反应] 增加可见反馈: 编辑卡切「新增算法」标题+高亮边框+提示语+自动聚焦下拉 */
+const addingAlgo = ref(false)
+const algoSelectRef = ref()
 function addNewAlgo() {
   currentAlgoId.value = ''
   editForm.algoId = ''
   editForm.algoName = ''
   form.algorithm = ''
   formErrors.interval = ''; formErrors.confidence = ''; formErrors.nms = ''
-  nextTick(() => editCardRef.value?.$el?.scrollIntoView?.({ behavior: 'smooth', block: 'center' }))
+  addingAlgo.value = true
+  ElMessage.info('已进入新增模式：请选择算法标签并配置参数，然后点击「保存配置」')
+  nextTick(() => {
+    editCardRef.value?.$el?.scrollIntoView?.({ behavior: 'smooth', block: 'center' })
+    algoSelectRef.value?.focus?.()
+  })
 }
 
-/** [UX 对齐效果图] 行内启禁用: 切换整通道推理调度 (后端 ScheduledChannel 为通道级模型, 无 per-algo 开关) */
-async function toggleAlgoEnabled(row: { enabled: boolean }) {
+/** [FIX 2026-09-01 一对一启停] 行内开关: 启用=算法加入调度串 / 禁用=移出串并记入禁用集合
+ *  (串空 → 停整通道调度; 禁用行来自 localStorage 记忆, 可独立重新开启) */
+const togglingId = ref('')
+async function toggleAlgoEnabled(row: { algoId: string; enabled: boolean }) {
   const ch = selected.value
   if (!ch) return
+  if (togglingId.value) return  // 上一次切换进行中, 防连点错乱
   const sc = scheduledMap.value.get(ch.channelId)
+  const deviceId = ch.deviceId || ch.parentDeviceId || ch.channelId
+  const activeIds = String(sc?.algo_plugin || '').split(',').map((s) => s.trim()).filter(Boolean)
+  const dmap = loadDisabledMap()
+  const dlist = new Set(dmap[ch.channelId] ?? [])
   const next = !row.enabled
+  togglingId.value = row.algoId
   try {
+    let ids: string[]
     if (next) {
-      const deviceId = ch.deviceId || ch.parentDeviceId || ch.channelId
-      await startSchedule(ch.channelId, deviceId, sc?.interval_ms ?? editForm.interval,
-        sc?.algo_plugin || 'yolov8n',
-        { confidence: editForm.confidence, nmsThreshold: editForm.nms, inferenceMode: editForm.mode })
+      if (!activeIds.includes(row.algoId)) activeIds.push(row.algoId)
+      dlist.delete(row.algoId)
+      ids = activeIds
     } else {
-      await stopSchedule(ch.channelId)
+      ids = activeIds.filter((id) => id !== row.algoId)
+      dlist.add(row.algoId)
     }
-    ElMessage.success(next ? '推理调度已启用' : '推理调度已停用')
+    dmap[ch.channelId] = Array.from(dlist)
+    saveDisabledMap(dmap)
+    if (ids.length === 0) {
+      await stopSchedule(ch.channelId)
+    } else {
+      await startSchedule(ch.channelId, deviceId, sc?.interval_ms ?? editForm.interval, ids.join(','),
+        { confidence: editForm.confidence, nmsThreshold: editForm.nms, inferenceMode: editForm.mode })
+    }
+    ElMessage.success(next ? `「${algoNameOf(row.algoId)}」已启用` : `「${algoNameOf(row.algoId)}」已禁用`)
     await loadData()
     await loadRuleCounts()
   } catch (e: any) {
     ElMessage.error(`切换失败: ${e?.message || e}`)
     await loadData()
+  } finally {
+    togglingId.value = ''
   }
 }
 
@@ -610,6 +736,12 @@ async function removeAlgo(row: { algoId: string; algoName: string }) {
       currentAlgoId.value = ''
       editForm.algoId = ''
       editForm.algoName = ''
+    }
+    // 删除 = 彻底移除: 同步清掉禁用记忆 (与禁用区分)
+    const dmap = loadDisabledMap()
+    if (dmap[ch.channelId]?.length) {
+      dmap[ch.channelId] = (dmap[ch.channelId] ?? []).filter((id) => id !== row.algoId)
+      saveDisabledMap(dmap)
     }
     await loadData()
     await loadRuleCounts()
@@ -886,6 +1018,167 @@ async function removeSingleRule(r: LinkageRule) {
   } catch (e: any) {
     ElMessage.error(`删除失败: ${e?.message ?? e}`)
   }
+}
+
+// ─── 绑定事件规则抽屉 (原「新增算法」主入口 → 事件规则绑定) ────────────
+// 未绑定判定 (口径对齐 loadRuleCounts: 空数组=全部命中):
+//   chHit  = channel_ids 为空 或 含本通道
+//   devHit = device_ids 为空 或 含本设备
+//   algoHit= algorithm_ids 与本通道已配置算法有交集
+//   已绑定 = chHit && devHit && algoHit (排除); 其余均可绑定
+const bindRuleVisible = ref(false)
+const bindRuleLoading = ref(false)
+const bindRuleAll = ref<LinkageRule[]>([])
+const bindRuleFilter = ref('')
+const bindPage = ref(1)
+const bindPageSize = 20
+const bindSelection = ref<LinkageRule[]>([])
+const bindSaving = ref(false)
+const router = useRouter()
+
+const currentChId = computed(() => {
+  const n = Number(selected.value?.channelId)
+  return Number.isFinite(n) && Number.isSafeInteger(n) ? n : 0
+})
+const currentDeviceId = computed(() => selected.value?.deviceId || selected.value?.parentDeviceId || '')
+const currentAlgoIds = computed(() => {
+  const sc = selected.value ? scheduledMap.value.get(selected.value.channelId) : undefined
+  return String(sc?.algo_plugin || '').split(',').map((s) => s.trim()).filter(Boolean)
+})
+
+/** 可绑定规则 = 未绑定本通道 (见区块头判定) + 搜索过滤 (规则名/事件类型中英文/算法名) */
+const bindRuleFiltered = computed(() => {
+  const chId = currentChId.value
+  const devId = currentDeviceId.value
+  const algoIds = currentAlgoIds.value
+  const kw = bindRuleFilter.value.trim().toLowerCase()
+  return bindRuleAll.value.filter((r) => {
+    const src: any = (r as any).source_cond ?? {}
+    const chHit = (src.channel_ids ?? []).length === 0 || (src.channel_ids ?? []).includes(chId)
+    const devHit = (src.device_ids ?? []).length === 0 || (src.device_ids ?? []).includes(devId)
+    const algoHit = ((src.algorithm_ids ?? []) as string[]).some((a) => algoIds.includes(a))
+    if (chHit && devHit && algoHit) return false
+    if (!kw) return true
+    const types = ((src.event_types ?? []) as string[])
+      .map((k) => `${eventTypeZh(k)} ${k}`).join(' ')
+    const algos = ((src.algorithm_ids ?? []) as string[]).map((a) => algoNameOf(a)).join(' ')
+    return `${r.name ?? ''} ${types} ${algos}`.toLowerCase().includes(kw)
+  })
+})
+const bindRulePageItems = computed(() => {
+  const start = (bindPage.value - 1) * bindPageSize
+  return bindRuleFiltered.value.slice(start, start + bindPageSize)
+})
+
+function eventTypeZh(key: string): string {
+  return canonicalTypes.value.find((t) => t.key === key)?.name_zh || key
+}
+function bindEventTypesOf(r: LinkageRule): string {
+  const list = ((r as any).source_cond?.event_types ?? []) as string[]
+  if (!list.length) return '-'
+  const zh = list.map(eventTypeZh).join('、')
+  return zh.length > 16 ? `${zh.slice(0, 16)}…` : zh
+}
+function bindAlgosOf(r: LinkageRule): string {
+  const list = ((r as any).source_cond?.algorithm_ids ?? []) as string[]
+  if (!list.length) return '-'
+  const names = list.map((a) => algoNameOf(a)).join('、')
+  return names.length > 16 ? `${names.slice(0, 16)}…` : names
+}
+function bindScopeOf(r: LinkageRule): string {
+  const src: any = (r as any).source_cond ?? {}
+  const chs = (src.channel_ids ?? []) as number[]
+  const devs = (src.device_ids ?? []) as string[]
+  const parts = [chs.length === 0 ? '全部通道' : `通道 ${chs.join(',')}`]
+  parts.push(devs.length === 0 ? '全部设备' : `设备 ${devs.length} 个`)
+  return parts.join(' · ')
+}
+
+/** 打开绑定抽屉: 拉全量规则 + SSOT 事件类型 (中文名展示用) */
+async function openBindRuleDrawer() {
+  if (!selected.value) return
+  bindRuleVisible.value = true
+  bindRuleFilter.value = ''
+  bindPage.value = 1
+  bindSelection.value = []
+  await reloadBindRules()
+}
+async function reloadBindRules() {
+  bindRuleLoading.value = true
+  try {
+    const res = await linkageApi.getAllRules()
+    bindRuleAll.value = res.data?.data?.items ?? (res.data as any)?.items ?? []
+    if (canonicalTypes.value.length === 0) {
+      try {
+        const r = await eventTypesApi.list()
+        canonicalTypes.value = r.data?.data?.types ?? (r.data as any)?.types ?? []
+      } catch (e) { console.warn('[AlgoConfigView] 绑定抽屉事件类型加载失败', e) }
+    }
+  } catch (e: any) {
+    ElMessage.error(`规则列表加载失败: ${e?.message || e}`)
+  } finally {
+    bindRuleLoading.value = false
+  }
+}
+function onBindSelectionChange(rows: LinkageRule[]) {
+  bindSelection.value = rows
+}
+
+/** 分割按钮下拉命令: bind=绑定抽屉 / algo=裸算法旧流程 */
+function onAddMenuCmd(cmd: string) {
+  if (cmd === 'bind') openBindRuleDrawer()
+  else if (cmd === 'algo') addNewAlgo()
+}
+
+/** 绑定动作: 遍历勾选项补齐 source_cond 后 PUT; 算法不一致的一次性预检跳过 + warning */
+async function confirmBindRules() {
+  const ch = selected.value
+  if (!ch || bindSelection.value.length === 0) return
+  bindSaving.value = true
+  const chId = currentChId.value
+  const devId = currentDeviceId.value
+  const algoIds = currentAlgoIds.value
+  // 预检: 所属算法与本通道已配置算法无交集 → 不挂 (挂上也不会触发) → 跳过 + 逐条 warning
+  const inconsistent = bindSelection.value.filter((r) => {
+    const algos = ((r as any).source_cond?.algorithm_ids ?? []) as string[]
+    return algos.length > 0 && !algos.some((a) => algoIds.includes(a))
+  })
+  for (const r of inconsistent) {
+    ElMessage.warning(`规则「${r.name}」所属算法与本通道不一致, 已跳过`)
+  }
+  const targets = bindSelection.value.filter((r) => !inconsistent.includes(r))
+  let ok = 0
+  try {
+    for (const r of targets) {
+      // 浅拷贝 source_cond; 空=全部维度收窄为本通道 (「绑定到本通道」语义)
+      const src: any = { ...((r as any).source_cond ?? {}) }
+      if ((src.channel_ids ?? []).length === 0) src.channel_ids = [chId]
+      if ((src.device_ids ?? []).length === 0) src.device_ids = devId ? [devId] : []
+      try {
+        await linkageApi.updateRule(r.id, { ...r, source_cond: src } as Partial<LinkageRule>)
+        ok++
+      } catch (e) {
+        console.warn('[AlgoConfigView] 绑定规则失败', r.id, e)
+      }
+    }
+    if (ok > 0) ElMessage.success(`已绑定 ${ok} 条事件规则到通道「${ch.name}」`)
+    if (targets.length > 0 && ok < targets.length) {
+      ElMessage.error(`${targets.length - ok} 条绑定失败, 详见控制台`)
+    }
+    bindSelection.value = []
+    if (ok > 0) {
+      await reloadBindRules()
+      await loadRuleCounts()
+    }
+  } finally {
+    bindSaving.value = false
+  }
+}
+
+/** 空态快捷跳转: 前往联动规则管理新建 */
+function gotoLinkageView() {
+  bindRuleVisible.value = false
+  router.push('/linkage')
 }
 
 const form = reactive({
@@ -1407,6 +1700,7 @@ async function saveConfig() {
     ch.algoPlugin = algoPluginStr
     ch.inferenceEnabled = true
     ch.interval = editForm.interval
+    addingAlgo.value = false
     ElMessage.success(`通道 ${ch.name} 配置已保存, 推理调度已启动`)
     await loadData() // 刷新调度记录 → 算法列表/间隔/模式同步
   } catch (e: any) {
@@ -1439,6 +1733,9 @@ async function saveConfig() {
 .panel-right { flex: 1; display: flex; flex-direction: column; gap: 10px; overflow-y: auto; }
 .empty-state { flex: 1; display: flex; align-items: center; justify-content: center; }
 .edit-card :deep(.el-card__body), .roi-card :deep(.el-card__body) { padding: 10px 20px; }
+/* [FIX 2026-09-01] 新增算法模式: 编辑卡高亮提示用户操作焦点已切换 */
+.edit-card--adding { border-color: var(--el-color-warning); }
+.edit-card--adding :deep(.el-card__header) { color: var(--el-color-warning); }
 .edit-card :deep(.el-card__header), .roi-card :deep(.el-card__header) { padding: 6px 20px; }
 /* [2026-09-01] 右列高度预算: 编辑卡(~200) + ROI 卡(header+tabs+画布 405+列表) ≈ 800 ≤ 883 可视 → 无滚动 */
 .edit-card, .roi-card { flex-shrink: 0; }
@@ -1487,6 +1784,15 @@ async function saveConfig() {
 .rule-drawer-item-name { font-weight: 600; font-size: 13px; flex: 1; min-width: 0; }
 .rule-drawer-form :deep(.el-form-item) { margin-bottom: 10px; }
 .rule-drawer-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
+/* [UX 2026-09-01] 中栏 header 分割按钮 (绑定事件规则 主 + 新增裸算法 兼容入口) */
+.algo-add-split { vertical-align: middle; }
+.algo-add-split :deep(.el-button) { padding: 5px 10px; font-size: 12px; }
+/* 绑定事件规则抽屉: 搜索 + 勾选表格 + 分页 + 底部动作 */
+.bind-rule-body { display: flex; flex-direction: column; gap: 10px; padding: 0 4px; }
+.bind-rule-search { flex: 0 0 auto; }
+.bind-rule-table { flex: 1; min-height: 0; }
+.bind-rule-page { display: flex; justify-content: flex-end; padding-top: 6px; }
+.bind-rule-count { float: left; line-height: 32px; font-size: 12px; color: var(--text-secondary); margin-right: auto; }
 .config-header { display: flex; justify-content: space-between; align-items: center; font-weight: 600; font-size: 14px; }
 .edit-form :deep(.el-form-item) { margin-bottom: 8px; }
 .edit-form :deep(.el-form-item__error) { padding-top: 1px; }
