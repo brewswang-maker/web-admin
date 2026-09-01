@@ -214,6 +214,15 @@
     <el-drawer v-model="drawerVisible" :title="editingRule ? '编辑联动规则' : '新建联动规则'" size="520px" direction="rtl" :close-on-click-modal="false" destroy-on-close>
       <div class="editor-body">
         <el-form :model="form" label-position="top" size="default" :rules="formRules" ref="formRef">
+          <!-- [vp7 向导 2026-09-01] 双形态切换: el-steps 分步向导 / 全览 (原单页表单) -->
+          <div class="wizard-bar">
+            <el-steps :active="wizardStep" simple style="flex: 1; min-width: 0">
+              <el-step v-for="(s, i) in WIZARD_STEPS" :key="s" :title="s" style="cursor: pointer" @click="wizardStep = i" />
+            </el-steps>
+            <el-switch v-model="wizardMode" active-text="分步" inactive-text="全览" size="small" style="flex-shrink: 0" />
+          </div>
+
+          <div v-show="sectionVisible(0)">
           <!-- 规则名称 + 启用开关 -->
           <el-row :gutter="12">
             <el-col :span="18">
@@ -299,7 +308,9 @@
               </el-row>
             </el-collapse-item>
           </el-collapse>
+          </div>
 
+          <div v-show="sectionVisible(1)">
           <el-divider content-position="left">
             触发条件
             <el-switch v-model="advancedConditionMode" size="small" active-text="高级" inactive-text="普通"
@@ -315,7 +326,7 @@
           </div>
 
           <!-- 普通条件卡片 -->
-          <div v-for="cond in conditionDefs" :key="cond.type" class="condition-card" :class="{ 'is-enabled': form.conditions[cond.type].enabled }">
+          <div v-for="cond in conditionDefs" :key="cond.type" v-show="condStepVisible(cond.type)" class="condition-card" :class="{ 'is-enabled': form.conditions[cond.type].enabled }">
             <div class="cond-header" @click="toggleCollapse(cond.type)">
               <div class="cond-title">
                 <span class="cond-icon">{{ cond.icon }}</span>
@@ -515,7 +526,9 @@
               </template>
             </div>
           </div>
+          </div>
 
+          <div v-show="sectionVisible(2)">
           <el-divider content-position="left">联动动作</el-divider>
 
           <!-- 动作 Tabs -->
@@ -557,6 +570,44 @@
               </div>
             </el-tab-pane>
           </el-tabs>
+          </div>
+
+          <!-- [vp7 向导 2026-09-01] 步 3 AI 增强: NLG 自然语言生成 + 模板库 + 多模态 D-S/VLM/算力 -->
+          <div v-show="sectionVisible(3)">
+            <RuleNlgInput @apply="applyNlg" />
+            <div style="height: 10px" />
+            <TemplateGallery :selected-tags="form.tags" @apply-template="applyTemplateToForm" />
+            <div style="height: 10px" />
+            <AiEnhancePanel
+              v-model:fusion="fusionConfig"
+              v-model:vlm-suppress-threshold="vlmSuppressThreshold"
+              v-model:enable-vlm-verify="form.enableVlmVerify"
+              v-model:response-deadline-s="form.responseDeadlineS"
+              :selected-event-types="form.conditions.eventType.config.types"
+              :selected-channel-count="deviceChannelValue.channelIds.length"
+              @est="onAiEst"
+            />
+          </div>
+
+          <!-- [vp7 向导 2026-09-01] 步 4 计划与防区: 布防时间 (time 条件卡在本步显示) + 防区范围 (华为 HoloSens 设备树多选) -->
+          <div v-show="sectionVisible(4)">
+            <el-alert type="info" :closable="false" style="margin-bottom: 10px">
+              布防计划 = 下方时间条件卡片 (本步展示); 防区范围 = 设备/通道多选, 选中设备默认继承全部通道 (可展开剔除), 选择结果同步至触发条件·事件源。
+            </el-alert>
+            <DeviceChannelPicker v-model="deviceChannelValue" />
+            <div style="height: 10px" />
+          </div>
+
+          <!-- [vp7 向导 2026-09-01] 步 5 确认预览: 条件树可视化 + 动作时间线 + 算力 + 冲突检测 + Dry-Run -->
+          <div v-show="sectionVisible(5)">
+            <RulePreviewPanel
+              :condition-tree="advancedConditionMode ? conditionTreeValue : undefined"
+              :condition-summary="conditionSummary"
+              :actions="previewActions"
+              :selected-event-types="form.conditions.eventType.config.types"
+              :compute-est="aiEst"
+            />
+          </div>
         </el-form>
       </div>
 
@@ -566,6 +617,10 @@
             模拟测试
           </el-button>
           <div style="flex:1" />
+          <template v-if="wizardMode">
+            <el-button :disabled="wizardStep === 0" @click="wizardStep--">上一步</el-button>
+            <el-button v-if="wizardStep < WIZARD_STEPS.length - 1" type="primary" plain @click="wizardStep++">下一步</el-button>
+          </template>
           <el-button @click="drawerVisible = false">取消</el-button>
           <el-button type="primary" @click="handleSave" :loading="saving">保存规则</el-button>
         </div>
@@ -1165,6 +1220,12 @@ import type { EventCoverageItem } from '@/api/test'
 import PlanEditor from '@/components/PlanEditor.vue'
 import CEPPatternEditor from '@/components/CEPPatternEditor.vue'
 import ConditionTreeEditor from '@/components/ConditionTreeEditor.vue'
+// [vp7 向导 2026-09-01] 新建事件规则向导子组件 (设备通道多选/NLG/模板库/AI 增强/确认预览)
+import DeviceChannelPicker from '@/components/linkage/DeviceChannelPicker.vue'
+import RuleNlgInput from '@/components/linkage/RuleNlgInput.vue'
+import TemplateGallery from '@/components/linkage/TemplateGallery.vue'
+import AiEnhancePanel from '@/components/linkage/AiEnhancePanel.vue'
+import RulePreviewPanel from '@/components/linkage/RulePreviewPanel.vue'
 import type { RoiData } from '@/composables/useRoiCanvas'
 
 // ── 常量 ──
@@ -1542,7 +1603,7 @@ const formRules = reactive<FormRules>({
 function defaultConditions() {
   return {
     time: { enabled: false, config: { startTime: '08:00', endTime: '20:00', weekdays: [1, 2, 3, 4, 5], monthdays: [] as number[] } },
-    region: { enabled: false, config: { location: '', roi: '', group: '', roiPolygon: [] as RoiData[], channelId: '' } },
+    region: { enabled: false, config: { location: '', roi: '', group: '', roiPolygon: [] as RoiData[], channelId: '', tripwireId: '', direction: '' } },
     location: { enabled: false, config: { point: '' } },
     eventType: { enabled: true, config: { types: [] as string[], minSeverity: 3, minConfidence: 50 } },
     eventSource: { enabled: false, config: { channels: [] as string[] } },
@@ -1573,6 +1634,129 @@ const advancedCollapse = ref<string[]>([])
 // ── 高级条件模式 ──
 const advancedConditionMode = ref(false)
 const conditionTreeValue = ref<ConditionNode | undefined>(undefined)
+
+// ═══ [vp7 新建事件规则向导 2026-09-01] ═══
+// 6 步向导: 0 基本信息 → 1 触发条件 → 2 动作编排 → 3 AI 增强 → 4 计划与防区 → 5 确认预览;
+// el-steps 分步 / 全览双形态切换 (对标华为 iClient 条件树分区 + 大华 DSS 向导)。
+const WIZARD_STEPS = ['基本信息', '触发条件', '动作编排', 'AI 增强', '计划与防区', '确认预览']
+const wizardMode = ref(true)
+const wizardStep = ref(0)
+const sectionVisible = (s: number) => !wizardMode.value || wizardStep.value === s
+/** 条件卡片分步归属: time 归「计划与防区」(布防计划语义), 其余归「触发条件」 */
+const condStepVisible = (type: string) => !wizardMode.value || wizardStep.value === (type === 'time' ? 4 : 1)
+
+// ── 防区选择 (DeviceChannelPicker): channelIds String 化单向同步进 eventSource.channels,
+//    保存链 source_cond 组装 (数字/字符串双形态分拣) 零改动复用。 ──
+const deviceChannelValue = ref<{ deviceIds: string[]; channelIds: number[] }>({ deviceIds: [], channelIds: [] })
+watch(deviceChannelValue, (v) => {
+  form.conditions.eventSource.enabled = v.deviceIds.length > 0 || v.channelIds.length > 0
+  form.conditions.eventSource.config.channels = v.channelIds.map(String)
+}, { deep: true })
+
+// ── AI 增强状态 (五模态 D-S / VLM 抑制阈值 / 算力估算) ──
+interface FusionConfigLocal { modalities: string[]; threshold: number; minSources: number }
+const fusionConfig = ref<FusionConfigLocal>({ modalities: ['video'], threshold: 0.6, minSources: 2 })
+const vlmSuppressThreshold = ref(0.85)
+const aiEst = ref<{ total: number; headroom: number }>({ total: 0, headroom: 0 })
+/** 算力估算回调 (模板表达式不支持内联 TS 标注, 抽函数) */
+function onAiEst(v: { total: number; headroom: number }) { aiEst.value = v }
+
+// ── NLG 应用: 解析结果 → 表单 (事件类型/动作勾选/时间窗/合并窗口/置信度) ──
+function applyNlg(p: { eventTypes: string[]; actions: Array<{ type: number; name: string }>; mergeWindowMs?: number; timeStart?: string; timeEnd?: string; weekdays?: number[]; minConfidence?: number }) {
+  if (p.eventTypes.length > 0) {
+    form.conditions.eventType.enabled = true
+    form.conditions.eventType.config.types = [...new Set([...form.conditions.eventType.config.types, ...p.eventTypes])]
+  }
+  let miss = 0
+  for (const a of p.actions) {
+    const key = ACTION_TYPE_REVERSE_MAP[a.type]
+    if (key) actionState[key] = true
+    else miss++
+  }
+  if (p.minConfidence !== undefined) form.conditions.eventType.config.minConfidence = p.minConfidence
+  if (p.mergeWindowMs !== undefined) {
+    form.conditions.autoMerge.enabled = true
+    form.conditions.autoMerge.config.windowMs = p.mergeWindowMs
+  }
+  if (p.timeStart && p.timeEnd) {
+    form.conditions.time.enabled = true
+    form.conditions.time.config.startTime = p.timeStart
+    form.conditions.time.config.endTime = p.timeEnd
+    if (p.weekdays?.length) form.conditions.time.config.weekdays = p.weekdays
+  }
+  ElMessage.success(miss > 0
+    ? `已应用自然语言解析 (事件 ${p.eventTypes.length} 项, 动作 ${p.actions.length - miss} 项; ${miss} 项无标准类型映射已跳过)`
+    : `已应用自然语言解析 (事件 ${p.eventTypes.length} 项, 动作 ${p.actions.length} 项)`)
+}
+
+// ── 模板一键应用到当前表单: RuleTemplate 字段 → 表单 (海康 iVMS-8700 式导入;
+//    与既有 applyTemplate (直接从模板创建新规则) 语义不同, 勿合并) ──
+function applyTemplateToForm(t: any) {
+  if (!form.name && t.name) form.name = `${t.name}`
+  if (typeof t.priority === 'number') form.priority = t.priority
+  if (typeof t.cooldown_ms === 'number') form.cooldownMs = t.cooldown_ms
+  if (t.description && !form.description) form.description = t.description
+  if (Array.isArray(t.tags) && t.tags.length) form.tags = [...new Set([...form.tags, ...t.tags])]
+  if (t.time_cond) {
+    form.conditions.time.enabled = !!(t.time_cond.time_start || t.time_cond.weekdays?.length)
+    form.conditions.time.config.startTime = t.time_cond.time_start || form.conditions.time.config.startTime
+    form.conditions.time.config.endTime = t.time_cond.time_end || form.conditions.time.config.endTime
+    if (t.time_cond.weekdays?.length) form.conditions.time.config.weekdays = [...t.time_cond.weekdays]
+  }
+  const src = t.source_cond
+  if (src?.event_types?.length || src?.algorithm_ids?.length) {
+    form.conditions.eventType.enabled = true
+    form.conditions.eventType.config.types = [...new Set([...form.conditions.eventType.config.types, ...(src.algorithm_ids?.length ? src.algorithm_ids : src.event_types)])]
+  }
+  if (src?.min_severity !== undefined) form.conditions.eventType.config.minSeverity = src.min_severity
+  if (src?.min_confidence !== undefined) form.conditions.eventType.config.minConfidence = Math.round(src.min_confidence * 100)
+  if (Array.isArray(src?.channel_ids) && src.channel_ids.length) {
+    form.conditions.eventSource.enabled = true
+    form.conditions.eventSource.config.channels = [...new Set([...form.conditions.eventSource.config.channels, ...src.channel_ids.map(String)])]
+  }
+  if (t.merge_cond?.enabled) {
+    form.conditions.autoMerge.enabled = true
+    form.conditions.autoMerge.config.windowMs = t.merge_cond.window_ms || 10000
+  }
+  // 模板动作 → 勾选 + 参数
+  let applied = 0
+  for (const a of t.actions || []) {
+    const key = ACTION_TYPE_REVERSE_MAP[a.type]
+    if (!key) continue
+    actionState[key] = true
+    const { type: _at, target: _tg, name: _an, enabled: _ae, ...rest } = a
+    if (Object.keys(rest).length) actionParams[key] = { ...(actionParams[key] || {}), ...rest }
+    applied++
+  }
+  ElMessage.success(`模板「${t.name}」已应用 (${applied} 动作 / 标签 ${t.tags?.length || 0} 项); 请在分步中检查并补全防区范围`)
+}
+
+// ── 确认步预览数据 (条件摘要 + 已选动作时间线) ──
+const conditionSummary = computed(() => {
+  const c = form.conditions
+  const fmt = (enabled: boolean, label: string, desc: string) => ({ label, desc, enabled })
+  return [
+    fmt(c.time.enabled, '布防时间', `${c.time.config.startTime} ~ ${c.time.config.endTime} · 星期${c.time.config.weekdays.join(',')}`),
+    fmt(c.region.enabled, '空间防区', c.region.config.location || c.region.config.group || (c.region.config.roiPolygon.length ? '已画 ROI 多边形' : '未配置')),
+    fmt(c.location.enabled, '监控位置', c.location.config.point || '未配置'),
+    fmt(c.eventType.enabled, '事件类型', c.eventType.config.types.length ? `${c.eventType.config.types.length} 类 (最低置信度 ${c.eventType.config.minConfidence}%)` : '全部事件 (通配)'),
+    fmt(c.eventSource.enabled, '事件源', c.eventSource.config.channels.length ? `${c.eventSource.config.channels.length} 通道` : '全部通道'),
+    fmt(c.autoMerge.enabled, '自动合并', c.autoMerge.enabled ? `窗口 ${c.autoMerge.config.windowMs}ms · 最多 ${c.autoMerge.config.maxCount} 条` : '未启用'),
+  ]
+})
+const previewActions = computed(() => {
+  const out: Array<{ type: string; label: string; icon: string; delayMs: number }> = []
+  const collect = (items: Array<{ type: string; icon: string; label: string }>) => {
+    for (const it of items) {
+      if (!actionState[it.type]) continue
+      out.push({ type: it.type, label: it.label, icon: it.icon, delayMs: actionParams[it.type]?.delay_ms || 0 })
+    }
+  }
+  for (const g of clientActionGroups) collect(g.items)
+  for (const g of webActionGroups) collect(g.items)
+  collect(appActions); collect(mpActions); collect(sysActions)
+  return out.sort((a, b) => a.delayMs - b.delayMs)
+})
 
 // ── Dry-Run 状态 ──
 const dryRunLoading = ref(false)
@@ -1902,6 +2086,12 @@ function openEditor(rule: LinkageRule | null) {
   // [P2-1] 恢复治理字段: 关闭条件/响应时限
   form.closeCondition = rule?.close_condition || ''
   form.responseDeadlineS = rule?.response_deadline_s ?? 0
+  // [vp7] 向导步归零 + 防区选择/AI 增强字段回填
+  wizardStep.value = 0
+  deviceChannelValue.value = { deviceIds: [], channelIds: [] }
+  const fz = (rule as any)?.fusion_modalities
+  fusionConfig.value = Array.isArray(fz) && fz.length ? { modalities: [...fz], threshold: (rule as any)?.fusion_threshold ?? 0.6, minSources: (rule as any)?.fusion_min_sources ?? 2 } : { modalities: ['video'], threshold: 0.6, minSources: 2 }
+  vlmSuppressThreshold.value = typeof (rule as any)?.vlm_suppress_threshold === 'number' ? (rule as any).vlm_suppress_threshold : 0.85
   advancedCollapse.value = (form.mutexGroup || form.suppressAfterRule || form.suppressLowerPriority || form.enableVlmVerify || form.closeCondition || form.responseDeadlineS > 0) ? ['advanced'] : []
   // 恢复条件树
   if (rule?.condition_tree) {
@@ -2148,6 +2338,13 @@ async function handleSave() {
       suppress_after_rule: form.suppressAfterRule || '',
       suppress_lower_priority: form.suppressLowerPriority,
       enable_vlm_verify: form.enableVlmVerify,
+      // [vp7] VLM 抑制阈值 (LinkageEngine.h:478 真实字段生效) + 多模态融合配置
+      //   (fusion_* 为预留键: 后端 nlohmann value() 宽容解析忽略未知字段, 与
+      //   /fusion/ingest 推送端配置语义对齐, 见手册 §11)
+      vlm_suppress_threshold: vlmSuppressThreshold.value,
+      fusion_modalities: fusionConfig.value.modalities,
+      fusion_threshold: fusionConfig.value.threshold,
+      fusion_min_sources: fusionConfig.value.minSources,
       // [P2-1] 治理字段提交: 关闭条件/响应时限
       close_condition: form.closeCondition || '',
       response_deadline_s: form.responseDeadlineS ?? 0,
@@ -2926,6 +3123,10 @@ watch(mainTab, (tab) => {
   display: flex; align-items: center; justify-content: space-between;
   padding: 4px 0; height: 30px;
 }
+
+/* ── [vp7 向导 2026-09-01] 步骤条工具栏 ── */
+.wizard-bar { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; padding: 8px 10px; background: var(--el-fill-color-extra-light); border-radius: 6px; }
+.wizard-bar :deep(.el-step__title) { font-size: 12px; }
 
 /* ── 抽屉底部 ── */
 .drawer-footer { display: flex; justify-content: flex-end; gap: 12px; }
