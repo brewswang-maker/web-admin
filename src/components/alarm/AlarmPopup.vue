@@ -139,8 +139,8 @@
                   <AlarmSnapshot
                     :key="`snap-${currentAlarm?.id || 'none'}`"
                     :image-url="snapshotImageUrl"
-                    :bbox="(currentAlarm.metadata?.bbox as number[]) || []"
-                    :target-label="(currentAlarm.metadata?.targetLabel as string) || ''"
+                    :bbox="popupBbox"
+                    :target-label="popupTargetLabel"
                   />
                 </el-tab-pane>
               </el-tabs>
@@ -659,6 +659,30 @@ const levelLabel = computed(() => {
     case 'medium': return '中'
     default: return '低'
   }
+})
+
+// [vp6-P1.3 2026-09-01] 快照标注框兜底提取链 (metadata 原始键已由
+//   normalizeAlarmPayload/store.normalizeAlarm 兜底合并保留):
+//   ① 归一化 bbox (P1-3 联动链 full_meta.bbox / 融合告警) → 直接用;
+//   ② 检测直报链 (person_detected 等) metadata.detections[0] 为原图像素坐标
+//      x1/y1/x2/y2 (真机 1920x1080 实证) → 透传, 由 AlarmSnapshot 按图像
+//      自然尺寸归一化; GB28181 数组形态 metadata 首元素本身即框对象亦覆盖。
+const popupBbox = computed<number[]>(() => {
+  const m = (currentAlarm.value?.metadata || {}) as Record<string, unknown>
+  const b = m.bbox as number[] | undefined
+  if (Array.isArray(b) && b.length >= 4) return b
+  const det = (Array.isArray(m.detections) ? m.detections[0] : null) as
+    Record<string, unknown> | null
+  const cand = det ?? m
+  if (['x1', 'y1', 'x2', 'y2'].every((k) => typeof cand[k] === 'number')) {
+    return [cand.x1 as number, cand.y1 as number, cand.x2 as number, cand.y2 as number]
+  }
+  return []
+})
+const popupTargetLabel = computed(() => {
+  const m = (currentAlarm.value?.metadata || {}) as Record<string, unknown>
+  return (m.targetLabel as string) || (m.target_label as string) ||
+    (m.class_name as string) || ''
 })
 
 const suggestedAction = computed(() =>

@@ -29,9 +29,24 @@ export const useAlarmStore = defineStore('alarm', () => {
 
   // ===== Actions =====
 
-  /** 后端 snake_case → 前端 AlarmEvent 归一化 (委派给 types/alarm.ts 统一实现) */
+  /** 后端 snake_case → 前端 AlarmEvent 归一化 (委派给 types/alarm.ts 统一实现)。
+   *  [vp6-P1.3 2026-09-01] 兜底合并原始 metadata (同 useAlarmPopup.normalizeAlarmPayload):
+   *  normalizeAlarmCore 白名单重建只取顶层 raw.bbox/target_label, metadata 内
+   *  detections/class_name (检测直报链, REST 落库为 JSON 字符串) 被丢弃 →
+   *  事件视图/快照标注兜底链断。原始键保留, camel 标准键优先。 */
   function normalizeAlarm(raw: any): AlarmEvent {
-    return normalizeAlarmCore(raw)
+    const n = normalizeAlarmCore(raw)
+    let rm: Record<string, unknown> = {}
+    const md = raw?.metadata
+    if (typeof md === 'string') {
+      try { rm = JSON.parse(md) as Record<string, unknown> } catch { rm = {} }
+    } else if (Array.isArray(md)) {
+      rm = (md[0] && typeof md[0] === 'object' ? md[0] : {}) as Record<string, unknown>
+    } else if (md && typeof md === 'object') {
+      rm = md as Record<string, unknown>
+    }
+    n.metadata = { ...rm, ...n.metadata } as typeof n.metadata
+    return n
   }
 
   /** 加载告警列表 */

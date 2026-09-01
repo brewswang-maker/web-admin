@@ -62,20 +62,27 @@ const props = defineProps<{
 
 const containerRef = ref<HTMLElement>()
 const canvasRef = ref<HTMLCanvasElement>()
+// 图像自然尺寸 (像素坐标 bbox 归一化基准)
+const imageSize = ref<{ w: number; h: number }>({ w: 0, h: 0 })
 
 const normalizedBoxes = computed<DetectionBox[]>(() => {
   if (props.detectionBoxes?.length) return props.detectionBoxes
-  // 从原始 bbox 转换
-  if (props.bbox && props.bbox.length >= 4) {
-    const [x1, y1, x2, y2] = props.bbox
-    return [{
-      x: x1, y: y1,
-      w: x2 - x1, h: y2 - y1,
-      label: props.targetLabel || 'target',
-      confidence: 1,
-    }]
+  if (!props.bbox || props.bbox.length < 4) return []
+  let [x1, y1, x2, y2] = props.bbox
+  // [vp6-P1.3 2026-09-01] 检测直报链兜底: metadata.detections 为原图像素坐标
+  //   (真机 1920x1080 实证), 任一坐标 >1 判定为像素 → 按图像自然尺寸归一化;
+  //   自然尺寸未就绪时先不出框, onImageLoad 后重算。
+  if (props.bbox.some((v) => v > 1)) {
+    const { w, h } = imageSize.value
+    if (!w || !h) return []
+    x1 /= w; y1 /= h; x2 /= w; y2 /= h
   }
-  return []
+  return [{
+    x: x1, y: y1,
+    w: x2 - x1, h: y2 - y1,
+    label: props.targetLabel || 'target',
+    confidence: 1,
+  }]
 })
 
 function drawBoxes() {
@@ -119,6 +126,11 @@ function drawBoxes() {
 
 // 图片加载/错误处理
 function onImageLoad() {
+  // el-image 内部真实 <img> 已挂载, 读自然尺寸供像素 bbox 归一化
+  const img = containerRef.value?.querySelector('img') as HTMLImageElement | null
+  if (img?.naturalWidth && img?.naturalHeight) {
+    imageSize.value = { w: img.naturalWidth, h: img.naturalHeight }
+  }
   nextTick(() => drawBoxes())
 }
 

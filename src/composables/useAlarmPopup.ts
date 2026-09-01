@@ -54,8 +54,27 @@ const RULE_CACHE_TTL_MS = 30000
 // ── WS 数据适配 (snake_case → camelCase) ──
 // 委派给 types/alarm.ts 的统一实现 normalizeAlarmCore,
 // 避免与 AlarmsView.vue / stores/alarm.ts 三处各自实现漂移
+// [vp6-P1.3 2026-09-01] metadata 原始形态解包: REST 链落库为 JSON 字符串,
+// GB28181 既有告警存在数组形态 (治理字段注入首元素) — 与 types/alarm.ts gov
+// 解包语义对齐, 字符串 parse / 数组取首元素 / 对象直用。
+function unpackRawMetadata(md: unknown): Record<string, unknown> {
+  if (typeof md === 'string') {
+    try { return JSON.parse(md) as Record<string, unknown> } catch { return {} }
+  }
+  if (Array.isArray(md)) {
+    return (md[0] && typeof md[0] === 'object' ? md[0] : {}) as Record<string, unknown>
+  }
+  return (md && typeof md === 'object' ? md : {}) as Record<string, unknown>
+}
+
 export function normalizeAlarmPayload(raw: any): AlarmEvent {
-  return normalizeAlarmCore(raw)
+  const n = normalizeAlarmCore(raw)
+  // [vp6-P1.3 2026-09-01] 兜底合并原始 metadata: normalizeAlarmCore 白名单重建只取
+  //   顶层 raw.bbox/target_label, metadata 内的 detections/class_name (检测直报链
+  //   person_detected 等, 原图像素坐标) 等原始键被丢弃 → 弹窗快照标注兜底链断。
+  //   原始键保留 (camel 标准键优先), AlarmPopup 据此回退 detections 提取标注框。
+  n.metadata = { ...unpackRawMetadata(raw?.metadata), ...n.metadata } as typeof n.metadata
+  return n
 }
 
 // ── 时间条件检查 (与后端 matchTimeConditionWithCtx 逻辑一致) ──
