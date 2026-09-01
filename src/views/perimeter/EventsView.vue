@@ -77,6 +77,26 @@
       <el-table-column prop="createdAt" :label="t('perimeter.events.colTime')" width="170">
         <template #default="{ row }">{{ fmtTime(row.createdAt) }}</template>
       </el-table-column>
+      <!-- [行操作 2026-09-01] 详情=全局报警弹窗 (与告警中心/首页同一套), 处理=
+        确认/误报/忽略 (对齐 AlarmsView handleFalse/handleIgnore 范式) —
+        用户决策: 未处理入口与报警处置一体化, 其他场景事件列表同款 -->
+      <el-table-column :label="t('perimeter.events.colActions')" width="150" fixed="right" align="center">
+        <template #default="{ row }">
+          <el-button size="small" type="primary" link @click.stop="openAlarmPopup(row)">{{ t('common.detail') }}</el-button>
+          <el-dropdown trigger="click" @command="(c: string) => handleAlarmRow(row, c as any, onHandled)">
+            <el-button size="small" type="warning" link class="act-handle">
+              {{ t('perimeter.events.actHandle') }}<el-icon class="el-icon--right"><ArrowDown /></el-icon>
+            </el-button>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item command="confirmed">{{ t('common.confirm') }}</el-dropdown-item>
+                <el-dropdown-item command="false_alarm">{{ t('perimeter.events.actFalseAlarm') }}</el-dropdown-item>
+                <el-dropdown-item command="ignored">{{ t('perimeter.events.actIgnore') }}</el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
+        </template>
+      </el-table-column>
     </el-table>
 
     <!-- ===== 详情抽屉 (抓拍 + 元数据) ===== -->
@@ -114,11 +134,19 @@
  */
 import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Refresh } from '@element-plus/icons-vue'
+import { Refresh, ArrowDown } from '@element-plus/icons-vue'
 import { videoPerimeterApi, isPerimeterEvent } from '@/api/videoPerimeter'
 import { normalizeAlarmCore, type AlarmEvent, type AlarmLevel, type AlarmStatus } from '@/types/alarm'
+import { useAlarmRowActions } from '@/composables/useAlarmRowActions'
 
 const { t } = useI18n()
+const { openAlarmPopup, handleAlarmRow } = useAlarmRowActions()
+
+/** 处理成功后行内回写状态 (避免整表刷新, 与 AlarmsView row.status 回写同范式) */
+function onHandled(id: string, status: string) {
+  const row = events.value.find(e => e.id === id)
+  if (row) row.status = status as AlarmStatus
+}
 
 const LEVELS: AlarmLevel[] = ['critical', 'high', 'medium', 'low', 'info']
 const STATUSES: AlarmStatus[] = ['unhandled', 'acknowledged', 'disposed', 'resolved', 'closed', 'false_alarm']
@@ -227,6 +255,7 @@ onMounted(reload)
 .filter-status { width: 150px; }
 .filter-ai { width: 130px; }
 .events-table { cursor: pointer; }
+.act-handle { margin-left: 8px; }
 .mono { font-family: Menlo, Consolas, monospace; }
 .snap-img { width: 100%; max-height: 260px; border-radius: 8px; margin-bottom: 14px; background: var(--el-fill-color-light); }
 .detail-desc { margin-top: 4px; }

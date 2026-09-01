@@ -74,6 +74,25 @@
         <el-table-column label="时间" width="165">
           <template #default="{ row }">{{ formatTime(row.createdAt) }}</template>
         </el-table-column>
+        <!-- [行操作 2026-09-01] 详情=全局报警弹窗 + 处理下拉 (与周界/安检/无人值守同款,
+          useAlarmRowActions 共享) -->
+        <el-table-column label="操作" width="150" align="center">
+          <template #default="{ row }">
+            <el-button size="small" type="primary" link @click.stop="openAlarmPopup(row)">详情</el-button>
+            <el-dropdown trigger="click" @command="(c: string) => handleAlarmRow(row, c as any, onHandled)">
+              <el-button size="small" type="warning" link class="act-handle">
+                处理<el-icon class="el-icon--right"><ArrowDown /></el-icon>
+              </el-button>
+              <template #dropdown>
+                <el-dropdown-menu>
+                  <el-dropdown-item command="confirmed">确认告警</el-dropdown-item>
+                  <el-dropdown-item command="false_alarm">标记误报</el-dropdown-item>
+                  <el-dropdown-item command="ignored">忽略</el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
+          </template>
+        </el-table-column>
       </el-table>
       <div class="pager">
         <el-pagination v-model:current-page="page" :page-size="pageSize" :total="finalEvents.length"
@@ -96,7 +115,9 @@ import { Refresh } from '@element-plus/icons-vue'
 import { alarmApi } from '@/api/alarm'
 import eventTypesApi from '@/api/eventTypes'
 import type { EventTypeMetadataItem } from '@/api/eventTypes'
-import type { AlarmEvent } from '@/types/alarm'
+import type { AlarmEvent, AlarmStatus } from '@/types/alarm'
+import { useAlarmRowActions } from '@/composables/useAlarmRowActions'
+import { ArrowDown } from '@element-plus/icons-vue'
 import { LARGE_EVENT_SCENES, NEW_LARGE_EVENT_TYPES } from '@/types/largeEvent'
 
 const sceneOptions = [
@@ -112,6 +133,13 @@ const selectedType = ref('')
 const typeItems = ref<EventTypeMetadataItem[]>([])
 
 const events = ref<AlarmEvent[]>([])
+const { openAlarmPopup, handleAlarmRow } = useAlarmRowActions()
+
+/** 处理成功后行内回写状态 (与周界/安检/告警中心同范式) */
+function onHandled(id: string, status: string) {
+  const row = events.value.find(e => e.id === id)
+  if (row) row.status = status as AlarmStatus
+}
 const page = ref(1)
 const pageSize = 20
 
@@ -243,6 +271,7 @@ onMounted(() => {
 
 <style scoped>
 .le-events-page { padding: 4px 0; }
+.act-handle { margin-left: 8px; }  /* [行操作 2026-09-01] dropdown 包裹后相邻按钮间距失效 */
 .filter-card { margin-bottom: 16px; }
 .scene-bar { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
 .bar-label { font-size: 13px; color: var(--el-text-color-secondary); }

@@ -191,9 +191,23 @@
         <el-table-column label="时间" width="160">
           <template #default="{ row }">{{ shortTime(row.createdAt) }}</template>
         </el-table-column>
-        <el-table-column label="" width="70" align="center">
+        <!-- [行操作 2026-09-01] 详情=全局报警弹窗 + 处理下拉 (与周界事件列表同款,
+          useAlarmRowActions 共享); 行点击仍开本地抽屉 (浏览习惯) -->
+        <el-table-column label="操作" width="150" align="center">
           <template #default="{ row }">
-            <el-button size="small" type="primary" link @click.stop="openDetail(row)">详情</el-button>
+            <el-button size="small" type="primary" link @click.stop="openAlarmPopup(row)">详情</el-button>
+            <el-dropdown trigger="click" @command="(c: string) => handleAlarmRow(row, c as any, onHandled)">
+              <el-button size="small" type="warning" link class="act-handle">
+                处理<el-icon class="el-icon--right"><ArrowDown /></el-icon>
+              </el-button>
+              <template #dropdown>
+                <el-dropdown-menu>
+                  <el-dropdown-item command="confirmed">确认告警</el-dropdown-item>
+                  <el-dropdown-item command="false_alarm">标记误报</el-dropdown-item>
+                  <el-dropdown-item command="ignored">忽略</el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
           </template>
         </el-table-column>
       </el-table>
@@ -243,7 +257,17 @@ import { deviceApi } from '@/api/device'
 import eventTypesApi from '@/api/eventTypes'
 import { screeningApi } from '@/api/screening'
 import type { EventTypeMetadataItem } from '@/api/eventTypes'
-import { normalizeAlarmCore, type AlarmEvent, type AlarmLevel } from '@/types/alarm'
+import { normalizeAlarmCore, type AlarmEvent, type AlarmLevel, type AlarmStatus } from '@/types/alarm'
+import { useAlarmRowActions } from '@/composables/useAlarmRowActions'
+import { ArrowDown } from '@element-plus/icons-vue'
+
+const { openAlarmPopup, handleAlarmRow } = useAlarmRowActions()
+
+/** 处理成功后行内回写状态 (与周界/告警中心同范式) */
+function onHandled(id: string, status: string) {
+  const row = events.value.find(e => e.id === id)
+  if (row) row.status = status as AlarmStatus
+}
 
 // ── dashboard 响应结构 (与 RestApiHandlers GET /stats/screening_dashboard 实测对齐) ──
 
@@ -602,6 +626,7 @@ onUnmounted(() => {
 
 <style scoped>
 .screening-overview { padding: 16px; background: #f5f7fa; min-height: calc(100vh - 84px); }
+.act-handle { margin-left: 8px; }  /* [行操作 2026-09-01] dropdown 包裹后相邻按钮间距失效 */
 
 /* ── 页头 ── */
 .ov-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }

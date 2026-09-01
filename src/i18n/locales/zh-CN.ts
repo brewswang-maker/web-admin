@@ -820,6 +820,11 @@ const zhCN = {
       reviewNone: '未复核',
       colStatus: '状态',
       colTime: '时间',
+      // [行操作 2026-09-01] 事件列表详情/处理动作 (useAlarmRowActions 共享)
+      colActions: '操作',
+      actHandle: '处理',
+      actFalseAlarm: '标记误报',
+      actIgnore: '忽略',
       detailTitle: '事件详情',
       noSnapshot: '无抓拍快照',
       aiConclusion: 'AI 结论',
@@ -833,6 +838,8 @@ const zhCN = {
       status_disposed: '处置中',
       status_resolved: '已解决',
       status_closed: '已关闭',
+      status_confirmed: '已确认告警',
+      status_ignored: '已忽略',
       status_false_alarm: '误报'
     },
     overview: {
@@ -1034,6 +1041,11 @@ const zhCN = {
       colDesc: '描述',
       colSnapshot: '快照',
       colTime: '时间',
+      // [行操作 2026-09-01] 事件列表详情/处理动作 (useAlarmRowActions 共享)
+      colActions: '操作',
+      actHandle: '处理',
+      actFalseAlarm: '标记误报',
+      actIgnore: '忽略',
       drawerTitle: '事件明细 · 拦截证据链',
       metaSection: 'metadata 拦截证据 (员工通道 fusion 插件)',
       metaValue: '值',

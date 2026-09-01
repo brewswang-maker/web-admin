@@ -520,6 +520,12 @@ export function normalizeAlarmCore(raw: any): AlarmEvent {
     String(rawCh),
   ].find(v => isValidChannelId(v)) || ''
   const rawChStr = String(rawCh)
+  // [status 映射 2026-09-01] 后端初始状态是 'new' (实测顶层 status 缺省时由
+  //   metadata 治理字段 gov.status 回填 'new'), 前端 SSOT 值域是 'unhandled'
+  //   (见 AlarmStatus 注释 "unhandled // new - 新告警"); 直接透传致视图 i18n
+  //   拼出 status_new 裸 key (真机实测状态列显示 "perimeter.events.status_new")。
+  //   双源取值后再统一映射, 全视图受益。
+  const rawStatusVal = (raw.status as AlarmStatus) || (gov.status as AlarmStatus)
 
   return {
     id: raw.id || raw.alarm_id || `${raw.device_id || ''}_${channelId}_${raw.timestamp_ms || Date.now()}`,
@@ -541,7 +547,7 @@ export function normalizeAlarmCore(raw: any): AlarmEvent {
     // [加油站三期 2026-08-30 EHS 闭环] status 双源: 后端顶层字段优先,
     //    兜底工单状态机回填的 metadata 治理字段 (handleAlarm 持久化 →
     //    getRecentAlarmsPaged SELECT 回填数组首元素), 未处理保持 'unhandled'
-    status: (raw.status as AlarmStatus) || (gov.status as AlarmStatus) || 'unhandled',
+    status: rawStatusVal === 'new' ? 'unhandled' : (rawStatusVal || 'unhandled'),
     location: raw.location || raw.location_name || raw.zone || '',
     metadata: {
       bbox: raw.bbox || [],

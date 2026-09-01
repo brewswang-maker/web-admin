@@ -95,6 +95,25 @@
         <el-table-column :label="t('hotel.events.colTime')" width="150">
           <template #default="{ row }">{{ fmtTime(row.createdAt) }}</template>
         </el-table-column>
+        <!-- [行操作 2026-09-01] 详情=全局报警弹窗 + 处理下拉 (与周界/安检事件列表同款,
+          useAlarmRowActions 共享); 行点击仍开 metadata 抽屉 -->
+        <el-table-column :label="t('hotel.events.colActions')" width="150" align="center">
+          <template #default="{ row }">
+            <el-button size="small" type="primary" link @click.stop="openAlarmPopup(row)">{{ t('common.detail') }}</el-button>
+            <el-dropdown trigger="click" @command="(c: string) => handleAlarmRow(row, c as any, onHandled)">
+              <el-button size="small" type="warning" link class="act-handle">
+                {{ t('hotel.events.actHandle') }}<el-icon class="el-icon--right"><ArrowDown /></el-icon>
+              </el-button>
+              <template #dropdown>
+                <el-dropdown-menu>
+                  <el-dropdown-item command="confirmed">{{ t('common.confirm') }}</el-dropdown-item>
+                  <el-dropdown-item command="false_alarm">{{ t('hotel.events.actFalseAlarm') }}</el-dropdown-item>
+                  <el-dropdown-item command="ignored">{{ t('hotel.events.actIgnore') }}</el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
+          </template>
+        </el-table-column>
       </el-table>
       <div class="pager">
         <el-pagination v-model:current-page="page" :page-size="pageSize" :total="finalEvents.length"
@@ -147,14 +166,25 @@
  * 三态防御: 骨架屏 / 错误态可恢复 / 空态。
  */
 import { computed, onMounted, ref } from 'vue'
+import { useRoute } from 'vue-router'
 import { Refresh } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { useI18n } from 'vue-i18n'
 import { hotelUnattendedApi, isHotelEvent, CORRIDOR_INTERCEPT_TYPES, CORRIDOR_METADATA_KEYS,
          PERSON_GROUPS } from '@/api/hotelUnattended'
-import type { AlarmEvent } from '@/types/alarm'
+import type { AlarmEvent, AlarmStatus } from '@/types/alarm'
+import { useAlarmRowActions } from '@/composables/useAlarmRowActions'
+import { ArrowDown } from '@element-plus/icons-vue'
 
 const { t } = useI18n()
+const { openAlarmPopup, handleAlarmRow } = useAlarmRowActions()
+
+/** 处理成功后行内回写状态 (与周界/安检/告警中心同范式) */
+function onHandled(id: string, status: string) {
+  const row = events.value.find(e => e.id === id)
+  if (row) row.status = status as AlarmStatus
+}
+const route = useRoute()
 
 const loading = ref(false)
 const loadError = ref('')
@@ -302,11 +332,18 @@ function refreshAll() {
   fetchEvents()
 }
 
-onMounted(() => { refreshAll() })
+onMounted(() => {
+  refreshAll()
+  // [P1-1 v2.1] Overview 构成卡联动入口: ?group=<六分类 key> 初始化人员分类筛选
+  // (refreshAll 会清空筛选, 故在之后应用; 口径同 PERSON_GROUPS SSOT)
+  const qg = String(route.query.group ?? '')
+  if (PERSON_GROUPS.some(p => p.key === qg)) selectedGroup.value = qg
+})
 </script>
 
 <style scoped>
 .hu-events-page { padding: 4px 0; }
+.act-handle { margin-left: 8px; }  /* [行操作 2026-09-01] dropdown 包裹后相邻按钮间距失效 */
 .filter-card { margin-bottom: 16px; }
 .scene-bar { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
 .bar-label { font-size: 13px; color: var(--el-text-color-secondary); }

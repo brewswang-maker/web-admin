@@ -824,6 +824,11 @@ const enUS: MessageSchema = {
       reviewNone: 'Unreviewed',
       colStatus: 'Status',
       colTime: 'Time',
+      // [row actions 2026-09-01] event list detail/handle actions (shared useAlarmRowActions)
+      colActions: 'Actions',
+      actHandle: 'Handle',
+      actFalseAlarm: 'False alarm',
+      actIgnore: 'Ignore',
       detailTitle: 'Event Detail',
       noSnapshot: 'No snapshot',
       aiConclusion: 'AI Conclusion',
@@ -837,6 +842,8 @@ const enUS: MessageSchema = {
       status_disposed: 'Disposing',
       status_resolved: 'Resolved',
       status_closed: 'Closed',
+      status_confirmed: 'Confirmed',
+      status_ignored: 'Ignored',
       status_false_alarm: 'False Alarm'
     },
     overview: {
@@ -1038,6 +1045,11 @@ const enUS: MessageSchema = {
       colDesc: 'Description',
       colSnapshot: 'Snapshot',
       colTime: 'Time',
+      // [row actions 2026-09-01] event list detail/handle actions (shared useAlarmRowActions)
+      colActions: 'Actions',
+      actHandle: 'Handle',
+      actFalseAlarm: 'False alarm',
+      actIgnore: 'Ignore',
       drawerTitle: 'Event Detail · Intercept Evidence',
       metaSection: 'Metadata intercept evidence (staff corridor fusion plugin)',
       metaValue: 'Value',
