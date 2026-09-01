@@ -38,7 +38,7 @@
  * 在告警快照图片上叠加 Canvas 绘制的 detection boxes。
  * 坐标从归一化 (0-1) 转为像素坐标。
  */
-import { ref, computed, nextTick } from 'vue'
+import { ref, computed, nextTick, onMounted, onBeforeUnmount } from 'vue'
 
 interface DetectionBox {
   x: number; y: number; w: number; h: number
@@ -176,6 +176,24 @@ function onImageLoad() {
   }
   nextTick(() => drawBoxes())
 }
+
+// [fix 2026-09-01 真机探针] 绘制时机兜底: 弹窗默认"实时视频" tab, 快照 pane
+//   隐藏时容器 0×0 → @load 触发的 drawBoxes 画到 0 尺寸 canvas 上 (真机两次
+//   弹窗 canvas width/height=0 实证); 容器获得非零尺寸 (切 tab 挂载/窗口缩放)
+//   时 ResizeObserver 重绘。0 尺寸时跳过防空绘。
+let boxResizeObserver: ResizeObserver | null = null
+onMounted(() => {
+  if (!containerRef.value || typeof ResizeObserver === 'undefined') return
+  boxResizeObserver = new ResizeObserver(() => {
+    const el = containerRef.value
+    if (el && el.clientWidth > 0 && el.clientHeight > 0) drawBoxes()
+  })
+  boxResizeObserver.observe(containerRef.value)
+})
+onBeforeUnmount(() => {
+  boxResizeObserver?.disconnect()
+  boxResizeObserver = null
+})
 
 function onImageError() {
   console.warn('[AlarmSnapshot] Image failed to load:', props.imageUrl)
