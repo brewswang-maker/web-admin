@@ -76,9 +76,17 @@
           <el-button type="info" @click="toggleRuleStats" :loading="ruleStatsLoading" title="查看规则触发统计">
             <el-icon><DataLine /></el-icon>规则统计
           </el-button>
-          <el-button type="primary" @click="openEditor(null)">
-            <el-icon><Plus /></el-icon>新建规则
-          </el-button>
+          <!-- [vp8 双模式] 新建默认简易模式 (模板优先+极简字段); 高级新建/模板库走下拉 -->
+          <el-dropdown split-button type="primary" class="new-rule-split" @click="openSimpleCreate" @command="onNewCommand">
+            <span class="new-rule-label"><el-icon><Plus /></el-icon>新建规则</span>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item command="simple">简易创建（推荐）</el-dropdown-item>
+                <el-dropdown-item command="advanced">高级新建（专业模式）</el-dropdown-item>
+                <el-dropdown-item command="template" divided>从模板库创建</el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
         </div>
       </div>
     </el-card>
@@ -198,7 +206,7 @@
         </el-table-column>
         <el-table-column label="操作" width="320" fixed="right">
           <template #default="{ row }">
-            <el-button size="small" type="primary" link @click="openEditor(row)">编辑</el-button>
+            <el-button size="small" type="primary" link @click="openRowEditor(row)">编辑</el-button>
             <el-button size="small" type="success" link @click="openRuleTest(row)">🧪 测试</el-button>
             <el-button size="small" type="success" link @click="handleCloneRule(row)">复制</el-button>
             <el-button size="small" type="info" link @click="openVersionHistory(row)">历史</el-button>
@@ -626,6 +634,16 @@
         </div>
       </template>
     </el-drawer>
+
+    <!-- ═══ [vp8 双模式] 简易创建抽屉 (模板优先 + 极简字段, 新建/编辑默认入口) ═══ -->
+    <SimpleRuleDrawer
+      v-model="simpleDrawerVisible"
+      :advanced-hints="simpleHints"
+      :committing="simpleCommitting"
+      :initial-patch="simpleInitial"
+      @commit="commitSimple"
+      @switch-advanced="onSimpleSwitchAdvanced"
+    />
 
     <!-- ===== 专用动作参数弹窗 ===== -->
     <el-dialog v-model="paramDialogVisible" :title="paramDialogTitle" width="520px" destroy-on-close append-to-body>
@@ -1226,6 +1244,8 @@ import RuleNlgInput from '@/components/linkage/RuleNlgInput.vue'
 import TemplateGallery from '@/components/linkage/TemplateGallery.vue'
 import AiEnhancePanel from '@/components/linkage/AiEnhancePanel.vue'
 import RulePreviewPanel from '@/components/linkage/RulePreviewPanel.vue'
+import SimpleRuleDrawer from '@/components/linkage/SimpleRuleDrawer.vue'
+import type { SimpleCommitPatch } from '@/components/linkage/SimpleRuleDrawer.vue'
 import type { RoiData } from '@/composables/useRoiCanvas'
 
 // ── 常量 ──
@@ -1639,7 +1659,8 @@ const conditionTreeValue = ref<ConditionNode | undefined>(undefined)
 // 6 步向导: 0 基本信息 → 1 触发条件 → 2 动作编排 → 3 AI 增强 → 4 计划与防区 → 5 确认预览;
 // el-steps 分步 / 全览双形态切换 (对标华为 iClient 条件树分区 + 大华 DSS 向导)。
 const WIZARD_STEPS = ['基本信息', '触发条件', '动作编排', 'AI 增强', '计划与防区', '确认预览']
-const wizardMode = ref(true)
+// [vp8 双模式] 向导退役为高级模式内可选形态: 默认全览 (原单页表单), 用户可切分步
+const wizardMode = ref(false)
 const wizardStep = ref(0)
 const sectionVisible = (s: number) => !wizardMode.value || wizardStep.value === s
 /** 条件卡片分步归属: time 归「计划与防区」(布防计划语义), 其余归「触发条件」 */
@@ -1728,7 +1749,7 @@ function applyTemplateToForm(t: any) {
     if (Object.keys(rest).length) actionParams[key] = { ...(actionParams[key] || {}), ...rest }
     applied++
   }
-  ElMessage.success(`模板「${t.name}」已应用 (${applied} 动作 / 标签 ${t.tags?.length || 0} 项); 请在分步中检查并补全防区范围`)
+  ElMessage.success(`模板「${t.name}」已应用 (${applied} 动作 / 标签 ${t.tags?.length || 0} 项); 可在高级模式中补全防区范围`)
 }
 
 // ── 确认步预览数据 (条件摘要 + 已选动作时间线) ──
@@ -2070,7 +2091,9 @@ async function toggleRule(rule: LinkageRule) {
 
 // ── 编辑器: 打开/恢复 ──
 
-function openEditor(rule: LinkageRule | null) {
+// [vp8 双模式] 表单重置与抽屉打开解耦: 简易模式 commit 需在后台重置表单后
+// 直接复用 handleSave 唯一保存链, 不打开高级抽屉 (校验失败时才落高级表单补全)。
+function resetEditorState(rule: LinkageRule | null) {
   editingRule.value = rule
   form.name = rule?.name || ''
   form.description = rule?.description || ''
@@ -2171,19 +2194,140 @@ function openEditor(rule: LinkageRule | null) {
     }
   }
 
+}
+
+function openEditor(rule: LinkageRule | null) {
+  resetEditorState(rule)
   drawerVisible.value = true
+}
+
+// ═══ [vp8 双模式 2026-09-01] 简易/高级双模式创建编辑 ═══
+// 对标华为好望双版本 + 海康基本/高级配置分区 + NNG 渐进式披露:
+// 新建默认简易 (模板优先+极简字段), 高级模式保留全功能与可选分步向导。
+const simpleDrawerVisible = ref(false)
+const simpleHints = ref<string[]>([])
+const simpleCommitting = ref(false)
+const simpleInitial = ref<SimpleCommitPatch | null>(null)
+
+/** 规则是否携带高级治理配置 (简易视图不可见/不可编辑的字段) */
+function detectAdvancedHints(r: any): string[] {
+  const h: string[] = []
+  if (r?.mutex_group) h.push('互斥组')
+  if (r?.suppress_after_rule) h.push('抑制链')
+  if (r?.suppress_lower_priority) h.push('低优先级抑制')
+  if (r?.enable_vlm_verify) h.push('VLM 复核')
+  if (r?.close_condition) h.push('关闭条件')
+  if ((r?.response_deadline_s ?? 0) > 0) h.push('响应时限')
+  if (r?.condition_tree) h.push('条件树')
+  if (Array.isArray(r?.fusion_modalities) && r.fusion_modalities.length > 1) h.push('多模态融合')
+  return h
+}
+
+/** 新建 → 简易模式 (默认入口) */
+function openSimpleCreate() {
+  resetEditorState(null)
+  simpleHints.value = []
+  simpleDrawerVisible.value = true
+}
+
+/** 编辑态时间档推断 (与 SimpleRuleDrawer.guessPreset 同语义) */
+function guessTimePreset(enabled: boolean, s: string, e: string, wd: number[]): 'all' | 'day' | 'night' | 'custom' {
+  if (!enabled) return 'all'
+  if (s === '08:00' && e === '20:00' && wd.join() === '1,2,3,4,5') return 'day'
+  if (s === '20:00' && e === '07:00' && wd.length === 7) return 'night'
+  return 'custom'
+}
+
+/** 列表行编辑 → 简易模式 (含高级配置时提示条引导切高级; 表单回填草稿直接进自定义视图) */
+function openRowEditor(row: LinkageRule) {
+  resetEditorState(row)
+  simpleHints.value = detectAdvancedHints(row)
+  const tc = form.conditions.time
+  simpleInitial.value = {
+    name: form.name,
+    eventTypes: [...form.conditions.eventType.config.types],
+    channelIds: form.conditions.eventSource.config.channels.map(c => parseInt(c)).filter(n => !Number.isNaN(n)),
+    deviceIds: [],
+    timePreset: guessTimePreset(tc.enabled, tc.config.startTime, tc.config.endTime, tc.config.weekdays),
+    timeStart: tc.config.startTime,
+    timeEnd: tc.config.endTime,
+    weekdays: [...tc.config.weekdays],
+    actions: Object.entries(actionState).filter(([, v]) => v).map(([k]) => k),
+    priority: form.priority,
+    cooldownMs: form.cooldownMs,
+    template: null,
+  }
+  simpleDrawerVisible.value = true
+}
+
+/** 简易时间四档 → time 条件 (night 跨夜与高级表单同语义) */
+function applySimpleTime(p: SimpleCommitPatch) {
+  if (p.timePreset === 'all') { form.conditions.time.enabled = false; return }
+  form.conditions.time.enabled = true
+  form.conditions.time.config.startTime = p.timeStart || '08:00'
+  form.conditions.time.config.endTime = p.timeEnd || '20:00'
+  form.conditions.time.config.weekdays = p.weekdays?.length ? [...p.weekdays] : [1, 2, 3, 4, 5]
+}
+
+/** 简易草稿 → 内部表单 (动作参数等高级语义仍由模板/高级模式承载) */
+function applySimplePatch(p: SimpleCommitPatch) {
+  form.name = p.name
+  if (typeof p.priority === 'number') form.priority = p.priority
+  if (typeof p.cooldownMs === 'number') form.cooldownMs = p.cooldownMs
+  form.conditions.eventType.enabled = true
+  form.conditions.eventType.config.types = [...(p.eventTypes || [])]
+  applySimpleTime(p)
+  deviceChannelValue.value = { deviceIds: [...(p.deviceIds || [])], channelIds: [...(p.channelIds || [])] }
+  if (p.actions) {
+    Object.keys(actionState).forEach(k => delete actionState[k])
+    for (const key of p.actions) actionState[key] = true
+  }
+}
+
+/** 简易保存: 复用 handleSave 唯一保存链 (数据层零变更); 失败时落高级表单补全 */
+async function commitSimple(p: SimpleCommitPatch) {
+  simpleCommitting.value = true
+  try {
+    resetEditorState(null)
+    if (p.template) applyTemplateToForm(p.template) // 模板整包合入 (保动作参数)
+    applySimplePatch(p)
+    if (p.template) form.name = p.name // 模板分支: 用户微调名优先
+    simpleDrawerVisible.value = false
+    const ok = await handleSave()
+    if (!ok) drawerVisible.value = true
+  } finally { simpleCommitting.value = false }
+}
+
+/** 简易 → 高级切换: 关简易, 携带草稿打开高级表单 (默认全览形态) */
+function onSimpleSwitchAdvanced(p: SimpleCommitPatch | null) {
+  simpleDrawerVisible.value = false
+  if (p) {
+    resetEditorState(null)
+    if (p.template) applyTemplateToForm(p.template)
+    applySimplePatch(p)
+    if (p.template && p.name) form.name = p.name
+  }
+  wizardMode.value = false
+  drawerVisible.value = true
+}
+
+/** 工具栏新建下拉: 简易(默认) / 高级 / 模板库 */
+function onNewCommand(cmd: string) {
+  if (cmd === 'advanced') openEditor(null)
+  else if (cmd === 'template') openTemplateLibrary()
+  else openSimpleCreate()
 }
 
 // ── 编辑器: 保存 (内部表单 → 后端格式) ──
 
-async function handleSave() {
-  // 表单验证
-  if (!form.name.trim()) { ElMessage.warning('请输入规则名称'); return }
-  if (form.priority < 1 || form.priority > 100) { ElMessage.warning('优先级范围 1-100'); return }
-  if (form.cooldownMs < 1000) { ElMessage.warning('冷却时间最小 1000ms'); return }
+async function handleSave(): Promise<boolean> {
+  // 表单验证 (返回 boolean: 简易模式 commitSimple 依据结果决定是否落高级表单补全)
+  if (!form.name.trim()) { ElMessage.warning('请输入规则名称'); return false }
+  if (form.priority < 1 || form.priority > 100) { ElMessage.warning('优先级范围 1-100'); return false }
+  if (form.cooldownMs < 1000) { ElMessage.warning('冷却时间最小 1000ms'); return false }
 
   const enabledActions = Object.entries(actionState).filter(([, v]) => v)
-  if (enabledActions.length === 0) { ElMessage.warning('请至少选择一个联动动作'); return }
+  if (enabledActions.length === 0) { ElMessage.warning('请至少选择一个联动动作'); return false }
 
   // [v7.9 FIX BUG-3] 事件类型为空时提醒用户规则将匹配所有事件 (通配模式)
   if (form.conditions.eventType.config.types.length === 0) {
@@ -2193,7 +2337,7 @@ async function handleSave() {
         '通配规则确认',
         { confirmButtonText: '继续保存', cancelButtonText: '返回选择事件', type: 'warning' }
       )
-    } catch { return }
+    } catch { return false }
   }
 
   saving.value = true
@@ -2366,9 +2510,11 @@ async function handleSave() {
     ElMessage.success(editingRule.value ? '规则已更新' : '规则已创建')
     drawerVisible.value = false
     fetchRules()
+    return true
   } catch (e: any) {
     const msg = e?.response?.data?.message || e?.message || '保存失败'
     ElMessage.error(msg)
+    return false
   } finally { saving.value = false }
 }
 
@@ -3126,6 +3272,8 @@ watch(mainTab, (tab) => {
 
 /* ── [vp7 向导 2026-09-01] 步骤条工具栏 ── */
 .wizard-bar { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; padding: 8px 10px; background: var(--el-fill-color-extra-light); border-radius: 6px; }
+/* [vp8 双模式] 新建 split-button: 主区简易/下拉高级 */
+.new-rule-split .new-rule-label { display: inline-flex; align-items: center; gap: 4px; }
 .wizard-bar :deep(.el-step__title) { font-size: 12px; }
 
 /* ── 抽屉底部 ── */
