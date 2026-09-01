@@ -77,7 +77,7 @@
       </el-row>
 
       <el-row :gutter="16">
-        <!-- ===== 事件类型分布 (9 键, PERIMETER_EVENT_TYPES 顺序) ===== -->
+        <!-- ===== 事件类型分布 (19 键 vp5, PERIMETER_EVENT_TYPES 顺序) ===== -->
         <el-col :span="14">
           <el-card shadow="hover" class="dist-card">
             <template #header>{{ t('perimeter.overview.typeDist') }}</template>
