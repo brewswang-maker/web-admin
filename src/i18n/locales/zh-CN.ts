@@ -117,6 +117,7 @@ const zhCN = {
     gasStationScenePacks: '加油站场景包',
     gasStationRules: '事件规则',
     devices: '设备管理',
+    deviceGroups: '设备分组',
     channels: '通道管理',
     alarms: '告警中心',
     live: '实时视频',

@@ -119,6 +119,7 @@ const enUS: MessageSchema = {
     gasStationScenePacks: 'Gas Station Scene Packs',
     gasStationRules: 'Event Rules',
     devices: 'Devices',
+    deviceGroups: 'Device Groups',
     channels: 'Channels',
     alarms: 'Alarms',
     live: 'Live View',

@@ -192,6 +192,10 @@
             <el-icon><Monitor /></el-icon>
             <template #title>{{ $t('menu.devices') }}</template>
           </el-menu-item>
+          <el-menu-item index="/device-groups">
+            <el-icon><Files /></el-icon>
+            <template #title>{{ $t('menu.deviceGroups') }}</template>
+          </el-menu-item>
           <el-menu-item index="/live">
             <el-icon><VideoCamera /></el-icon>
             <template #title>{{ $t('menu.live') }}</template>
@@ -508,6 +512,7 @@ import {
   School, Warning, Basketball, Clock, DataBoard, Box, Histogram,
   // [加油站方案 2026-08-30] 一级菜单加油站 (T6 硬红线 + EHS 闭环)
   TakeawayBox, MagicStick,
+  Files,   // [vp9 2026-09-01] 设备分组菜单
 } from '@element-plus/icons-vue'
 import logoUrl from '@/assets/logo.png'
 import userAvatarUrl from '@/assets/photo2.jpg'

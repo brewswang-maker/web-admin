@@ -386,11 +386,11 @@
               <!-- 空间条件 -->
               <template v-if="cond.type === 'region'">
                 <el-form-item label="物理位置" label-position="top" class="cond-form-item">
-                  <el-select v-model="form.conditions.region.config.location" placeholder="选择位置" clearable style="width: 100%">
-                    <template v-if="locationOptionsDynamic.length > 0">
-                      <el-option v-for="l in locationOptionsDynamic" :key="l.value" :label="l.label" :value="l.value" />
+                  <el-select v-model="form.conditions.region.config.location" placeholder="选择位置" clearable filterable style="width: 100%">
+                    <template v-if="locationOptionsMerged.length > 0">
+                      <el-option v-for="l in locationOptionsMerged" :key="l.value" :label="l.label" :value="l.value" />
                     </template>
-                    <template #empty><span class="text-secondary">暂无设备位置</span></template>
+                    <template #empty><span class="text-secondary">暂无位置（可在设备分组页维护）</span></template>
                   </el-select>
                 </el-form-item>
                 <el-form-item label="关联通道(快照背景)" label-position="top" class="cond-form-item">
@@ -433,19 +433,36 @@
                   </p>
                 </el-form-item>
                 <el-form-item label="设备分组" label-position="top" class="cond-form-item">
-                  <el-select v-model="form.conditions.region.config.group" placeholder="选择分组" style="width: 100%"><el-option v-for="g in groupOptions" :key="g" :label="g" :value="g" /></el-select>
+                  <!-- [vp9 2026-09-01] 远程分组列表 (替代旧硬编码); 选中后展示覆盖设备/通道数;
+                       引擎按分组 resolved 快照展开匹配 (任一通道命中即触发) -->
+                  <el-select v-model="form.conditions.region.config.group" placeholder="选择分组 (按分组圈定触发范围)" clearable filterable style="width: 100%" @focus="loadDeviceGroups">
+                    <el-option v-for="g in deviceGroupOptions" :key="g.value" :label="g.label" :value="g.value" />
+                    <template #empty><span class="text-secondary">暂无分组（可在设备分组页创建）</span></template>
+                  </el-select>
+                  <div v-if="selectedGroupInfo" class="cond-hint" style="margin-top:4px">
+                    ✅ 分组「{{ selectedGroupInfo.name }}」覆盖 {{ selectedGroupInfo.device_count ?? selectedGroupInfo.device_ids.length }} 台设备 / {{ selectedGroupInfo.channel_count ?? selectedGroupInfo.resolved_channel_ids.length }} 路通道；事件来自其中任一通道即按本规则空间判定触发。
+                  </div>
+                </el-form-item>
+                <el-form-item label="绑定通道（多选，显式圈定）" label-position="top" class="cond-form-item">
+                  <!-- [vp9 2026-09-01] spatial_cond.bound_channel_ids: 与分组/ROI/绊线共同决定触发范围;
+                       引擎侧任一命中即通过 (与 source_cond 取并集, 避免规则静默) -->
+                  <el-select v-model="boundChannelDraft" multiple filterable clearable collapse-tags collapse-tags-tooltip placeholder="按设备逐个勾选通道 (不选 = 不按通道收窄)" style="width: 100%" @change="onBoundChannelsChange">
+                    <el-option v-for="ch in channelOptionsDynamic" :key="ch.value" :label="ch.label" :value="ch.value" />
+                  </el-select>
+                  <p class="cond-hint" style="margin-top:4px">对标 NVIDIA sensor-scene 显式绑定：勾选后仅这些通道的事件进入本规则的 ROI/绊线判定；留空则由事件源与分组决定。</p>
                 </el-form-item>
               </template>
 
               <!-- 位置条件 -->
               <template v-if="cond.type === 'location'">
                 <el-form-item label="监控位置" label-position="top" class="cond-form-item">
-                  <el-select v-model="form.conditions.location.config.point" placeholder="选择位置" clearable style="width: 100%">
-                                      <template v-if="locationOptionsDynamic.length > 0">
-                                        <el-option v-for="l in locationOptionsDynamic" :key="l.value" :label="l.label" :value="l.value" />
+                  <el-select v-model="form.conditions.location.config.point" placeholder="选择位置" clearable filterable style="width: 100%">
+                                      <template v-if="locationOptionsMerged.length > 0">
+                                        <el-option v-for="l in locationOptionsMerged" :key="l.value" :label="l.label" :value="l.value" />
                                       </template>
-                                      <template #empty><span class="text-secondary">暂无设备位置</span></template>
+                                      <template #empty><span class="text-secondary">暂无位置（可在设备分组页维护）</span></template>
                                     </el-select>
+                  <p class="cond-hint" style="margin-top:4px">位置在「设备分组」页维护 (层级: 园区/楼栋/楼层)；选择旧规则中的设备位置仍兼容。</p>
                 </el-form-item>
               </template>
 
@@ -1246,6 +1263,8 @@ import AiEnhancePanel from '@/components/linkage/AiEnhancePanel.vue'
 import RulePreviewPanel from '@/components/linkage/RulePreviewPanel.vue'
 import SimpleRuleDrawer from '@/components/linkage/SimpleRuleDrawer.vue'
 import type { SimpleCommitPatch } from '@/components/linkage/SimpleRuleDrawer.vue'
+import { deviceGroupApi } from '@/api/deviceGroups'
+import type { DeviceGroup, DeviceLocation } from '@/api/deviceGroups'
 import type { RoiData } from '@/composables/useRoiCanvas'
 
 // ── 常量 ──
@@ -1270,6 +1289,55 @@ const monthdayOptions = Array.from({ length: 31 }, (_, i) => ({ label: `${i + 1}
 // 动态选项 (从后端加载)
 const { eventTypeOptions, eventTypeGrouped, severityColor, channelOptions: channelOptionsDynamic, locationOptions: locationOptionsDynamic, loading: optionsLoading, fetchOptions } = useLinkageOptions()
 
+// [vp9 2026-09-01] 设备分组/位置远程实体 (独立管理页维护, 替代旧硬编码下拉)
+const deviceGroups = ref<DeviceGroup[]>([])
+const remoteLocations = ref<DeviceLocation[]>([])
+async function loadDeviceGroups() {
+  try {
+    const [gRes, lRes] = await Promise.all([
+      deviceGroupApi.listGroups(),
+      deviceGroupApi.listLocations(),
+    ])
+    const gData = (gRes as any)?.data?.data ?? (gRes as any)?.data
+    deviceGroups.value = gData?.items || []
+    const lData = (lRes as any)?.data?.data ?? (lRes as any)?.data
+    remoteLocations.value = lData?.items || []
+  } catch { /* 分组服务不可用时静默降级到设备位置 fallback */ }
+}
+// 分组下拉: value=id (LinkageEngine 按 resolved 快照展开), label=名称+覆盖数 (华为"分组视图"语义)
+const deviceGroupOptions = computed(() => deviceGroups.value.map(g => ({
+  value: g.id,
+  label: `${g.name} (${g.device_count ?? g.device_ids.length} 设备 / ${g.channel_count ?? g.resolved_channel_ids.length} 通道)`,
+})))
+// 选中分组的覆盖范围展示 (规则内确认范围)
+const selectedGroupInfo = computed(() => deviceGroups.value.find(g => g.id === form.conditions.region.config.group) || null)
+// 位置下拉: 位置表实体优先 (正确语义: 先选位置), 设备提取位置 fallback (向后兼容老规则)
+const locationOptionsMerged = computed(() => {
+  const remote = remoteLocations.value.map(l => ({ label: l.name, value: l.id }))
+  const remoteVals = new Set(remote.map(r => r.value))
+  const legacy = locationOptionsDynamic.value.filter(l => !remoteVals.has(l.value))
+  return [...remote, ...legacy]
+})
+// 选位置 → 该位置下设备/通道只读预览 (需求: 选位置自动加载该位置下清单)
+const selectedLocationChannels = computed(() => {
+  const locId = form.conditions.location.config.point || form.conditions.region.config.location
+  if (!locId || !remoteLocations.value.some(l => l.id === locId)) return null   // 非位置表实体 → 不展示
+  return { devices: deviceGroups.value.length, label: remoteLocations.value.find(l => l.id === locId)?.name || '' }
+})
+
+// [vp9 2026-09-01] 绑定通道多选代理 (spatial_cond.bound_channel_ids; 国标字符串形态)
+const boundChannelDraft = computed<string[]>({
+  get: () => form.conditions.region.config.boundChannelIds || [],
+  set: v => { form.conditions.region.config.boundChannelIds = v },
+})
+/// 选完通道联动预览: 无快照背景时取第一个绑定通道加载 ROI 背景
+function onBoundChannelsChange(ids: string[]) {
+  if (ids.length > 0 && !form.conditions.region.config.channelId) {
+    form.conditions.region.config.channelId = ids[0]
+    loadChannelSnapshot(ids[0])
+  }
+}
+
 // 静态回退选项 — [P1-8 2026-08-20] value 对齐 SSOT meta_table canonical key
 //   (原中文串 value 不在后端 LinkageEngine 识别范围, 回退时选中即产生永久沉默规则)
 const fallbackEventTypes = [
@@ -1284,7 +1352,6 @@ const fallbackEventTypes = [
 ]
 const fallbackChannelOptions: string[] = [] // 已移除虚假静态通道，避免规则无法触发
 const roiOptions = ['全部区域', '周界线A', '绊线B', '区域C']
-const groupOptions = ['全部分组', '东区摄像头', '室内摄像头', '室外摄像头']
 
 // ROI 编辑器背景快照
 // [FIX 2026-08-28 SNAPSHOT-JSON-CONTRACT] 后端 /snapshot 返回 JSON {data:{url:"/snapshots/..."}},
@@ -1623,7 +1690,7 @@ const formRules = reactive<FormRules>({
 function defaultConditions() {
   return {
     time: { enabled: false, config: { startTime: '08:00', endTime: '20:00', weekdays: [1, 2, 3, 4, 5], monthdays: [] as number[] } },
-    region: { enabled: false, config: { location: '', roi: '', group: '', roiPolygon: [] as RoiData[], channelId: '', tripwireId: '', direction: '' } },
+    region: { enabled: false, config: { location: '', roi: '', group: '', roiPolygon: [] as RoiData[], channelId: '', tripwireId: '', direction: '', boundChannelIds: [] as string[] } },
     location: { enabled: false, config: { point: '' } },
     eventType: { enabled: true, config: { types: [] as string[], minSeverity: 3, minConfidence: 50 } },
     eventSource: { enabled: false, config: { channels: [] as string[] } },
@@ -2136,11 +2203,12 @@ function resetEditorState(rule: LinkageRule | null) {
     }
     // spatial_cond → region + location
     const sc = rule.spatial_cond || {} as any
-    const hasSpatial = !!(sc.region_id || sc.location_id || sc.device_group_id || sc.roi_polygon?.length || sc.tripwire_id || sc.direction)
+    const hasSpatial = !!(sc.region_id || sc.location_id || sc.device_group_id || sc.roi_polygon?.length || sc.tripwire_id || sc.direction || (sc as any).bound_channel_ids?.length)
     form.conditions.region = {
       enabled: hasSpatial,
       // [FIX 2026-08-27 P0-PERIMETER v3] tripwire + direction 从后端读出
-      config: { location: sc.location_id || '', roi: sc.region_id || '', group: sc.device_group_id || '', roiPolygon: [] as RoiData[], channelId: '', tripwireId: sc.tripwire_id || '', direction: sc.direction || '' },
+      // [vp9 2026-09-01] bound_channel_ids 显式绑定通道回填 (字符串形态直存)
+      config: { location: sc.location_id || '', roi: sc.region_id || '', group: sc.device_group_id || '', roiPolygon: [] as RoiData[], channelId: '', tripwireId: sc.tripwire_id || '', direction: sc.direction || '', boundChannelIds: ((sc as any).bound_channel_ids || []).map(String) },
     }
     form.conditions.location = {
       enabled: !!sc.location_id,
@@ -2391,6 +2459,8 @@ async function handleSave(): Promise<boolean> {
       region_id: cleanLocation(rc.config.roi || ''),
       location_id: cleanLocation(lc.enabled ? (lc.config.point || rc.config.location) : (rc.config.location || '')),
       device_group_id: cleanGroup(rc.config.group || ''),
+      // [vp9 2026-09-01] 显式绑定通道 (多选, 字符串形态与引擎侧双形态匹配兼容)
+      bound_channel_ids: (rc.config.boundChannelIds || []).map(String),
       // 绊线类型的 2 点数据不进 roi_polygon (后端仅做 pointInPolygon, 线段永远不含点)
       roi_polygon: rc.config.roiPolygon.filter(r => r.roi_type !== 'tripwire').flatMap((r: RoiData) => r.polygon) || [] as number[],
       // [FIX 2026-08-27 P0-PERIMETER v3] tripwire 越界联动
@@ -2398,7 +2468,7 @@ async function handleSave(): Promise<boolean> {
       //   否则仅匹配的 tripwire + direction 才触发动作
       tripwire_id: effectiveTripwireId || '',
       direction: rc.config.direction || '',
-    } : { region_id: '', location_id: '', device_group_id: '', roi_polygon: [] as number[], tripwire_id: '', direction: '' }
+    } : { region_id: '', location_id: '', device_group_id: '', roi_polygon: [] as number[], tripwire_id: '', direction: '', bound_channel_ids: [] as string[] }
 
     const etc = form.conditions.eventType
     const esc = form.conditions.eventSource
@@ -3003,7 +3073,7 @@ onMounted(() => {
   // [校园二期 2026-08-30] 场景包 goRules 跳转预填 tag 过滤 (?tag=scene_pack)
   const qTag = useRoute().query.tag
   if (qTag) tagFilter.value = [String(qTag)]
-  fetchRules(); fetchOptions()
+  fetchRules(); fetchOptions(); loadDeviceGroups()
   if (mainTab.value === 'plans') fetchPlans()
   if (mainTab.value === 'cep') fetchCEPPatterns()
 })

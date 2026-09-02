@@ -152,6 +152,13 @@ export const asyncRoutes: RouteRecordRaw[] = [
         meta: { title: '设备通道', icon: 'Grid', hidden: true, roles: ['admin', 'user'] }
       },
       {
+        // [vp9 2026-09-01] 设备分组独立管理 (对标华为"分组即管理单位")
+        path: 'device-groups',
+        name: 'DeviceGroups',
+        component: () => import('@/views/DeviceGroupManager.vue'),
+        meta: { title: '设备分组', icon: 'Files', roles: ['admin', 'user'] }
+      },
+      {
         path: 'live',
         name: 'Live',
         component: LiveView,
