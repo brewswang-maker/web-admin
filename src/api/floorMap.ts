@@ -13,7 +13,8 @@
  *   DELETE /api/v1/maps/:id/cameras/:chId
  *   GET    /api/v1/maps/by-channel/:chId 弹窗反查 (主图在前 {map,binding} 对)
  *
- * 底图静态服务: GET /floormaps/{id}.{ext} (HttpServer 前缀拦截, 非 /api/v1)。
+ * 底图静态服务: GET /api/v1/maps/:id/image (计划 1.4; nginx /api/ 反代 → HttpServer 静态层直发,
+  *   image_path 仅作「已上传底图」资产标识, 不再用于拼 URL)。
  * 上传走 JSON + base64 (后端无真 multipart — face upload L25779 同款模式)。
  */
 
@@ -82,10 +83,10 @@ export const floorMapApi = {
     return (res.data as any)?.data ?? res.data
   },
 
-  /** 底图静态 URL (HttpServer /floormaps/ 前缀拦截; 加时间戳防缓存) */
+  /** 底图静态 URL (GET /api/v1/maps/:id/image, nginx /api/ 反代直达后端静态层; 加时间戳防缓存) */
   getImageUrl(map: Pick<FloorMapDef, 'id' | 'image_path' | 'image_type' | 'updated_at'>): string {
     if (!map.image_path) return ''
-    return `${map.image_path}?v=${map.updated_at || 0}`
+    return `/api/v1/maps/${map.id}/image?v=${map.updated_at || 0}`
   },
 
   /** 图内摄像头绑定列表 */

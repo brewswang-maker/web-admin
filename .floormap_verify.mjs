@@ -29,7 +29,7 @@ const api = (method, path, body) => new Promise((resolve, reject) => {
 const jbody = (r) => { try { return JSON.parse(r.body) } catch { return {} } };
 const raw = (path) => new Promise((resolve, reject) => {
   http.get({ host: '127.0.0.1', port: PORT, path }, (res) => {
-    let buf = ''; res.on('data', d => buf += d); res.on('end', () => resolve({ status: res.statusCode, body: buf }));
+    let buf = ''; res.on('data', d => buf += d); res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body: buf }));
   }).on('error', reject);
 });
 const login = await api('POST', '/api/v1/auth/login', { username: 'admin', password: 'admin123' });
@@ -72,10 +72,13 @@ const m1img = (await allMaps()).find(m => m.id === MAP1);
 check('M1b SVG 上传 → 宽高回写 (viewBox 800x600)', m1img?.width_px === 800 && m1img?.height_px === 600 && String(m1img?.image_type) === 'svg',
   `w=${m1img?.width_px} h=${m1img?.height_px} type=${m1img?.image_type}`);
 
-check('M1c 列表可见 + image_path', !!(m1img && String(m1img.image_path || '').includes(`/floormaps/${MAP1}.svg`)), `image_path=${m1img?.image_path}`);
+check('M1c 列表可见 + image_path 资产标识', !!(m1img && String(m1img.image_path || '').includes(`${MAP1}.svg`)), `image_path=${m1img?.image_path}`);
 
-const imgHttp = await raw(`/floormaps/${MAP1}.svg`);
-check('M1d 底图静态服务 (/floormaps/:id.svg)', imgHttp.status === 200 && imgHttp.body.includes('<svg'), `status=${imgHttp.status} len=${imgHttp.body.length}`);
+const imgHttp = await raw(`/api/v1/maps/${MAP1}/image`);
+const imgCt = String(imgHttp.headers?.['content-type'] || '');
+check('M1d 底图 REST 文件服务 (GET /api/v1/maps/:id/image, nginx /api/ 反代)',
+  imgHttp.status === 200 && imgHttp.body.includes('<svg') && imgCt.includes('image/svg+xml'),
+  `status=${imgHttp.status} ct=${imgCt} len=${imgHttp.body.length}`);
 
 const c5 = jbody(await api('PUT', `/api/v1/maps/${MAP1}`, { name: MAP1_NAME, building: '验证楼-改' }));
 const m1e = (await allMaps()).find(m => m.id === MAP1);
