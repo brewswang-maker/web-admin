@@ -156,6 +156,7 @@ const zhCN = {
     pipelineEditor: '流水线编辑',
     pipelineHealth: '流水线健康',
     linkage: '联动规则',
+    floorMap: '平面图', // [FLOOR-MAP 2026-09-03]
     situationScreen: '态势大屏',
     statistics: '数据分析',
     notFound: '页面未找到',

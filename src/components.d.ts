@@ -104,6 +104,7 @@ declare module 'vue' {
     ErrorBoundary: typeof import('./components/ErrorBoundary.vue')['default']
     EventTestDrawer: typeof import('./components/EventTestDrawer.vue')['default']
     FloatingPreview: typeof import('./components/video/FloatingPreview.vue')['default']
+    FloorMapCanvas: typeof import('./components/map/FloorMapCanvas.vue')['default']
     FolderOpened: typeof import('@element-plus/icons-vue')['FolderOpened']
     FullScreen: typeof import('@element-plus/icons-vue')['FullScreen']
     GasEventSection: typeof import('./components/gas-station/GasEventSection.vue')['default']

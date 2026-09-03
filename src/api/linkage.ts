@@ -142,6 +142,9 @@ export interface SourceCondition {
   algorithm_ids: string[]
   /** [P4-D] 属性条件集合 (AND 语义); LEAF:SOURCE 与 rule 级 source_cond 共用 */
   attribute_conditions?: AttributeCondition[]
+  /** [FLOOR-MAP 2026-09-03] 适用平面图 id 列表 (纯可视化绑定, 不参与引擎触发匹配;
+   *   后端 source_cond 白名单透传四处已同步 — 序列化 2 处 + 解析 2 处) */
+  map_ids?: number[]
 }
 
 /** 合并条件 */

@@ -38,6 +38,8 @@ const RecordingView = () => import('@/views/RecordingView.vue')
 const PipelineListView = () => import('@/views/PipelineListView.vue')
 const PipelineEditorView = () => import('@/views/PipelineEditorView.vue')
 const LinkageRuleView = () => import('@/views/LinkageRuleView.vue')
+// [FLOOR-MAP 2026-09-03] 2D 室内定位平面图管理页 (三层联动·管理层)
+const FloorMapView = () => import('@/views/FloorMapView.vue')
 const FederationDashboard = () => import('@/views/FederationDashboard.vue')
 const FLConfigView = () => import('@/views/FLConfigView.vue')
 const PermissionManagementView = () => import('@/views/rbac/PermissionManagementView.vue')
@@ -256,6 +258,13 @@ export const asyncRoutes: RouteRecordRaw[] = [
         name: 'LinkageRule',
         component: LinkageRuleView,
         meta: { title: '联动规则', icon: 'Connection', roles: ['admin', 'user'] }
+      },
+      {
+        // [FLOOR-MAP 2026-09-03] 平面图管理 (admin 专属, 照 algo-config 对齐)
+        path: 'maps',
+        name: 'FloorMap',
+        component: FloorMapView,
+        meta: { title: '平面图', icon: 'MapLocation', roles: ['admin'] }
       },
       {
         path: 'settings',

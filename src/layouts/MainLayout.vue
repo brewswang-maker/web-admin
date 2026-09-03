@@ -591,6 +591,9 @@ const primaryMenus = computed<PrimaryMenu[]>(() => {
       // [ADD 2026-08-28] 算法配置入口: 路由 /algo-config 早已存在但未挂菜单,
       //   仅 admin 可见 (与路由 meta.roles: ['admin'] 对齐)
       { path: '/algo-config', label: t('menu.algoConfig'), icon: SetUp },
+      // [FLOOR-MAP 2026-09-03] 平面图入口: /maps 三层联动·管理层 (admin 专属,
+      //   与路由 meta.roles: ['admin'] 对齐; 挂 ai 组照 algo-config 写法)
+      { path: '/maps', label: t('menu.floorMap'), icon: MapLocation },
       { path: '/models', label: t('menu.models'), icon: Cpu },
       { path: '/ai-chat', label: t('menu.aiChat'), icon: ChatDotRound },
       { path: '/statistics', label: t('menu.statistics'), icon: TrendCharts, iconFont: 'icon1-jinritongji' },

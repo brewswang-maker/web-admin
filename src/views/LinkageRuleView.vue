@@ -195,6 +195,23 @@
             </div>
           </template>
         </el-table-column>
+        <!-- [FLOOR-MAP 2026-09-03] 适用地图列: source_cond.map_ids → 地图名 el-tag;
+             空显示 "-"; 纯可视化绑定不参与触发匹配 -->
+        <el-table-column label="适用地图" min-width="140">
+          <template #default="{ row }">
+            <div class="condition-tags">
+              <el-tag
+                v-for="mid in (row.source_cond?.map_ids || [])"
+                :key="mid"
+                size="small"
+                type="success"
+                effect="plain"
+                class="cond-tag"
+              >{{ mapNameById(mid) }}</el-tag>
+              <span v-if="!(row.source_cond?.map_ids || []).length" class="text-secondary">-</span>
+            </div>
+          </template>
+        </el-table-column>
         <el-table-column label="联动动作" min-width="180">
           <template #default="{ row }">
             <span v-if="(row.actions || []).length" class="action-count">{{ row.actions.filter((a: any) => a.enabled).length }} 项动作</span>
@@ -553,6 +570,15 @@
                     <span class="text-secondary" style="padding: 8px 0; display: inline-block;">暂无通道数据，请先添加通道或检查后端连接</span>
                   </template>
                 </el-checkbox-group>
+                <!-- [FLOOR-MAP 2026-09-03] 适用平面图多选: 纯可视化绑定 (告警弹窗
+                     地图 Tab 消费), 不参与触发匹配; 保存走 source_cond.map_ids 透传 -->
+                <el-form-item label="适用平面图" label-position="top" class="cond-form-item" style="margin-top: 8px">
+                  <el-select v-model="form.mapIds" multiple collapse-tags collapse-tags-tooltip filterable
+                    placeholder="不选=不限 (可在平面图页维护)" style="width: 100%">
+                    <el-option v-for="m in floorMaps" :key="m.id" :label="m.name" :value="m.id" />
+                    <template #empty><span class="text-secondary">暂无平面图（可在 AI 智能 → 平面图页创建）</span></template>
+                  </el-select>
+                </el-form-item>
               </template>
 
               <!-- 自动合并 -->
@@ -1251,6 +1277,8 @@ import { regionApi } from '@/api/region'  // [FIX 2026-08-28] 画板绊线自动
 import type { LinkageRule, LinkageAction, LinkageLog, ActionLogEntry, TimeTemplate, LinkagePlan, CEPPattern, ConditionNode, RuleConflict, RuleTriggerStat } from '@/api/linkage'
 import { useLinkageOptions } from '@/composables/useLinkageOptions'
 import { syncAlgosForRule } from '@/composables/useAlgoRuleSync'
+// [FLOOR-MAP 2026-09-03] 适用平面图多选: 地图列表缓存 (与平面图页共用单例)
+import { useFloorMap } from '@/composables/useFloorMap'
 import { validateTemplateImport } from '@/api/templateSchema'
 import RoiPolygonEditor from '@/components/RoiPolygonEditor.vue'
 import TimeTemplateEditor from '@/components/TimeTemplateEditor.vue'
@@ -1706,6 +1734,12 @@ function defaultConditions() {
   }
 }
 
+// [FLOOR-MAP 2026-09-03] 适用平面图: 地图缓存 + id→名称 (列表列/抽屉 options 共用)
+const { maps: floorMaps, loadMaps: loadFloorMaps } = useFloorMap()
+function mapNameById(id: number): string {
+  return floorMaps.value.find((m) => m.id === id)?.name || `#${id}`
+}
+
 const form = reactive({
   name: '',
   description: '',
@@ -1726,6 +1760,9 @@ const form = reactive({
   // [POPUP-AUTOCLOSE 2026-09-03] 弹窗自动关闭秒: 0=永不自动关闭 (默认, 对齐海康 iVMS / 大华 DSS),
   //   >0=打开 N 秒后自动关闭。仅作用于 WS 命中本规则的弹窗, 详情入口弹窗不受此控制
   popupAutoCloseS: 0,
+  // [FLOOR-MAP 2026-09-03] 适用平面图多选 (source_cond.map_ids 透传;
+  //   纯可视化绑定, 引擎匹配零改动)
+  mapIds: [] as number[],
   conditions: defaultConditions(),
 })
 const advancedCollapse = ref<string[]>([])
@@ -2271,6 +2308,8 @@ function resetEditorState(rule: LinkageRule | null) {
     }
     // source_cond → eventType + eventSource
     const src = rule.source_cond || {} as any
+    // [FLOOR-MAP 2026-09-03] 适用平面图回填 (map_ids 可选字段, 老规则无此字段默认空)
+    form.mapIds = ((src as any).map_ids || []).map(Number)
     form.conditions.eventType = {
       enabled: true,
       config: {
@@ -2600,6 +2639,9 @@ async function handleSave(): Promise<boolean> {
       min_severity: etc.config.minSeverity,
       min_confidence: etc.config.minConfidence / 100,
       algorithm_ids: etc.config.types,
+      // [FLOOR-MAP 2026-09-03] 适用平面图透传 (纯可视化, 引擎匹配零改动;
+      //   后端 PUT contains 守卫 — toggleRule 只传 enabled 不丢绑定)
+      map_ids: (form.mapIds || []).map(Number),
     }
 
     const mc = form.conditions.autoMerge
@@ -3215,6 +3257,8 @@ watch([simpleDrawerOpen, drawerVisible], ([a, b]) => {
 })
 
 onMounted(() => {
+  // [FLOOR-MAP 2026-09-03] 适用地图列/抽屉 options 预热 (30s TTL 缓存单例)
+  loadFloorMaps().catch(() => {})
   // [校园二期 2026-08-30] 场景包 goRules 跳转预填 tag 过滤 (?tag=scene_pack)
   const route = useRoute()
   const qTag = route.query.tag

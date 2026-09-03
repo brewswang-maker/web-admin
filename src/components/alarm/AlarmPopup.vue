@@ -162,7 +162,38 @@
               <!-- 联动地图位置 -->
               <div v-show="activePrimaryTab === 'map'" class="alarm-popup__pane">
                 <div class="alarm-popup__map">
-                  <div class="alarm-popup__map-placeholder">
+                  <!-- [FLOOR-MAP 2026-09-03] 真实平面图渲染: plan 模式且通道已绑定 →
+                       FloorMapCanvas 只读 (底图+全部摄像头+告警高亮涟漪+bbox);
+                       多图楼层切换 (华为 IVS 对标), 主图在前为默认 -->
+                  <div v-if="mapMode === 'plan' && mapPairs.length" class="alarm-popup__map-live">
+                    <div v-if="mapPairs.length > 1" class="alarm-popup__map-floors">
+                      <button
+                        v-for="(p, i) in mapPairs"
+                        :key="p.map.id"
+                        class="alarm-popup__map-floor"
+                        :class="{ 'is-active': i === activeMapIdx }"
+                        @click="activeMapIdx = i"
+                      >{{ p.map.floor || p.map.name }}<span v-if="p.binding.is_primary" class="alarm-popup__map-floor-primary">主</span></button>
+                    </div>
+                    <div class="alarm-popup__map-livecanvas">
+                      <FloorMapCanvas
+                        :map="activeMapPair.map"
+                        :bindings="activeMapBindings"
+                        :alarm-channel-id="alarmChannelIdStr"
+                        :alarm-metadata="alarmMetadataObj"
+                      />
+                    </div>
+                    <!-- 右下角真实换算 (比例尺 scale_m_per_px) -->
+                    <div class="alarm-popup__map-livecoords">
+                      <span>{{ activeMapPair.map.building || '' }}{{ activeMapPair.map.floor ? ' ' + activeMapPair.map.floor : '' }}</span>
+                      <span class="alarm-popup__map-divider">|</span>
+                      <span>1px = {{ activeMapPair.map.scale_m_per_px }}m</span>
+                      <span class="alarm-popup__map-divider">|</span>
+                      <span>FOV 半径: {{ activeMapPair.binding.fov_radius_m }}m</span>
+                    </div>
+                  </div>
+                  <!-- GPS 占位兑底: 未绑定通道 或 3d 模式 (保留原有渲染不动 — 零破坏) -->
+                  <div v-show="!(mapMode === 'plan' && mapPairs.length)" class="alarm-popup__map-placeholder">
                     <div class="alarm-popup__map-coords">
                       <span>设备 GPS: {{ mapCoords.lat }}°, {{ mapCoords.lng }}°</span>
                       <span class="alarm-popup__map-divider">|</span>
@@ -179,22 +210,22 @@
                         </svg>
                       </div>
                     </div>
-                    <!-- 右下角: 平面图 / 3D 视图切换缩略图 -->
-                    <div class="alarm-popup__map-switcher">
-                      <div
-                        class="alarm-popup__map-thumb"
-                        :class="{ 'alarm-popup__map-thumb--active': mapMode === 'plan' }"
-                        @click="mapMode = 'plan'"
-                      >
-                        <svg viewBox="0 0 32 32" width="24" height="24"><rect x="4" y="6" width="24" height="20" fill="none" stroke="currentColor" stroke-width="2" /><path d="M4 14h24M14 14v12" stroke="currentColor" stroke-width="2" /></svg>
-                      </div>
-                      <div
-                        class="alarm-popup__map-thumb"
-                        :class="{ 'alarm-popup__map-thumb--active': mapMode === '3d' }"
-                        @click="mapMode = '3d'"
-                      >
-                        <svg viewBox="0 0 32 32" width="24" height="24"><path d="M16 4 28 10v12L16 28 4 22V10z" fill="none" stroke="currentColor" stroke-width="2" /><path d="M4 10 16 16l12-6M16 16v12" stroke="currentColor" stroke-width="2" /></svg>
-                      </div>
+                  </div>
+                  <!-- 右下角: 平面图 / 3D 视图切换缩略图 (提到容器级: 绑定/占位两态共用) -->
+                  <div class="alarm-popup__map-switcher">
+                    <div
+                      class="alarm-popup__map-thumb"
+                      :class="{ 'alarm-popup__map-thumb--active': mapMode === 'plan' }"
+                      @click="mapMode = 'plan'"
+                    >
+                      <svg viewBox="0 0 32 32" width="24" height="24"><rect x="4" y="6" width="24" height="20" fill="none" stroke="currentColor" stroke-width="2" /><path d="M4 14h24M14 14v12" stroke="currentColor" stroke-width="2" /></svg>
+                    </div>
+                    <div
+                      class="alarm-popup__map-thumb"
+                      :class="{ 'alarm-popup__map-thumb--active': mapMode === '3d' }"
+                      @click="mapMode = '3d'"
+                    >
+                      <svg viewBox="0 0 32 32" width="24" height="24"><path d="M16 4 28 10v12L16 28 4 22V10z" fill="none" stroke="currentColor" stroke-width="2" /><path d="M4 10 16 16l12-6M16 16v12" stroke="currentColor" stroke-width="2" /></svg>
                     </div>
                   </div>
                 </div>
@@ -392,6 +423,10 @@ import { checkStreamAlive, stopStream } from '@/api/stream'
 import { useObjectLabel, type ObjectLabelMeta } from '@/composables/useObjectLabel'
 import { useChannelStore } from '@/stores/channel'
 import { useRouter } from 'vue-router'
+// [FLOOR-MAP 2026-09-03] 地图 Tab 真实渲染: 只读画布 + 通道反查 (复用共享缓存)
+import FloorMapCanvas from '@/components/map/FloorMapCanvas.vue'
+import { useFloorMap } from '@/composables/useFloorMap'
+import type { MapChannelPair } from '@/types/floorMap'
 
 const { getCategoryName, getTargetName, getAlarmTypeName } = useObjectLabel()
 
@@ -446,6 +481,36 @@ function nextImage() { if (imageIndex.value < totalImageCount.value - 1) imageIn
 
 // ── 联动地图位置（GPS + 扇形 FOV + 平面/3D 切换） ──
 const mapMode = ref<'plan' | '3d'>('3d')
+// [FLOOR-MAP 2026-09-03] 真实平面图: channelId 反查绑定地图 (主图在前);
+//   空结果负缓存 10s — 未绑定通道弹窗不重复打反查; 无绑定 → GPS 占位兑底不动
+const { mapsByChannel: mapsByChannelQ, loadMaps: loadFloorMapsQ, bindingsOfMap } = useFloorMap()
+const mapPairs = ref<MapChannelPair[]>([])
+const activeMapIdx = ref(0)
+const activeMapPair = computed<MapChannelPair>(() => mapPairs.value[activeMapIdx.value] || mapPairs.value[0])
+const alarmChannelIdStr = computed(() => String(currentAlarm.value?.channelId || ''))
+const alarmMetadataObj = computed<Record<string, unknown>>(() =>
+  (currentAlarm.value?.metadata || {}) as Record<string, unknown>
+)
+/** 当前图全部摄像头绑定 (弹窗展示同图所有点位; 缓存 miss 时退化为仅当前告警通道) */
+const activeMapBindings = computed(() => {
+  const p = activeMapPair.value
+  if (!p) return []
+  const all = bindingsOfMap(p.map.id)
+  return all.length ? all : [p.binding]
+})
+watch(currentAlarm, async (a) => {
+  activeMapIdx.value = 0
+  mapPairs.value = []
+  const ch = String(a?.channelId || '')
+  if (!ch) return
+  try {
+    const pairs = await mapsByChannelQ(ch)
+    // 弹窗已切到下一条告警 → 丢弃过期结果
+    if (String(currentAlarm.value?.channelId || '') !== ch) return
+    mapPairs.value = pairs
+    if (pairs.length) loadFloorMapsQ().catch(() => {})  // 预热全量缓存 (同图全部点位)
+  } catch { /* 反查失败 → GPS 占位兑底 */ }
+}, { immediate: true })
 const mapCoords = computed(() => {
   const m = (currentAlarm.value?.metadata || {}) as Record<string, unknown>
   const lat = (m.gps_lat as number) || (m.latitude as number) || 39.9087
@@ -1186,6 +1251,50 @@ void jumpToPlayback; void openImageTab
 .alarm-popup__map-cam-icon {
   position: absolute; left: 50%; transform: translateX(-50%);
   filter: drop-shadow(0 0 6px rgba(50, 148, 237, 0.55));
+}
+/* ── [FLOOR-MAP 2026-09-03] 真实平面图渲染 (plan + 已绑定) ── */
+.alarm-popup__map-live {
+  position: absolute; inset: 0;
+  display: flex; flex-direction: column;
+}
+.alarm-popup__map-floors {
+  display: flex; gap: 4px;
+  padding: 8px 8px 0;
+  flex-shrink: 0;
+}
+.alarm-popup__map-floor {
+  padding: 3px 12px;
+  background: rgba(5, 14, 48, 0.78);
+  border: 1px solid #3A5A8C;
+  border-radius: 3px;
+  color: #B7CDE6; font-size: 12px;
+  cursor: pointer;
+  display: inline-flex; align-items: center; gap: 4px;
+}
+.alarm-popup__map-floor.is-active {
+  border-color: #00E5FF;
+  color: #00E5FF;
+}
+.alarm-popup__map-floor-primary {
+  padding: 0 4px;
+  background: rgba(0, 229, 255, 0.18);
+  border-radius: 2px;
+  font-size: 10px;
+}
+.alarm-popup__map-livecanvas {
+  flex: 1;
+  min-height: 0;
+  margin: 8px;
+  border-radius: 4px;
+  overflow: hidden;
+}
+.alarm-popup__map-livecoords {
+  display: flex; align-items: center; gap: 8px;
+  padding: 0 12px 34px;   /* 避开右下角视图切换器 */
+  justify-content: flex-end;
+  color: #B7CDE6; font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
 }
 .alarm-popup__map-switcher {
   position: absolute; right: 12px; bottom: 12px;
