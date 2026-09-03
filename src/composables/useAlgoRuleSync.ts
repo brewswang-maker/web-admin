@@ -11,8 +11,10 @@
  * 一致性约束:
  *   - 联动记忆 localStorage 持久化, 刷新/重启后仍在;
  *   - 联动失败不阻塞主流程 (调用方 try/catch, 此处仅 console.warn);
- *   - 通配规则 (channel_ids 为空) 不参与反向联动, 避免误伤其他通道;
- *   - 反向仅作用于规则明确绑定的通道 (通道维度隔离);
+ *   - 反向仅作用于规则明确绑定的通道 (通道维度隔离; [REF-COUNT] 通配规则纳入
+ *     计数 — 作用于所有部署了依赖算法的通道, 逐通道检查本地消费者);
+ *   - [REF-COUNT 2026-09-03] 消费者引用计数: 关规则仅停「无其他启用消费者」的
+ *     算法行 (共享场景保留生产者), 镜像 AutoDeploy 部署哲学「无消费者不生产」;
  *   - 算法页手动重开算法时清反向记忆 (forgetAlgoInRuleMemory), 防旧记忆残留
  *     导致后续「规则再关」不联动 (验收 V5)。
  *
@@ -160,11 +162,15 @@ export async function syncRulesForAlgo(chId: string, algoId: string, enable: boo
 }
 
 /**
- * 反向: 规则启停 → 绑定通道上的依赖算法行同步。
- * enable=false: 依赖集 = algorithm_ids (空则 event_types) 尾段匹配串内算法, 仅关
- * 「当前处于启用态」的算法行 (已是禁用态的不记 — 那是别的联动/用户手动的记忆, 保持隔离);
- * 通配规则 (channel_ids 为空) 直接返回 0。
- * enable=true: 仅恢复反向记忆中因本规则关闭的算法行, 恢复后删记忆键。
+ * 反向: 规则启停 → 依赖算法行同步 (消费者引用计数模型)。
+ * [REF-COUNT 2026-09-03] 生产者的去留 = 是否还有 ≥1 条启用中的规则消费它:
+ *  enable=false: 作用范围 = 规则明确绑定的通道; 通配规则 (channel_ids 空) 纳入计数,
+ *    作用于调度列表中所有部署了依赖算法的通道 (逐通道检查本地消费者)。
+ *    每个通道×算法仅当「无其他启用消费者」时才关 (共享场景保留 — 关规则 A 时
+ *    规则 B 仍启用且依赖同一算法 → 不断 B 的推理来源); 仅关「当前启用态」的
+ *    算法行 (已是禁用态不记 — 别的联动/用户手动的记忆, 保持隔离)。
+ *  enable=true: 仅恢复反向记忆中因本规则关闭的算法行 (本规则自任消费者, 合法),
+ *    恢复后删记忆键。
  * 返回同步算法行数; 调用方 catch — 同步失败不阻塞规则启停主流程。
  */
 export async function syncAlgosForRule(ruleId: string, sourceCond: any, enable: boolean): Promise<number> {
@@ -187,23 +193,46 @@ export async function syncAlgosForRule(ruleId: string, sourceCond: any, enable: 
     saveAlgoDisabledByRule(m)
     return ok
   }
-  const chs: number[] = src.channel_ids ?? []
-  if (chs.length === 0) return 0 // 通配规则不反向误伤
   const aids: string[] = src.algorithm_ids ?? []
   const deps = aids.length > 0 ? aids : ((src.event_types ?? []) as string[])
   if (deps.length === 0) return 0
   const sched = await fetchSchedMap()
-  const hashToId = new Map<number, string>()
-  for (const [cid] of sched) hashToId.set(safeChannelHash(cid), cid)
+  // 作用范围: 绑定规则 → 哈希映射回的绑定通道; 通配规则 → 所有部署了依赖算法的通道
+  const chs: number[] = src.channel_ids ?? []
+  let targetCids: string[] = []
+  if (chs.length === 0) {
+    for (const [cid, sc] of sched) {
+      if (effectiveActiveOf(sc).some((a) => deps.some((d) => algoIdMatches(d, a)))) targetCids.push(cid)
+    }
+  } else {
+    const hashToId = new Map<number, string>()
+    for (const [cid] of sched) hashToId.set(safeChannelHash(cid), cid)
+    targetCids = chs.map((h) => hashToId.get(Number(h))).filter((c): c is string => !!c)
+  }
+  if (targetCids.length === 0) return 0
+  // 消费者计数查询: 除本规则外, 是否还有启用规则 (绑定该通道或通配) 依赖该算法。
+  // 依赖口径与作用范围一致: algorithm_ids (空则 event_types) 尾段双向匹配。
+  const res = await linkageApi.getAllRules()
+  const items: any[] = res.data?.data?.items ?? (res.data as any)?.items ?? []
+  const hasOtherConsumer = (cid: string, algoId: string): boolean => {
+    const chHash = safeChannelHash(cid)
+    return items.some((r: any) => {
+      if (!r.enabled || r.id === ruleId) return false
+      const s: any = r.source_cond ?? {}
+      const rchs: number[] = s.channel_ids ?? []
+      if (rchs.length > 0 && !rchs.includes(chHash)) return false
+      const raids: string[] = s.algorithm_ids ?? []
+      const rdeps = raids.length > 0 ? raids : ((s.event_types ?? []) as string[])
+      return rdeps.some((d) => algoIdMatches(d, algoId))
+    })
+  }
   const m = loadAlgoDisabledByRule()
   const recorded: string[] = []
-  for (const h of chs) {
-    const cid = hashToId.get(Number(h))
-    if (!cid) continue
+  for (const cid of targetCids) {
     const sc = sched.get(cid)!
-    const active = effectiveActiveOf(sc)
-    for (const a of active) {
+    for (const a of effectiveActiveOf(sc)) {
       if (!deps.some((d) => algoIdMatches(d, a))) continue
+      if (hasOtherConsumer(cid, a)) continue // 共享: 其他启用消费者仍在, 保留生产者
       try {
         if (await setAlgoOnChannel(cid, a, false, Number(sc.interval_ms) || 1000)) recorded.push(`${cid}|${a}`)
       } catch (e) { console.warn('[algoRuleSync] 联动关闭算法失败', cid, a, e) }
