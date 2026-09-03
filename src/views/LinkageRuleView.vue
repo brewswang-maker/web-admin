@@ -1241,7 +1241,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, reactive, onMounted, onUnmounted, watch } from 'vue'
+import { ref, computed, reactive, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { FormInstance, FormRules } from 'element-plus'
@@ -1754,7 +1754,12 @@ const condStepVisible = (_type: string) => sectionVisible(1)
 // ── 防区选择 (DeviceChannelPicker): channelIds String 化单向同步进 eventSource.channels,
 //    保存链 source_cond 组装 (数字/字符串双形态分拣) 零改动复用。 [r25] 从步 4 提升到步 1 末尾 ──
 const deviceChannelValue = ref<{ deviceIds: string[]; channelIds: number[] }>({ deviceIds: [], channelIds: [] })
+// [COND-PERSIST 2026-09-03] 回填抑制: resetEditorState 程序化恢复 picker 时, watch 的
+//   「picker 非空 ⇒ eventSource.enabled」推断会覆盖禁用态保留的勾选 (enabled=false +
+//   勾选快照); 回填期间抑制, flush 后解除 (用户后续操作恢复正常同步)
+let suppressPickerSync = false
 watch(deviceChannelValue, (v) => {
+  if (suppressPickerSync) return
   form.conditions.eventSource.enabled = v.deviceIds.length > 0 || v.channelIds.length > 0
   form.conditions.eventSource.config.channels = v.channelIds.map(String)
 }, { deep: true })
@@ -1793,6 +1798,37 @@ function applyTemplateToForm(t: any) {
   if (t.merge_cond?.enabled) {
     form.conditions.autoMerge.enabled = true
     form.conditions.autoMerge.config.windowMs = t.merge_cond.window_ms || 10000
+  }
+  // [COND-PERSIST 2026-09-03] 模板 spatial_cond 防御性落地 (当前模板库 0/276 携带,
+  //   后续模板若带位置/绊线/分组字段则原值预填; 有任一字段即启用区域条件)
+  const tsc = (t as any).spatial_cond
+  if (tsc && typeof tsc === 'object') {
+    let hasAny = false
+    if (tsc.location_id) { form.conditions.location.enabled = true; form.conditions.location.config.point = tsc.location_id; hasAny = true }
+    if (tsc.region_id) { form.conditions.region.config.roi = tsc.region_id; hasAny = true }
+    if (tsc.device_group_id) { form.conditions.region.config.group = tsc.device_group_id; hasAny = true }
+    if (tsc.tripwire_id) { form.conditions.region.config.tripwireId = String(tsc.tripwire_id); hasAny = true }
+    if (tsc.direction) { form.conditions.region.config.direction = tsc.direction; hasAny = true }
+    if (Array.isArray(tsc.bound_channel_ids) && tsc.bound_channel_ids.length) {
+      form.conditions.region.config.boundChannelIds = tsc.bound_channel_ids.map(String); hasAny = true
+    }
+    if (tsc.roi_shapes_json) {
+      try {
+        const shapes = JSON.parse(tsc.roi_shapes_json) as Array<{ shape: string; name?: string; active?: boolean; direction?: string; points: number[] }>
+        if (Array.isArray(shapes) && shapes.length) {
+          form.conditions.region.config.roiPolygon = shapes.filter(s => s && Array.isArray(s.points)).map((s, i) => ({
+            roi_id: `roi_tpl_${Date.now()}_${i}`,
+            roi_name: s.name || `区域 ${i + 1}`,
+            roi_type: s.shape as any,
+            polygon: s.points.map((v, k) => Math.round(k % 2 === 0 ? v * 1920 : v * 1080)),
+            is_active: s.active !== false,
+            direction: (s.direction || undefined) as any,
+          }))
+          hasAny = true
+        }
+      } catch { /* 模板形状快照损坏 → 忽略, 不阻断落地 */ }
+    }
+    if (hasAny) form.conditions.region.enabled = true
   }
   // 模板动作 → 勾选 + 参数
   let applied = 0
@@ -2151,7 +2187,12 @@ function resetEditorState(rule: LinkageRule | null) {
   form.popupAutoCloseS = Number(rule?.popup_auto_close_s ?? 0) || 0
   // [r25] 向导步归零 + 防区选择/AI 增强字段回填 (fusion_* 删除, 后端 nlohmann 宽容不读)
   wizardStep.value = 0
+  // [COND-PERSIST 2026-09-03] picker 先清空 (编辑态稍后由 ui_state 恢复):
+  //   suppress 防止 deep watch 的「picker 非空 ⇒ enabled」推断在 flush 时
+  //   覆盖刚回填的 eventSource (尤其禁用态保留勾选场景); nextTick 后恢复同步
+  suppressPickerSync = true
   deviceChannelValue.value = { deviceIds: [], channelIds: [] }
+  nextTick(() => { suppressPickerSync = false })
   vlmSuppressThreshold.value = typeof (rule as any)?.vlm_suppress_threshold === 'number' ? (rule as any).vlm_suppress_threshold : 0.85
   // [r25] 折叠默认收起条件中删除 enableVlmVerify/responseDeadlineS (这两项不再为用户主动配置,
   //   VLM 已默认启用 (新建 enableVlmVerify=true)、response_deadline_s 后端仅存不用, 不该在高级折叠里提示)
@@ -2168,10 +2209,19 @@ function resetEditorState(rule: LinkageRule | null) {
   // 恢复条件: 后端格式 → 内部 6 条件表单
   const defaults = defaultConditions()
   if (rule) {
-    // time_cond → time
+    // [COND-PERSIST 2026-09-03] 前端 UI 态快照 (handleSave 全量写入, 此处优先消费;
+    //   老规则无此字段 → 各处回退内容推断, 行为与旧版一致)
+    const sc0 = (rule as any).spatial_cond || {}
+    const ui = (() => {
+      try {
+        const raw = sc0.ui_state_json
+        return raw ? JSON.parse(raw) : null
+      } catch { return null }
+    })() as any
+    // time_cond → time ([COND-PERSIST] enabled 优先 ui 态, 老规则回退内容推断)
     const tc = rule.time_cond || {} as any
     form.conditions.time = {
-      enabled: !!(tc.time_start || tc.time_end || tc.weekdays?.length || tc.monthdays?.length),
+      enabled: ui?.time?.enabled ?? !!(tc.time_start || tc.time_end || tc.weekdays?.length || tc.monthdays?.length),
       config: { startTime: tc.time_start || '08:00', endTime: tc.time_end || '20:00', weekdays: tc.weekdays || [1, 2, 3, 4, 5], monthdays: tc.monthdays || [] },
     }
     // spatial_cond → region + location
@@ -2196,15 +2246,18 @@ function resetEditorState(rule: LinkageRule | null) {
     })()
     const hasSpatial = !!(sc.region_id || sc.location_id || sc.device_group_id || sc.roi_polygon?.length || sc.tripwire_id || sc.direction || (sc as any).bound_channel_ids?.length || (sc as any).roi_shapes_json)
     form.conditions.region = {
-      enabled: hasSpatial,
+      // [COND-PERSIST 2026-09-03] enabled/location/channelId 优先 ui 态 (channelId 后端无
+      //   白名单字段, 唯一持久化途径; location 解决与 location.point 混写折叠)
+      enabled: ui?.region?.enabled ?? hasSpatial,
       // [FIX 2026-08-27 P0-PERIMETER v3] tripwire + direction 从后端读出
       // [vp9 2026-09-01] bound_channel_ids 显式绑定通道回填 (字符串形态直存)
       // [FIX 2026-09-02] roiPolygon 从 roi_shapes_json 完整回显 (多形状/方向/角点)
-      config: { location: sc.location_id || '', roi: sc.region_id || '', group: sc.device_group_id || '', roiPolygon: roiShapesFromJson, channelId: '', tripwireId: sc.tripwire_id || '', direction: sc.direction || '', boundChannelIds: ((sc as any).bound_channel_ids || []).map(String) },
+      config: { location: ui?.region?.location ?? (sc.location_id || ''), roi: sc.region_id || '', group: sc.device_group_id || '', roiPolygon: roiShapesFromJson, channelId: ui?.region?.channelId || '', tripwireId: sc.tripwire_id || '', direction: sc.direction || '', boundChannelIds: ((sc as any).bound_channel_ids || []).map(String) },
     }
     form.conditions.location = {
-      enabled: !!sc.location_id,
-      config: { point: sc.location_id || '' },
+      // [COND-PERSIST] enabled/point 优先 ui 态 (解决与 region.location 混写折叠)
+      enabled: ui?.location?.enabled ?? !!sc.location_id,
+      config: { point: ui?.location?.point ?? (sc.location_id || '') },
     }
     // source_cond → eventType + eventSource
     const src = rule.source_cond || {} as any
@@ -2217,17 +2270,35 @@ function resetEditorState(rule: LinkageRule | null) {
         minConfidence: Math.round(src.min_confidence ?? 50),
       },
     }
+    // [COND-PERSIST 2026-09-03] eventSource: enabled 优先 ui 态; 禁用态勾选从 ui 快照
+    //   恢复 (source_cond 已被保存链清空, 引擎语义不变 — 不限通道, 仅 UI 保留)
+    const esEnabled = ui?.eventSource?.enabled ?? !!(src.channel_ids?.length || src.device_ids?.length)
+    // [FIX 2026-08-28 双形态归一] device_ids 可能同时存主形态(不带 _ch0)与
+    //   子码流形态(带 _ch0) — 同一通道只回填一个勾选值(带后缀优先,
+    //   与通道选项 value 形态一致), 保存时再展开双形态。
+    const esChannels = esEnabled
+      ? dedupeChannelForms([...(src.channel_ids || []).map(String), ...(src.device_ids || [])])
+      : (ui?.eventSource?.channels || [])
     form.conditions.eventSource = {
-      enabled: !!(src.channel_ids?.length || src.device_ids?.length),
-      // [FIX 2026-08-28 双形态归一] device_ids 可能同时存主形态(不带 _ch0)与
-      // 子码流形态(带 _ch0) — 同一通道只回填一个勾选值(带后缀优先,
-      // 与通道选项 value 形态一致), 保存时再展开双形态。
-      config: { channels: dedupeChannelForms([...(src.channel_ids || []).map(String), ...(src.device_ids || [])]) },
+      enabled: esEnabled,
+      config: { channels: esChannels },
     }
-    // merge_cond → autoMerge
+    // [COND-PERSIST] DeviceChannelPicker 完整值恢复 (ui 优先; 老规则从数值通道反推)。
+    //   suppress 仍生效中 (nextTick 才解除), 不触发「picker 非空 ⇒ enabled」覆盖
+    if (ui?.picker) {
+      deviceChannelValue.value = { deviceIds: [...(ui.picker.deviceIds || [])], channelIds: [...(ui.picker.channelIds || [])] }
+    } else {
+      const nums: number[] = []
+      for (const c of esChannels) {
+        const n = parseInt(c, 10)
+        if (!isNaN(n) && String(n) === c.trim()) nums.push(n)
+      }
+      deviceChannelValue.value = { deviceIds: [], channelIds: nums }
+    }
+    // merge_cond → autoMerge ([COND-PERSIST] enabled 优先 ui 态)
     const mc = rule.merge_cond || {} as any
     form.conditions.autoMerge = {
-      enabled: !!mc.enabled,
+      enabled: ui?.autoMerge?.enabled ?? !!mc.enabled,
       config: { windowMs: mc.window_ms || 10000, maxCount: mc.max_merge_count || 10, dimension: mc.merge_by || 'channel' },
     }
   } else {
@@ -2528,6 +2599,22 @@ async function handleSave(): Promise<boolean> {
       max_merge_count: mc.config.maxCount,
       merge_by: mc.config.dimension,
     } : { enabled: false, window_ms: 10000, max_merge_count: 10, merge_by: 'channel' }
+
+    // [COND-PERSIST 2026-09-03] 前端 UI 态快照 (spatial_cond.ui_state_json 透传往返):
+    //   cond enabled 精确状态 + ROI 快照通道 channelId + 事件源禁用时保留的勾选 +
+    //   设备通道选择器完整值 — 后端白名单解析丢弃未知键, 此字段保证「保存 → 编辑」
+    //   全字段原值回显 (resetEditorState 优先消费, 缺失回退内容推断, 兼容老规则)。
+    //   与 spatial_cond 其他字段的 enabled 门控无关 (无条件全量写, 引擎不解析)
+    const ui_state_json = JSON.stringify({
+      v: 1,
+      region: { enabled: rc.enabled, location: rc.config.location, channelId: rc.config.channelId },
+      location: { enabled: lc.enabled, point: lc.config.point },
+      eventSource: { enabled: esc.enabled, channels: [...esc.config.channels] },
+      time: { enabled: tc.enabled },
+      autoMerge: { enabled: mc.enabled },
+      picker: { deviceIds: [...deviceChannelValue.value.deviceIds], channelIds: [...deviceChannelValue.value.channelIds] },
+    })
+    ;(spatial_cond as any).ui_state_json = ui_state_json // [COND-PERSIST] 运行时附加 (两分支字面量不侵入)
 
     // 构建 actions: actionState + actionParams → 后端 LinkageAction[]
     const actions: LinkageAction[] = enabledActions.map(([typeStr]) => {
