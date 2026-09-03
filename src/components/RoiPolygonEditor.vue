@@ -13,7 +13,11 @@
         <el-button size="small" text @click="clearCurrentPoints" :disabled="disabled || points.length === 0">
           清除当前
         </el-button>
-        <el-button size="small" text @click="confirmAndAdd" :disabled="disabled || points.length < minPoints" type="primary">
+        <!-- [ROI-FEEDBACK 2026-09-03] disabled 放宽: 简单形状 (绊线/矩形/点/计数区) 画满即自动入列表
+             (points 草稿清零), 原条件 points<min 会让按钮在完成后回灰 — 用户无法区分「已加入」
+             与「失败」, 外层保存链被误判为不可用。改为: 草稿不足且列表为空才灰; 列表已有形状
+             (含刚自动加入的) 按钮可点, 点击无草稿时给 info 提示 (非 dead-click)。 -->
+        <el-button size="small" text @click="confirmAndAdd" :disabled="disabled || (points.length < minPoints && rois.length === 0)" type="primary">
           确认添加
         </el-button>
       </div>
@@ -451,7 +455,13 @@ function clearAll() {
 }
 
 function confirmAndAdd() {
-  if (points.value.length < minPoints.value) return
+  if (points.value.length < minPoints.value) {
+    // [ROI-FEEDBACK 2026-09-03] 可点击但无草稿 (简单形状已自动入列表): 显式提示而非静默
+    if (rois.value.length > 0) {
+      ElMessage.info('绊线/矩形/关注点/计数区画满后已自动加入列表; 多边形顶点画满后点此确认')
+    }
+    return
+  }
 
   const roiId = `roi_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`
   const newRoi: RoiData = {
@@ -470,6 +480,10 @@ function confirmAndAdd() {
   pushHistory()
   emitRois()
   renderCanvas()
+  // [ROI-FEEDBACK 2026-09-03] 完成态显式反馈: 自动/手动加入列表后 toast + 选中新增项,
+  //   消除「画完了但不知道存没存上」的歧义 (按钮灰 = 失败的错误解读)
+  selectedRoiIndex.value = rois.value.length - 1
+  ElMessage.success(`已添加「${newRoi.roi_name}」 (${rois.value.length} 个区域)`)
 }
 
 function selectRoi(index: number) {
@@ -667,6 +681,12 @@ function onMouseMove(e: MouseEvent) {
 }
 
 function onMouseUp(e: MouseEvent) {
+  // [ROI-FEEDBACK 2026-09-03] mouseleave 触发的 onMouseUp 不做矩形完成判定:
+  //   真人拖拽手抖出界很常见, 原逻辑用画布外坐标完成 (畸形矩形) 或清锚点 (白拖)。
+  //   现改为仅画布内真实 mouseup 才完成; 出界时保留 anchor+dragging, 拖回画布内
+  //   mousemove 橡皮筋自恢复, 在界外松手则状态残留至下次 mousedown 自愈 (矩形分支重置 anchor)。
+  const isLeave = e.type === 'mouseleave'
+
   // [FIX 2026-09-02] 顶点拖动结束 → 入撤销栈 + 上抛
   if (vertexDrag.value) {
     vertexDrag.value = null
@@ -679,6 +699,7 @@ function onMouseUp(e: MouseEvent) {
 
   // [FIX 2026-09-02] 矩形拖拽完成: anchor + 当前点展开 4 顶点
   if (rectAnchor.value && dragging.value && drawing.value) {
+    if (isLeave) return // 出界: 保留拖拽态, 待回界或下次 mousedown 自愈
     const p = getCanvasPoint(e)
     if (p) {
       // 拖拽距离过小视为误触 (归一化坐标系 < 8 单位)
