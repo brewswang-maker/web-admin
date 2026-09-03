@@ -1732,7 +1732,9 @@ const WIZARD_STEPS = ['基本信息', '触发条件', '动作编排']
 // [REVERT 2026-09-02] 恢复 vp8 之前默认形态: 打开抽屉默认分步向导 (wizardMode=true),
 // 同一套功能分步引导展示 (vp8 曾改为全览一页铺开, 用户反馈观感即"高级模式才有的字段");
 // 右上角「分步/全览」切换保留。
-const wizardMode = ref(true)
+// [TPL-VP6 r2 2026-09-03 用户反馈] 默认改全览: 模板落地/高级入口打开即一页铺开
+// (字段已预填, 全览可直接检阅全部能力), 需引导时右上角切「分步」。
+const wizardMode = ref(false)
 // [vp6-SIMPLE 2026-09-02] 简易模式入口: vp6 纯净表单 (单页普通模式, 隐藏向导条/AI 增强/确认预览)
 const simpleEntryMode = ref(false)
 const wizardStep = ref(0)
@@ -2344,7 +2346,7 @@ function onSimpleSwitchAdvanced(p: SimpleCommitPatch | null, mode?: 'simple' | '
     simpleDrawerOpen.value = false // 经桥关闭 (同步清 editVisible, 防渗入新建)
     resetEditorState(row)
     simpleEntryMode.value = mode !== 'full' // 简易卡片=vp6 纯净单页; 高级卡片=全功能全览
-    wizardMode.value = mode === 'full'
+    wizardMode.value = false // [TPL-VP6 r2] 默认全览 (用户反馈), 右上角可切分步
     drawerVisible.value = true
     return
   }
@@ -2357,7 +2359,7 @@ function onSimpleSwitchAdvanced(p: SimpleCommitPatch | null, mode?: 'simple' | '
     if (p.name) form.name = p.name
   }
   simpleEntryMode.value = mode !== 'full' // 简易卡片=vp6 纯净表单 (无向导/AI 增强/确认预览)
-  wizardMode.value = mode === 'full'      // 高级入口默认分步向导 (可右上角切全览); 简易 vp6 单页普通模式
+  wizardMode.value = false // [TPL-VP6 r2 2026-09-03 用户反馈] 默认全览: 模板落地/高级入口一页铺开, 右上角可切「分步」
   drawerVisible.value = true
 }
 
