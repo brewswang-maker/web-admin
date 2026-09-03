@@ -38,7 +38,7 @@
                   <div class="ch-item-name">{{ c.name }}</div>
                   <div class="ch-item-no">通道号: {{ c.channelId }}</div>
                 </div>
-                <el-tag v-if="c.inferenceEnabled" class="ch-item-on" size="small" effect="dark" type="success">ON</el-tag>
+                <el-tag v-if="isChInferenceOn(c.channelId)" class="ch-item-on" size="small" effect="dark" type="success">ON</el-tag>
               </div>
             </template>
           </div>
@@ -299,7 +299,7 @@
       </template>
     </el-dialog>
 
-    <!-- ③ 任务3: 事件规则编辑抽屉 (不走平台跳转, 在当前页右侧滑出完整表单) -->
+    <!-- ③ 任务3: 事件规则抽屉 (展示本算法已绑定规则; 行内「编辑」跳平台 /linkage?editRuleId=) -->
     <el-drawer v-model="ruleDrawerVisible" direction="rtl" size="540px"
       :with-header="true" :show-close="true" :close-on-click-modal="false"
       class="rule-drawer" :title="`事件规则编辑 — ${ruleDrawerAlgoName}`">
@@ -323,44 +323,16 @@
               <el-icon><Delete /></el-icon>
             </el-button>
           </div>
-          <el-form :model="r" label-width="84px" size="small" class="rule-drawer-form">
-            <el-form-item label="事件类型">
-              <el-select v-model="r.source_cond.event_types" multiple collapse-tags
-                placeholder="选择事件类型 (来自 /event-types/canonical SSOT)" style="width:100%">
-                <el-option v-for="t in canonicalTypes" :key="t.key" :label="t.name_zh" :value="t.key" />
-              </el-select>
-            </el-form-item>
-            <el-row :gutter="8">
-              <el-col :span="8">
-                <el-form-item label="启用">
-                  <el-switch v-model="r.enabled" />
-                </el-form-item>
-              </el-col>
-              <el-col :span="8">
-                <el-form-item label="优先级">
-                  <el-input-number v-model="r.priority" :min="1" :max="100" :step="5" size="small" style="width:100%" />
-                </el-form-item>
-              </el-col>
-              <el-col :span="8">
-                <el-form-item label="冷却(ms)">
-                  <el-input-number v-model="r.cooldown_ms" :min="1000" :max="60000" :step="1000" size="small" style="width:100%" />
-                </el-form-item>
-              </el-col>
-            </el-row>
-            <el-form-item label="设备过滤">
-              <el-select v-model="r.source_cond.device_ids" multiple filterable allow-create
-                placeholder="不选=全部设备生效" style="width:100%">
-                <el-option v-for="d in ruleDrawerDevices" :key="d.value" :label="d.label" :value="d.value" />
-              </el-select>
-            </el-form-item>
-            <el-form-item label="动作数">
-              <span class="rule-drawer-sub">{{ (r.actions || []).filter((a: any) => a.enabled).length }} 项启用 · 共 {{ (r.actions || []).length }} 项</span>
-            </el-form-item>
-            <div class="rule-drawer-actions">
-              <el-button size="small" @click="resetRuleForm(r)">重置</el-button>
-              <el-button size="small" type="primary" :loading="ruleSaving" @click="saveSingleRule(r)">保存该规则</el-button>
-            </div>
-          </el-form>
+          <!-- [SIMPLE-EDIT 2026-09-03] 内联字段子集表单 → 摘要行 + 简易抽屉编辑
+               (与各场景 RulesView / 平台行内编辑统一入口, 不再单独维护字段子集) -->
+          <div class="rule-drawer-item-summary">
+            <span>事件 {{ (r.source_cond?.event_types ?? []).length }} 类</span>
+            <span class="rule-drawer-sep">·</span>
+            <span>动作 {{ (r.actions || []).filter((a: any) => a.enabled).length }}/{{ (r.actions || []).length }} 项</span>
+            <span class="rule-drawer-sep">·</span>
+            <span>{{ ruleTimeSummary(r) }}</span>
+            <el-button size="small" type="primary" link @click="openRuleEdit(r)">编辑</el-button>
+          </div>
         </div>
       </div>
       <template #footer>
@@ -369,9 +341,14 @@
       </template>
     </el-drawer>
 
+    <!-- [SCENE-EDIT-UNIFY 2026-09-03] 编辑跳转平台 /linkage?editRuleId= 自动打开该规则
+         的 choice 编辑入口 (与平台行内编辑同链路同表单) — 算法页不再就地维护简化编辑器 -->
+
     <!-- ⑥ 绑定事件规则抽屉: 从全量规则中筛「未绑定本通道」条目 → 勾选 → 补齐
          source_cond (channel_ids/device_ids 空则填本通道) → PUT /linkage/rules/{id} -->
-    <el-drawer v-model="bindRuleVisible" direction="rtl" size="720px"
+    <!-- [FIX 2026-09-02] destroy-on-close: 关闭即销毁表格, 清除 reserve-selection 对已绑定规则的
+         勾选记忆 — 否则重开抽屉后 selection 残留已绑定项, 再次绑定会连带重复提交且计数不符 -->
+    <el-drawer v-model="bindRuleVisible" direction="rtl" size="720px" destroy-on-close
       :with-header="true" :show-close="true" :close-on-click-modal="false"
       class="bind-rule-drawer" :title="`绑定事件规则 — ${selected?.name ?? ''}`">
       <div class="bind-rule-body" v-loading="bindRuleLoading">
@@ -445,12 +422,14 @@ import type { ScheduledChannel } from '@/api/inference'
 import algorithmsApi from '@/api/algorithms'
 import type { AlgorithmInfo } from '@/api/algorithms'
 import eventTypesApi, { type CanonicalEventType } from '@/api/eventTypes'
+import { useEventTypeZh } from '@/composables/useEventTypeZh'
 import { linkageApi, type LinkageRule } from '@/api/linkage'
 import { regionApi } from '@/api/region'
 import type { TripwireDef, PassagewayDef, SuppressMode, CountingZoneDef } from '@/types/region'
 import RoiPolygonEditor from '@/components/RoiPolygonEditor.vue'
 import TripwireEditor from '@/components/TripwireEditor.vue'
 import PassagewayEditor from '@/components/PassagewayEditor.vue'
+
 
 /** 通道项（合并通道信息 + 推理调度状态） */
 interface ChannelItem {
@@ -474,24 +453,74 @@ const channels = ref<ChannelItem[]>([])
 const algorithmOptions = ref<{ label: string; value: string }[]>([])
 // [FIX 2026-09-01] 全量 id→显示名映射 (不过滤 enabled): 算法列表显示名解析源
 const algoNameMap = ref<Map<string, string>>(new Map())
+// [FIX 2026-09-02c] 事件类型 → 算法 id 反推映射 (数据源 /algorithms 的 alarm_type 字段):
+//   规则只声明 event_types (algorithm_ids 空, 周界模板规则多属此类) 时, 告警仍须由
+//   某个算法产生 (引擎 matchSourceCondition 只消费算法告警), 绑定时按此映射联动启用
+const algoEventMap = ref<Map<string, string>>(new Map())
+// [FIX 2026-09-02f] 事件类型中文名 SSOT 单例 (useEventTypeZh, /event-types/canonical
+//   113 类): 目录外事件型插件 id (如 person_detected) 的算法名兜底数据源。
+//   ensure 预热 + zh 同步读缓存 (ref 响应式, 到达后相关 computed 自动重算)
+const { ensure: ensureEventTypeZh, zh: eventTypeZhSSOT } = useEventTypeZh()
+ensureEventTypeZh()
+// [FIX 2026-09-02d] 事件名 → 算法 alarm_type 的别名兑底 (对齐后端 EventTypeAliases.h SSOT
+//   的关键别名对)。词形前缀近似覆盖不了非前缀关系的命名对 — 实锤: tailgate vs
+//   tailgating 第 8 字符 e/i 分叉, startsWith 恒 false → 反推失败 → 绑定后算法不启用。
+//   权威依据: 后端 aliases {"tailgate": [..., "tailgating"]} / {"fight": [..., "fighting"]} 等
+const EVENT_ALGO_TYPE_ALIASES: Record<string, string> = {
+  tailgate: 'tailgating',
+  face_tailgate: 'tailgating',
+  fight: 'fighting',
+  violence: 'fighting',
+  fall_detected: 'fall',
+  elderly_fall: 'fall',
+}
+/** 事件类型 → 能产生它的算法 id。匹配链: 精确 alarm_type → 别名表归一后精确 →
+ *  词形近似 (双向前缀, 短串≥4)。前缀命中多个取 alarm_type 最短者。无算法可产生返回 '' */
+function algoIdForEventType(t: string): string {
+  if (!t) return ''
+  const evMap = algoEventMap.value
+  const norm = EVENT_ALGO_TYPE_ALIASES[t] ?? t
+  const hit = evMap.get(norm) ?? evMap.get(t)
+  if (hit) return hit
+  let best = ''
+  let bestLen = Infinity
+  for (const [at, id] of evMap) {
+    const shortLen = Math.min(at.length, norm.length)
+    if (shortLen >= 4 && (at.startsWith(norm) || norm.startsWith(at)) && at.length < bestLen) {
+      best = id
+      bestLen = at.length
+    }
+  }
+  if (best) return best
+  // [FIX 2026-09-02d] 匹配链末环: 目录外事件型插件 — /algorithms 目录只收录模型型
+  //   算法, 事件型插件不入目录但设备插件库实测可用 (FALLBACK_ALGO_NAMES 表即实测
+  //   证据源, 如 object_removal 物品移除 / queue_length 排队长度), 事件类型本身即
+  //   插件 id, 启用自身。实测用户规则库 12 类事件经全链 12/12 可反推
+  return FALLBACK_ALGO_NAMES[t] ? t : ''
+}
 // [FIX 2026-09-01] 目录缺失 id 的显示兜底: 设备 algo_plugin 实测 13 项中 5 项不在
 //   /algorithms 目录 (事件型插件/模型型 id 未入目录) → 中文名对齐 EventTypeAliases SSOT
 const FALLBACK_ALGO_NAMES: Record<string, string> = {
   object_removal: '物品移除',
+  person_detected: '人员检测',
   gathering: '人群聚集',
   queue_length: '排队长度',
   'shield.algo.object.per': '人员检测',
   yolo26s: '通用目标检测 (YOLO26s)',
 }
 
-/** [FIX 2026-09-01] 统一中文名解析函数: 目录全量映射 → SSOT 兑底表 → options (enabled) → 裸 id
- *  任务 1 要求: 所有算法名展示统一走该函数 */
+/** [FIX 2026-09-01] 统一中文名解析函数: 目录全量映射 → SSOT 兑底表 → 事件类型
+ *  SSOT 中文名 → options (enabled) → 裸 id。任务 1 要求: 所有算法名展示统一走该函数 */
 function algoNameOf(id: string | null | undefined): string {
   if (!id) return ''
-  return algoNameMap.value.get(id)
-    || FALLBACK_ALGO_NAMES[id]
-    || algorithmOptions.value.find((a) => a.value === id)?.label
-    || id
+  const hit = algoNameMap.value.get(id) || FALLBACK_ALGO_NAMES[id]
+  if (hit) return hit
+  // [FIX 2026-09-02f] 目录外事件型插件裸 id (如设备串里的 person_detected —
+  // 不在 /algorithms 目录且旧 FALLBACK 表未登记): 取 SSOT 事件类型中文名。
+  // zh() 无命中返回原 key, 判异后再收, 不截断后续 options 兑底
+  const zhName = eventTypeZhSSOT(id)
+  if (zhName && zhName !== id) return zhName
+  return algorithmOptions.value.find((a) => a.value === id)?.label || id
 }
 /** 孤儿算法判断 (中文名解析等同于 id): 为 true 时需 tooltip 提示 */
 function isAlgoFallback(id: string | null | undefined): boolean {
@@ -565,8 +594,16 @@ function saveDisabledMap(m: Record<string, string[]>) {
   try { localStorage.setItem(ALGO_DISABLED_KEY, JSON.stringify(m)) } catch { /* 隐私模式忽略 */ }
 }
 function disabledListOf(chId: string): string[] {
-  const active = String(scheduledMap.value.get(chId)?.algo_plugin || '').split(',').map((s) => s.trim()).filter(Boolean)
+  const active = effectiveActiveIds(chId)
   return (loadDisabledMap()[chId] ?? []).filter((id) => !active.includes(id))
+}
+// [FIX 2026-09-02 关闭最后算法不同步] 后端 /schedule/stop (disableChannel) 只置 enabled=false,
+// algo_plugin 串保留作为重启调度记忆 → 串≠启用集合。通道停用时启用集合视为空,
+// 否则最后一行算法仍显示开启 / 重开时串内残留算法被连带带起
+function effectiveActiveIds(chId: string): string[] {
+  const sc = scheduledMap.value.get(chId)
+  if (!sc || sc.enabled === false) return []
+  return String(sc.algo_plugin || '').split(',').map((s) => s.trim()).filter(Boolean)
 }
 // [FIX 2026-09-01 稳定行序] 显示顺序持久化: 禁用/启用行原地保留不跳位
 // (否则禁用行后接到底部 → 后续行上移, 连续点击时"点上行动下行"错位感)
@@ -594,9 +631,16 @@ function stableAlgoOrder(chId: string, activeIds: string[], disabledIds: string[
 const algoRows = computed(() => {
   if (!selected.value) return []
   const sc = scheduledMap.value.get(selected.value.channelId)
-  const activeIds = String(sc?.algo_plugin || '').split(',').map((s) => s.trim()).filter(Boolean)
-  // 串内=启用行; 禁用记忆中不在串内的=禁用行; 按稳定顺序渲染 (原地启停不跳位)
-  const all = stableAlgoOrder(selected.value.channelId, activeIds, disabledListOf(selected.value.channelId))
+  const activeIds = effectiveActiveIds(selected.value.channelId)
+  // [FIX 2026-09-02] 通道停用时遗留串并入禁用行: 换浏览器/清缓存(无禁用记忆)也能看到
+  // 全部算法行并重新启用, 不至于行消失无从操作
+  const chDisabled = !sc || sc.enabled === false
+  const leftoverIds = chDisabled
+    ? String(sc?.algo_plugin || '').split(',').map((s) => s.trim()).filter(Boolean)
+    : []
+  const disabledIds = Array.from(new Set([...disabledListOf(selected.value.channelId), ...leftoverIds]))
+  // 串内=启用行; 禁用记忆/遗留串=禁用行; 按稳定顺序渲染 (原地启停不跳位)
+  const all = stableAlgoOrder(selected.value.channelId, activeIds, disabledIds)
   return all.map((id) => ({
     algoId: id,
     // [FIX 2026-09-01] 解析链: 统一走 algoNameOf (目录全量映射 → SSOT 兑底表 → options → 裸 id)
@@ -637,6 +681,56 @@ function resetEditForm() {
 
 /** [FIX 2026-09-01 一对一启停] 行内开关: 启用=算法加入调度串 / 禁用=移出串并记入禁用集合
  *  (串空 → 停整通道调度; 禁用行来自 localStorage 记忆, 可独立重新开启) */
+/** [FIX 2026-09-02] 左侧 ON 徽标与算法行开关同源: 直接判调度 enabled,
+ *  避免 loadData 重建 channels 数组与 scheduledMap 更新时序差导致的双源不一致 */
+function isChInferenceOn(chId: string): boolean {
+  const sc = scheduledMap.value.get(chId)
+  return !!sc && sc.enabled !== false
+}
+/** [FIX 2026-09-02 开关一致性] 算法启停 → 关联事件规则 enabled 同步。
+ *  enable=false: 停用「明确绑定本通道 + algorithm_ids 含该算法」的启用规则并记入联动记忆
+ *  (通配规则不动 — 可能被其他通道/算法触发, 避免误伤);
+ *  enable=true: 仅恢复联动记忆中因本通道本算法停用的规则 (用户手动停用的不误拉起)。
+ *  返回同步条数; 调用方 catch — 同步失败不阻塞算法启停主流程 */
+async function syncRulesForAlgo(chId: string, algoId: string, enable: boolean): Promise<number> {
+  const key = `${chId}|${algoId}`
+  if (enable) {
+    const m = loadRuleDisabledByAlgo()
+    const ids = m[key] ?? []
+    if (ids.length === 0) return 0
+    let ok = 0
+    for (const rid of ids) {
+      try { await linkageApi.updateRule(rid, { enabled: true } as Partial<LinkageRule>); ok++ }
+      catch (e) { console.warn('[AlgoConfigView] 联动恢复规则失败', rid, e) }
+    }
+    delete m[key]
+    saveRuleDisabledByAlgo(m)
+    return ok
+  }
+  const res = await linkageApi.getAllRules()
+  const items: any[] = res.data?.data?.items ?? (res.data as any)?.items ?? []
+  const chHash = safeChannelHash(chId)
+  const targets = items.filter((r: any) => {
+    if (!r.enabled) return false
+    const sc: any = r.source_cond ?? {}
+    const chs: number[] = sc.channel_ids ?? []
+    const algos: string[] = sc.algorithm_ids ?? []
+    return chs.length > 0 && chs.includes(chHash) && algos.includes(algoId)
+  })
+  if (targets.length === 0) return 0
+  const m = loadRuleDisabledByAlgo()
+  const disabledIds: string[] = []
+  for (const r of targets) {
+    try { await linkageApi.updateRule(r.id, { enabled: false } as Partial<LinkageRule>); disabledIds.push(r.id) }
+    catch (e) { console.warn('[AlgoConfigView] 联动停用规则失败', r.id, e) }
+  }
+  if (disabledIds.length > 0) {
+    m[key] = Array.from(new Set([...(m[key] ?? []), ...disabledIds]))
+    saveRuleDisabledByAlgo(m)
+  }
+  return disabledIds.length
+}
+
 const togglingId = ref('')
 async function toggleAlgoEnabled(row: { algoId: string; enabled: boolean }) {
   const ch = selected.value
@@ -644,7 +738,8 @@ async function toggleAlgoEnabled(row: { algoId: string; enabled: boolean }) {
   if (togglingId.value) return  // 上一次切换进行中, 防连点错乱
   const sc = scheduledMap.value.get(ch.channelId)
   const deviceId = ch.deviceId || ch.parentDeviceId || ch.channelId
-  const activeIds = String(sc?.algo_plugin || '').split(',').map((s) => s.trim()).filter(Boolean)
+  // [FIX 2026-09-02] 通道停用时串是遗留记忆, 启用集合从空重建 (避免遗留算法连带带起)
+  const activeIds = effectiveActiveIds(ch.channelId)
   const dmap = loadDisabledMap()
   const dlist = new Set(dmap[ch.channelId] ?? [])
   const next = !row.enabled
@@ -667,7 +762,12 @@ async function toggleAlgoEnabled(row: { algoId: string; enabled: boolean }) {
       await startSchedule(ch.channelId, deviceId, sc?.interval_ms ?? editForm.interval, ids.join(','),
         { confidence: editForm.confidence, nmsThreshold: editForm.nms, inferenceMode: editForm.mode })
     }
-    ElMessage.success(next ? `「${algoNameOf(row.algoId)}」已启用` : `「${algoNameOf(row.algoId)}」已禁用`)
+    // [FIX 2026-09-02 开关一致性] 同步关联事件规则 enabled (失败不阻塞主流程)
+    let syncedRules = 0
+    try { syncedRules = await syncRulesForAlgo(ch.channelId, row.algoId, next) }
+    catch (e) { console.warn('[AlgoConfigView] 关联规则同步失败', e) }
+    const syncTxt = syncedRules > 0 ? `, 已同步${next ? '启用' : '停用'} ${syncedRules} 条关联事件规则` : ''
+    ElMessage.success(`「${algoNameOf(row.algoId)}」已${next ? '启用' : '禁用'}${syncTxt}`)
     await loadData()
     await loadRuleCounts()
   } catch (e: any) {
@@ -675,6 +775,60 @@ async function toggleAlgoEnabled(row: { algoId: string; enabled: boolean }) {
     await loadData()
   } finally {
     togglingId.value = ''
+  }
+}
+
+/** [FIX 2026-09-02e] 删除算法联动解绑: 绑定 = 规则×通道×算法支撑 (绑定即启用算法)。
+ *  删除算法后, 在本通道失去全部算法支撑的绑定规则自动解除绑定 (channel_ids 移除
+ *  本通道哈希 + device_ids 移除本设备, 与绑定写入对称), 规则重新出现在「绑定事件
+ *  规则」可添加列表可再次绑定; 仍有多算法支撑的规则保持绑定 (部分算法仍在跑,
+ *  规则在本通道仍可触发, 解绑反而丢失触发)。依赖算法集与绑定收集口径一致:
+ *  algorithm_ids 归一 / 纯 event_types 反推 (algoIdForEventType) */
+async function unbindRulesLostSupport(
+  ch: { channelId: string; deviceId?: string; parentDeviceId?: string },
+  remainingIds: string[]
+) {
+  try {
+    const res = await linkageApi.getAllRules()
+    const items: LinkageRule[] = res.data?.data?.items ?? (res.data as any)?.items ?? []
+    const chHash = safeChannelHash(ch.channelId)
+    const devId = ch.deviceId || ch.parentDeviceId || ''
+    const remain = new Set(remainingIds)
+    let n = 0
+    for (const r of items) {
+      const src: any = (r as any).source_cond ?? {}
+      const chs: number[] = src.channel_ids ?? []
+      if (!chs.includes(chHash)) continue // 未绑定本通道
+      const deps = new Set<string>()
+      const aids = (src.algorithm_ids ?? []) as string[]
+      if (aids.length > 0) {
+        for (const a of aids) {
+          deps.add(algorithmOptions.value.find((o) => o.value === a || o.value.endsWith('.' + a))?.value ?? a)
+        }
+      } else {
+        for (const t of (src.event_types ?? []) as string[]) {
+          const id = algoIdForEventType(t)
+          if (id) deps.add(id)
+        }
+      }
+      // 仍有任一支撑算法在通道串 → 保持绑定。兼容短名 id (历史规则 algorithm_ids
+      // 存短名如 'intrusion', 目录/串里是全名): 双向 endsWith 匹配兑底, 防误解绑
+      const supported = (d: string) =>
+        remain.has(d) || [...remain].some((x) => x === d || x.endsWith('.' + d) || d.endsWith('.' + x))
+      if ([...deps].some(supported)) continue
+      const src2: any = { ...src }
+      src2.channel_ids = chs.filter((x) => x !== chHash)
+      if (devId) src2.device_ids = ((src.device_ids ?? []) as string[]).filter((d) => d !== devId)
+      try {
+        await linkageApi.updateRule(r.id, { ...r, source_cond: src2 } as Partial<LinkageRule>)
+        n++
+      } catch (e) {
+        console.warn('[AlgoConfigView] 解绑规则失败', r.id, e)
+      }
+    }
+    if (n > 0) ElMessage.info(`已解绑 ${n} 条失去算法支撑的事件规则, 可重新绑定`)
+  } catch (e) {
+    console.warn('[AlgoConfigView] 删除后解绑联动失败', e)
   }
 }
 
@@ -690,7 +844,8 @@ async function removeAlgo(row: { algoId: string; algoName: string }) {
     )
   } catch { return }
   const sc = scheduledMap.value.get(ch.channelId)
-  const ids = String(sc?.algo_plugin || '').split(',').map((s) => s.trim()).filter(Boolean)
+  // [FIX 2026-09-02] 同 toggleAlgoEnabled: 通道停用时串是遗留, 删除行直接从记忆移除
+  const ids = effectiveActiveIds(ch.channelId)
   const next = ids.filter((id) => id !== row.algoId)
   try {
     if (next.length === 0) {
@@ -714,6 +869,9 @@ async function removeAlgo(row: { algoId: string; algoName: string }) {
       saveDisabledMap(dmap)
     }
     await loadData()
+    // [FIX 2026-09-02e] 删除后联动解绑失去支撑的绑定规则 (先于 loadRuleCounts,
+    // 计数与抽屉列表均反映解绑后的最新绑定关系)
+    await unbindRulesLostSupport(ch, next)
     await loadRuleCounts()
   } catch (e: any) {
     ElMessage.error(`删除失败: ${e?.message || e}`)
@@ -859,16 +1017,20 @@ async function removeAlgoRules(row: { algoId: string; algoName: string; ruleCoun
   await loadRuleCounts()
 }
 
-// ─── 任务3: 事件规则编辑抽屉 (不走平台跳转) ─────────────────────────────
+// ─── 任务3: 事件规则抽屉 (列表展示 + 行内编辑跳平台) ─────────────────────
 // drawer 状态: 当前算法 / 规则列表 / 加载中
 const ruleDrawerVisible = ref(false)
 const ruleDrawerLoading = ref(false)
 const ruleDrawerAlgo = ref('')
 const ruleDrawerAlgoName = computed(() => algoNameOf(ruleDrawerAlgo.value) || ruleDrawerAlgo.value)
 const ruleDrawerItems = ref<LinkageRule[]>([])
-const ruleDrawerDevices = ref<{ value: string; label: string }[]>([])
-// 保存原始快照用于重置
-const ruleDrawerSnapshots = ref<Map<string, string>>(new Map())
+// ─── [SCENE-EDIT-UNIFY 2026-09-03] 单条规则编辑: 跳平台 /linkage?editRuleId= 自动打开该
+//     规则的 choice 编辑入口 (简易/高级卡片 → vp6 全功能表单), 与平台行内编辑同链路 —
+//     编辑器单一来源, 算法页不再就地维护简化表单 (UX-ALIGN 时期的 tune 就地编辑已移除) ──
+function openRuleEdit(rule: LinkageRule) {
+  ruleDrawerVisible.value = false
+  router.push({ path: '/linkage', query: { editRuleId: rule.id } })
+}
 
 /** [任务3] 打开规则编辑抽屉: 在当前页右侧滑出完整表单,
  *  不跳转到「联动规则管理」页 */
@@ -896,14 +1058,7 @@ async function reloadRuleDrawer() {
         if (!src.algorithm_ids) src.algorithm_ids = [algoId]
         return r
       })
-    // 保存原始 JSON 用于 reset
-    const map = new Map<string, string>()
-    for (const r of ruleDrawerItems.value) map.set(r.id, JSON.stringify(r))
-    ruleDrawerSnapshots.value = map
-    // 设备列表: 当前选中通道的 deviceId + 父设备 id
-    const dId = selected.value.deviceId || selected.value.parentDeviceId
-    ruleDrawerDevices.value = dId ? [{ value: dId, label: `${dId} (当前)` }] : []
-    // 加载 SSOT 事件类型 (用于 select 选项)
+    // 加载 SSOT 事件类型 (用于 ruleDialog 添加规则搜索)
     if (canonicalTypes.value.length === 0) {
       try {
         const r = await eventTypesApi.list()
@@ -924,51 +1079,16 @@ function isSceneDefaultRule(r: LinkageRule): boolean {
   return false
 }
 
-/** [任务3] 保存单条规则: PUT /linkage/rules/{id} (若无 updateRule 则回退 PATCH/POST) */
-async function saveSingleRule(r: LinkageRule) {
-  ruleSaving.value = true
-  try {
-    const src = (r.source_cond || {}) as any
-    // 关闭时清空 device_ids (任务5 协议: 不限维度 → 空数组)
-    if (!r.enabled) src.device_ids = []
-    if (!src.algorithm_ids || src.algorithm_ids.length === 0) src.algorithm_ids = [ruleDrawerAlgo.value]
-    if (!src.event_types || src.event_types.length === 0) {
-      ElMessage.warning('事件类型不能为空')
-      return
-    }
-    // 优先尝试 updateRule (PUT), 不存在则回退
-    const apiAny = linkageApi as any
-    let resp
-    if (typeof apiAny.updateRule === 'function') {
-      resp = await apiAny.updateRule(r.id, { ...r, source_cond: src })
-    } else if (typeof apiAny.putRule === 'function') {
-      resp = await apiAny.putRule(r.id, { ...r, source_cond: src })
-    } else {
-      // 回退: 删除后重建
-      await linkageApi.deleteRule(r.id)
-      resp = await linkageApi.createRule({ ...r, id: undefined, source_cond: src })
-    }
-    if (resp?.status >= 400 || (resp?.data && resp.data.code && resp.data.code !== 0 && resp.data.code !== 200)) {
-      throw new Error(resp?.data?.message || `HTTP ${resp?.status}`)
-    }
-    ElMessage.success(isSceneDefaultRule(r) ? '场景默认规则已更新 (模板同步)' : '规则已保存')
-    ruleDrawerSnapshots.value.set(r.id, JSON.stringify(r))
-    await loadRuleCounts()
-  } catch (e: any) {
-    console.warn('[AlgoConfigView] 保存规则失败', e)
-    ElMessage.error(`保存失败: ${e?.message ?? e}`)
-  } finally {
-    ruleSaving.value = false
-  }
-}
-
-/** [任务3] 重置规则表单: 从快照恢复 */
-function resetRuleForm(r: LinkageRule) {
-  const snap = ruleDrawerSnapshots.value.get(r.id)
-  if (!snap) return
-  const obj = JSON.parse(snap)
-  Object.assign(r, obj)
-  ElMessage.info('已重置为原始配置')
+/** [SIMPLE-EDIT 2026-09-03] 摘要行时段文案 (全天候 / HH:mm~HH:mm + 星期);
+ *  编辑保存统一走 SimpleRuleDrawer 简易抽屉 (useSimpleRuleEdit), 原内联表单/快照重置已删 */
+const WEEKDAY_ZH = ['一', '二', '三', '四', '五', '六', '日']
+function ruleTimeSummary(r: LinkageRule): string {
+  const tc = (r.time_cond || {}) as any
+  if (!tc.time_start && !tc.time_end) return '全天候'
+  const wd = (tc.weekdays || []) as number[]
+  const days = wd.length === 7 ? '每天'
+    : wd.length ? `周${wd.map((n) => WEEKDAY_ZH[n - 1] || n).join('')}` : ''
+  return `${tc.time_start}~${tc.time_end}${days ? ` (${days})` : ''}`
 }
 
 /** [任务3] 删除单条规则 (二次确认) */
@@ -1006,28 +1126,65 @@ const bindSelection = ref<LinkageRule[]>([])
 const bindSaving = ref(false)
 const router = useRouter()
 
-const currentChId = computed(() => {
-  const n = Number(selected.value?.channelId)
-  return Number.isFinite(n) && Number.isSafeInteger(n) ? n : 0
-})
+const currentChId = computed(() => selected.value?.channelId ?? '')
+// [FIX 2026-09-02 绑定保存无效] 后端 SourceCondition.channel_ids 是 int32 (LinkageEngine.h L145),
+// 事件匹配用 safeChannelHash(channel_id_str) (FNV-1a 32位, LinkageEngine.cpp L98)。
+// 旧实现 Number("..._ch0")=NaN→0 → 绑出去 [0] 死值, 规则永不触发且「已绑定判定」永假 → 保存无反应
+const currentChHash = computed(() => safeChannelHash(currentChId.value))
 const currentDeviceId = computed(() => selected.value?.deviceId || selected.value?.parentDeviceId || '')
 const currentAlgoIds = computed(() => {
   const sc = selected.value ? scheduledMap.value.get(selected.value.channelId) : undefined
   return String(sc?.algo_plugin || '').split(',').map((s) => s.trim()).filter(Boolean)
 })
 
+/** 与后端 LinkageEngine.cpp safeChannelHash 逐位一致 (FNV-1a 32位 & 0x7FFFFFFF) */
+function safeChannelHash(idStr: string): number {
+  if (!idStr) return 0
+  let hash = 2166136261
+  for (let i = 0; i < idStr.length; i++) {
+    hash ^= idStr.charCodeAt(i)
+    hash = Math.imul(hash, 16777619)
+  }
+  return hash & 0x7FFFFFFF
+}
+
+// [FIX 2026-09-02 开关一致性] 算法行启停 ↔ 关联事件规则 enabled 双向跟随:
+// 关算法 → 自动停用「绑定本通道 + algorithm_ids 含该算法」的启用规则并记入联动记忆;
+// 重开算法 → 仅恢复记忆中「因联动而停用」的规则 (用户手动停用的不误拉起)
+const RULE_DISABLED_BY_ALGO_KEY = 'rule_disabled_by_algo'
+function loadRuleDisabledByAlgo(): Record<string, string[]> {
+  try { return JSON.parse(localStorage.getItem(RULE_DISABLED_BY_ALGO_KEY) || '{}') } catch { return {} }
+}
+function saveRuleDisabledByAlgo(m: Record<string, string[]>) {
+  try { localStorage.setItem(RULE_DISABLED_BY_ALGO_KEY, JSON.stringify(m)) } catch { /* 隐私模式忽略 */ }
+}
+/** 通道哈希 → 通道名 (作用范围列显示名, 不暴露裸哈希) */
+const chNameByHash = computed(() => {
+  const m = new Map<number, string>()
+  for (const c of channels.value) m.set(safeChannelHash(c.channelId), c.name)
+  return m
+})
+
 /** 可绑定规则 = 未绑定本通道 (见区块头判定) + 搜索过滤 (规则名/事件类型中英文/算法名) */
 const bindRuleFiltered = computed(() => {
-  const chId = currentChId.value
+  const chHash = currentChHash.value
   const devId = currentDeviceId.value
   const algoIds = currentAlgoIds.value
   const kw = bindRuleFilter.value.trim().toLowerCase()
   return bindRuleAll.value.filter((r) => {
     const src: any = (r as any).source_cond ?? {}
-    const chHit = (src.channel_ids ?? []).length === 0 || (src.channel_ids ?? []).includes(chId)
-    const devHit = (src.device_ids ?? []).length === 0 || (src.device_ids ?? []).includes(devId)
-    const algoHit = ((src.algorithm_ids ?? []) as string[]).some((a) => algoIds.includes(a))
-    if (chHit && devHit && algoHit) return false
+    // [FIX 2026-09-02] 与后端契约及绑定写入语义对齐: channel_ids/device_ids 存哈希/设备串,
+    // 「已绑定本通道」= 非空且含本通道哈希。空=通配规则 (匹配所有通道, 尚未收窄) — 旧判定
+    // 「空=命中」把通配规则误判为已绑定而藏起, 用户永远绑不上
+    const chIds: number[] = src.channel_ids ?? []
+    const devIds: string[] = src.device_ids ?? []
+    const chHit = chIds.length > 0 && chIds.includes(chHash)
+    const devHit = devIds.length > 0 && devIds.includes(devId)
+    // [FIX 2026-09-02b] 「已绑定」= 绑定动作写入的两字段均已落 (chHit + devHit)。
+    // 移除旧判定的 algoHit: 空算法规则 (algos=[] 通配, 周界模板规则多属此类) 绑定后
+    // algoHit 恒 false → 永不消失 → 用户重复绑定仍「在列表」= 感知「加不上」。
+    // 算法匹配性由绑定弹窗 (绑定并启用算法) 保证, 不属于「是否已绑定」的判定范畴
+    if (chHit && (devIds.length === 0 || devHit)) return false
     if (!kw) return true
     const types = ((src.event_types ?? []) as string[])
       .map((k) => `${eventTypeZh(k)} ${k}`).join(' ')
@@ -1059,7 +1216,9 @@ function bindScopeOf(r: LinkageRule): string {
   const src: any = (r as any).source_cond ?? {}
   const chs = (src.channel_ids ?? []) as number[]
   const devs = (src.device_ids ?? []) as string[]
-  const parts = [chs.length === 0 ? '全部通道' : `通道 ${chs.join(',')}`]
+  // [FIX 2026-09-02] 通道哈希反查通道名显示, 不暴露裸哈希/ID
+  const chLabels = chs.map((h) => chNameByHash.value.get(h) ?? `#${h}`)
+  const parts = [chLabels.length === 0 ? '全部通道' : `通道 ${chLabels.join(',')}`]
   parts.push(devs.length === 0 ? '全部设备' : `设备 ${devs.length} 个`)
   return parts.join(' · ')
 }
@@ -1097,27 +1256,54 @@ function onBindSelectionChange(rows: LinkageRule[]) {
 /** 绑定动作: 遍历勾选项补齐 source_cond 后 PUT; 算法不一致的一次性预检跳过 + warning */
 async function confirmBindRules() {
   const ch = selected.value
-  if (!ch || bindSelection.value.length === 0) return
-  bindSaving.value = true
-  const chId = currentChId.value
-  const devId = currentDeviceId.value
-  const algoIds = currentAlgoIds.value
-  // 预检: 所属算法与本通道已配置算法无交集 → 不挂 (挂上也不会触发) → 跳过 + 逐条 warning
-  const inconsistent = bindSelection.value.filter((r) => {
-    const algos = ((r as any).source_cond?.algorithm_ids ?? []) as string[]
-    return algos.length > 0 && !algos.some((a) => algoIds.includes(a))
-  })
-  for (const r of inconsistent) {
-    ElMessage.warning(`规则「${r.name}」所属算法与本通道不一致, 已跳过`)
+  if (!ch) return
+  // [FIX 2026-09-02] 防御: 理论上按钮 disabled 挡住空勾选, 但 selection 时序异常时
+  // 会静默 return → 用户点按钮无任何反馈/无请求 → 给出明确提示
+  if (bindSelection.value.length === 0) {
+    ElMessage.warning('请先在列表中勾选要绑定的事件规则')
+    return
   }
-  const targets = bindSelection.value.filter((r) => !inconsistent.includes(r))
+  const chId = currentChId.value
+  const chHash = currentChHash.value
+  const devId = currentDeviceId.value
+  // ── [产品决策 2026-09-02 绑定=算法必然出现] 用户明确要求: 绑定事件规则后算法列表
+  // 必须出现对应算法, 「是否启用」不是需要询问的问题。交互演进存档:
+  //   v1 静默跳过不一致规则(零请求) → v2 确认弹窗(可拒绝启用, 拒绝则算法不出现)
+  //   → v3 直接绑定并启用。空态文案「绑定事件规则=为通道添加算法」从此无条件成立
+  const activeNow = effectiveActiveIds(ch.channelId)
+  const wanted = new Set<string>()
+  for (const r of bindSelection.value) {
+    const ruleAlgos = ((r as any).source_cond?.algorithm_ids ?? []) as string[]
+    for (const a of ruleAlgos) {
+      const full = algorithmOptions.value.find((o) => o.value === a || o.value.endsWith('.' + a))?.value ?? a
+      if (!activeNow.includes(full)) wanted.add(full)
+    }
+    // [FIX 2026-09-02c] 仅声明 event_types 的规则 (algorithm_ids 空 — 周界模板规则多属
+    // 此类, 如「周界踩点徘徊预警」只有 loitering): 按目录 alarm_type 反推对应算法,
+    // 绑定即启用 → 算法列表必然出现 (反推不到的如实跳过, 如 object_removal 无算法)
+    if (ruleAlgos.length === 0) {
+      for (const t of (((r as any).source_cond?.event_types ?? []) as string[])) {
+        const algoId = algoIdForEventType(t)
+        if (algoId && !activeNow.includes(algoId)) wanted.add(algoId)
+      }
+    }
+  }
+  const toEnable = Array.from(wanted)
+  const enableAlgos = toEnable.length > 0
+  const targets: LinkageRule[] = [...bindSelection.value]
+  bindSaving.value = true
   let ok = 0
   try {
     for (const r of targets) {
-      // 浅拷贝 source_cond; 空=全部维度收窄为本通道 (「绑定到本通道」语义)
+      // 浅拷贝 source_cond; 「绑定到本通道」= channel_ids 追加本通道哈希 (保留其他绑定,
+      // 清除历史脏值 0/负值) + device_ids 追加本设备 → 规则在本通道可触发
       const src: any = { ...((r as any).source_cond ?? {}) }
-      if ((src.channel_ids ?? []).length === 0) src.channel_ids = [chId]
-      if ((src.device_ids ?? []).length === 0) src.device_ids = devId ? [devId] : []
+      const chs: number[] = (src.channel_ids ?? []).filter(
+        (n: number) => Number.isFinite(n) && n > 0 && n !== chHash
+      )
+      src.channel_ids = [chHash, ...chs]
+      const devs: string[] = (src.device_ids ?? []).filter((d: string) => d && d !== devId)
+      if (devId) src.device_ids = [devId, ...devs]
       try {
         await linkageApi.updateRule(r.id, { ...r, source_cond: src } as Partial<LinkageRule>)
         ok++
@@ -1126,6 +1312,19 @@ async function confirmBindRules() {
       }
     }
     if (ok > 0) ElMessage.success(`已绑定 ${ok} 条事件规则到通道「${ch.name}」`)
+    // ── 联动启用算法 (弹窗已确认; 失败不回滚绑定, 提示手动开启)
+    if (ok > 0 && enableAlgos && toEnable.length > 0) {
+      try {
+        const sc = scheduledMap.value.get(ch.channelId)
+        const deviceId2 = ch.deviceId || ch.parentDeviceId || ch.channelId
+        await startSchedule(ch.channelId, deviceId2, sc?.interval_ms ?? editForm.interval,
+          Array.from(new Set([...activeNow, ...toEnable])).join(','))
+        ElMessage.success(`已启用算法: ${toEnable.map((a) => algoNameOf(a)).join('、')}`)
+      } catch (e) {
+        console.warn('[AlgoConfigView] 关联算法启用失败', e)
+        ElMessage.warning('关联算法启用失败, 可在算法列表手动开启')
+      }
+    }
     if (targets.length > 0 && ok < targets.length) {
       ElMessage.error(`${targets.length - ok} 条绑定失败, 详见控制台`)
     }
@@ -1133,6 +1332,9 @@ async function confirmBindRules() {
     if (ok > 0) {
       await reloadBindRules()
       await loadRuleCounts()
+      // [FIX 2026-09-02] 联动启用算法后必须刷新算法面板: scheduledMap/algoRows 数据源在
+      // loadData, 不刷新则后端 algo_plugin 已新增而面板仍显旧串 → 用户看「算法没出现」
+      await loadData()
     }
   } finally {
     bindSaving.value = false
@@ -1551,6 +1753,15 @@ async function loadData() {
           String(a.name_zh || a.name_en || a.name || a.algo_id || a.id || ''),
         ])
       )
+      // [FIX 2026-09-02c] alarm_type → algo_id 映射: 绑定仅声明 event_types 的规则时
+      // 反推需联动启用的算法 (见 algoIdForEventType)
+      const evMap = new Map<string, string>()
+      for (const a of algos) {
+        const at = String(a.alarm_type ?? '').trim()
+        const id = String(a.algo_id ?? a.id ?? '')
+        if (at && id && !evMap.has(at)) evMap.set(at, id)
+      }
+      algoEventMap.value = evMap
       algorithmOptions.value = algos
         .filter((a: any) => a.enabled)
         .map((a: any) => ({
@@ -1742,8 +1953,10 @@ async function saveConfig() {
 .rule-drawer-item { border: 1px solid var(--border-light); border-radius: 8px; padding: 12px 14px; background: var(--bg-card, #fafafa); }
 .rule-drawer-item-head { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
 .rule-drawer-item-name { font-weight: 600; font-size: 13px; flex: 1; min-width: 0; }
-.rule-drawer-form :deep(.el-form-item) { margin-bottom: 10px; }
-.rule-drawer-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
+/* [SIMPLE-EDIT 2026-09-03] 摘要行 (原内联表单/重置按钮已删, 编辑统一走 SimpleRuleDrawer 简易抽屉) */
+.rule-drawer-item-summary { display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  font-size: 12px; color: var(--text-secondary); }
+.rule-drawer-sep { color: var(--border-light); }
 /* [UX 2026-09-01] 中栏 header「+ 绑定事件规则」主入口按钮 */
 .algo-add-btn { padding: 5px 10px; font-size: 12px; }
 /* 绑定事件规则抽屉: 搜索 + 勾选表格 + 分页 + 底部动作 */

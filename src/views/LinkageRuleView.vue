@@ -76,8 +76,9 @@
           <el-button type="info" @click="toggleRuleStats" :loading="ruleStatsLoading" title="查看规则触发统计">
             <el-icon><DataLine /></el-icon>规则统计
           </el-button>
-          <!-- [vp8 双模式] 新建默认简易模式 (模板优先+极简字段); 高级新建/模板库走下拉 -->
-          <el-dropdown split-button type="primary" class="new-rule-split" @click="openSimpleCreate" @command="onNewCommand">
+          <!-- [vp8 双模式 / REVERT 2026-09-02] 新建默认开选择抽屉 (模板/高级两入口,
+               'custom' 高频字段子表单已移除); 高级新建/模板库走下拉 -->
+          <el-dropdown split-button type="primary" class="new-rule-split" @click="openNewRuleDrawer" @command="onNewCommand">
             <span class="new-rule-label"><el-icon><Plus /></el-icon>新建规则</span>
             <template #dropdown>
               <el-dropdown-menu>
@@ -206,7 +207,9 @@
         </el-table-column>
         <el-table-column label="操作" width="320" fixed="right">
           <template #default="{ row }">
-            <el-button size="small" type="primary" link @click="openRowEditor(row)">编辑</el-button>
+            <!-- [SIMPLE-EDIT 2026-09-03] 行内编辑改走简易抽屉 (高频字段一键编辑);
+                 完整 VLM/互斥/抑制/动作编排到「高级模式新建」或模拟调试入口 -->
+            <el-button size="small" type="primary" link @click="openSimpleEdit(row)">编辑</el-button>
             <el-button size="small" type="success" link @click="openRuleTest(row)">🧪 测试</el-button>
             <el-button size="small" type="success" link @click="handleCloneRule(row)">复制</el-button>
             <el-button size="small" type="info" link @click="openVersionHistory(row)">历史</el-button>
@@ -222,8 +225,9 @@
     <el-drawer v-model="drawerVisible" :title="editingRule ? '编辑联动规则' : '新建联动规则'" size="520px" direction="rtl" :close-on-click-modal="false" destroy-on-close>
       <div class="editor-body">
         <el-form :model="form" label-position="top" size="default" :rules="formRules" ref="formRef">
-          <!-- [vp7 向导 2026-09-01] 双形态切换: el-steps 分步向导 / 全览 (原单页表单) -->
-          <div class="wizard-bar">
+          <!-- [vp7 向导 2026-09-01] 双形态切换: el-steps 分步向导 / 全览 (原单页表单)
+               [vp6-SIMPLE 2026-09-02] 简易模式入口 = vp6 纯净表单: 无向导条无 AI 增强无确认预览 -->
+          <div v-if="!simpleEntryMode" class="wizard-bar">
             <el-steps :active="wizardStep" simple style="flex: 1; min-width: 0">
               <el-step v-for="(s, i) in WIZARD_STEPS" :key="s" :title="s" style="cursor: pointer" @click="wizardStep = i" />
             </el-steps>
@@ -313,6 +317,16 @@
                     <span class="text-secondary" style="margin-left: 8px; font-size: 12px">0 = 未设置</span>
                   </el-form-item>
                 </el-col>
+                <!-- [POPUP-AUTOCLOSE 2026-09-03] 弹窗自动关闭秒 (新建/编辑都可见):
+                     0 = 永不自动关闭 (推荐, 对齐海康 iVMS / 大华 DSS 报警弹窗常驻语义);
+                     >0 = 打开 N 秒后自动关闭 (低优先级告警降噪场景)。
+                     仅作用于 WS 命中本规则的弹窗, 详情入口弹窗不受此控制。 -->
+                <el-col :span="12">
+                  <el-form-item label="弹窗自动关闭(秒)">
+                    <el-input-number v-model="form.popupAutoCloseS" :min="0" :max="3600" :step="5" controls-position="right" style="width: 100%" />
+                    <span class="text-secondary" style="margin-left: 8px; font-size: 12px">0 = 永不自动关闭</span>
+                  </el-form-item>
+                </el-col>
               </el-row>
             </el-collapse-item>
           </el-collapse>
@@ -335,30 +349,34 @@
 
           <!-- 普通条件卡片 -->
           <div v-for="cond in conditionDefs" :key="cond.type" v-show="condStepVisible(cond.type)" class="condition-card" :class="{ 'is-enabled': form.conditions[cond.type].enabled }">
-            <div class="cond-header" @click="toggleCollapse(cond.type)">
+            <!-- [FIX 2026-09-02] 单开关重构 (对标海康 iVMS/宇视 NVR 联动规则编辑器):
+                 ① 去重: 仅保留头部开关 (原 cond-body 顶部 cond-enable-bar 重复开关已删)
+                 ② 事件类型 = 必备核心条件, 无开关无折叠箭头, 条件体常显
+                 ③ 开关关闭 = 条件体折叠, 开启 = 展开 (off→on 时自动展开) -->
+            <div class="cond-header" :class="{ 'is-static': cond.type === 'eventType' }" @click="cond.type !== 'eventType' && toggleCollapse(cond.type)">
               <div class="cond-title">
                 <span class="cond-icon">{{ cond.icon }}</span>
                 <span class="cond-label">{{ cond.label }}</span>
               </div>
-              <!-- [任务5] 左侧 “单个设备” / “全部” 文字 + el-switch (右侧),
-                   开关颜色随状态变化: 开=绿(#67c23a) / 关=灰, 动画过渡 -->
-              <div class="cond-switch-zone" @click.stop>
-                <span class="cond-switch-side" :class="{ active: !form.conditions[cond.type].enabled }">全部</span>
+              <div v-if="cond.type !== 'eventType'" class="cond-switch-zone" @click.stop>
+                <span class="cond-switch-label">{{ form.conditions[cond.type].enabled ? '已启用' : '已禁用' }}</span>
                 <el-switch
                   v-model="form.conditions[cond.type].enabled"
-                  size="small"
+                  size="default"
+                  :width="44"
                   inline-prompt
-                  active-text=""
-                  inactive-text=""
+                  active-text="ON"
+                  inactive-text="OFF"
                   :active-color="'#67c23a'"
                   :inactive-color="'#dcdfe6'"
+                  @change="(v: any) => { if (v) collapsedConditions[cond.type] = false }"
                 />
-                <span class="cond-switch-side" :class="{ active: form.conditions[cond.type].enabled }">单个设备</span>
               </div>
-              <el-icon class="cond-arrow" :class="{ 'is-rotated': !collapsedConditions[cond.type] }" @click.stop="toggleCollapse(cond.type)"><ArrowDown /></el-icon>
+              <el-icon v-if="cond.type !== 'eventType'" class="cond-arrow" :class="{ 'is-rotated': condBodyVisible(cond.type) }" @click.stop="toggleCollapse(cond.type)"><ArrowDown /></el-icon>
             </div>
 
-            <div v-show="!collapsedConditions[cond.type]" class="cond-body">
+            <!-- 条件体可见性: 事件类型常显; 其他 = 开关启用 且 未手动折叠 -->
+            <div v-show="condBodyVisible(cond.type)" class="cond-body">
               <!-- 时间条件 -->
               <template v-if="cond.type === 'time'">
                 <el-row :gutter="8" align="middle">
@@ -399,16 +417,17 @@
                     <template #empty><span class="text-secondary">暂无通道</span></template>
                   </el-select>
                 </el-form-item>
-                <el-form-item label="ROI多边形区域" label-position="top" class="cond-form-item">
-                  <!-- [FIX 2026-08-28] 多边形(检测/排除区域)进 roi_polygon 由后端
-                       pointInPolygon 判定; 绊线类型在保存时自动创建到算法绊线库
-                       (双镜像)并关联本规则 tripwire_id — 须先在上方"关联通道"
-                       选通道。点击画布即开始绘制; 绊线两点自动完成。-->
+                <el-form-item label="ROI绘制区域" label-position="top" class="cond-form-item">
+                  <!-- [FIX 2026-09-02] 形状四范式 (对标海康 iVMS/大华 DSS 联动规则编辑器):
+                       多边形/矩形/绊线/关注点; 绘制提示在画布下方状态栏 (画布内零提示文字)。
+                       多边形/矩形进 roi_polygon+roi_shapes_json 由后端 pointInPolygon 判定
+                       (矩形按 4 顶点多边形退化); 绊线保存时自动镜像到算法绊线库并关联
+                       tripwire_id; 关注点仅随规则持久化回显。 -->
                   <RoiPolygonEditor
                     v-model="form.conditions.region.config.roiPolygon"
                     :background-image-url="roiBackgroundUrl"
                     :canvas-width="440" :canvas-height="248"
-                    :types="['detection_zone', 'exclusion_zone', 'tripwire']"
+                    :types="['detection_zone', 'exclusion_zone', 'rectangle', 'tripwire', 'point']"
                   />
                 </el-form-item>
                 <!-- [FIX 2026-08-27 P0-PERIMETER v3] 越界 (Tripwire) 联动 -->
@@ -497,7 +516,9 @@
                     <el-checkbox v-for="et in fallbackEventTypes" :key="et.value" :label="et.label" :value="et.value" size="small" />
                   </template>
                 </el-checkbox-group>
-                <p v-if="form.conditions.eventType.config.types.length === 0" class="cond-hint" style="color: #E6A23C; margin-top: 4px">⚠ 未选择事件类型 = 匹配所有告警事件</p>
+                <!-- [FIX 2026-09-02] 空类型语义修正: 未选择 = 不匹配任何事件 (对齐引擎新语义),
+                     匹配所有事件的通配规则会放大 TPU/联动动作资源开销 → 必选阻断 (与简易模式 L237 一致) -->
+                <p v-if="form.conditions.eventType.config.types.length === 0" class="cond-hint" style="color: #E6A23C; margin-top: 4px">⚠ 事件类型为必选项，未选择 = 不匹配任何事件（无法保存）</p>
                 <el-row :gutter="16" style="margin-top: 12px">
                   <el-col :span="12">
                     <el-form-item label="最低严重度" label-position="top" class="cond-form-item">
@@ -551,6 +572,11 @@
               </template>
             </div>
           </div>
+
+          <!-- [r25 2026-09-02] 设备通道多选从原步 4 提升到步 1 末尾 -->
+          <div style="margin-top: 12px">
+            <DeviceChannelPicker v-model="deviceChannelValue" />
+          </div>
           </div>
 
           <div v-show="sectionVisible(2)">
@@ -597,42 +623,10 @@
           </el-tabs>
           </div>
 
-          <!-- [vp7 向导 2026-09-01] 步 3 AI 增强: NLG 自然语言生成 + 模板库 + 多模态 D-S/VLM/算力 -->
-          <div v-show="sectionVisible(3)">
-            <RuleNlgInput @apply="applyNlg" />
-            <div style="height: 10px" />
-            <TemplateGallery :selected-tags="form.tags" @apply-template="applyTemplateToForm" />
-            <div style="height: 10px" />
-            <AiEnhancePanel
-              v-model:fusion="fusionConfig"
-              v-model:vlm-suppress-threshold="vlmSuppressThreshold"
-              v-model:enable-vlm-verify="form.enableVlmVerify"
-              v-model:response-deadline-s="form.responseDeadlineS"
-              :selected-event-types="form.conditions.eventType.config.types"
-              :selected-channel-count="deviceChannelValue.channelIds.length"
-              @est="onAiEst"
-            />
-          </div>
-
-          <!-- [vp7 向导 2026-09-01] 步 4 计划与防区: 布防时间 (time 条件卡在本步显示) + 防区范围 (华为 HoloSens 设备树多选) -->
-          <div v-show="sectionVisible(4)">
-            <el-alert type="info" :closable="false" style="margin-bottom: 10px">
-              布防计划 = 下方时间条件卡片 (本步展示); 防区范围 = 设备/通道多选, 选中设备默认继承全部通道 (可展开剔除), 选择结果同步至触发条件·事件源。
-            </el-alert>
-            <DeviceChannelPicker v-model="deviceChannelValue" />
-            <div style="height: 10px" />
-          </div>
-
-          <!-- [vp7 向导 2026-09-01] 步 5 确认预览: 条件树可视化 + 动作时间线 + 算力 + 冲突检测 + Dry-Run -->
-          <div v-show="sectionVisible(5)">
-            <RulePreviewPanel
-              :condition-tree="advancedConditionMode ? conditionTreeValue : undefined"
-              :condition-summary="conditionSummary"
-              :actions="previewActions"
-              :selected-event-types="form.conditions.eventType.config.types"
-              :compute-est="aiEst"
-            />
-          </div>
+          <!-- [r25 2026-09-02] 化简向导为 3 步 (基本信息/触发条件/动作编排):
+               步 3 AI 增强/步 4 计划与防区/步 5 确认预览 整体隐藏。
+               VLM 二次验证保留在「基本信息·冲突处理与高级配置」折叠里 (后端 LinkageEngine.cpp:3579 真触发)。
+               DeviceChannelPicker 从原步 4 提升到步 1 触发条件末尾, 让用户在配置条件时直接选设备通道。 -->
         </el-form>
       </div>
 
@@ -652,12 +646,14 @@
       </template>
     </el-drawer>
 
-    <!-- ═══ [vp8 双模式] 简易创建抽屉 (模板优先 + 极简字段, 新建/编辑默认入口) ═══ -->
+    <!-- ═══ [vp8 双模式 / REVERT 2026-09-02] 简易创建抽屉: 新建默认入口,
+         choice 页仅剩 从模板库选择(tune 微调) 与 切换到高级模式(全功能抽屉) 两入口 -->
     <SimpleRuleDrawer
-      v-model="simpleDrawerVisible"
-      :advanced-hints="simpleHints"
-      :committing="simpleCommitting"
-      :initial-patch="simpleInitial"
+      v-model="simpleDrawerOpen"
+      :committing="simpleCommitting || editSaving"
+      :editing-rule-id="editRuleId"
+      :initial-tune="editTune"
+      edit-simple-advanced
       @commit="commitSimple"
       @switch-advanced="onSimpleSwitchAdvanced"
     />
@@ -1257,12 +1253,14 @@ import CEPPatternEditor from '@/components/CEPPatternEditor.vue'
 import ConditionTreeEditor from '@/components/ConditionTreeEditor.vue'
 // [vp7 向导 2026-09-01] 新建事件规则向导子组件 (设备通道多选/NLG/模板库/AI 增强/确认预览)
 import DeviceChannelPicker from '@/components/linkage/DeviceChannelPicker.vue'
-import RuleNlgInput from '@/components/linkage/RuleNlgInput.vue'
-import TemplateGallery from '@/components/linkage/TemplateGallery.vue'
-import AiEnhancePanel from '@/components/linkage/AiEnhancePanel.vue'
-import RulePreviewPanel from '@/components/linkage/RulePreviewPanel.vue'
+// [REVERT 2026-09-02] TemplateGallery 不再在本视图使用: 工具栏/卡片已有"从模板库创建"语义,
+//   编辑场景下浏览模板参考是画蛇添足。组件本体保留给 SimpleRuleDrawer 的 tune 微调视图复用。
+// [r25 2026-09-02] 删除 RuleNlgInput/AiEnhancePanel/RulePreviewPanel 三个 import:
+//   步 3/4/5 整段隐藏 (WIZARD_STEPS 3 步化), 三个组件本身已全部删除。
+//   VLM 二次验证保留在「冲突处理与高级配置」折叠里 (后端 LinkageEngine.cpp:3579 真触发)
 import SimpleRuleDrawer from '@/components/linkage/SimpleRuleDrawer.vue'
-import type { SimpleCommitPatch } from '@/components/linkage/SimpleRuleDrawer.vue'
+import type { SimpleCommitPatch, SimpleCommitEvent } from '@/components/linkage/SimpleRuleDrawer.vue'
+import { useSimpleRuleEdit } from '@/composables/useSimpleRuleEdit'
 import { deviceGroupApi } from '@/api/deviceGroups'
 import type { DeviceGroup, DeviceLocation } from '@/api/deviceGroups'
 import type { RoiData } from '@/composables/useRoiCanvas'
@@ -1677,7 +1675,8 @@ const drawerVisible = ref(false)
 const editingRule = ref<LinkageRule | null>(null)
 const saving = ref(false)
 const activeActionTab = ref('client')
-const collapsedConditions = reactive<Record<string, boolean>>({ time: false, region: true, location: true, eventType: false, eventSource: true, autoMerge: true })
+// [r26 修复] 默认全部展开所有条件卡, 让用户一眼看到 cond-header 里的开关与 cond-body 里的所有内容
+const collapsedConditions = reactive<Record<string, boolean>>({ time: false, region: false, location: false, eventType: false, eventSource: false, autoMerge: false })
 const actionState = reactive<Record<string, boolean>>({})
 const actionParams = reactive<Record<string, Record<string, any>>>({})
 const formRef = ref<FormInstance>()
@@ -1710,10 +1709,14 @@ const form = reactive({
   mutexGroup: '',
   suppressAfterRule: '',
   suppressLowerPriority: false,
-  enableVlmVerify: false,
+  // [r25] VLM 默认启用 (后端 LinkageEngine.cpp:3579/3641 真触发 VLM 复核, 阈值 0.85)
+  enableVlmVerify: true,
   // [P2-1] 治理字段: 关闭条件/响应时限
   closeCondition: '',
   responseDeadlineS: 0,
+  // [POPUP-AUTOCLOSE 2026-09-03] 弹窗自动关闭秒: 0=永不自动关闭 (默认, 对齐海康 iVMS / 大华 DSS),
+  //   >0=打开 N 秒后自动关闭。仅作用于 WS 命中本规则的弹窗, 详情入口弹窗不受此控制
+  popupAutoCloseS: 0,
   conditions: defaultConditions(),
 })
 const advancedCollapse = ref<string[]>([])
@@ -1722,60 +1725,35 @@ const advancedCollapse = ref<string[]>([])
 const advancedConditionMode = ref(false)
 const conditionTreeValue = ref<ConditionNode | undefined>(undefined)
 
-// ═══ [vp7 新建事件规则向导 2026-09-01] ═══
-// 6 步向导: 0 基本信息 → 1 触发条件 → 2 动作编排 → 3 AI 增强 → 4 计划与防区 → 5 确认预览;
-// el-steps 分步 / 全览双形态切换 (对标华为 iClient 条件树分区 + 大华 DSS 向导)。
-const WIZARD_STEPS = ['基本信息', '触发条件', '动作编排', 'AI 增强', '计划与防区', '确认预览']
-// [vp8 双模式] 向导退役为高级模式内可选形态: 默认全览 (原单页表单), 用户可切分步
-const wizardMode = ref(false)
+// ═══ [r25 2026-09-02 化简向导] ═══
+// 3 步向导: 0 基本信息 → 1 触发条件 → 2 动作编排 (含设备通道多选, 原步 4 归并);
+// el-steps 分步 / 全览双形态切换保留。隐藏原步 3 AI 增强/步 4 计划与防区/步 5 确认预览。
+const WIZARD_STEPS = ['基本信息', '触发条件', '动作编排']
+// [REVERT 2026-09-02] 恢复 vp8 之前默认形态: 打开抽屉默认分步向导 (wizardMode=true),
+// 同一套功能分步引导展示 (vp8 曾改为全览一页铺开, 用户反馈观感即"高级模式才有的字段");
+// 右上角「分步/全览」切换保留。
+const wizardMode = ref(true)
+// [vp6-SIMPLE 2026-09-02] 简易模式入口: vp6 纯净表单 (单页普通模式, 隐藏向导条/AI 增强/确认预览)
+const simpleEntryMode = ref(false)
 const wizardStep = ref(0)
 const sectionVisible = (s: number) => !wizardMode.value || wizardStep.value === s
 /** 条件卡片分步归属: time 归「计划与防区」(布防计划语义), 其余归「触发条件」 */
-const condStepVisible = (type: string) => !wizardMode.value || wizardStep.value === (type === 'time' ? 4 : 1)
+// [r25] 化简: 全模式/分步模式均把所有条件卡归到步 1 (time 卡从原步 4 归并)
+const condStepVisible = (_type: string) => sectionVisible(1)
 
 // ── 防区选择 (DeviceChannelPicker): channelIds String 化单向同步进 eventSource.channels,
-//    保存链 source_cond 组装 (数字/字符串双形态分拣) 零改动复用。 ──
+//    保存链 source_cond 组装 (数字/字符串双形态分拣) 零改动复用。 [r25] 从步 4 提升到步 1 末尾 ──
 const deviceChannelValue = ref<{ deviceIds: string[]; channelIds: number[] }>({ deviceIds: [], channelIds: [] })
 watch(deviceChannelValue, (v) => {
   form.conditions.eventSource.enabled = v.deviceIds.length > 0 || v.channelIds.length > 0
   form.conditions.eventSource.config.channels = v.channelIds.map(String)
 }, { deep: true })
 
-// ── AI 增强状态 (五模态 D-S / VLM 抑制阈值 / 算力估算) ──
-interface FusionConfigLocal { modalities: string[]; threshold: number; minSources: number }
-const fusionConfig = ref<FusionConfigLocal>({ modalities: ['video'], threshold: 0.6, minSources: 2 })
+// [r25] VLM 抑制阈值保留 (后端 LinkageEngine.cpp:3662 真用 `result.confidence >= rule.vlm_suppress_threshold`, 默认 0.85)
+//   删除 fusion_* (fusion_modalities/threshold/min_sources 后端 nlohmann 宽容解析不读, 字段沉冗) / aiEst 算力预估 / onAiEst 回调
 const vlmSuppressThreshold = ref(0.85)
-const aiEst = ref<{ total: number; headroom: number }>({ total: 0, headroom: 0 })
-/** 算力估算回调 (模板表达式不支持内联 TS 标注, 抽函数) */
-function onAiEst(v: { total: number; headroom: number }) { aiEst.value = v }
 
-// ── NLG 应用: 解析结果 → 表单 (事件类型/动作勾选/时间窗/合并窗口/置信度) ──
-function applyNlg(p: { eventTypes: string[]; actions: Array<{ type: number; name: string }>; mergeWindowMs?: number; timeStart?: string; timeEnd?: string; weekdays?: number[]; minConfidence?: number }) {
-  if (p.eventTypes.length > 0) {
-    form.conditions.eventType.enabled = true
-    form.conditions.eventType.config.types = [...new Set([...form.conditions.eventType.config.types, ...p.eventTypes])]
-  }
-  let miss = 0
-  for (const a of p.actions) {
-    const key = ACTION_TYPE_REVERSE_MAP[a.type]
-    if (key) actionState[key] = true
-    else miss++
-  }
-  if (p.minConfidence !== undefined) form.conditions.eventType.config.minConfidence = p.minConfidence
-  if (p.mergeWindowMs !== undefined) {
-    form.conditions.autoMerge.enabled = true
-    form.conditions.autoMerge.config.windowMs = p.mergeWindowMs
-  }
-  if (p.timeStart && p.timeEnd) {
-    form.conditions.time.enabled = true
-    form.conditions.time.config.startTime = p.timeStart
-    form.conditions.time.config.endTime = p.timeEnd
-    if (p.weekdays?.length) form.conditions.time.config.weekdays = p.weekdays
-  }
-  ElMessage.success(miss > 0
-    ? `已应用自然语言解析 (事件 ${p.eventTypes.length} 项, 动作 ${p.actions.length - miss} 项; ${miss} 项无标准类型映射已跳过)`
-    : `已应用自然语言解析 (事件 ${p.eventTypes.length} 项, 动作 ${p.actions.length} 项)`)
-}
+// [r25] 删除 applyNlg: RuleNlgInput 组件已删除 (步 3 NLG 整段隐藏)
 
 // ── 模板一键应用到当前表单: RuleTemplate 字段 → 表单 (海康 iVMS-8700 式导入;
 //    与既有 applyTemplate (直接从模板创建新规则) 语义不同, 勿合并) ──
@@ -1819,32 +1797,8 @@ function applyTemplateToForm(t: any) {
   ElMessage.success(`模板「${t.name}」已应用 (${applied} 动作 / 标签 ${t.tags?.length || 0} 项); 可在高级模式中补全防区范围`)
 }
 
-// ── 确认步预览数据 (条件摘要 + 已选动作时间线) ──
-const conditionSummary = computed(() => {
-  const c = form.conditions
-  const fmt = (enabled: boolean, label: string, desc: string) => ({ label, desc, enabled })
-  return [
-    fmt(c.time.enabled, '布防时间', `${c.time.config.startTime} ~ ${c.time.config.endTime} · 星期${c.time.config.weekdays.join(',')}`),
-    fmt(c.region.enabled, '空间防区', c.region.config.location || c.region.config.group || (c.region.config.roiPolygon.length ? '已画 ROI 多边形' : '未配置')),
-    fmt(c.location.enabled, '监控位置', c.location.config.point || '未配置'),
-    fmt(c.eventType.enabled, '事件类型', c.eventType.config.types.length ? `${c.eventType.config.types.length} 类 (最低置信度 ${c.eventType.config.minConfidence}%)` : '全部事件 (通配)'),
-    fmt(c.eventSource.enabled, '事件源', c.eventSource.config.channels.length ? `${c.eventSource.config.channels.length} 通道` : '全部通道'),
-    fmt(c.autoMerge.enabled, '自动合并', c.autoMerge.enabled ? `窗口 ${c.autoMerge.config.windowMs}ms · 最多 ${c.autoMerge.config.maxCount} 条` : '未启用'),
-  ]
-})
-const previewActions = computed(() => {
-  const out: Array<{ type: string; label: string; icon: string; delayMs: number }> = []
-  const collect = (items: Array<{ type: string; icon: string; label: string }>) => {
-    for (const it of items) {
-      if (!actionState[it.type]) continue
-      out.push({ type: it.type, label: it.label, icon: it.icon, delayMs: actionParams[it.type]?.delay_ms || 0 })
-    }
-  }
-  for (const g of clientActionGroups) collect(g.items)
-  for (const g of webActionGroups) collect(g.items)
-  collect(appActions); collect(mpActions); collect(sysActions)
-  return out.sort((a, b) => a.delayMs - b.delayMs)
-})
+// [r25] 删除 conditionSummary/previewActions: RulePreviewPanel 组件已删除 (步 5 确认预览整段隐藏)
+//   预览能力由「页脚 模拟测试」按铉保留 (handleDryRun 另走点)
 
 // ── Dry-Run 状态 ──
 const dryRunLoading = ref(false)
@@ -2074,7 +2028,7 @@ function getActiveConditions(rule: LinkageRule): Array<{ key: string; label: str
   if (tc && (tc.time_start || tc.time_end || tc.weekdays?.length || tc.monthdays?.length))
     tags.push({ key: 'time', label: '🕐 时间' })
   const sc = rule.spatial_cond
-  if (sc && (sc.region_id || sc.location_id || sc.device_group_id || sc.roi_polygon?.length || sc.tripwire_id || sc.direction))
+  if (sc && (sc.region_id || sc.location_id || sc.device_group_id || sc.roi_polygon?.length || sc.tripwire_id || sc.direction || (sc as any).roi_shapes_json))
     tags.push({ key: 'spatial', label: '📍 空间' })
   const src = rule.source_cond
   if (src && (src.event_types?.length || src.channel_ids?.length || src.algorithm_ids?.length))
@@ -2099,6 +2053,13 @@ function formatCooldown(ms?: number) {
 }
 
 function toggleCollapse(type: string) { collapsedConditions[type] = !collapsedConditions[type] }
+
+// [FIX 2026-09-02] 条件体可见性: 事件类型 (必备核心条件) 常显;
+// 其他条件 = 开关启用 且 未手动折叠 (开关关闭 → 条件体折叠隐藏)
+function condBodyVisible(type: string): boolean {
+  if (type === 'eventType') return true
+  return (form.conditions as Record<string, { enabled: boolean }>)[type]?.enabled === true && !collapsedConditions[type]
+}
 function handleSortChange({ prop, order }: any) { if (prop) sortBy.value = prop; if (order) sortOrder.value = order }
 function handleSelectionChange(rows: LinkageRule[]) { selectedRows.value = rows }
 
@@ -2176,13 +2137,15 @@ function resetEditorState(rule: LinkageRule | null) {
   // [P2-1] 恢复治理字段: 关闭条件/响应时限
   form.closeCondition = rule?.close_condition || ''
   form.responseDeadlineS = rule?.response_deadline_s ?? 0
-  // [vp7] 向导步归零 + 防区选择/AI 增强字段回填
+  // [POPUP-AUTOCLOSE 2026-09-03] 恢复弹窗自动关闭秒 (整型兜底, 缺省 0=永不自动关闭)
+  form.popupAutoCloseS = Number(rule?.popup_auto_close_s ?? 0) || 0
+  // [r25] 向导步归零 + 防区选择/AI 增强字段回填 (fusion_* 删除, 后端 nlohmann 宽容不读)
   wizardStep.value = 0
   deviceChannelValue.value = { deviceIds: [], channelIds: [] }
-  const fz = (rule as any)?.fusion_modalities
-  fusionConfig.value = Array.isArray(fz) && fz.length ? { modalities: [...fz], threshold: (rule as any)?.fusion_threshold ?? 0.6, minSources: (rule as any)?.fusion_min_sources ?? 2 } : { modalities: ['video'], threshold: 0.6, minSources: 2 }
   vlmSuppressThreshold.value = typeof (rule as any)?.vlm_suppress_threshold === 'number' ? (rule as any).vlm_suppress_threshold : 0.85
-  advancedCollapse.value = (form.mutexGroup || form.suppressAfterRule || form.suppressLowerPriority || form.enableVlmVerify || form.closeCondition || form.responseDeadlineS > 0) ? ['advanced'] : []
+  // [r25] 折叠默认收起条件中删除 enableVlmVerify/responseDeadlineS (这两项不再为用户主动配置,
+  //   VLM 已默认启用 (新建 enableVlmVerify=true)、response_deadline_s 后端仅存不用, 不该在高级折叠里提示)
+  advancedCollapse.value = (form.mutexGroup || form.suppressAfterRule || form.suppressLowerPriority || form.closeCondition) ? ['advanced'] : []
   // 恢复条件树
   if (rule?.condition_tree) {
     advancedConditionMode.value = true
@@ -2203,12 +2166,31 @@ function resetEditorState(rule: LinkageRule | null) {
     }
     // spatial_cond → region + location
     const sc = rule.spatial_cond || {} as any
-    const hasSpatial = !!(sc.region_id || sc.location_id || sc.device_group_id || sc.roi_polygon?.length || sc.tripwire_id || sc.direction || (sc as any).bound_channel_ids?.length)
+    // [FIX 2026-09-02] 画板形状回显: roi_shapes_json (归一化 [0,1]) → RoiData[] (1920×1080);
+    //   修复编辑重开时画布恒空 (原回填写死 []); 含绊线方向/矩形角点/点坐标完整恢复。
+    //   无 roi_shapes_json 的老规则维持空画板 (原行为, roi_polygon 不可反推形状类型)。
+    const roiShapesFromJson = (() => {
+      try {
+        const raw = (sc as any).roi_shapes_json
+        if (!raw) return [] as RoiData[]
+        const arr = JSON.parse(raw) as Array<{ shape: string; name?: string; active?: boolean; direction?: string; points: number[] }>
+        return arr.filter(s => s && Array.isArray(s.points)).map((s, i) => ({
+          roi_id: `roi_echo_${Date.now()}_${i}`,
+          roi_name: s.name || `区域 ${i + 1}`,
+          roi_type: s.shape as RoiData['roi_type'],
+          polygon: s.points.map((v, k) => Math.round(k % 2 === 0 ? v * 1920 : v * 1080)),
+          is_active: s.active !== false,
+          direction: (s.direction || undefined) as RoiData['direction'],
+        }))
+      } catch { return [] as RoiData[] }
+    })()
+    const hasSpatial = !!(sc.region_id || sc.location_id || sc.device_group_id || sc.roi_polygon?.length || sc.tripwire_id || sc.direction || (sc as any).bound_channel_ids?.length || (sc as any).roi_shapes_json)
     form.conditions.region = {
       enabled: hasSpatial,
       // [FIX 2026-08-27 P0-PERIMETER v3] tripwire + direction 从后端读出
       // [vp9 2026-09-01] bound_channel_ids 显式绑定通道回填 (字符串形态直存)
-      config: { location: sc.location_id || '', roi: sc.region_id || '', group: sc.device_group_id || '', roiPolygon: [] as RoiData[], channelId: '', tripwireId: sc.tripwire_id || '', direction: sc.direction || '', boundChannelIds: ((sc as any).bound_channel_ids || []).map(String) },
+      // [FIX 2026-09-02] roiPolygon 从 roi_shapes_json 完整回显 (多形状/方向/角点)
+      config: { location: sc.location_id || '', roi: sc.region_id || '', group: sc.device_group_id || '', roiPolygon: roiShapesFromJson, channelId: '', tripwireId: sc.tripwire_id || '', direction: sc.direction || '', boundChannelIds: ((sc as any).bound_channel_ids || []).map(String) },
     }
     form.conditions.location = {
       enabled: !!sc.location_id,
@@ -2266,65 +2248,37 @@ function resetEditorState(rule: LinkageRule | null) {
 
 function openEditor(rule: LinkageRule | null) {
   resetEditorState(rule)
+  // [SIMPLE-EDIT 2026-09-03] 行编辑已迁简易抽屉, 本入口现仅服务高级模式新建 (全功能形态)
+  simpleEntryMode.value = false
   drawerVisible.value = true
 }
 
-// ═══ [vp8 双模式 2026-09-01] 简易/高级双模式创建编辑 ═══
-// 对标华为好望双版本 + 海康基本/高级配置分区 + NNG 渐进式披露:
-// 新建默认简易 (模板优先+极简字段), 高级模式保留全功能与可选分步向导。
+// ═══ [vp8 双模式 2026-09-01] 简易创建抽屉 (choice 页: 模板 / 高级两入口) ═══
+// [REVERT 2026-09-02] 按用户要求移除 'custom' 高频字段子表单 (SimpleRuleDrawer 卡片 2):
+//   仅保留 模板微调 (tune → commit 回填高级表单) 与 切换到高级模式 两条链路; 新建仍默认开选择抽屉。
+// [SIMPLE-EDIT 2026-09-03] 行内编辑统一走简易抽屉: 与新建共享同一挂载; [UX-ALIGN]
+//   编辑也从 choice 入口进, 且「简易/高级模式」卡片均复用新建同一 vp6 表单回显编辑
+//   (resetEditorState 整包回显 + handleSave 原生 update 分支), 不另建编辑表单。
+//   注: composable 的 editingRule 别名为 editSourceRule (本地 L1664 已有同名编辑器状态)。
 const simpleDrawerVisible = ref(false)
-const simpleHints = ref<string[]>([])
 const simpleCommitting = ref(false)
-const simpleInitial = ref<SimpleCommitPatch | null>(null)
+const { editVisible, editSaving, editRuleId, editTune, editingRule: editSourceRule, openSimpleEdit, clearSimpleEdit, commitSimpleEdit } =
+  useSimpleRuleEdit({ onSaved: () => fetchRules() })
 
-/** 规则是否携带高级治理配置 (简易视图不可见/不可编辑的字段) */
-function detectAdvancedHints(r: any): string[] {
-  const h: string[] = []
-  if (r?.mutex_group) h.push('互斥组')
-  if (r?.suppress_after_rule) h.push('抑制链')
-  if (r?.suppress_lower_priority) h.push('低优先级抑制')
-  if (r?.enable_vlm_verify) h.push('VLM 复核')
-  if (r?.close_condition) h.push('关闭条件')
-  if ((r?.response_deadline_s ?? 0) > 0) h.push('响应时限')
-  if (r?.condition_tree) h.push('条件树')
-  if (Array.isArray(r?.fusion_modalities) && r.fusion_modalities.length > 1) h.push('多模态融合')
-  return h
-}
+/** 共享挂载开关桥: 新建(simpleDrawerVisible) 或 编辑(editVisible) 任一打开;
+ *  关闭时同步回落 (编辑关闭清 editVisible, 防编辑态渗入新建流程的 choice 入口) */
+const simpleDrawerOpen = computed({
+  get: () => simpleDrawerVisible.value || editVisible.value,
+  set: (v: boolean) => {
+    simpleDrawerVisible.value = v
+    if (!v) editVisible.value = false
+  },
+})
 
-/** 新建 → 简易模式 (默认入口) */
-function openSimpleCreate() {
+/** 新建 → 选择抽屉 (模板优先 / 切高级); 清除编辑态防止上一轮编辑的预填残留 */
+function openNewRuleDrawer() {
   resetEditorState(null)
-  simpleHints.value = []
-  simpleDrawerVisible.value = true
-}
-
-/** 编辑态时间档推断 (与 SimpleRuleDrawer.guessPreset 同语义) */
-function guessTimePreset(enabled: boolean, s: string, e: string, wd: number[]): 'all' | 'day' | 'night' | 'custom' {
-  if (!enabled) return 'all'
-  if (s === '08:00' && e === '20:00' && wd.join() === '1,2,3,4,5') return 'day'
-  if (s === '20:00' && e === '07:00' && wd.length === 7) return 'night'
-  return 'custom'
-}
-
-/** 列表行编辑 → 简易模式 (含高级配置时提示条引导切高级; 表单回填草稿直接进自定义视图) */
-function openRowEditor(row: LinkageRule) {
-  resetEditorState(row)
-  simpleHints.value = detectAdvancedHints(row)
-  const tc = form.conditions.time
-  simpleInitial.value = {
-    name: form.name,
-    eventTypes: [...form.conditions.eventType.config.types],
-    channelIds: form.conditions.eventSource.config.channels.map(c => parseInt(c)).filter(n => !Number.isNaN(n)),
-    deviceIds: [],
-    timePreset: guessTimePreset(tc.enabled, tc.config.startTime, tc.config.endTime, tc.config.weekdays),
-    timeStart: tc.config.startTime,
-    timeEnd: tc.config.endTime,
-    weekdays: [...tc.config.weekdays],
-    actions: Object.entries(actionState).filter(([, v]) => v).map(([k]) => k),
-    priority: form.priority,
-    cooldownMs: form.cooldownMs,
-    template: null,
-  }
+  clearSimpleEdit()
   simpleDrawerVisible.value = true
 }
 
@@ -2337,7 +2291,7 @@ function applySimpleTime(p: SimpleCommitPatch) {
   form.conditions.time.config.weekdays = p.weekdays?.length ? [...p.weekdays] : [1, 2, 3, 4, 5]
 }
 
-/** 简易草稿 → 内部表单 (动作参数等高级语义仍由模板/高级模式承载) */
+/** 模板草稿 → 内部表单 (动作参数等高级语义仍由模板/高级模式承载) */
 function applySimplePatch(p: SimpleCommitPatch) {
   form.name = p.name
   if (typeof p.priority === 'number') form.priority = p.priority
@@ -2352,8 +2306,13 @@ function applySimplePatch(p: SimpleCommitPatch) {
   }
 }
 
-/** 简易保存: 复用 handleSave 唯一保存链 (数据层零变更); 失败时落高级表单补全 */
-async function commitSimple(p: SimpleCommitPatch) {
+/** 简易抽屉统一保存入口: update=高频字段直 PATCH (composable), create=模板分支走 handleSave 唯一保存链 */
+async function commitSimple(e: SimpleCommitEvent) {
+  if (e.mode === 'update') {
+    await commitSimpleEdit(e)
+    return
+  }
+  const p = e.payload
   simpleCommitting.value = true
   try {
     resetEditorState(null)
@@ -2362,34 +2321,46 @@ async function commitSimple(p: SimpleCommitPatch) {
     if (p.template) form.name = p.name // 模板分支: 用户微调名优先
     simpleDrawerVisible.value = false
     const ok = await handleSave()
-    if (!ok) drawerVisible.value = true
+    if (!ok) { simpleEntryMode.value = false; drawerVisible.value = true } // 校验失败落全功能表单补全
   } finally { simpleCommitting.value = false }
 }
 
-/** 简易 → 高级切换: 关简易, 携带草稿打开高级表单 (默认全览形态) */
-function onSimpleSwitchAdvanced(p: SimpleCommitPatch | null) {
+/** 切换全功能表单: 简易卡片=vp6 纯净单页 (simple), 高级卡片/模板页切高级=全功能全览 (full)
+ *  [UX-ALIGN 2026-09-03] 编辑态简易/高级卡片: 复用新建同一 vp6 表单回显编辑
+ *  (resetEditorState 整包回显, 草稿 p 忽略 — 回显数据比高频字段草稿更全;
+ *  不走 openEditor 因其写死 simpleEntryMode=false; handleSave 原生支持 update) */
+function onSimpleSwitchAdvanced(p: SimpleCommitPatch | null, mode?: 'simple' | 'full') {
+  if (editVisible.value && editSourceRule.value) {
+    const row = editSourceRule.value
+    simpleDrawerOpen.value = false // 经桥关闭 (同步清 editVisible, 防渗入新建)
+    resetEditorState(row)
+    simpleEntryMode.value = mode !== 'full' // 简易卡片=vp6 纯净单页; 高级卡片=全功能全览
+    wizardMode.value = mode === 'full'
+    drawerVisible.value = true
+    return
+  }
   simpleDrawerVisible.value = false
   if (p) {
     resetEditorState(null)
-    if (p.template) applyTemplateToForm(p.template)
     applySimplePatch(p)
-    if (p.template && p.name) form.name = p.name
+    if (p.name) form.name = p.name
   }
-  wizardMode.value = false
+  simpleEntryMode.value = mode !== 'full' // 简易卡片=vp6 纯净表单 (无向导/AI 增强/确认预览)
+  wizardMode.value = mode === 'full'      // 高级入口默认分步向导 (可右上角切全览); 简易 vp6 单页普通模式
   drawerVisible.value = true
 }
 
-/** 工具栏新建下拉: 简易(默认) / 高级 / 模板库 */
+/** 工具栏新建下拉: 选择抽屉(默认) / 高级 / 模板库 */
 function onNewCommand(cmd: string) {
   if (cmd === 'advanced') openEditor(null)
   else if (cmd === 'template') openTemplateLibrary()
-  else openSimpleCreate()
+  else openNewRuleDrawer()
 }
 
 // ── 编辑器: 保存 (内部表单 → 后端格式) ──
 
 async function handleSave(): Promise<boolean> {
-  // 表单验证 (返回 boolean: 简易模式 commitSimple 依据结果决定是否落高级表单补全)
+  // 表单验证 (返回 boolean: commitSimple 依据结果决定是否落高级表单补全)
   if (!form.name.trim()) { ElMessage.warning('请输入规则名称'); return false }
   if (form.priority < 1 || form.priority > 100) { ElMessage.warning('优先级范围 1-100'); return false }
   if (form.cooldownMs < 1000) { ElMessage.warning('冷却时间最小 1000ms'); return false }
@@ -2397,15 +2368,13 @@ async function handleSave(): Promise<boolean> {
   const enabledActions = Object.entries(actionState).filter(([, v]) => v)
   if (enabledActions.length === 0) { ElMessage.warning('请至少选择一个联动动作'); return false }
 
-  // [v7.9 FIX BUG-3] 事件类型为空时提醒用户规则将匹配所有事件 (通配模式)
+  // [FIX 2026-09-02] 事件类型必选硬校验 (废除 v7.9 BUG-3 的"通配确认"弹窗):
+  //   引擎侧空 event_types 用户规则已改为"不匹配任何事件"(仅 default_*/system_* 系统
+  //   兜底规则保留通配); 通配语义易放大 TPU/联动动作资源开销 → 源头阻断,
+  //   与简易模式 SimpleRuleDrawer validateCommon 的必选校验对齐。
   if (form.conditions.eventType.config.types.length === 0) {
-    try {
-      await ElMessageBox.confirm(
-        '未选择任何事件类型，此规则将匹配【所有事件】（通配模式）。\n是否继续？',
-        '通配规则确认',
-        { confirmButtonText: '继续保存', cancelButtonText: '返回选择事件', type: 'warning' }
-      )
-    } catch { return false }
+    ElMessage.warning('请至少选择一个事件类型（未选择 = 不匹配任何事件，规则不会触发）')
+    return false
   }
 
   saving.value = true
@@ -2421,6 +2390,12 @@ async function handleSave(): Promise<boolean> {
 
     const rc = form.conditions.region
     const lc = form.conditions.location
+    // [FIX 2026-09-02] 绊线方向统一源 (大写形态): 条件卡"越界方向"显式选择优先,
+    //   未选时回退画板绊线形状自身方向 (ROI 列表可独立切换), 均无则不限。
+    //   供绊线镜像创建 + spatial_cond.direction 两处复用, 避免两处漂移。
+    const activeTwRoi = rc.config.roiPolygon.find(r => r.is_active && r.roi_type === 'tripwire' && r.direction)
+    const dirUpper = rc.config.direction
+      || (activeTwRoi?.direction ? String(activeTwRoi.direction).toUpperCase() : '')
     // [FIX 2026-08-28] 画板绊线 → 自动创建到算法绊线库 (双镜像) 并关联本规则;
     //   仅当未通过下拉显式选择绊线时才创建 (显式选择优先)。
     let effectiveTripwireId = rc.config.tripwireId || ''
@@ -2440,7 +2415,9 @@ async function handleSave(): Promise<boolean> {
               name: `${form.name || '规则'}_绊线`,
               point_a: [p[0], p[1]],
               point_b: [p[2], p[3]],
-              direction: 'both',
+              // [FIX 2026-09-02] 方向随统一方向源 dirUpper 映射 (算法绊线库小写形态);
+              //   原先写死 'both' 导致 A→B/B→A 单向绊线被镜像成双向
+              direction: dirUpper === 'A_TO_B' ? 'a_to_b' : dirUpper === 'B_TO_A' ? 'b_to_a' : 'both',
               enabled: true,
             })
             effectiveTripwireId = String(newId)
@@ -2455,20 +2432,44 @@ async function handleSave(): Promise<boolean> {
     // 清理 "全部XXX" 占位值，后端空字符串 = 不过滤
     const cleanLocation = (v: string) => (v && v.startsWith('全部') ? '' : v)
     const cleanGroup = (v: string) => (v && v.startsWith('全部') ? '' : v)
+    // [FIX 2026-09-02] 画板形状序列化 (对标海康 iVMS 联动规则 ROI 持久化):
+    //   roi_shapes_json = 画板全量形状快照 (类型/名称/启用/方向, 坐标归一化 [0,1]),
+    //   供编辑回显 + 引擎多形状并集判定 (LinkageEngine matchRoiShapes)。
+    //   同时修复两个历史 bug:
+    //   ① 多 ROI flatMap 拼接 → 引擎 pointInPolygon 视为单个乱序大参边形(全错);
+    //     现 roi_polygon 仅取第一个激活区域类形状 (兼容字段), 多形状判定走 roi_shapes_json;
+    //   ② 坐标 [0,1920] 像素系直存 → 引擎 [ROI-UNIT-MISMATCH] pass-through (恒不拦截);
+    //     现统一 /1920 /1080 归一化。
+    const buildNormPoints = (poly: number[]): number[] => {
+      const out: number[] = []
+      for (let i = 0; i + 1 < poly.length; i += 2) {
+        out.push(Math.round((poly[i] / 1920) * 10000) / 10000, Math.round((poly[i + 1] / 1080) * 10000) / 10000)
+      }
+      return out
+    }
+    const buildRoiShapesJson = (list: RoiData[]) => list.length === 0 ? '' : JSON.stringify(list.map(r => ({
+      shape: r.roi_type, name: r.roi_name, active: r.is_active,
+      direction: r.direction || '', points: buildNormPoints(r.polygon),
+    })))
+    // 区域类形状 (引擎 pointInPolygon 判定); 绊线走 tripwire_id 镜像链路, 关注点不做空间过滤
+    const AREA_ROI_TYPES = ['detection_zone', 'exclusion_zone', 'rectangle']
+    const firstActiveArea = rc.config.roiPolygon.find(r => r.is_active && AREA_ROI_TYPES.includes(r.roi_type))
     const spatial_cond = (rc.enabled || lc.enabled) ? {
       region_id: cleanLocation(rc.config.roi || ''),
       location_id: cleanLocation(lc.enabled ? (lc.config.point || rc.config.location) : (rc.config.location || '')),
       device_group_id: cleanGroup(rc.config.group || ''),
       // [vp9 2026-09-01] 显式绑定通道 (多选, 字符串形态与引擎侧双形态匹配兼容)
       bound_channel_ids: (rc.config.boundChannelIds || []).map(String),
-      // 绊线类型的 2 点数据不进 roi_polygon (后端仅做 pointInPolygon, 线段永远不含点)
-      roi_polygon: rc.config.roiPolygon.filter(r => r.roi_type !== 'tripwire').flatMap((r: RoiData) => r.polygon) || [] as number[],
+      // [FIX 2026-09-02] 兼容字段: 第一个激活区域类形状 (归一化); 多形状并集见 roi_shapes_json
+      roi_polygon: firstActiveArea ? buildNormPoints(firstActiveArea.polygon) : [] as number[],
+      // [FIX 2026-09-02] 画板全量形状快照 (多形状并集判定 + 编辑回显 SSOT)
+      roi_shapes_json: buildRoiShapesJson(rc.config.roiPolygon),
       // [FIX 2026-08-27 P0-PERIMETER v3] tripwire 越界联动
       //   tripwireId 与 direction 都空 = 不启用 tripwire 过滤
       //   否则仅匹配的 tripwire + direction 才触发动作
       tripwire_id: effectiveTripwireId || '',
-      direction: rc.config.direction || '',
-    } : { region_id: '', location_id: '', device_group_id: '', roi_polygon: [] as number[], tripwire_id: '', direction: '', bound_channel_ids: [] as string[] }
+      direction: dirUpper,
+    } : { region_id: '', location_id: '', device_group_id: '', roi_polygon: [] as number[], roi_shapes_json: '', tripwire_id: '', direction: '', bound_channel_ids: [] as string[] }
 
     const etc = form.conditions.eventType
     const esc = form.conditions.eventSource
@@ -2552,16 +2553,15 @@ async function handleSave(): Promise<boolean> {
       suppress_after_rule: form.suppressAfterRule || '',
       suppress_lower_priority: form.suppressLowerPriority,
       enable_vlm_verify: form.enableVlmVerify,
-      // [vp7] VLM 抑制阈值 (LinkageEngine.h:478 真实字段生效) + 多模态融合配置
-      //   (fusion_* 为预留键: 后端 nlohmann value() 宽容解析忽略未知字段, 与
-      //   /fusion/ingest 推送端配置语义对齐, 见手册 §11)
+      // [r25] VLM 抑制阈值保留 (LinkageEngine.h:478 真实字段生效) + 删除 fusion_* 三个预留键
+      //   后端 nlohmann 宽容解析不读 fusion_*, 字段沉冗; VLM 真用: LinkageEngine.cpp:3662
+      //   `result.confidence >= rule.vlm_suppress_threshold` 才抑制
       vlm_suppress_threshold: vlmSuppressThreshold.value,
-      fusion_modalities: fusionConfig.value.modalities,
-      fusion_threshold: fusionConfig.value.threshold,
-      fusion_min_sources: fusionConfig.value.minSources,
       // [P2-1] 治理字段提交: 关闭条件/响应时限
       close_condition: form.closeCondition || '',
       response_deadline_s: form.responseDeadlineS ?? 0,
+      // [POPUP-AUTOCLOSE 2026-09-03] 提交弹窗自动关闭秒 (整数化, 钳位 >=0)
+      popup_auto_close_s: Math.max(0, Math.floor(Number(form.popupAutoCloseS) || 0)),
       ...(advancedConditionMode.value && conditionTreeValue.value ? { condition_tree: conditionTreeValue.value } : {}),
       time_cond,
       spatial_cond,
@@ -3071,8 +3071,29 @@ function applyTimeTemplate(tmpl: TimeTemplate) {
 
 onMounted(() => {
   // [校园二期 2026-08-30] 场景包 goRules 跳转预填 tag 过滤 (?tag=scene_pack)
-  const qTag = useRoute().query.tag
+  const route = useRoute()
+  const qTag = route.query.tag
   if (qTag) tagFilter.value = [String(qTag)]
+  // [SCENE-EDIT-UNIFY 2026-09-03] 五个场景页「编辑」统一跳转本页 (?editRuleId=):
+  //   规则列表加载完成后自动打开该规则编辑 (choice 三卡片 → 简易/高级卡片 → vp6 全功能表单),
+  //   与平台行内编辑同链路 — 场景页不再就地维护简化编辑器, 编辑器单一来源
+  const qEditRuleId = route.query.editRuleId
+  if (qEditRuleId) {
+    // 防刷新重复打开: 清地址栏 query。注: 不能用 router.replace — MainLayout 的
+    // router-view 以 route.fullPath 为 :key, 导航式清 query 会销毁重建本组件,
+    // 下述 watch 随之失效; history.replaceState 不触发导航, key 不变
+    const cleaned = { ...route.query }
+    delete cleaned.editRuleId
+    const qs = new URLSearchParams(cleaned as Record<string, string>).toString()
+    window.history.replaceState(window.history.state, '', route.path + (qs ? '?' + qs : ''))
+    const stopEditWatch = watch(rules, (list) => {
+      if (!list.length) return // 首次赋值前/空列表继续等
+      stopEditWatch()
+      const row = list.find(r => r.id === qEditRuleId)
+      if (row) openSimpleEdit(row)
+      else ElMessage.warning('未找到目标规则, 可能已被删除')
+    })
+  }
   fetchRules(); fetchOptions(); loadDeviceGroups()
   if (mainTab.value === 'plans') fetchPlans()
   if (mainTab.value === 'cep') fetchCEPPatterns()
@@ -3282,9 +3303,11 @@ watch(mainTab, (tab) => {
 .cond-icon { font-size: 14px; }
 .cond-label { font-size: 13px; font-weight: 600; }
 /* [任务5] 开关区域: 「全部 / switch / 单个设备」 水平布局 */
-.cond-switch-zone { display: flex; align-items: center; gap: 8px; flex: 1; justify-content: flex-end; }
-.cond-switch-side { font-size: 12px; color: var(--app-text-secondary); transition: color 0.2s ease, font-weight 0.2s ease; }
-.cond-switch-side.active { color: var(--el-color-primary); font-weight: 600; }
+.cond-switch-zone { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; padding: 2px 8px; border: 1px solid var(--app-border); border-radius: 6px; background: var(--el-fill-color-extra-light); cursor: pointer; }
+.cond-switch-label { font-size: 12px; font-weight: 600; color: var(--el-color-primary); min-width: 36px; text-align: center; }
+/* [FIX 2026-09-02] 事件类型核心条件卡: 头部不可折叠, 移除手型/hover */
+.cond-header.is-static { cursor: default; }
+.cond-header.is-static:hover { background: transparent; }
 .cond-arrow { font-size: 12px; color: var(--app-text-secondary); transition: transform 0.25s ease, color 0.2s ease; flex: 0 0 auto; }
 .cond-arrow.is-rotated { transform: rotate(180deg); color: var(--el-color-primary); }
 /* [任务5] 展开/收起过渡 */

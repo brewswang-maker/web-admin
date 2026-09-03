@@ -8,6 +8,17 @@
  *   3. 查询匹配的联动规则 → 决定弹窗 Tab 和操作按钮
  *   4. 追踪联动执行状态（WS linkage_action 消息）
  *   5. 报警音效播放
+ *
+ * [POPUP-AUTOCLOSE 2026-09-03] 弹窗自动关闭字段透传:
+ *   - showAlarmPopup(options?: { autoCloseSeconds?: number })
+ *   - 详情入口 (openAlarmDetailById): 不传 options, 默认永不自关
+ *   - WS 推送 (useGlobalAlarm.handleAlarm): 传 rule.popup_auto_close_s, 由规则决定
+ *   - 字段独立存放 (currentPopupAutoCloseS), 不污染 AlarmEvent 类型
+ *
+ * [POPUP-AUTOCLOSE-TEST 2026-09-03 调试钩子]
+ *   URL ?popuptest=1 时挂载 window.__popupTest = { showAlarmPopup, currentPopupAutoCloseS, closePopup, normalizeAlarmPayload }
+ *   供 Playwright 注入假告警验证 autoCloseSeconds 透传 + 倒计时 + 自动关闭全链路;
+ *   生产默认不启用 (无 URL 参数时 window.__popupTest === undefined, 不影响 bundle 行为)。
  */
 import { ref, computed } from 'vue'
 import { ElMessage } from 'element-plus'
@@ -38,6 +49,9 @@ export const popupVisible = ref(false)
 export const currentAlarm = ref<AlarmEvent | null>(null)
 export const matchedRule = ref<LinkageRule | null>(null)
 export const linkageLogs = ref<Array<{ action: string; status: string; icon: string; text: string }>>([])
+// [POPUP-AUTOCLOSE 2026-09-03] 当前弹窗的自动关闭秒数: 0=永不自动关闭 (默认),
+//   >0=打开 N 秒后自动关闭 (由 WS 命中规则的 popup_auto_close_s 字段透传)
+export const currentPopupAutoCloseS = ref(0)
 
 // 告警队列（从 alarmStore.realtimeAlarms 过滤未处理）
 const queueIndex = ref(0)
@@ -364,7 +378,10 @@ export function pushLinkageLog(log: { action: string; status: string; icon?: str
 }
 
 // ── 核心入口：弹出告警弹窗 ──
-export async function showAlarmPopup(rawAlarm: any) {
+// [POPUP-AUTOCLOSE 2026-09-03] options.autoCloseSeconds:
+//   - 详情入口 (openAlarmDetailById) 不传 → 0 → 永不自动关闭
+//   - WS 推送 (useGlobalAlarm) 透传 rule.popup_auto_close_s → 0=不启用, >0=N 秒后关闭
+export async function showAlarmPopup(rawAlarm: any, options?: { autoCloseSeconds?: number }) {
   if (!rawAlarm) return
 
   // 取消待执行的关闭定时器，防止新告警被旧 300ms 定时器清除
@@ -402,11 +419,15 @@ export async function showAlarmPopup(rawAlarm: any) {
   currentAlarm.value = alarm
   linkageLogs.value = []
   queueIndex.value = 0
+  // [POPUP-AUTOCLOSE 2026-09-03] 写入当前弹窗的自动关闭秒数 (独立 ref, 不污染 AlarmEvent)
+  currentPopupAutoCloseS.value = Math.max(0, Number(options?.autoCloseSeconds ?? 0)) || 0
   if (!popupVisible.value) {
     popupVisible.value = true
-    console.log('[useAlarmPopup] popupVisible set to true, alarm:', alarm.id, 'ch:', alarm.channelId)
+    console.log('[useAlarmPopup] popupVisible set to true, alarm:', alarm.id, 'ch:', alarm.channelId,
+      'autoCloseSeconds:', currentPopupAutoCloseS.value)
   } else {
-    console.log('[useAlarmPopup] popup already visible, updated alarm to:', alarm.id)
+    console.log('[useAlarmPopup] popup already visible, updated alarm to:', alarm.id,
+      'autoCloseSeconds:', currentPopupAutoCloseS.value)
   }
 
   // 3. 音效 —— 传入告警类型, 仅 ALARM 类播放报警音
@@ -425,6 +446,8 @@ export async function showAlarmPopup(rawAlarm: any) {
 let closeTimer: ReturnType<typeof setTimeout> | null = null
 export function closePopup() {
   popupVisible.value = false
+  // [POPUP-AUTOCLOSE 2026-09-03] 立即清零自动关闭秒数, 防下一弹窗误用旧值
+  currentPopupAutoCloseS.value = 0
   // 清理音频监听器
   audioUnlockCleanup?.()
   // 延迟清理，等 transition 结束
@@ -453,5 +476,27 @@ export async function openAlarmDetailById(id: string) {
   } catch (e: any) {
     console.error('[useAlarmPopup] openAlarmDetailById failed:', e)
     ElMessage.error('打开告警详情失败: ' + (e?.message || ''))
+  }
+}
+
+// ── [POPUP-AUTOCLOSE-TEST 2026-09-03] 调试钩子 ──
+// URL ?popuptest=1 时挂载 window.__popupTest, 注入假告警验证 autoCloseSeconds 全链路
+// 生产默认不启用 (无 URL 参数时 window.__popupTest === undefined, 不影响 bundle 行为)
+if (typeof window !== 'undefined') {
+  const sp = new URLSearchParams(window.location.search)
+  if (sp.get('popuptest') === '1') {
+    (window as any).__popupTest = {
+      showAlarmPopup,
+      closePopup,
+      currentPopupAutoCloseS,
+      normalizeAlarmPayload,
+      // 辅助: 直接读 ref 当前值
+      snapshot: () => ({
+        popupVisible: popupVisible.value,
+        currentPopupAutoCloseS: currentPopupAutoCloseS.value,
+        currentAlarmId: currentAlarm.value?.id || null,
+      }),
+    }
+    console.log('[useAlarmPopup] 调试钩子已挂载 (window.__popupTest), popuptest=1 模式')
   }
 }

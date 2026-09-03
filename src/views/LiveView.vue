@@ -1656,9 +1656,30 @@ function selectBestFormat(urls: Partial<Record<PlayerFormat, string>>, codec?: s
 }
 
 // WebRTC 播放：通过 ZLM 后端 SDP 交换
+// [FIX 2026-09-02] 会话级 WebRTC 可用性记忆:
+//   根因: 设备端 ZLM 编译时 ENABLE_WEBRTC=OFF（实证: /index/api/webrtc 404、
+//   启动日志 [rtc] 配置全部 unknow config、流列表无 rtc schema），而后端
+//   getPlayUrls 仍下发 webrtc URL → H.265 通道 selectBestFormat 优先选
+//   webrtc → 每个 slot 撞 SDP 5000 后才降级（9 宫格 = 18 次必败请求）。
+//   修复: SDP 业务错误（e.code）后置模块级标志，本次会话所有 slot 直接走
+//   降级链，只留一条 info 日志。ICE 超时等网络层错误不置位（可能仅网络抖动）。
+let webrtcUnavailable = false
+
 async function attachWebRtc(slotIdx: number, webrtcUrl: string) {
   const slot = gridSlots[slotIdx] as GridSlot
   const video = videoRefs.value[slotIdx]
+  // 会话级快速路径: 后端 WebRTC 信令已确认不可用, 直接降级
+  if (webrtcUnavailable) {
+    console.info('[WebRTC] 后端信令不可用（ZLM 未启用 WebRTC），本会话直接使用 HLS/FLV')
+    if (slot.urls['hls']) {
+      attachPlayerByFormat(slotIdx, 'hls')
+    } else if (slot.urls['ws-flv']) {
+      attachPlayerByFormat(slotIdx, 'ws-flv')
+    } else if (slot.urls.flv) {
+      attachPlayerByFormat(slotIdx, 'flv')
+    }
+    return
+  }
   if (!video || !slot.channelId) {
     console.warn(`[WebRTC] slot${slotIdx} 缺少 video 或 channelId，降级到 HLS`)
     if (slot.urls['hls']) {
@@ -1867,7 +1888,9 @@ async function exchangeSdpViaBackend(pc: RTCPeerConnection, channelId: string, o
   } catch (e: any) {
     // 增强诊断：区分后端错误和网络错误
     if (e.code) {
-      console.error(`[WebRTC] SDP 交换业务错误: channelId=${channelId}, code=${e.code}, msg=${e.message}`)
+      // 业务层拒绝（后端信令/编解码不可用）: 会话级记忆, 其余 slot 不再重试
+      webrtcUnavailable = true
+      console.error(`[WebRTC] SDP 交换业务错误（后续 slot 将直接降级）: channelId=${channelId}, code=${e.code}, msg=${e.message}`)
     } else {
       console.error(`[WebRTC] SDP 交换网络/系统错误: channelId=${channelId}, msg=${e.message}`)
     }

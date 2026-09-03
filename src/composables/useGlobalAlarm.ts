@@ -331,7 +331,10 @@ async function handleAlarm(alarm: any) {
         'elapsed:', Math.round((now - lastTime) / 1000) + 's')
     } else if (await findMatchingRule(normalized)) {
       lastPopupTime.set(debounceKey, now)
-      showAlarmPopup(normalized)
+      // [POPUP-AUTOCLOSE 2026-09-03] 透传规则 popup_auto_close_s: 0=永不自动关闭 (默认), >0=N 秒后关闭
+      //   详情入口不受此控制 (openAlarmDetailById 不传 options, 默认永不自关)
+      const matchedRule = await findMatchingRule(normalized)
+      showAlarmPopup(normalized, { autoCloseSeconds: Number(matchedRule?.popup_auto_close_s) || 0 })
     } else {
       console.log('[useGlobalAlarm] popup suppressed (no matching linkage rule), type:',
         normalized.type, 'ch:', normalized.channelId)

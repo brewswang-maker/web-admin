@@ -259,7 +259,7 @@
               :src="getSnapshotUrl(row)"
               loading="lazy"
               style="width:56px;height:32px;object-fit:cover;border-radius:4px;cursor:pointer"
-              @click="openSnapshotPreview(row)"
+              @click.stop="openSnapshotPreview(row)"
               @error="() => console.warn('[AlarmsView] snapshot load failed:', getSnapshotUrl(row))"
             />
             <span v-else class="text-secondary" style="font-size:11px">无</span>

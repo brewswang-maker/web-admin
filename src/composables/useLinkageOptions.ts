@@ -62,6 +62,8 @@ const EXCLUDED_CATEGORIES = ['tracking', 'attribute', 'image_enhance', 'enhance'
 // [FIX] ui_group 英文 key → 中文分组标签映射
 // 后端 /event-types/metadata 返回的 ui_group 是英文 key (face/perimeter/behavior/...),
 // 前端显示时需映射为中文, 否则用户只看到英文分组名.
+// [FIX 2026-09-02] 补齐 other/retail/facility/environment 四组 (此前英文直显),
+//   分组键与后端 EventTypeAliases.h inferEventUiGroup (SSOT) 对齐
 const GROUP_LABEL_MAP: Record<string, string> = {
   face: '人脸识别',
   perimeter: '周界安全',
@@ -70,6 +72,10 @@ const GROUP_LABEL_MAP: Record<string, string> = {
   safety: '安全合规',
   traffic: '交通管理',
   device: '设备状态',
+  retail: '零售经营',
+  facility: '设施建筑',
+  environment: '环境异常',
+  other: '其他',
   person: '人员检测',
   object: '物体检测',
   // event category (metadata groups 的 key 是小写 category)
@@ -78,6 +84,18 @@ const GROUP_LABEL_MAP: Record<string, string> = {
   business: '业务事件',
   state: '设备状态',
   perception: '感知事件',
+}
+
+// [FIX 2026-09-02] 分组显示顺序 (对标海康 iVMS/宇视 NVR 联动规则编辑器):
+//   业务域分组按固定序排列, other 兜底组置末; 不依赖后端返回顺序。
+//   未识别的组排在业务组之后、other 之前 (居中兜底, 不与 other 混杂)。
+const GROUP_ORDER: Record<string, number> = {
+  face: 0, perimeter: 1, behavior: 2, fire: 3, safety: 4, traffic: 5,
+  device: 6, retail: 7, facility: 8, environment: 9,
+}
+function groupRank(g: string): number {
+  if (g in GROUP_ORDER) return GROUP_ORDER[g]
+  return g === 'other' ? 10000 : 500
 }
 
 // 模块级缓存，防止重复请求
@@ -281,18 +299,24 @@ export function useLinkageOptions() {
   }
   const eventTypeGrouped = computed(() => {
     const groups: Record<string, EventTypeOption[]> = {}
+    const ranks: Record<string, number> = {}
     for (const opt of eventTypeOptions.value) {
       // [FIX] 使用 ui_group 作为分组 key, 但显示时映射为中文
-      const rawCat = opt.uiGroup || opt.category || '其他'
+      const rawCat = opt.uiGroup || opt.category || 'other'
       const displayCat = GROUP_LABEL_MAP[rawCat] || rawCat
-      if (!groups[displayCat]) groups[displayCat] = []
+      if (!groups[displayCat]) { groups[displayCat] = []; ranks[displayCat] = groupRank(rawCat) }
       groups[displayCat].push(opt)
     }
     // 组内按严重等级降序排
     for (const cat of Object.keys(groups)) {
       groups[cat].sort((a, b) => (b.severityLevel ?? b.level ?? 0) - (a.severityLevel ?? a.level ?? 0))
     }
-    return groups
+    // [FIX 2026-09-02] 分组按业务域固定序排列 (other 置末), 不再依赖后端返回顺序
+    const sorted: Record<string, EventTypeOption[]> = {}
+    Object.keys(groups)
+      .sort((a, b) => ranks[a] - ranks[b] || a.localeCompare(b, 'zh'))
+      .forEach(cat => { sorted[cat] = groups[cat] })
+    return sorted
   })
 
   // v7.6: 严重等级颜色映射 (对标海康/大华告警级别颜色)

@@ -3,7 +3,9 @@
     <!-- [fix 2026-09-01 真机探针] 融合告警等程序化链路 snapshot_url 为空但
          bbox/target_label 已落库: 空图时渲染网格占位底 + overlay 照常画框,
          标注可视化不再被无快照阻断 (src 由父组件判空传入) -->
-    <el-image v-if="src" :src="src" :preview-src-list="[src]" fit="fill" class="snap-img" @load="onImgLoad" />
+    <!-- [fix 2026-09-02] 补 preview-teleported: 在 el-drawer 内点击放大时,
+         预览层不 teleported 会被抽屉 z-index/裁剪遮挡 -->
+    <el-image v-if="src" :src="src" :preview-src-list="[src]" fit="fill" preview-teleported class="snap-img" @load="onImgLoad" />
     <div v-else class="snap-placeholder">{{ t('perimeter.events.annotPlaceholder') }}</div>
     <!-- 检测框叠加: bbox 为归一化 [x1,y1,x2,y2], SVG viewBox 0-100 + none 保真映射;
          object-fit:fill 拉伸图像与 SVG 同步形变 → 坐标恒对齐 (标注精确性优先,
@@ -17,6 +19,23 @@
           :style="{ left: clampPct(box[0] * 100, 2, 86), top: clampPct(box[1] * 100, 2, 92) }">
       {{ label }}
     </span>
+    <!-- [FEAT 2026-09-02] 下载标注图: 导出原始分辨率合成图 (快照+检测框标注) PNG,
+         与报警弹窗 AlarmSnapshot 下载能力同构 -->
+    <button v-if="src" class="ann-download" :title="t('perimeter.events.downloadAnnotated', '导出带检测框标注的快照原图 (PNG)')" @click="downloadAnnotated">
+      {{ t('perimeter.events.downloadAnnotatedBtn', '⬇ 下载标注图') }}
+    </button>
+    <!-- [FEAT 2026-09-02] 全屏预览: 显式按钮触发 el-image-viewer (teleported 防
+         详情抽屉 z-index 遮挡), 左上角与下载按钮对称 -->
+    <button v-if="src" class="ann-fullscreen" :title="t('perimeter.events.fullscreen', '全屏预览')" @click="viewerVisible = true">
+      {{ t('perimeter.events.fullscreenBtn', '⛶ 全屏') }}
+    </button>
+    <el-image-viewer
+      v-if="viewerVisible"
+      :url-list="[src]"
+      teleported
+      hide-on-click-modal
+      @close="viewerVisible = false"
+    />
   </div>
 </template>
 
@@ -34,6 +53,7 @@
  */
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { ElMessage } from 'element-plus'
 
 const { t } = useI18n()
 
@@ -41,6 +61,8 @@ const { t } = useI18n()
 // 真机 1920x1080 快照实证)
 const rootRef = ref<HTMLElement>()
 const imgNat = ref<{ w: number; h: number }>({ w: 0, h: 0 })
+/** [FEAT 2026-09-02] 全屏预览开关 (el-image-viewer v-if 挂载) */
+const viewerVisible = ref(false)
 function onImgLoad() {
   // 容器内局部查询 (同页多实例时全局 querySelector 会取错图)
   const img = rootRef.value?.querySelector('img') as HTMLImageElement | null
@@ -93,6 +115,56 @@ const label = computed(() => {
 /** 角标位置钳位 (百分比字符串, 防标签溢出容器) */
 function clampPct(v: number, min: number, max: number): string {
   return `${Math.min(max, Math.max(min, v))}%`
+}
+
+/** [FEAT 2026-09-02] 下载标注图: 离屏 canvas 按快照原始分辨率合成 (背景+红框+
+ *  目标标签), 视觉与屏幕 SVG overlay 同款 (危险色红框/角标)。无框时导出原图 */
+function downloadAnnotated() {
+  const img = rootRef.value?.querySelector('img') as HTMLImageElement | null
+  if (!img || !img.naturalWidth) {
+    ElMessage.warning('快照尚未加载完成')
+    return
+  }
+  const canvas = document.createElement('canvas')
+  canvas.width = img.naturalWidth
+  canvas.height = img.naturalHeight
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return
+  ctx.drawImage(img, 0, 0)
+  const b = box.value
+  if (b) {
+    const scale = Math.max(1, canvas.width / 640)
+    const x = b[0] * canvas.width
+    const y = b[1] * canvas.height
+    const w = (b[2] - b[0]) * canvas.width
+    const h = (b[3] - b[1]) * canvas.height
+    ctx.strokeStyle = '#f56c6c'
+    ctx.lineWidth = 2 * scale
+    ctx.strokeRect(x, y, w, h)
+    const text = label.value
+    if (text) {
+      ctx.font = `bold ${Math.round(12 * scale)}px sans-serif`
+      const tw = ctx.measureText(text).width + 12 * scale
+      const th = 20 * scale
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.62)'
+      ctx.fillRect(x, y - th, tw, th)
+      ctx.fillStyle = '#fff'
+      ctx.fillText(text, x + 6 * scale, y - 5 * scale)
+    }
+  }
+  canvas.toBlob((blob) => {
+    if (!blob) {
+      ElMessage.error('标注图导出失败')
+      return
+    }
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    const ts = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14)
+    a.href = url
+    a.download = `event-annotated-${ts}.png`
+    a.click()
+    URL.revokeObjectURL(url)
+  }, 'image/png')
 }
 </script>
 
@@ -150,5 +222,43 @@ function clampPct(v: number, min: number, max: number): string {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+/* [FEAT 2026-09-02] 下载标注图悬浮按钮 */
+.ann-download {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 10;
+  padding: 4px 10px;
+  border: none;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  font-size: 12px;
+  line-height: 20px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+/* [FEAT 2026-09-02] 全屏预览悬浮按钮: 左上角与下载按钮对称, 同款悬浮风格 */
+.ann-fullscreen {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 10;
+  padding: 4px 10px;
+  border: none;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  font-size: 12px;
+  line-height: 20px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+.ann-fullscreen:hover {
+  background: rgba(0, 0, 0, 0.78);
+}
+.ann-download:hover {
+  background: rgba(0, 0, 0, 0.78);
 }
 </style>

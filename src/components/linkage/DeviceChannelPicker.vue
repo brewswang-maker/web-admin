@@ -90,10 +90,23 @@ const algoFilter = ref('')
 const devices = ref<DeviceRow[]>([])
 const channels = ref<ChannelItem[]>([])
 
+// [r27 修复] 后端响应多层剥壳：axios → ApiResponse{code,data} → 数组/分页对象
+// 后端真实结构: /devices → {code:0,data:{devices:[...],items:[...]}}; /channels → {code:0,data:{channels:[...]}}
+// 旧写法只剥一层导致 devices.value = {code,message,data} 非数组 → computed 崩溃 → 条件卡渲染中断
+function toArr<T>(res: any, ...keys: string[]): T[] {
+  const body = res?.data ?? res
+  const inner = body?.data ?? body
+  if (Array.isArray(inner)) return inner as T[]
+  for (const k of keys) if (Array.isArray(inner?.[k])) return inner[k] as T[]
+  return []
+}
+
 const value = computed(() => props.modelValue)
 const deviceChannelMap = computed(() => {
   const m = new Map<string, ChannelItem[]>()
-  for (const ch of channels.value) {
+  // [r27 修复] 渲染链最上游，数组守卫
+  const chList = Array.isArray(channels.value) ? channels.value : []
+  for (const ch of chList) {
     const k = String(ch.deviceId)
     if (!m.has(k)) m.set(k, [])
     m.get(k)!.push(ch)
@@ -108,13 +121,17 @@ const isOnline = (d: DeviceItem) => String(d.status).toLowerCase() === 'online'
 
 const algoOptions = computed(() => {
   const s = new Set<string>()
-  for (const d of devices.value) for (const p of d.algoPlugins || []) if (p) s.add(p)
+  // [r27 修复] 数组守卫：即使上游异常也不崩溃（防条件卡渲染中断）
+  const list = Array.isArray(devices.value) ? devices.value : []
+  for (const d of list) for (const p of (d as any).algoPlugins || []) if (p) s.add(p)
   return [...s].sort()
 })
 
 const filteredDevices = computed(() => {
+  // [r27 修复] 数组守卫
+  const list = Array.isArray(devices.value) ? devices.value : []
   const kw = keyword.value.trim().toLowerCase()
-  return devices.value.filter(d => {
+  return list.filter((d: any) => {
     if (kw && !(`${d.name} ${d.ip} ${d.location}`.toLowerCase().includes(kw))) return false
     if (algoFilter.value && !(d.algoPlugins || []).includes(algoFilter.value)) return false
     return true
@@ -133,7 +150,9 @@ const selectedChannelCount = computed(() => {
 })
 const offlineSelected = computed(() =>
   value.value.deviceIds.filter(id => {
-    const d = devices.value.find(x => x.id === id)
+    // [r27 修复] 数组守卫
+    const list = Array.isArray(devices.value) ? devices.value : []
+    const d = list.find((x: any) => x.id === id)
     return d && !isOnline(d)
   }).length)
 
@@ -243,10 +262,9 @@ onMounted(async () => {
       deviceApi.getList({ page: 1, pageSize: 500 }),
       channelApi.getList({ page: 1, pageSize: 1000 }),
     ])
-    const devData = (devRes as any)?.data
-    devices.value = ((devData?.items ?? devData?.list ?? devData) || []) as DeviceRow[]
-    const chData = (chRes as any)?.data
-    channels.value = ((chData?.items ?? chData?.list ?? chData) || []) as ChannelItem[]
+    // [r27 修复] 多层剥壳 + 多键兑底 (devices/items/list)
+    devices.value = toArr<DeviceRow>(devRes, 'devices', 'items', 'list')
+    channels.value = toArr<ChannelItem>(chRes, 'channels', 'items', 'list')
   } finally {
     loading.value = false
   }

@@ -65,9 +65,11 @@
         <el-table-column prop="description" label="描述" min-width="220" show-overflow-tooltip />
         <el-table-column label="快照" width="70" align="center">
           <template #default="{ row }">
+            <!-- [fix 2026-09-02] 缩略图点击只开图片全屏预览: @click.stop 阻断冒泡,
+              否则 row-click 同帧弹出详情抽屉盖住预览层 (与安检/态势同款) -->
             <el-image v-if="row.snapshotUrl" :src="row.snapshotUrl"
                       :preview-src-list="[row.snapshotUrl]" fit="cover"
-                      preview-teleported class="snap-thumb" />
+                      preview-teleported class="snap-thumb" @click.stop />
             <span v-else>-</span>
           </template>
         </el-table-column>
@@ -294,6 +296,6 @@ onMounted(() => {
 .lv-red { background: #d93636; }
 .lv-stampede { background: #7f1d1d; font-weight: bold; }
 .lv-info { background: #909399; }
-.snap-thumb { width: 48px; height: 36px; border-radius: 3px; }
+.snap-thumb { width: 48px; height: 36px; border-radius: 3px; cursor: pointer; }
 .pager { display: flex; justify-content: flex-end; margin-top: 12px; }
 </style>

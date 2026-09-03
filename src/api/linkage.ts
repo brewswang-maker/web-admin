@@ -114,6 +114,13 @@ export interface SpatialCondition {
   location_id: string
   device_group_id: string
   roi_polygon: number[]
+  // [FIX 2026-09-02] 补齐后端实际字段 (修复 LinkageRuleView 6 个基线 TS2339):
+  //   tripwire_id/direction/bound_channel_ids 后端早已返回 (v3/P0-PERIMETER/vp9);
+  //   roi_shapes_json 为本轮新增 (画板形状快照, 编辑回显 + 引擎多形状并集判定)
+  tripwire_id?: string
+  direction?: string
+  bound_channel_ids?: string[]
+  roi_shapes_json?: string
 }
 
 /** 属性条件 (后端 AttributeCondition, [AttrDec β] + [P4-D 2026-08-29])
@@ -237,6 +244,10 @@ export interface LinkageRule {
   // [P2-1] 治理字段: 关闭条件 + 响应时限 (''|manual|auto_event_close|timeout, 0=未设)
   close_condition?: string
   response_deadline_s?: number
+  // [POPUP-AUTOCLOSE 2026-09-03] 弹窗自动关闭秒数: 0=永不自动关闭(默认), >0=打开 N 秒后关闭
+  //   落地于 WS 触发的事件规则弹窗 (useGlobalAlarm → findMatchingRule 透传)。
+  //   详情入口弹窗始终不自动关闭, 与海康 iVMS / 大华 DSS 默认语义对齐。
+  popup_auto_close_s?: number
   version?: number
   is_archived?: boolean
   created_by: string

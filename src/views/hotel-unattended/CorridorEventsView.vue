@@ -86,9 +86,11 @@
         <el-table-column prop="description" :label="t('hotel.events.colDesc')" min-width="200" show-overflow-tooltip />
         <el-table-column :label="t('hotel.events.colSnapshot')" width="70" align="center">
           <template #default="{ row }">
+            <!-- [fix 2026-09-02] 缩略图点击只开图片全屏预览: @click.stop 阻断冒泡,
+              否则 row-click=openDetail 同帧弹出详情抽屉盖住预览层 (与安检/态势同款) -->
             <el-image v-if="row.snapshotUrl" :src="row.snapshotUrl"
                       :preview-src-list="[row.snapshotUrl]" fit="cover"
-                      preview-teleported class="snap-thumb" />
+                      preview-teleported class="snap-thumb" @click.stop />
             <span v-else>-</span>
           </template>
         </el-table-column>
@@ -130,6 +132,13 @@
           <span class="detail-time">{{ fmtTime(activeEvent.createdAt) }}</span>
         </div>
         <p class="detail-desc">{{ activeEvent.description }}</p>
+
+        <!-- [FEAT 2026-09-02] 快照标注展示 (与周界 EventsView 详情同构):
+          有快照或有 bbox 均渲染 (bbox 时不检出框, fusion 拦截证据链);
+          内部含全屏/下载按钮 (上轮 FEAT), 无图时占位提示 -->
+        <SnapshotAnnotated v-if="activeEvent.snapshotUrl || hasBox(activeEvent.metadata)"
+                           :src="activeEvent.snapshotUrl ?? ''" :metadata="activeEvent.metadata" />
+        <el-empty v-else :description="t('hotel.events.noSnapshot', '无快照')" :image-size="80" />
 
         <h4 class="sec-title">{{ t('hotel.events.metaSection') }}</h4>
         <el-table :data="metadataRows" size="small" max-height="420" class="meta-table">
@@ -175,6 +184,8 @@ import { hotelUnattendedApi, isHotelEvent, CORRIDOR_INTERCEPT_TYPES, CORRIDOR_ME
 import type { AlarmEvent, AlarmStatus } from '@/types/alarm'
 import { useAlarmRowActions } from '@/composables/useAlarmRowActions'
 import { ArrowDown } from '@element-plus/icons-vue'
+// [FEAT 2026-09-02] 详情抽屉快照展示: 复用周界标注组件 (上轮已带全屏/下载按钮)
+import SnapshotAnnotated from '../perimeter/SnapshotAnnotated.vue'
 
 const { t } = useI18n()
 const { openAlarmPopup, handleAlarmRow } = useAlarmRowActions()
@@ -270,6 +281,12 @@ function onSelectType(alarmType: string) {
   page.value = 1
 }
 
+/** [FEAT 2026-09-02] 合法 bbox 判定 (与 SnapshotAnnotated 内部校验同口径: 数组≥4,
+  同周界 EventsView.hasBox); fusion 拦截证据链无快照时可凭 bbox 渲染占位底+检测框 */
+function hasBox(md?: Record<string, unknown>): boolean {
+  return Array.isArray(md?.bbox) && (md.bbox as unknown[]).length >= 4
+}
+
 function levelTagType(level: unknown) {
   const lv = String(level ?? '').toLowerCase()
   if (lv === 'critical' || lv === 'high') return 'danger'
@@ -361,7 +378,7 @@ onMounted(() => {
 .mono { font-family: 'JetBrains Mono', Consolas, monospace; }
 .evt-key { font-size: 12px; color: var(--el-text-color-secondary); }
 .evt-name { font-size: 12px; }
-.snap-thumb { width: 48px; height: 36px; border-radius: 3px; }
+.snap-thumb { width: 48px; height: 36px; border-radius: 3px; cursor: pointer; }
 .pager { display: flex; justify-content: flex-end; margin-top: 12px; }
 .detail-head { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
 .detail-type { font-size: 14px; font-weight: 500; }

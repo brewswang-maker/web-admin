@@ -132,8 +132,9 @@
             </template>
           </el-table-column>
           <el-table-column :label="t('hotel.rules.colAction')" width="100" align="center">
-            <template #default>
-              <el-button size="small" link type="primary" @click="goLinkage">{{ t('hotel.rules.goEdit') }}</el-button>
+            <template #default="{ row }">
+              <!-- [FEAT 2026-09-02] 单条就地编辑: 点哪条只编辑哪条 -->
+              <el-button size="small" link type="primary" @click="openRuleEdit(row)">{{ t('common.edit') }}</el-button>
             </template>
           </el-table-column>
         </el-table>
@@ -161,6 +162,9 @@
           </el-tooltip>
         </div>
       </el-card>
+
+      <!-- [SCENE-EDIT-UNIFY 2026-09-03] 编辑跳转平台 /linkage?editRuleId= 自动打开该规则
+           的 choice 编辑入口 (与平台行内编辑同链路同表单) — 场景页不再就地维护简化编辑器 -->
     </template>
   </div>
 </template>
@@ -176,7 +180,8 @@
  *   - HT 模板落地对照: GET /linkage/rule-templates 中 HT-* 21 条 × 规则 tags 交叉
  *     ([P1-2 v2.1] 18→21: +HT-receiving-* 收货通道 3 条 §5.4-C 补包)
  *   - 包过滤: 规则 tags 含 scene_pack_id (6 包 radio)
- * 编辑跳转系统联动规则页 /linkage (不在本页重复实现编辑器)。
+ * [SCENE-EDIT-UNIFY 2026-09-03] 编辑: 跳平台 /linkage?editRuleId= 自动打开该规则的
+ *   choice 编辑入口, 与平台行内编辑同链路同表单 (编辑器单一来源)。
  * 三态防御: 骨架屏 / 错误态可恢复 / 空态。
  */
 import { computed, onMounted, ref } from 'vue'
@@ -184,6 +189,7 @@ import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { useI18n } from 'vue-i18n'
 import { CircleCheckFilled, Refresh, Box } from '@element-plus/icons-vue'
+
 import { hotelUnattendedApi, pickHotelPacks, pickHotelTemplates } from '@/api/hotelUnattended'
 import type { LinkageRule, RuleTemplate, RuleTriggerStat } from '@/api/linkage'
 import type { ScenePack } from '@/types/largeEvent'
@@ -266,8 +272,14 @@ async function fetchAll() {
 }
 
 function reload() { fetchAll() }
-function goLinkage() { router.push('/linkage') }
 function goPacks() { router.push('/hotel-unattended/scene-packs') }
+
+// ─── [SCENE-EDIT-UNIFY 2026-09-03] 单条规则编辑: 跳平台 /linkage?editRuleId= 自动打开该
+//     规则的 choice 编辑入口 (简易/高级卡片 → vp6 全功能表单), 与平台行内编辑同链路 —
+//     编辑器单一来源, 场景页不再就地维护简化表单 (UX-ALIGN 时期的 tune 就地编辑已移除) ──
+function openRuleEdit(row: LinkageRule) {
+  router.push({ path: '/linkage', query: { editRuleId: row.id } })
+}
 
 onMounted(() => { fetchAll() })
 </script>

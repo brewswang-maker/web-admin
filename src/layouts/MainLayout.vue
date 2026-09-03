@@ -192,10 +192,6 @@
             <el-icon><Monitor /></el-icon>
             <template #title>{{ $t('menu.devices') }}</template>
           </el-menu-item>
-          <el-menu-item index="/device-groups">
-            <el-icon><Files /></el-icon>
-            <template #title>{{ $t('menu.deviceGroups') }}</template>
-          </el-menu-item>
           <el-menu-item index="/live">
             <el-icon><VideoCamera /></el-icon>
             <template #title>{{ $t('menu.live') }}</template>
@@ -703,7 +699,10 @@ const primaryMenus = computed<PrimaryMenu[]>(() => {
     items: [
       // [场景账号 2026-08-31] devices/topology/linkage/projects 全员可见 (守卫等效控制,
       //   projects 仍叠加既有 auth.can); 其余 admin-only 项标 roles
+      // [vp9-fix 2026-09-02] 设备分组菜单项必须加在此 primaryMenus 数据源
+      //   (首次误加到 v-if="false" 的 legacy 兼容菜单致不可见)
       { path: '/devices', label: t('menu.devices'), icon: Monitor },
+      { path: '/device-groups', label: t('menu.deviceGroups'), icon: Files },
       { path: '/scene-management', label: '3D场景管理', icon: MapLocation, roles: ['admin'] },
       { path: '/topology', label: t('menu.topology'), icon: Share },
       { path: '/linkage', label: t('menu.linkage'), icon: Connection },

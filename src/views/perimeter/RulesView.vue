@@ -174,9 +174,8 @@
         </div>
       </el-card>
 
-      <!-- [FEAT 2026-09-02] 单条规则就地编辑抽屉 (共用组件, 点哪条只编辑哪条) -->
-      <RuleEditDrawer v-model:visible="ruleEditVisible" :rule="ruleEditing"
-        @saved="fetchAll" @deleted="fetchAll" @goto-platform="goLinkage" />
+      <!-- [SCENE-EDIT-UNIFY 2026-09-03] 编辑跳转平台 /linkage?editRuleId= 自动打开该规则
+           的 choice 编辑入口 (与平台行内编辑同链路同表单) — 场景页不再就地维护简化编辑器 -->
     </template>
   </div>
 </template>
@@ -202,7 +201,7 @@ import { ElMessage } from 'element-plus'
 import { useDebounceFn } from '@vueuse/core'
 import { CircleCheckFilled, Refresh, Box, Search } from '@element-plus/icons-vue'
 import { videoPerimeterApi, pickPerimeterPacks, pickPerimeterTemplates } from '@/api/videoPerimeter'
-import RuleEditDrawer from '@/components/RuleEditDrawer.vue'
+
 import { linkageApi, type LinkageRule, type RuleTemplate, type RuleTriggerStat } from '@/api/linkage'
 import { useEventTypeZh } from '@/composables/useEventTypeZh'
 import type { ScenePack } from '@/types/largeEvent'
@@ -318,17 +317,13 @@ async function toggleRule(rule: LinkageRule) {
 }
 
 function reload() { fetchAll() }
-// ─── [FEAT 2026-09-02] 单条规则就地编辑 (共用 RuleEditDrawer) ─────────────
-const ruleEditVisible = ref(false)
-const ruleEditing = ref<LinkageRule | null>(null)
-
-/** 点哪条规则的「编辑」, 抽屉只加载并编辑那一条 */
+// ─── [SCENE-EDIT-UNIFY 2026-09-03] 单条规则编辑: 跳平台 /linkage?editRuleId= 自动打开该
+//     规则的 choice 编辑入口 (简易/高级卡片 → vp6 全功能表单), 与平台行内编辑同链路 —
+//     编辑器单一来源, 场景页不再就地维护简化表单 (UX-ALIGN 时期的 tune 就地编辑已移除) ──
 function openRuleEdit(row: LinkageRule) {
-  ruleEditing.value = row
-  ruleEditVisible.value = true
+  router.push({ path: '/linkage', query: { editRuleId: row.id } })
 }
 
-function goLinkage() { router.push('/linkage') }
 function goPacks() { router.push('/video-perimeter/packs') }
 
 onMounted(() => {

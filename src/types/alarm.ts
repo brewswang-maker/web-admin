@@ -589,8 +589,13 @@ export function normalizeAlarmCore(raw: any): AlarmEvent {
       || new Date().toISOString(),
     updatedAt: raw.updated_at || raw.updatedAt || raw.created_at || raw.createdAt
       || (typeof raw.timestamp === 'number' ? new Date(raw.timestamp).toISOString() : new Date().toISOString()),
-    handledBy: raw.handled_by || raw.handledBy || '',
-    handledAt: raw.handled_at || raw.handledAt || '',
-    handleNote: raw.handle_note || raw.handleNote || '',
+    // [FIX 2026-09-03 处理备注闭环] 双源: 顶层字段优先, 兜底治理回填 gov
+    //   (后端 handleAlarm 写 handled_by/disposition 列, 列表/详情 SELECT 回填
+    //   metadata 治理字段 — 与 status 双源同模式); 否则确认后重开备注/处理人永远为空。
+    handledBy: String(raw.handled_by || gov.handled_by || raw.handledBy || ''),
+    handledAt: raw.handled_at || raw.handledAt
+      || (typeof gov.acked_at === 'number' ? new Date(gov.acked_at).toISOString() : '')
+      || (typeof gov.resolved_at === 'number' ? new Date(gov.resolved_at).toISOString() : ''),
+    handleNote: String(raw.handle_note || gov.handle_note || raw.handleNote || ''),
   }
 }

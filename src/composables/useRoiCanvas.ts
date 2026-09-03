@@ -112,13 +112,19 @@ export function arrayToPoints(flat: number[]): Array<{ x: number; y: number }> {
 // 借鉴EasyAIoT — 扩展ROI绘制工具 (绊线/方向线/矩形)
 // ============================================================================
 
-/** ROI类型枚举 — 对应后端 AlgoROI::Type */
+/** ROI类型枚举 — 对应后端 AlgoROI::Type
+ *  [FIX 2026-09-02] 新增 rectangle / point 两型 (对标海康 iVMS/大华 DSS 联动规则
+ *  绘制工具栏四形状范式: 多边形/矩形/绊线/点)。仅显式传入 types 的调用方可见
+ *  (availableTypes 白名单机制), 未传 types 的旧调用方 (PipelineEditorView)
+ *  工具栏不变。 */
 export enum RoiType {
   DETECTION_ZONE = 'detection_zone',   // 检测区域 (多边形)
   EXCLUSION_ZONE = 'exclusion_zone',   // 排除区域 (多边形)
-  TRIPWIRE = 'tripwire',               // 绊线 (线段)
+  TRIPWIRE = 'tripwire',               // 绊线 (线段, A→B 端点)
   DIRECTIONAL_LINE = 'directional_line', // 方向线 (带箭头)
   COUNTING_ZONE = 'counting_zone',     // 计数区域 (矩形)
+  RECTANGLE = 'rectangle',             // [2026-09-02] 矩形区域 (拖拽对角两点, 存 4 顶点)
+  POINT = 'point',                     // [2026-09-02] 关注点 (单击放置单点)
 }
 
 /** ROI方向 — 绊线/方向线用 */
@@ -149,7 +155,9 @@ export interface RoiData {
   direction?: RoiDirection
 }
 
-/** 在 Canvas 上绘制绊线 (线段) */
+/** 在 Canvas 上绘制绊线 (线段)
+ *  [FIX 2026-09-02] 支持 direction 方向箭头 (对标海康 iVMS 绊线 A→B/B→A/双向
+ *  箭头范式, 与 drawDirectionalLine 同一 drawArrowhead), 未设方向保持纯虚线。 */
 export function drawTripwire(
   ctx: CanvasRenderingContext2D,
   points: number[],
@@ -159,6 +167,7 @@ export function drawTripwire(
     stroke = '#FF6D00',
     lineWidth = 3,
     pointRadius = 5,
+    direction,
     label,
   } = opts
 
@@ -175,6 +184,16 @@ export function drawTripwire(
   ctx.setLineDash([8, 4])
   ctx.stroke()
   ctx.setLineDash([])
+
+  // [FIX 2026-09-02] 方向箭头 (首尾两端点; a_to_b 沿 A→B, b_to_a 沿 B→A, both 双向)
+  if (direction === RoiDirection.A_TO_B || direction === RoiDirection.BOTH) {
+    const xe = points[points.length - 2], ye = points[points.length - 1]
+    drawArrowhead(ctx, points[0], points[1], xe, ye, 10, stroke)
+  }
+  if (direction === RoiDirection.B_TO_A || direction === RoiDirection.BOTH) {
+    const xe = points[points.length - 2], ye = points[points.length - 1]
+    drawArrowhead(ctx, xe, ye, points[0], points[1], 10, stroke)
+  }
 
   // 绘制端点
   if (pointRadius > 0) {
@@ -255,6 +274,59 @@ export function drawDirectionalLine(
     ctx.font = '12px sans-serif'
     ctx.textAlign = 'center'
     ctx.fillText(label, midX, midY - 12)
+  }
+}
+
+/** [2026-09-02] 矩形对角两点 → 顺序化 4 顶点 [x1,y1, x2,y1, x2,y2, x1,y2]
+ *  (左上→右上→右下→左下)。矩形统一存 4 顶点: 引擎 pointInPolygon 直接可用
+ *  (凸四边形退化), drawRectangle 取 min/max 渲染亦正确, 回显零损失。 */
+export function rectFromDiagonal(x1: number, y1: number, x2: number, y2: number): number[] {
+  const lx = Math.min(x1, x2), rx = Math.max(x1, x2)
+  const ty = Math.min(y1, y2), by = Math.max(y1, y2)
+  return [lx, ty, rx, ty, rx, by, lx, by]
+}
+
+/** [2026-09-02] 在 Canvas 上绘制关注点 ROI (单点: 同心圆 + 十字准星) */
+export function drawPoint(
+  ctx: CanvasRenderingContext2D,
+  points: number[],
+  opts: RoiDrawOptions = {},
+): void {
+  const {
+    stroke = '#00BCD4',
+    pointRadius = 6,
+    label,
+  } = opts
+
+  if (points.length < 2) return
+  const x = points[0], y = points[1]
+
+  // 十字准星
+  ctx.strokeStyle = stroke
+  ctx.lineWidth = 1
+  ctx.setLineDash([3, 3])
+  ctx.beginPath()
+  ctx.moveTo(x - pointRadius * 2, y); ctx.lineTo(x + pointRadius * 2, y)
+  ctx.moveTo(x, y - pointRadius * 2); ctx.lineTo(x, y + pointRadius * 2)
+  ctx.stroke()
+  ctx.setLineDash([])
+
+  // 同心圆 (实心内圆 + 空心外环)
+  ctx.beginPath()
+  ctx.arc(x, y, 3, 0, Math.PI * 2)
+  ctx.fillStyle = stroke
+  ctx.fill()
+  ctx.beginPath()
+  ctx.arc(x, y, pointRadius, 0, Math.PI * 2)
+  ctx.strokeStyle = stroke
+  ctx.lineWidth = 2
+  ctx.stroke()
+
+  if (label) {
+    ctx.fillStyle = stroke
+    ctx.font = '12px sans-serif'
+    ctx.textAlign = 'left'
+    ctx.fillText(label, x + pointRadius + 4, y - 4)
   }
 }
 
@@ -353,6 +425,12 @@ export function drawRoi(
       break
     case RoiType.COUNTING_ZONE:
       drawRectangle(ctx, pts, { ...baseOpts, stroke: '#9C27B0' })
+      break
+    case RoiType.RECTANGLE:
+      drawRectangle(ctx, pts, { ...baseOpts, stroke: '#00897B' })
+      break
+    case RoiType.POINT:
+      drawPoint(ctx, pts, baseOpts)
       break
     default:
       drawPolygon(ctx, pts, baseOpts)

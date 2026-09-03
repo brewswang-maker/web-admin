@@ -315,11 +315,21 @@ function initMap() {
   })
 
   // 图层切换（矢量/卫星）— 右上角
-  map.addControl(new AMap.MapType({
-    defaultType: 0,          // 0=矢量 1=卫星
-    showTraffic: false,
-    showRoad: false,
-  }))
+  // [FIX 2026-09-02] AMap.MapType 是 JS API 2.0 插件, SDK URL 未带 plugin 参数时
+  //   AMap.MapType 为 undefined → "not a constructor" → initMap 中断整页白屏。
+  //   必须运行时按需补装 (loadAMap 复用已加载 SDK 时改 URL 参数也无效),
+  //   且插件失败不阻断主地图 (map 已创建, 仅缺图层切换按钮)
+  try {
+    AMap.plugin('AMap.MapType', () => {
+      map.addControl(new AMap.MapType({
+        defaultType: 0,          // 0=矢量 1=卫星
+        showTraffic: false,
+        showRoad: false,
+      }))
+    })
+  } catch (e) {
+    console.warn('[LocationTrack] MapType 插件加载失败 (不影响主地图):', e)
+  }
 
   // AMap 插件按需加载（位置设置功能已迁移到设备管理页）
 
@@ -696,7 +706,7 @@ onMounted(async () => {
     await loadAMap()
     initMap()
   } catch (e) {
-    console.error('[LocationTrack] 高德地图 SDK 加载失败:', e)
+    console.error('[LocationTrack] 高德地图初始化失败:', e)
   }
   await refreshLocations()
   // [Audit-Add] 监听 alarm_map_marker 事件

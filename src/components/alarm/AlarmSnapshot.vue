@@ -28,6 +28,32 @@
       ref="canvasRef"
       class="alarm-snapshot__canvas"
     />
+    <!-- [FEAT 2026-09-02] 下载标注图: 导出原始分辨率合成图 (快照+检测框标注) PNG -->
+    <button
+      v-if="imageUrl"
+      class="alarm-snapshot__download"
+      title="导出带检测框标注的快照原图 (PNG)"
+      @click="downloadAnnotated"
+    >
+      ⬇ 下载标注图
+    </button>
+    <!-- [FEAT 2026-09-02] 全屏预览: 显式按钮触发 el-image-viewer (teleported 防
+         报警弹窗 el-dialog z-index 遮挡), 左上角与下载按钮对称 -->
+    <button
+      v-if="imageUrl"
+      class="alarm-snapshot__fullscreen"
+      title="全屏预览"
+      @click="viewerVisible = true"
+    >
+      ⛶ 全屏
+    </button>
+    <el-image-viewer
+      v-if="viewerVisible"
+      :url-list="[imageUrl]"
+      teleported
+      hide-on-click-modal
+      @close="viewerVisible = false"
+    />
   </div>
 </template>
 
@@ -39,6 +65,10 @@
  * 坐标从归一化 (0-1) 转为像素坐标。
  */
 import { ref, computed, nextTick, onMounted, onBeforeUnmount } from 'vue'
+import { ElMessage } from 'element-plus'
+
+/** [FEAT 2026-09-02] 全屏预览开关 (el-image-viewer v-if 挂载) */
+const viewerVisible = ref(false)
 
 interface DetectionBox {
   x: number; y: number; w: number; h: number
@@ -198,6 +228,57 @@ onBeforeUnmount(() => {
 function onImageError() {
   console.warn('[AlarmSnapshot] Image failed to load:', props.imageUrl)
 }
+
+/** [FEAT 2026-09-02] 下载标注图: 离屏 canvas 按快照原始分辨率合成 (背景+检测框),
+ *  复用 normalizedBoxes 与屏幕绘制同款视觉 (色板/label+置信度), 线宽/字号随
+ *  分辨率缩放 (屏幕 2px 在 1920 原图上过细)。跨域污染时降级下载原图 */
+function downloadAnnotated() {
+  const img = containerRef.value?.querySelector('img') as HTMLImageElement | null
+  if (!img || !img.naturalWidth) {
+    ElMessage.warning('快照尚未加载完成')
+    return
+  }
+  const canvas = document.createElement('canvas')
+  canvas.width = img.naturalWidth
+  canvas.height = img.naturalHeight
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return
+  ctx.drawImage(img, 0, 0)
+  const scale = Math.max(1, canvas.width / 640)
+  for (const box of normalizedBoxes.value) {
+    const x = box.x * canvas.width
+    const y = box.y * canvas.height
+    const w = box.w * canvas.width
+    const h = box.h * canvas.height
+    const color = (props.dangerColor !== false)
+      ? '#f56c6c'
+      : (CLASS_COLORS[box.label] || '#FF3D71')
+    ctx.strokeStyle = color
+    ctx.lineWidth = 2 * scale
+    ctx.strokeRect(x, y, w, h)
+    const label = `${box.label} ${Math.round(box.confidence * 100)}%`
+    ctx.font = `bold ${Math.round(11 * scale)}px sans-serif`
+    const textWidth = ctx.measureText(label).width + 8 * scale
+    const th = 18 * scale
+    ctx.fillStyle = color
+    ctx.fillRect(x, y - th, textWidth, th)
+    ctx.fillStyle = '#fff'
+    ctx.fillText(label, x + 4 * scale, y - 5 * scale)
+  }
+  canvas.toBlob((blob) => {
+    if (!blob) {
+      ElMessage.error('标注图导出失败')
+      return
+    }
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    const ts = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14)
+    a.href = url
+    a.download = `alarm-annotated-${ts}.png`
+    a.click()
+    URL.revokeObjectURL(url)
+  }, 'image/png')
+}
 </script>
 
 <style scoped>
@@ -221,6 +302,44 @@ function onImageError() {
   width: 100%;
   height: 100%;
   pointer-events: none;
+}
+/* [FEAT 2026-09-02] 下载标注图悬浮按钮: 右上角常驻, 高于标注 canvas 与预览层 */
+.alarm-snapshot__download {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 10;
+  padding: 4px 10px;
+  border: none;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  font-size: 12px;
+  line-height: 20px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+.alarm-snapshot__download:hover {
+  background: rgba(0, 0, 0, 0.78);
+}
+/* [FEAT 2026-09-02] 全屏预览悬浮按钮: 左上角与下载按钮对称, 同款悬浮风格 */
+.alarm-snapshot__fullscreen {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 10;
+  padding: 4px 10px;
+  border: none;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  font-size: 12px;
+  line-height: 20px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+.alarm-snapshot__fullscreen:hover {
+  background: rgba(0, 0, 0, 0.78);
 }
 .alarm-snapshot__empty {
   display: flex;
