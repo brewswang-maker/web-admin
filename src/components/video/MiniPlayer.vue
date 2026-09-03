@@ -648,6 +648,7 @@ onBeforeUnmount(() => {
 .mini-player {
   position: relative;
   width: 100%;
+  height: 100%;  /* 占满父容器高度 (video 为 height:100%, 需要明确高度链) */
   background: #000;
   border-radius: 6px;
   overflow: hidden;

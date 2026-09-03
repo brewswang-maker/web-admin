@@ -5,11 +5,6 @@
         <div
           class="alarm-popup"
           :class="{ 'alarm-flash': popupVisible }"
-          :style="{
-            borderColor: levelColor,
-            '--alarm-level-color': levelColor,
-            '--alarm-level-rgb': levelRgb,
-          }"
         >
 
           <!-- ═══ 顶栏: 红色短标题 + 倒计时 + ✕ ═══ -->
@@ -22,7 +17,7 @@
             </div>
           </div>
 
-          <!-- ═══ 一级 Tab ═══ -->
+          <!-- ═══ 一级 Tab + 右侧二级 Tab (同行: 一级居左, 详情/处警居右) ═══ -->
           <div class="alarm-popup__tabs" role="tablist">
             <div
               v-for="t in primaryTabs" :key="t.name"
@@ -30,6 +25,20 @@
               :class="{ 'alarm-popup__tab--active': activePrimaryTab === t.name }"
               @click="activePrimaryTab = t.name"
             >{{ t.label }}</div>
+
+            <!-- 二级 Tab (详情/处警): 与一级 Tab 同行, 宽度对齐右侧面板 -->
+            <div class="alarm-popup__side-tabs">
+              <div
+                class="alarm-popup__side-tab"
+                :class="{ 'alarm-popup__side-tab--active': activeSecondaryTab === 'detail' }"
+                @click="activeSecondaryTab = 'detail'"
+              >详情</div>
+              <div
+                class="alarm-popup__side-tab"
+                :class="{ 'alarm-popup__side-tab--active': activeSecondaryTab === 'dispose' }"
+                @click="activeSecondaryTab = 'dispose'"
+              >处警</div>
+            </div>
           </div>
 
           <!-- ═══ 主体: 左主区 + 右侧二级 Tab ═══ -->
@@ -199,41 +208,34 @@
                   <button class="alarm-popup__nav-btn" :disabled="queueInfo.current >= queueInfo.total" @click="nextAlarm">下一条</button>
                 </div>
                 <div class="alarm-popup__footer-right">
-                  <el-radio-group v-model="priorityMode" size="small">
-                    <el-radio-button label="newest">优先显示新事件</el-radio-button>
-                    <el-radio-button label="highest">优先显示最高等级事件</el-radio-button>
+                  <el-radio-group v-model="priorityMode" size="small" class="alarm-popup__priority-group">
+                    <el-radio label="newest">优先显示新事件</el-radio>
+                    <el-radio label="highest">优先显示最高等级事件</el-radio>
                   </el-radio-group>
                 </div>
               </div>
 
             </div>
 
-            <!-- 右侧: 二级 Tab(详情/处警) -->
+            <!-- 右侧: 详情/处警面板 -->
             <div class="alarm-popup__side">
-              <div class="alarm-popup__side-tabs">
-                <div
-                  class="alarm-popup__side-tab"
-                  :class="{ 'alarm-popup__side-tab--active': activeSecondaryTab === 'detail' }"
-                  @click="activeSecondaryTab = 'detail'"
-                >详情</div>
-                <div
-                  class="alarm-popup__side-tab"
-                  :class="{ 'alarm-popup__side-tab--active': activeSecondaryTab === 'dispose' }"
-                  @click="activeSecondaryTab = 'dispose'"
-                >处警</div>
-              </div>
               <div class="alarm-popup__side-body">
                 <el-scrollbar>
                   <!-- 详情 -->
                   <div v-show="activeSecondaryTab === 'detail'" class="alarm-popup__detail">
                     <div class="alarm-popup__detail-ai">AI视频告警</div>
-                    <div class="alarm-popup__detail-row">
-                      <span class="alarm-popup__detail-key">报警等级:</span>
-                      <span class="alarm-popup__detail-val">
-                        <span class="alarm-popup__level-badge" :class="`alarm-popup__level-badge--${currentAlarm.level}`">{{ levelLabel }}</span>
-                      </span>
-                      <span class="alarm-popup__detail-key">状态:</span>
-                      <span class="alarm-popup__status">{{ statusLabel(currentAlarm.status) }}</span>
+                    <div class="alarm-popup__detail-row alarm-popup__detail-row--level">
+                      <div>
+                        <span class="alarm-popup__detail-key">报警等级:</span>
+                        <span class="alarm-popup__detail-val">
+                          <span class="alarm-popup__level-badge" :class="`alarm-popup__level-badge--${currentAlarm.level}`">{{ levelLabel }}</span>
+                        </span>
+                      </div>
+                      <div>
+                           <span class="alarm-popup__detail-key">状态:</span>
+                          <span class="alarm-popup__status">{{ statusLabel(currentAlarm.status) }}</span>
+                      </div>
+                     
                     </div>
                     <div class="alarm-popup__detail-row">
                       <span class="alarm-popup__detail-key">发生时间:</span>
@@ -262,7 +264,7 @@
                     <!-- 告警图片: 本次事件的快照, 多张可翻页, 点击跳转「图片」Tab -->
                     <div class="alarm-popup__detail-images">
                       <div class="alarm-popup__detail-images-header">
-                        <span class="alarm-popup__detail-key">告警图片:</span>
+                        <span class="alarm-popup__detail-key">告警图片</span>
                         <div class="alarm-popup__detail-images-nav">
                           <button :disabled="imageIndex <= 0" @click="prevImage" aria-label="上一张">‹</button>
                           <span>{{ imageIndex + 1 }} / {{ totalImageCount }}</span>
@@ -285,19 +287,19 @@
                         <span>{{ log.text }}</span>
                       </div>
                     </div>
-                    <!-- 底部「处警」粉红色入口 (效果图右下角) -->
-                    <div class="alarm-popup__detail-footer">
-                      <button class="alarm-popup__dispose-entry" @click="activeSecondaryTab = 'dispose'">处警</button>
-                    </div>
                   </div>
 
                   <!-- 处警: 未处置 = 表单 + 确认处置; 已处置 = 只读 + 追加处警 -->
                   <div v-show="activeSecondaryTab === 'dispose'" class="alarm-popup__dispose">
-                    <div class="alarm-popup__dispose-row">
-                      <span class="alarm-popup__dispose-key">接警单号:</span>
-                      <span class="alarm-popup__dispose-val">{{ receiverUnit }}</span>
-                      <span class="alarm-popup__dispose-key">接警员:</span>
-                      <span class="alarm-popup__dispose-val">{{ receiverName }}</span>
+                    <div class="alarm-popup__dispose-row alarm-popup__dispose-row--level">
+                      <div>
+                        <span class="alarm-popup__dispose-key">接警单号:</span>
+                        <span class="alarm-popup__dispose-val">{{ receiverUnit }}</span>
+                      </div>
+                      <div>
+                        <span class="alarm-popup__dispose-key">接警员:</span>
+                        <span class="alarm-popup__dispose-val">{{ receiverName }}</span>
+                      </div>
                     </div>
                     <!-- 编辑态: 未处置, 或已处置后点击「追加处警」进入 -->
                     <template v-if="!isDisposed || appendEditing">
@@ -350,6 +352,9 @@
                     </div>
                   </div>
                 </el-scrollbar>
+              </div>
+              <div class="alarm-popup__detail-footer">
+                <button class="alarm-popup__dispose-entry" @click="activeSecondaryTab = 'dispose'">处警</button>
               </div>
             </div>
           </div>
@@ -843,13 +848,13 @@ void jumpToPlayback; void openImageTab
 .alarm-popup__header {
   height: 44px;
   flex: 0 0 44px;
-  background: linear-gradient(90deg, #F93A55 0%, #E0284D 100%);
   color: #fff;
   display: flex; align-items: center; justify-content: space-between;
-  padding: 0 16px;
+  padding: 0 10px;
+  background: linear-gradient(90deg, #F93A55 0%, #050E30 100%);
 }
 .alarm-popup__title {
-  font-size: 16px; font-weight: 600; letter-spacing: 1px;
+  font-size: 18px; font-weight: 400;
 }
 .alarm-popup__header-right {
   display: flex; align-items: center; gap: 14px;
@@ -864,8 +869,8 @@ void jumpToPlayback; void openImageTab
 .alarm-popup__close-btn {
   width: 28px; height: 28px;
   background: transparent;
-  color: #fff;
-  border: 1px solid rgba(255, 255, 255, 0.4);
+  color: #00B2FD;
+  border: 1px solid transparent;
   border-radius: 50%;
   cursor: pointer;
   font-size: 14px; line-height: 1;
@@ -877,30 +882,32 @@ void jumpToPlayback; void openImageTab
 /* ── 一级 Tab ── */
 .alarm-popup__tabs {
   height: 40px; flex: 0 0 40px;
-  background: #000;
+  background: #050E30;
   display: flex; align-items: stretch;
-  border-bottom: 1px solid #1C4A7D;
 }
 .alarm-popup__tab {
-  flex: 1;
+  flex: 0 0 auto;
+  min-width: 88px;
+  padding: 0 24px;
   display: flex; align-items: center; justify-content: center;
-  color: #999;
-  font-size: 13px;
+  color: #AADDFF;
+  font-size: 15px;
   cursor: pointer;
   position: relative;
-  transition: color 0.15s;
   user-select: none;
 }
-.alarm-popup__tab:hover { color: #ccc; }
+.alarm-popup__tab:hover { color: #00FFFF; }
 .alarm-popup__tab--active {
-  color: #fff;
+  color: #00FFFF;
   font-weight: 600;
 }
 .alarm-popup__tab--active::after {
   content: '';
   position: absolute;
-  bottom: 0; left: 50%; transform: translateX(-50%);
-  width: 36px; height: 3px;
+  bottom: 0; 
+  left: 0;
+  width: 100%; 
+  height: 1px;
   background: #00E5FF;
   border-radius: 2px;
 }
@@ -931,7 +938,7 @@ void jumpToPlayback; void openImageTab
   background: #FFFFFF;
   color: #1a1a1a;
   display: flex; flex-direction: column;
-  border-left: 1px solid #e4e7ed;
+  /* border-left: 1px solid #e4e7ed; */
 }
 
 /* ── 联动预览 ── */
@@ -1135,7 +1142,7 @@ void jumpToPlayback; void openImageTab
 /* ── 联动地图位置 ── */
 .alarm-popup__map {
   width: 100%; height: 100%;
-  background: linear-gradient(135deg, #1F2D4A 0%, #2A3F66 50%, #1F2D4A 100%);
+  /* background: linear-gradient(135deg, #1F2D4A 0%, #2A3F66 50%, #1F2D4A 100%); */
   position: relative;
   overflow: hidden;
 }
@@ -1204,32 +1211,38 @@ void jumpToPlayback; void openImageTab
 
 /* ── 右侧: 二级 Tab (详情/处警) ── */
 .alarm-popup__side-tabs {
-  height: 36px; flex: 0 0 36px;
-  background: #F5F7FA;
-  display: flex; align-items: stretch;
-  border-bottom: 1px solid #e4e7ed;
+  flex: 0 0 360px;
+  margin-left: auto;
+  background: #fff;
+  display: flex; align-items: stretch; justify-content: flex-start;
+  padding: 0 14px;
+  gap: 28px;
+  border-left: none;
+  border-bottom: 1px solid #E4E7ED;
 }
 .alarm-popup__side-tab {
-  flex: 1;
+  flex: 0 0 auto;
   display: flex; align-items: center; justify-content: center;
-  font-size: 13px; color: #606266;
+  font-size: 14px; color: #666;
   cursor: pointer;
   position: relative;
   transition: color 0.15s;
+  user-select: none;
+  padding: 0 12px;
+  font-weight: bold;
 }
-.alarm-popup__side-tab:hover { color: #3294ED; }
+.alarm-popup__side-tab:hover { color: #0088C1; }
 .alarm-popup__side-tab--active {
-  color: #3294ED;
+  color: #0088C1;
   font-weight: 600;
-  background: #FFFFFF;
+  background: transparent;
 }
 .alarm-popup__side-tab--active::after {
   content: '';
   position: absolute;
-  bottom: 0; left: 50%; transform: translateX(-50%);
-  width: 30px; height: 2px;
+  bottom: 0; left: 0;
+  width: 100%; height: 1px;
   background: #3294ED;
-  border-radius: 1px;
 }
 .alarm-popup__side-body {
   flex: 1 1 auto;
@@ -1240,15 +1253,15 @@ void jumpToPlayback; void openImageTab
 /* ── 详情面板 ── */
 .alarm-popup__detail {
   padding: 12px 14px;
-  font-size: 13px;
+  font-size: 14px;
   color: #303133;
 }
 .alarm-popup__detail-ai {
   display: inline-block;
-  background: linear-gradient(90deg, #6C5CE7 0%, #A29BFE 100%);
-  color: #fff;
-  font-size: 11px; font-weight: 600;
-  padding: 2px 8px;
+  /* background: linear-gradient(90deg, #6C5CE7 0%, #A29BFE 100%); */
+  color: #111;
+  font-size: 14px; font-weight: 600;
+  padding: 2px 0;
   border-radius: 4px;
   margin-bottom: 8px;
 }
@@ -1258,42 +1271,51 @@ void jumpToPlayback; void openImageTab
   padding: 4px 0;
   flex-wrap: wrap;
 }
+.alarm-popup__detail-row--level {
+  justify-content: space-between;
+}
 .alarm-popup__detail-key {
-  color: #909399; font-size: 12px;
+  color: #111111; font-size: 14px;
   white-space: nowrap;
+  font-weight: bold;
 }
 .alarm-popup__detail-val {
-  color: #303133; font-size: 12px;
-  font-weight: 500;
+  color: #111111; font-size: 14px;
 }
 /* [POPUP-STRIP 2026-09-03] detail-hint 已随占位注释移除 */
 
 /* [POPUP-IMG-LIST 2026-09-03] 详情面板「告警图片」缩略图 + 翻页器 */
 .alarm-popup__detail-images {
-  margin-top: 6px;
+  margin-top: 20px;
 }
 .alarm-popup__detail-images-header {
   display: flex; align-items: center; justify-content: space-between;
+  padding-bottom: 6px;
+  border-bottom: 1px solid #ebeef5;
+}
+.alarm-popup__detail-images-header .alarm-popup__detail-key {
+  font-size: 15px;
+  font-weight: 600;
+  color: #303133;
 }
 .alarm-popup__detail-images-nav {
-  display: flex; align-items: center; gap: 6px;
-  font-size: 12px; color: #303133;
+  display: flex; align-items: center; gap: 12px;
+  font-size: 14px; color: #303133;
   font-variant-numeric: tabular-nums;
 }
 .alarm-popup__detail-images-nav button {
-  width: 20px; height: 20px;
+  width: 22px; height: 22px;
   display: flex; align-items: center; justify-content: center;
-  background: #F5F7FA;
-  border: 1px solid #DCDFE6;
-  border-radius: 3px;
-  color: #606266; font-size: 14px; line-height: 1;
+  background: transparent;  /* 去掉灰色底块, 仅留箭头字符 */
+  border: none;
+  color: #606266; font-size: 24px; line-height: 1;
   cursor: pointer;
 }
 .alarm-popup__detail-images-nav button:hover:not(:disabled) {
-  border-color: #3294ED; color: #3294ED;
+  color: #3294ED;
 }
 .alarm-popup__detail-images-nav button:disabled {
-  opacity: 0.35; cursor: not-allowed;
+  opacity: 1; cursor: not-allowed;
 }
 .alarm-popup__detail-images-thumb {
   margin-top: 6px;
@@ -1311,17 +1333,21 @@ void jumpToPlayback; void openImageTab
 }
 
 /* [POPUP-DISPOSE-ENTRY 2026-09-03] 详情面板底部「处警」粉红色入口按钮 */
+/* [LAYOUT 2026-09-03] 钉在侧栏最底部: 深蓝底条 + 居中粉红按钮, 不随内容滚动 */
 .alarm-popup__detail-footer {
-  margin-top: 14px;
+  flex: 0 0 auto;
   display: flex; justify-content: flex-end;
+  padding: 8px 0;
+  background: #081649;
 }
 .alarm-popup__dispose-entry {
   min-width: 112px; height: 32px;
-  background: #F93A55;
+  background: #F45C73;
   color: #fff;
   border: none; border-radius: 4px;
   font-size: 13px; font-weight: 600;
   cursor: pointer;
+  margin-right: 14px;
   transition: background 0.15s;
 }
 .alarm-popup__dispose-entry:hover { background: #E12D48; }
@@ -1329,10 +1355,10 @@ void jumpToPlayback; void openImageTab
 /* 报警等级徽章 */
 .alarm-popup__level-badge {
   display: inline-block;
-  padding: 2px 8px;
-  border-radius: 10px;
-  font-size: 11px; font-weight: 600;
+  padding: 0px 14px;
+  font-size: 13px; 
   color: #fff;
+  margin-left: 4px;
 }
 .alarm-popup__level-badge--critical { background: #FF3D71; }
 .alarm-popup__level-badge--high     { background: #FF6B35; }
@@ -1341,9 +1367,8 @@ void jumpToPlayback; void openImageTab
 
 .alarm-popup__status {
   display: inline-block;
-  background: #ecf5ff;
   color: #3294ED;
-  font-size: 11px;
+  font-size: 14px;
   padding: 1px 8px;
   border-radius: 8px;
 }
@@ -1389,14 +1414,18 @@ void jumpToPlayback; void openImageTab
   padding: 6px 0;
   flex-wrap: wrap;
 }
+.alarm-popup__dispose-row--level {
+  justify-content: space-between;
+}
 .alarm-popup__dispose-row--col {
   flex-direction: column;
   align-items: stretch;
   gap: 4px;
 }
 .alarm-popup__dispose-key {
-  color: #606266; font-size: 12px;
+  color: #111; font-size: 14px;
   white-space: nowrap;
+  font-weight: bold;
 }
 .alarm-popup__dispose-key--required::before {
   content: '*';
@@ -1404,8 +1433,7 @@ void jumpToPlayback; void openImageTab
   margin-right: 2px;
 }
 .alarm-popup__dispose-val {
-  color: #303133; font-size: 12px;
-  font-weight: 500;
+  color: #111; font-size: 14px;
 }
 .alarm-popup__dispose-select,
 .alarm-popup__dispose-textarea {
@@ -1419,7 +1447,7 @@ void jumpToPlayback; void openImageTab
   margin-top: 10px;
 }
 .alarm-popup__dispose-section-title {
-  font-size: 12px; font-weight: 600;
+  font-size: 14px; font-weight: 600;  
   color: #606266;
   margin-bottom: 4px;
 }
@@ -1437,8 +1465,8 @@ void jumpToPlayback; void openImageTab
 .alarm-popup__footer {
   height: 48px; flex: 0 0 48px;
   background: #050E30;
-  border-top: 1px solid #1C4A7D;
-  display: flex; align-items: center; justify-content: space-between;
+  /* border-top: 1px solid #1C4A7D; */
+  display: flex; align-items: center; 
   padding: 0 16px;
 }
 .alarm-popup__footer-left {
@@ -1446,11 +1474,11 @@ void jumpToPlayback; void openImageTab
 }
 .alarm-popup__nav-btn {
   background: transparent;
-  color: #00E5FF;
-  border: 1px solid #00E5FF;
+  color: #00B2FD;
+  border: 1px solid transparent;
   padding: 4px 12px;
   border-radius: 4px;
-  font-size: 12px;
+  font-size: 14px;
   cursor: pointer;
   transition: background 0.15s;
 }
@@ -1461,22 +1489,38 @@ void jumpToPlayback; void openImageTab
   opacity: 0.35; cursor: not-allowed;
 }
 .alarm-popup__nav-counter {
-  color: #B7CDE6; font-size: 12px;
+  color: #AADDFF; font-size: 14px;
   font-variant-numeric: tabular-nums;
   min-width: 50px; text-align: center;
 }
-.alarm-popup__footer-right :deep(.el-radio-button__inner) {
+.alarm-popup__footer-right :deep(.el-radio) {
+  height: auto;
+  margin-left: 24px;
+  margin-right: 0;
+}
+.alarm-popup__footer-right :deep(.el-radio:last-child) {
+  margin-right: 0;
+}
+.alarm-popup__footer-right :deep(.el-radio__label) {
+  color: #AADDFF;
+  font-size: 13px;
+  padding-left: 6px;
+}
+.alarm-popup__footer-right :deep(.el-radio__inner) {
   background: transparent;
   border-color: #3294ED;
-  color: #B7CDE6;
-  font-size: 11px;
-  padding: 4px 10px;
+  width: 14px; height: 14px;
 }
-.alarm-popup__footer-right :deep(.el-radio-button__original-radio:checked + .el-radio-button__inner) {
+.alarm-popup__footer-right :deep(.el-radio__input.is-checked .el-radio__inner) {
   background: #3294ED;
   border-color: #3294ED;
-  color: #fff;
-  box-shadow: -1px 0 0 0 #3294ED;
+}
+.alarm-popup__footer-right :deep(.el-radio__input.is-checked + .el-radio__label) {
+  color: #3294ED;
+}
+.alarm-popup__footer-right :deep(.el-radio__inner::after) {
+  background: #fff;
+  width: 5px; height: 5px;
 }
 
 /* ── 入场动画 ── */
