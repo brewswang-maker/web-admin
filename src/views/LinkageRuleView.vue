@@ -1,7 +1,13 @@
 <template>
   <div class="linkage-page">
+    <!-- [SCENE-EDIT-INPLACE 2026-09-03] 嵌入编辑模式 (embedEditRuleId): 场景页/算法页
+         就地渲染本组件编辑规则 — 列表外壳 (tabs) CSS 隐藏, 仅呈现编辑抽屉链
+         (choice → vp6 全功能表单), 编辑器单一来源, 宿主页不跳转 /linkage。
+         注: 编辑链 DOM (vp6 抽屉/SimpleRuleDrawer/paramDialog) 嵌于外壳内部,
+         不能用 v-if 卸载外壳 (会连编辑链一起卸载), 故 display:none + 抽屉
+         append-to-body 脱离隐藏祖先 -->
     <!-- ===== 主页面 Tabs ===== -->
-    <el-tabs v-model="mainTab" type="border-card" class="main-tabs">
+    <el-tabs v-show="!embedMode" v-model="mainTab" type="border-card" class="main-tabs">
     <el-tab-pane label="联动规则" name="rules">
 
     <!-- ===== 统计卡片 ===== -->
@@ -221,8 +227,9 @@
       </el-table>
     </el-card>
 
-    <!-- ===== 规则编辑抽屉 ===== -->
-    <el-drawer v-model="drawerVisible" :title="editingRule ? '编辑联动规则' : '新建联动规则'" size="520px" direction="rtl" :close-on-click-modal="false" destroy-on-close>
+    <!-- ===== 规则编辑抽屉 ===== (append-to-body: 嵌入模式下外壳 display:none,
+         抽屉须 teleport 到 body 才可见 — [SCENE-EDIT-INPLACE]) -->
+    <el-drawer v-model="drawerVisible" :title="editingRule ? '编辑联动规则' : '新建联动规则'" size="520px" direction="rtl" :close-on-click-modal="false" destroy-on-close append-to-body>
       <div class="editor-body">
         <el-form :model="form" label-position="top" size="default" :rules="formRules" ref="formRef">
           <!-- [vp7 向导 2026-09-01] 双形态切换: el-steps 分步向导 / 全览 (原单页表单)
@@ -1039,7 +1046,8 @@
     </el-dialog>
 
     <!-- ===== Dry-Run 结果对话框 ===== -->
-    <el-dialog v-model="showDryRunDialog" title="规则模拟测试结果" width="680px" destroy-on-close>
+    <!-- dryRun 由编辑抽屉 footer「模拟测试」触发 — 编辑链一环, 嵌入模式需 append-to-body -->
+    <el-dialog v-model="showDryRunDialog" title="规则模拟测试结果" width="680px" destroy-on-close append-to-body>
       <template v-if="dryRunResult">
         <el-alert :type="dryRunResult.matched ? 'success' : 'warning'" :closable="false" style="margin-bottom: 16px">
           <template #title>
@@ -3082,28 +3090,50 @@ function applyTimeTemplate(tmpl: TimeTemplate) {
   ElMessage.success('已应用时段模板: ' + tmpl.name)
 }
 
+// ── [SCENE-EDIT-INPLACE 2026-09-03] 嵌入编辑模式 ──
+// 宿主页 (五个场景 RulesView / AlgoConfigView) 就地渲染本组件并传 embedEditRuleId:
+// 隐藏列表外壳, onMounted 深链自动打开该规则 choice 编辑入口 — 与平台行内编辑
+// 同组件同表单同链路 (编辑器单一来源), 用户不离开当前页; 编辑抽屉链
+// (choice 桥 + vp6 抽屉) 全部关闭时 emit edit-closed, 宿主卸载本实例并刷新列表
+const props = defineProps<{ embedEditRuleId?: string }>()
+const emit = defineEmits<{ (e: 'edit-closed'): void }>()
+/** 嵌入编辑模式: 隐藏主外壳, 仅承载编辑抽屉链 */
+const embedMode = computed(() => !!props.embedEditRuleId)
+/** 深链已打开过编辑 (防初始 both-false 误触发 edit-closed) */
+const embedStarted = ref(false)
+watch([simpleDrawerOpen, drawerVisible], ([a, b]) => {
+  if (embedMode.value && embedStarted.value && !a && !b) emit('edit-closed')
+})
+
 onMounted(() => {
   // [校园二期 2026-08-30] 场景包 goRules 跳转预填 tag 过滤 (?tag=scene_pack)
   const route = useRoute()
   const qTag = route.query.tag
-  if (qTag) tagFilter.value = [String(qTag)]
-  // [SCENE-EDIT-UNIFY 2026-09-03] 五个场景页「编辑」统一跳转本页 (?editRuleId=):
-  //   规则列表加载完成后自动打开该规则编辑 (choice 三卡片 → 简易/高级卡片 → vp6 全功能表单),
-  //   与平台行内编辑同链路 — 场景页不再就地维护简化编辑器, 编辑器单一来源
-  const qEditRuleId = route.query.editRuleId
+  if (!embedMode.value && qTag) tagFilter.value = [String(qTag)]
+  // [SCENE-EDIT-UNIFY 2026-09-03] 场景页/算法页「编辑」入口; [SCENE-EDIT-INPLACE]
+  //   改为嵌入模式就地渲染 (embedEditRuleId prop), 平台 ?editRuleId= 深链保留:
+  //   规则列表加载完成后自动打开该规则编辑 (choice 三卡片 → 简易/高级卡片 →
+  //   vp6 全功能表单), 与平台行内编辑同链路 — 编辑器单一来源
+  const qEditRuleId = props.embedEditRuleId || route.query.editRuleId
   if (qEditRuleId) {
-    // 防刷新重复打开: 清地址栏 query。注: 不能用 router.replace — MainLayout 的
-    // router-view 以 route.fullPath 为 :key, 导航式清 query 会销毁重建本组件,
-    // 下述 watch 随之失效; history.replaceState 不触发导航, key 不变
-    const cleaned = { ...route.query }
-    delete cleaned.editRuleId
-    const qs = new URLSearchParams(cleaned as Record<string, string>).toString()
-    window.history.replaceState(window.history.state, '', route.path + (qs ? '?' + qs : ''))
+    // 防刷新重复打开: 清地址栏 query (仅平台 URL 深链; 嵌入模式无 query 可清)。注:
+    // 不能用 router.replace — MainLayout 的 router-view 以 route.fullPath 为 :key,
+    // 导航式清 query 会销毁重建本组件, 下述 watch 随之失效; history.replaceState
+    // 不触发导航, key 不变
+    if (!embedMode.value) {
+      const cleaned = { ...route.query }
+      delete cleaned.editRuleId
+      const qs = new URLSearchParams(cleaned as Record<string, string>).toString()
+      window.history.replaceState(window.history.state, '', route.path + (qs ? '?' + qs : ''))
+    }
     const stopEditWatch = watch(rules, (list) => {
       if (!list.length) return // 首次赋值前/空列表继续等
       stopEditWatch()
       const row = list.find(r => r.id === qEditRuleId)
-      if (row) openSimpleEdit(row)
+      if (row) {
+        openSimpleEdit(row)
+        embedStarted.value = true // 嵌入模式: 编辑链已启动, 全关后通知宿主卸载
+      }
       else ElMessage.warning('未找到目标规则, 可能已被删除')
     })
   }

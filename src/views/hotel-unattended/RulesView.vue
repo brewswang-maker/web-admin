@@ -163,8 +163,10 @@
         </div>
       </el-card>
 
-      <!-- [SCENE-EDIT-UNIFY 2026-09-03] 编辑跳转平台 /linkage?editRuleId= 自动打开该规则
-           的 choice 编辑入口 (与平台行内编辑同链路同表单) — 场景页不再就地维护简化编辑器 -->
+      <!-- [SCENE-EDIT-INPLACE 2026-09-03] 就地编辑: 内嵌平台 LinkageRuleView 嵌入模式
+           (embedEditRuleId, 同一编辑器单一来源: choice → vp6 全功能表单), 不再跳转
+           /linkage; 编辑抽屉链关闭 (edit-closed) 后卸载并刷新本页列表 -->
+      <LinkageRuleView v-if="editEmbedVisible" :embed-edit-rule-id="editEmbedRuleId" @edit-closed="onEditEmbedClosed" />
     </template>
   </div>
 </template>
@@ -192,6 +194,8 @@ import { CircleCheckFilled, Refresh, Box } from '@element-plus/icons-vue'
 
 import { hotelUnattendedApi, pickHotelPacks, pickHotelTemplates } from '@/api/hotelUnattended'
 import type { LinkageRule, RuleTemplate, RuleTriggerStat } from '@/api/linkage'
+// [SCENE-EDIT-INPLACE 2026-09-03] 就地编辑: 内嵌平台编辑器 (嵌入模式, 编辑器单一来源)
+import LinkageRuleView from '@/views/LinkageRuleView.vue'
 import type { ScenePack } from '@/types/largeEvent'
 
 const { t } = useI18n()
@@ -274,11 +278,18 @@ async function fetchAll() {
 function reload() { fetchAll() }
 function goPacks() { router.push('/hotel-unattended/scene-packs') }
 
-// ─── [SCENE-EDIT-UNIFY 2026-09-03] 单条规则编辑: 跳平台 /linkage?editRuleId= 自动打开该
-//     规则的 choice 编辑入口 (简易/高级卡片 → vp6 全功能表单), 与平台行内编辑同链路 —
-//     编辑器单一来源, 场景页不再就地维护简化表单 (UX-ALIGN 时期的 tune 就地编辑已移除) ──
+// ─── [SCENE-EDIT-INPLACE 2026-09-03] 单条规则就地编辑: 内嵌平台 LinkageRuleView 嵌入模式
+//     (embedEditRuleId → choice 三卡片 → 简易/高级卡片 → vp6 全功能表单), 与平台行内编辑
+//     同组件同表单同链路 — 编辑器单一来源且不跳转 (用户停留在本场景页) ──
+const editEmbedVisible = ref(false)
+const editEmbedRuleId = ref('')
 function openRuleEdit(row: LinkageRule) {
-  router.push({ path: '/linkage', query: { editRuleId: row.id } })
+  editEmbedRuleId.value = row.id
+  editEmbedVisible.value = true
+}
+function onEditEmbedClosed() {
+  editEmbedVisible.value = false
+  fetchAll()
 }
 
 onMounted(() => { fetchAll() })

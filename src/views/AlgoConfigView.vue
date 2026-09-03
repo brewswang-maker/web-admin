@@ -341,8 +341,10 @@
       </template>
     </el-drawer>
 
-    <!-- [SCENE-EDIT-UNIFY 2026-09-03] 编辑跳转平台 /linkage?editRuleId= 自动打开该规则
-         的 choice 编辑入口 (与平台行内编辑同链路同表单) — 算法页不再就地维护简化编辑器 -->
+    <!-- [SCENE-EDIT-INPLACE 2026-09-03] 就地编辑: 内嵌平台 LinkageRuleView 嵌入模式
+         (embedEditRuleId, 同一编辑器单一来源: choice → vp6 全功能表单), 不再跳转
+         /linkage; 编辑抽屉链关闭 (edit-closed) 后卸载并刷新规则绑定缓存 -->
+    <LinkageRuleView v-if="editEmbedVisible" :embed-edit-rule-id="editEmbedRuleId" @edit-closed="onEditEmbedClosed" />
 
     <!-- ⑥ 绑定事件规则抽屉: 从全量规则中筛「未绑定本通道」条目 → 勾选 → 补齐
          source_cond (channel_ids/device_ids 空则填本通道) → PUT /linkage/rules/{id} -->
@@ -427,6 +429,8 @@ import { linkageApi, type LinkageRule } from '@/api/linkage'
 import { regionApi } from '@/api/region'
 import type { TripwireDef, PassagewayDef, SuppressMode, CountingZoneDef } from '@/types/region'
 import RoiPolygonEditor from '@/components/RoiPolygonEditor.vue'
+// [SCENE-EDIT-INPLACE 2026-09-03] 就地编辑: 内嵌平台编辑器 (嵌入模式, 编辑器单一来源)
+import LinkageRuleView from '@/views/LinkageRuleView.vue'
 import TripwireEditor from '@/components/TripwireEditor.vue'
 import PassagewayEditor from '@/components/PassagewayEditor.vue'
 
@@ -1024,12 +1028,20 @@ const ruleDrawerLoading = ref(false)
 const ruleDrawerAlgo = ref('')
 const ruleDrawerAlgoName = computed(() => algoNameOf(ruleDrawerAlgo.value) || ruleDrawerAlgo.value)
 const ruleDrawerItems = ref<LinkageRule[]>([])
-// ─── [SCENE-EDIT-UNIFY 2026-09-03] 单条规则编辑: 跳平台 /linkage?editRuleId= 自动打开该
-//     规则的 choice 编辑入口 (简易/高级卡片 → vp6 全功能表单), 与平台行内编辑同链路 —
-//     编辑器单一来源, 算法页不再就地维护简化表单 (UX-ALIGN 时期的 tune 就地编辑已移除) ──
+// ─── [SCENE-EDIT-INPLACE 2026-09-03] 单条规则就地编辑: 内嵌平台 LinkageRuleView 嵌入模式
+//     (embedEditRuleId → choice 三卡片 → 简易/高级卡片 → vp6 全功能表单), 与平台行内编辑
+//     同组件同表单同链路 — 编辑器单一来源且不跳转 (用户停留在算法页) ──
+const editEmbedVisible = ref(false)
+const editEmbedRuleId = ref('')
 function openRuleEdit(rule: LinkageRule) {
-  ruleDrawerVisible.value = false
-  router.push({ path: '/linkage', query: { editRuleId: rule.id } })
+  ruleDrawerVisible.value = false // 规则抽屉让位全屏编辑链
+  editEmbedRuleId.value = rule.id
+  editEmbedVisible.value = true
+}
+function onEditEmbedClosed() {
+  editEmbedVisible.value = false
+  // 编辑可能改了规则 (名称/算法/通道): 刷新绑定缓存, 重开抽屉时 reloadRuleDrawer 取新数据
+  loadRuleCounts()
 }
 
 /** [任务3] 打开规则编辑抽屉: 在当前页右侧滑出完整表单,

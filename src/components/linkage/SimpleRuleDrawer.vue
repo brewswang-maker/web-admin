@@ -9,6 +9,8 @@
        落地平台 vp6 全功能表单 (动作编排/互斥组/抑制链/VLM 复核/元数据齐备), 不再进
        tune 简化表单; tune 视图仅保留给编辑态高频微调 (无全功能宿主时的就地编辑)。
        事件类型选项由本实例 fetchOptions() 填充 (useLinkageOptions 非单例, 否则下拉恒空)。 -->
+  <!-- append-to-body: [SCENE-EDIT-INPLACE] 嵌入模式下 LinkageRuleView 外壳 v-show 隐藏,
+       本抽屉须 teleport 到 body 才可见 (平台正常模式行为不变) -->
   <el-drawer
     :model-value="modelValue"
     :title="drawerTitle"
@@ -16,6 +18,7 @@
     direction="rtl"
     :close-on-click-modal="false"
     destroy-on-close
+    append-to-body
     @update:model-value="(v: boolean) => emit('update:modelValue', v)"
   >
     <div class="srd-body">
