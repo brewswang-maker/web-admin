@@ -71,12 +71,20 @@ async function load() {
 }
 onMounted(load)
 
-/** 大华三分法归类: category 含关键词归档, 其余进"更多" */
+/** 大华三分法归类 [TPL-FIX 2026-09-03]: 后端模板 category 是 55 种具体领域词
+ *  (交通枢纽/加油站/校园/酒店/周界/安检…), 原子串匹配 '行业|场景|事件' 恒不命中
+ *  → 四个主 tab 全空。改为关键词三分法 (优先级 事件→场景→行业, 未命中兑底「更多」):
+ *  事件 = 安全/风险类模板 (公共安全/消防安全/行为分析/应急管理等)
+ *  场景 = 通用场所/设施 (周界/门禁/停车/园区/安检/大型活动/环境监测等)
+ *  行业 = 垂直行业域 (交通/校园/酒店/加油站/金融/零售/能源/智慧城市等) */
+const EVENT_RE = /安全|安防|应急|防疫|高危|行为分析/
+const SCENE_RE = /周界|门禁|停车|园区|仓储|物流|环境|楼宇|安检|大型活动|基础设施|数据中心|机房|人员管理|设备运维|系统监控|商业管理|场所|出入口/
+const INDUSTRY_RE = /交通|校园|酒店|加油站|金融|农业|医疗|卫生|健康|零售|商业|工业|工厂|养老|城市|教育|能源|文旅|体育|政务|地产/
 function catOf(t: RuleTemplate): string {
   const c = String(t.category || '')
-  if (c.includes('行业') || c.includes('industry')) return '行业'
-  if (c.includes('场景') || c.includes('scene')) return '场景'
-  if (c.includes('事件') || c.includes('event')) return '事件'
+  if (EVENT_RE.test(c)) return '事件'
+  if (SCENE_RE.test(c)) return '场景'
+  if (INDUSTRY_RE.test(c)) return '行业'
   return '其他'
 }
 
@@ -95,11 +103,22 @@ const recommended = computed(() =>
     .sort((a, b) => recScore(b) - recScore(a))
 )
 
+/** [TPL-FIX 2026-09-03] choice 入口 selectedTags 恒空 → 推荐交集恒空集,
+ *  热门兑底: 内置模板按 priority 降序 top 12, 保证「为你推荐」始终有内容
+ *  (真推荐时交集排序优先, 兑底项无「推荐」标) */
+const recommendedList = computed(() => {
+  if (recommended.value.length) return recommended.value
+  return templates.value
+    .filter(t => t.is_builtin)
+    .sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0))
+    .slice(0, 12)
+})
+
 const displayList = computed(() => {
   const k = kw.value.trim().toLowerCase()
   const hit = (t: RuleTemplate) =>
     !k || `${t.name} ${(t.tags || []).join(' ')} ${t.description}`.toLowerCase().includes(k)
-  const src = activeCat.value === 'recommended' ? recommended.value : templates.value.filter(t => catOf(t) === activeCat.value)
+  const src = activeCat.value === 'recommended' ? recommendedList.value : templates.value.filter(t => catOf(t) === activeCat.value)
   return src.filter(hit)
 })
 </script>

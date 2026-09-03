@@ -2291,11 +2291,15 @@ function applySimpleTime(p: SimpleCommitPatch) {
   form.conditions.time.config.weekdays = p.weekdays?.length ? [...p.weekdays] : [1, 2, 3, 4, 5]
 }
 
-/** 模板草稿 → 内部表单 (动作参数等高级语义仍由模板/高级模式承载) */
+/** 高频字段草稿 → 内部表单 (动作参数等高级语义由模板整包/高级模式承载)
+ *  [POPUP-AUTOCLOSE 2026-09-03] popup_auto_close_s 一并合入: 修复 create 链路
+ *  (commitSimple 模板分支 / TPL-VP6 switch-advanced 模板落地) 该字段不进 form 的缺口 */
 function applySimplePatch(p: SimpleCommitPatch) {
   form.name = p.name
   if (typeof p.priority === 'number') form.priority = p.priority
   if (typeof p.cooldownMs === 'number') form.cooldownMs = p.cooldownMs
+  // [POPUP-AUTOCLOSE] 弹窗自动关闭秒 (整型化兑底, 与 handleSave 提交倒钳位对称)
+  if (typeof p.popup_auto_close_s === 'number') form.popupAutoCloseS = Math.max(0, Math.floor(p.popup_auto_close_s) || 0)
   form.conditions.eventType.enabled = true
   form.conditions.eventType.config.types = [...(p.eventTypes || [])]
   applySimpleTime(p)
@@ -2306,7 +2310,9 @@ function applySimplePatch(p: SimpleCommitPatch) {
   }
 }
 
-/** 简易抽屉统一保存入口: update=高频字段直 PATCH (composable), create=模板分支走 handleSave 唯一保存链 */
+/** 简易抽屉统一保存入口: update=高频字段直 PATCH (composable), create=模板分支走 handleSave 唯一保存链
+ *  [TPL-VP6 2026-09-03] 模板创建已改走 onSimpleSwitchAdvanced 落地 vp6 全功能表单由用户手动保存,
+ *  此 create 分支保留防御 (未来若恢复就地创建入口仍可用) */
 async function commitSimple(e: SimpleCommitEvent) {
   if (e.mode === 'update') {
     await commitSimpleEdit(e)
@@ -2328,7 +2334,10 @@ async function commitSimple(e: SimpleCommitEvent) {
 /** 切换全功能表单: 简易卡片=vp6 纯净单页 (simple), 高级卡片/模板页切高级=全功能全览 (full)
  *  [UX-ALIGN 2026-09-03] 编辑态简易/高级卡片: 复用新建同一 vp6 表单回显编辑
  *  (resetEditorState 整包回显, 草稿 p 忽略 — 回显数据比高频字段草稿更全;
- *  不走 openEditor 因其写死 simpleEntryMode=false; handleSave 原生支持 update) */
+ *  不走 openEditor 因其写死 simpleEntryMode=false; handleSave 原生支持 update)
+ *  [TPL-VP6 2026-09-03] 模板选中即切 vp6 全功能表单: p.template 整包合入
+ *  (动作勾选+参数/优先级/冷却/描述/标签/时间/事件/通道) + 高频字段覆盖, 与
+ *  commitSimple 模板分支同序 — 落地页具备动作编排/互斥组/抑制链/VLM 复核/元数据全部能力 */
 function onSimpleSwitchAdvanced(p: SimpleCommitPatch | null, mode?: 'simple' | 'full') {
   if (editVisible.value && editSourceRule.value) {
     const row = editSourceRule.value
@@ -2342,6 +2351,8 @@ function onSimpleSwitchAdvanced(p: SimpleCommitPatch | null, mode?: 'simple' | '
   simpleDrawerVisible.value = false
   if (p) {
     resetEditorState(null)
+    // [TPL-VP6] 模板整包先合入 (保动作参数/元数据), 高频字段覆盖其后 — 与 commitSimple 模板分支同序
+    if (p.template) applyTemplateToForm(p.template)
     applySimplePatch(p)
     if (p.name) form.name = p.name
   }

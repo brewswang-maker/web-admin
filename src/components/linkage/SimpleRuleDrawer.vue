@@ -2,9 +2,12 @@
   <!-- ═══ [vp8 双模式 2026-09-01] 简易创建抽屉: choice → template/tune 状态机 ═══
        [FINAL 2026-09-02] 按用户最终确认: choice 页三张并列卡片 (同一样式),
        「简易模式」与「高级模式」卡片均直开 vp8 之前的全功能表单抽屉 (switch-advanced),
-       不再经过 custom 高频字段子表单中转; 模板卡片流程不变。
+       不再经过 custom 高频字段子表单中转。
        [UX-ALIGN 2026-09-03] 编辑与新建统一入口: 编辑态也从 choice 进 (顶部规则名提示条),
        「简易模式」卡片进 tune 预填编辑 /「高级模式」卡片携草稿转全功能 / 模板卡片禁用。
+       [TPL-VP6 2026-09-03] 模板卡片: TemplateGallery 选中即携模板整包 switch-advanced,
+       落地平台 vp6 全功能表单 (动作编排/互斥组/抑制链/VLM 复核/元数据齐备), 不再进
+       tune 简化表单; tune 视图仅保留给编辑态高频微调 (无全功能宿主时的就地编辑)。
        事件类型选项由本实例 fetchOptions() 填充 (useLinkageOptions 非单例, 否则下拉恒空)。 -->
   <el-drawer
     :model-value="modelValue"
@@ -52,12 +55,13 @@
         </div>
       </template>
 
-      <!-- ── 视图 2: 模板选择 ── -->
+      <!-- ── 视图 2: 模板选择 [TPL-VP6 2026-09-03] 选中即携整包切 vp6 全功能表单 ── -->
       <template v-else-if="view === 'template'">
         <TemplateGallery :selected-tags="[]" @apply-template="onPickTemplate" />
       </template>
 
-      <!-- ── 视图 3: 模板微调 (4 必填字段) / [SIMPLE-EDIT 2026-09-03] 编辑模式复用同表单 ── -->
+      <!-- ── 视图 3: 高频微调表单 [TPL-VP6 2026-09-03] 仅编辑态可达 (模板创建已直落 vp6 全功能表单) /
+           [SIMPLE-EDIT 2026-09-03] 编辑模式复用同表单 (picked 条件保留防御) ── -->
       <template v-else-if="view === 'tune' && (picked || isEdit)">
         <el-alert v-if="isEdit" type="info" :closable="false" style="margin-bottom: 12px">
           <template #title>
@@ -217,7 +221,7 @@ const drawerTitle = computed(() => {
   const t: Record<View, string> = {
     choice: '新建联动规则',
     template: '从模板创建 · 选择模板',
-    tune: '从模板创建 · 微调并生效',
+    tune: '编辑联动规则 · 快速微调', // [TPL-VP6] tune 仅编辑态可达 (模板创建直落 vp6 全功能表单)
   }
   return t[view.value]
 })
@@ -281,20 +285,31 @@ const actionSummary = computed(() => {
   return list.length ? ` (${list.join('/')}${more > 0 ? ` 等 ${more + list.length} 项` : ''})` : ''
 })
 
-// ── 模板选择 → 微调视图预填 ──
+// ── [TPL-VP6 2026-09-03] 模板选择 → 直落平台 vp6 全功能表单 ──
+// 原 view='tune' 就地 5 字段微调过于简陋 (缺动作编排/互斥组/抑制链/VLM 复核/优先级/
+// 冷却/描述/标签), 无法支撑模板意图一键落地为完整可执行规则。改为携模板整包
+// switch-advanced: 宿主 (LinkageRuleView) applyTemplateToForm (动作勾选+参数/元数据/
+// 时间/事件/通道整包) + applySimplePatch (高频字段) 预填后打开 vp6 全功能抽屉, 用户在
+// 完整表单检查/编排后手动保存 — 编辑器单一来源, 与平台行内编辑同链路同表单。
 function onPickTemplate(t: RuleTemplate) {
-  picked.value = t
   const src: any = (t as any).source_cond || {}
-  tune.name = t.name || ''
-  tune.eventTypes = [...(src.algorithm_ids?.length ? src.algorithm_ids : (src.event_types || []))]
-  tune.channelIds = [...(src.channel_ids || [])].map(Number).filter(n => !Number.isNaN(n))
-  tune.deviceIds = [...(src.device_ids || [])]
   const tc: any = (t as any).time_cond || {}
-  tune.timeStart = tc.time_start || '08:00'
-  tune.timeEnd = tc.time_end || '20:00'
-  tune.weekdays = tc.weekdays?.length ? [...tc.weekdays] : [1, 2, 3, 4, 5]
-  tune.timePreset = guessPreset(tune.timeStart, tune.timeEnd, tune.weekdays)
-  view.value = 'tune'
+  const timeStart: string = tc.time_start || '08:00'
+  const timeEnd: string = tc.time_end || '20:00'
+  const weekdays: number[] = tc.weekdays?.length ? [...tc.weekdays] : [1, 2, 3, 4, 5]
+  // [TPL-VP6] 预设档以模板原始 time_cond 判定 (无 time_start = 'all' 全天):
+  // 原实现先兑底 '08:00' 再 guessPreset 会把无时间模板误判成「白天」档, 语义失真
+  const timePreset = guessPreset(tc.time_start || '', tc.time_end || '', weekdays)
+  emitSwitchAdvanced({
+    name: t.name || '',
+    eventTypes: [...(src.algorithm_ids?.length ? src.algorithm_ids : (src.event_types || []))],
+    channelIds: [...(src.channel_ids || [])].map(Number).filter(n => !Number.isNaN(n)),
+    deviceIds: [...(src.device_ids || [])],
+    timePreset, timeStart, timeEnd, weekdays,
+    // 模板不带弹窗自动关闭字段: 落地表单默认 0 (永不自动关闭), 与编辑态同字段同语义可在 vp6 表单调整
+    popup_auto_close_s: 0,
+    template: t,
+  }, 'full')
 }
 
 function guessPreset(s: string, e: string, wd: number[]): 'all' | 'day' | 'night' | 'custom' {
@@ -320,7 +335,9 @@ function tunePatch(): SimpleCommitPatch {
   }
 }
 
-/** [SIMPLE-EDIT 2026-09-03] tune 保存: 编辑分支=update (仅高频字段, ruleId 随行), 模板分支=create */
+/** [SIMPLE-EDIT 2026-09-03] tune 保存: 编辑分支=update (仅高频字段, ruleId 随行)
+ *  [TPL-VP6 2026-09-03] 模板 create 分支保留防御: onPickTemplate 已改携整包切 vp6 全功能
+ *  表单, 新建态 tune 不可达; 若未来恢复就地创建入口, 此分支仍走 commitSimple 模板链 */
 function saveTune() {
   if (!validateCommon(tune)) return
   const payload = tunePatch()
