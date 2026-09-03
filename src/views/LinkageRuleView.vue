@@ -1250,6 +1250,7 @@ import { linkageApi, ACTION_TYPE_MAP, ACTION_TYPE_REVERSE_MAP, getTargetForActio
 import { regionApi } from '@/api/region'  // [FIX 2026-08-28] 画板绊线自动创建 (createTripwireWithMirror)
 import type { LinkageRule, LinkageAction, LinkageLog, ActionLogEntry, TimeTemplate, LinkagePlan, CEPPattern, ConditionNode, RuleConflict, RuleTriggerStat } from '@/api/linkage'
 import { useLinkageOptions } from '@/composables/useLinkageOptions'
+import { syncAlgosForRule } from '@/composables/useAlgoRuleSync'
 import { validateTemplateImport } from '@/api/templateSchema'
 import RoiPolygonEditor from '@/components/RoiPolygonEditor.vue'
 import TimeTemplateEditor from '@/components/TimeTemplateEditor.vue'
@@ -2156,6 +2157,15 @@ async function toggleRule(rule: LinkageRule) {
   try {
     await linkageApi.updateRule(rule.id, { enabled: rule.enabled })
     ElMessage.success(rule.enabled ? '已启用' : '已停用')
+    // [ALGO-RULE-SYNC 2026-09-03] 反向联动: 规则启停 → 明确绑定通道上的依赖算法行同步
+    // (通配规则/无依赖集在 composable 内豁免; 串维护等效算法页行开关; 失败不阻塞主流程)
+    try {
+      const synced = await syncAlgosForRule(rule.id, (rule as any).source_cond, rule.enabled)
+      if (synced > 0) ElMessage.success(`已同步${rule.enabled ? '启用' : '停用'} ${synced} 个关联算法`)
+    } catch (e) {
+      console.warn('[LinkageRuleView] 关联算法同步失败', e)
+      ElMessage.warning('关联算法同步失败, 请到算法配置页检查')
+    }
   } catch (e: any) {
     rule.enabled = !rule.enabled
     const msg = e?.response?.data?.message || '操作失败'
@@ -2686,6 +2696,18 @@ async function handleSave(): Promise<boolean> {
       await linkageApi.createRule({ id, ...payload })
     }
     ElMessage.success(editingRule.value ? '规则已更新' : '规则已创建')
+    // [ALGO-RULE-SYNC] 编辑保存后 enabled 翻转 → 反向联动算法行
+    // (新建无旧态基准不联动; 失败不阻塞保存主流程, 仅警告)
+    const beforeEnabled = editingRule.value?.enabled
+    if (editingRule.value && typeof beforeEnabled === 'boolean' && beforeEnabled !== payload.enabled) {
+      try {
+        const synced = await syncAlgosForRule(editingRule.value.id, payload.source_cond, payload.enabled)
+        if (synced > 0) ElMessage.success(`已同步${payload.enabled ? '启用' : '停用'} ${synced} 个关联算法`)
+      } catch (e) {
+        console.warn('[LinkageRuleView] 保存后关联算法同步失败', e)
+        ElMessage.warning('关联算法同步失败, 请到算法配置页检查')
+      }
+    }
     drawerVisible.value = false
     fetchRules()
     return true

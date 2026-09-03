@@ -425,6 +425,10 @@ import algorithmsApi from '@/api/algorithms'
 import type { AlgorithmInfo } from '@/api/algorithms'
 import eventTypesApi, { type CanonicalEventType } from '@/api/eventTypes'
 import { useEventTypeZh } from '@/composables/useEventTypeZh'
+import {
+  syncRulesForAlgo, forgetAlgoInRuleMemory, safeChannelHash,
+  loadChannelDisabledMap, saveChannelDisabledMap,
+} from '@/composables/useAlgoRuleSync'
 import { linkageApi, type LinkageRule } from '@/api/linkage'
 import { regionApi } from '@/api/region'
 import type { TripwireDef, PassagewayDef, SuppressMode, CountingZoneDef } from '@/types/region'
@@ -590,16 +594,11 @@ function validateAll(): boolean {
 // [FIX 2026-09-01 一对一启停] 后端 ScheduledChannel 为通道级模型 (algo_plugin 串=启用集合,
 // 无 per-algo 开关) → 行开关改为: 启用=加入串 / 禁用=移出串, 禁用集合存 localStorage
 // (刷新/后端重启后仍显示禁用行并可一键恢复; 推理行为由串本身保证, 不依赖 localStorage)
-const ALGO_DISABLED_KEY = 'algo_disabled_by_channel'
-function loadDisabledMap(): Record<string, string[]> {
-  try { return JSON.parse(localStorage.getItem(ALGO_DISABLED_KEY) || '{}') } catch { return {} }
-}
-function saveDisabledMap(m: Record<string, string[]>) {
-  try { localStorage.setItem(ALGO_DISABLED_KEY, JSON.stringify(m)) } catch { /* 隐私模式忽略 */ }
-}
-function disabledListOf(chId: string): string[] {
+// [ALGO-RULE-SYNC 2026-09-03] 禁用集合/联动记忆/正反向同步已抽 composable useAlgoRuleSync
+// (LinkageRuleView 反向联动复用同一套 localStorage 键与串维护逻辑, 保持双页一致)
+const disabledListOf = (chId: string): string[] => {
   const active = effectiveActiveIds(chId)
-  return (loadDisabledMap()[chId] ?? []).filter((id) => !active.includes(id))
+  return (loadChannelDisabledMap()[chId] ?? []).filter((id) => !active.includes(id))
 }
 // [FIX 2026-09-02 关闭最后算法不同步] 后端 /schedule/stop (disableChannel) 只置 enabled=false,
 // algo_plugin 串保留作为重启调度记忆 → 串≠启用集合。通道停用时启用集合视为空,
@@ -691,49 +690,8 @@ function isChInferenceOn(chId: string): boolean {
   const sc = scheduledMap.value.get(chId)
   return !!sc && sc.enabled !== false
 }
-/** [FIX 2026-09-02 开关一致性] 算法启停 → 关联事件规则 enabled 同步。
- *  enable=false: 停用「明确绑定本通道 + algorithm_ids 含该算法」的启用规则并记入联动记忆
- *  (通配规则不动 — 可能被其他通道/算法触发, 避免误伤);
- *  enable=true: 仅恢复联动记忆中因本通道本算法停用的规则 (用户手动停用的不误拉起)。
- *  返回同步条数; 调用方 catch — 同步失败不阻塞算法启停主流程 */
-async function syncRulesForAlgo(chId: string, algoId: string, enable: boolean): Promise<number> {
-  const key = `${chId}|${algoId}`
-  if (enable) {
-    const m = loadRuleDisabledByAlgo()
-    const ids = m[key] ?? []
-    if (ids.length === 0) return 0
-    let ok = 0
-    for (const rid of ids) {
-      try { await linkageApi.updateRule(rid, { enabled: true } as Partial<LinkageRule>); ok++ }
-      catch (e) { console.warn('[AlgoConfigView] 联动恢复规则失败', rid, e) }
-    }
-    delete m[key]
-    saveRuleDisabledByAlgo(m)
-    return ok
-  }
-  const res = await linkageApi.getAllRules()
-  const items: any[] = res.data?.data?.items ?? (res.data as any)?.items ?? []
-  const chHash = safeChannelHash(chId)
-  const targets = items.filter((r: any) => {
-    if (!r.enabled) return false
-    const sc: any = r.source_cond ?? {}
-    const chs: number[] = sc.channel_ids ?? []
-    const algos: string[] = sc.algorithm_ids ?? []
-    return chs.length > 0 && chs.includes(chHash) && algos.includes(algoId)
-  })
-  if (targets.length === 0) return 0
-  const m = loadRuleDisabledByAlgo()
-  const disabledIds: string[] = []
-  for (const r of targets) {
-    try { await linkageApi.updateRule(r.id, { enabled: false } as Partial<LinkageRule>); disabledIds.push(r.id) }
-    catch (e) { console.warn('[AlgoConfigView] 联动停用规则失败', r.id, e) }
-  }
-  if (disabledIds.length > 0) {
-    m[key] = Array.from(new Set([...(m[key] ?? []), ...disabledIds]))
-    saveRuleDisabledByAlgo(m)
-  }
-  return disabledIds.length
-}
+/** [FIX 2026-09-02 开关一致性] 算法启停 → 关联事件规则 enabled 同步 (已迁 composable
+ *  useAlgoRuleSync.syncRulesForAlgo, 反向 syncAlgosForRule 在 LinkageRuleView 挂钩) */
 
 const togglingId = ref('')
 async function toggleAlgoEnabled(row: { algoId: string; enabled: boolean }) {
@@ -744,7 +702,7 @@ async function toggleAlgoEnabled(row: { algoId: string; enabled: boolean }) {
   const deviceId = ch.deviceId || ch.parentDeviceId || ch.channelId
   // [FIX 2026-09-02] 通道停用时串是遗留记忆, 启用集合从空重建 (避免遗留算法连带带起)
   const activeIds = effectiveActiveIds(ch.channelId)
-  const dmap = loadDisabledMap()
+  const dmap = loadChannelDisabledMap()
   const dlist = new Set(dmap[ch.channelId] ?? [])
   const next = !row.enabled
   togglingId.value = row.algoId
@@ -759,7 +717,7 @@ async function toggleAlgoEnabled(row: { algoId: string; enabled: boolean }) {
       dlist.add(row.algoId)
     }
     dmap[ch.channelId] = Array.from(dlist)
-    saveDisabledMap(dmap)
+    saveChannelDisabledMap(dmap)
     if (ids.length === 0) {
       await stopSchedule(ch.channelId)
     } else {
@@ -770,6 +728,9 @@ async function toggleAlgoEnabled(row: { algoId: string; enabled: boolean }) {
     let syncedRules = 0
     try { syncedRules = await syncRulesForAlgo(ch.channelId, row.algoId, next) }
     catch (e) { console.warn('[AlgoConfigView] 关联规则同步失败', e) }
+    // [ALGO-RULE-SYNC 2026-09-03] 手动开算法 → 清反向记忆中该算法条目:
+    // 用户接管算法状态, 旧「因规则关闭」记忆失效 (否则规则再关时误判已关过而跳过)
+    if (next) forgetAlgoInRuleMemory(ch.channelId, row.algoId)
     const syncTxt = syncedRules > 0 ? `, 已同步${next ? '启用' : '停用'} ${syncedRules} 条关联事件规则` : ''
     ElMessage.success(`「${algoNameOf(row.algoId)}」已${next ? '启用' : '禁用'}${syncTxt}`)
     await loadData()
@@ -867,10 +828,10 @@ async function removeAlgo(row: { algoId: string; algoName: string }) {
       editForm.algoName = ''
     }
     // 删除 = 彻底移除: 同步清掉禁用记忆 (与禁用区分)
-    const dmap = loadDisabledMap()
+    const dmap = loadChannelDisabledMap()
     if (dmap[ch.channelId]?.length) {
       dmap[ch.channelId] = (dmap[ch.channelId] ?? []).filter((id) => id !== row.algoId)
-      saveDisabledMap(dmap)
+      saveChannelDisabledMap(dmap)
     }
     await loadData()
     // [FIX 2026-09-02e] 删除后联动解绑失去支撑的绑定规则 (先于 loadRuleCounts,
@@ -1149,27 +1110,10 @@ const currentAlgoIds = computed(() => {
   return String(sc?.algo_plugin || '').split(',').map((s) => s.trim()).filter(Boolean)
 })
 
-/** 与后端 LinkageEngine.cpp safeChannelHash 逐位一致 (FNV-1a 32位 & 0x7FFFFFFF) */
-function safeChannelHash(idStr: string): number {
-  if (!idStr) return 0
-  let hash = 2166136261
-  for (let i = 0; i < idStr.length; i++) {
-    hash ^= idStr.charCodeAt(i)
-    hash = Math.imul(hash, 16777619)
-  }
-  return hash & 0x7FFFFFFF
-}
+// 事件匹配用 safeChannelHash(channel_id_str) (FNV-1a 32位, LinkageEngine.cpp L98)。
+// 旧实现 Number("..._ch0")=NaN→0 → 绑出去 [0] 死值, 规则永不触发且「已绑定判定」永假 → 保存无反应
+// [ALGO-RULE-SYNC] safeChannelHash 实现已迁 composable useAlgoRuleSync (反向联动需同源哈希)
 
-// [FIX 2026-09-02 开关一致性] 算法行启停 ↔ 关联事件规则 enabled 双向跟随:
-// 关算法 → 自动停用「绑定本通道 + algorithm_ids 含该算法」的启用规则并记入联动记忆;
-// 重开算法 → 仅恢复记忆中「因联动而停用」的规则 (用户手动停用的不误拉起)
-const RULE_DISABLED_BY_ALGO_KEY = 'rule_disabled_by_algo'
-function loadRuleDisabledByAlgo(): Record<string, string[]> {
-  try { return JSON.parse(localStorage.getItem(RULE_DISABLED_BY_ALGO_KEY) || '{}') } catch { return {} }
-}
-function saveRuleDisabledByAlgo(m: Record<string, string[]>) {
-  try { localStorage.setItem(RULE_DISABLED_BY_ALGO_KEY, JSON.stringify(m)) } catch { /* 隐私模式忽略 */ }
-}
 /** 通道哈希 → 通道名 (作用范围列显示名, 不暴露裸哈希) */
 const chNameByHash = computed(() => {
   const m = new Map<number, string>()
