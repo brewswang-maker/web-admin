@@ -65,6 +65,10 @@
             :class="isChannelOnline(b.channel_id) ? 'is-on' : 'is-off'"
           />
           <span v-if="camLabel(b)" class="fm-canvas__cam-label">{{ camLabel(b) }}</span>
+          <!-- 拖拽实时坐标 (图标上方; 归一化百分比, 宇视落点精调辅助对标) -->
+          <span v-if="dragging === b && dragPos" class="fm-canvas__cam-coords">
+            {{ Math.round(dragPos.x * 100) }}, {{ Math.round(dragPos.y * 100) }}
+          </span>
         </div>
       </template>
     </div>
@@ -157,10 +161,15 @@ function fovRadius(b: CameraMapBinding): number {
 }
 function fovStyle(b: CameraMapBinding) {
   const r = fovRadius(b)
+  // 拖拽跟随: 与 camStyle 同源取 dragPos — 图标与扇形同步移动 (宇视落点精调对标,
+  //   否则拖拽中扇形留在原地造成视觉断裂)
+  const pos = dragging.value === b ? dragPos.value : null
+  const x = (pos?.x ?? b.pos_x) * 100
+  const y = (pos?.y ?? b.pos_y) * 100
   const from = b.fov_yaw - 45
   return {
-    left: `${b.pos_x * 100}%`,
-    top: `${b.pos_y * 100}%`,
+    left: `${x}%`,
+    top: `${y}%`,
     width: `${r * 200}%`,
     height: `${r * 200}%`,
     background:
@@ -340,6 +349,18 @@ const bboxStyle = computed(() => {
   pointer-events: none;
 }
 .fm-canvas__cam--primary .fm-canvas__cam-label { color: #00E5FF; }
+.fm-canvas__cam-coords {
+  position: absolute; bottom: 100%;
+  margin-bottom: 3px;
+  padding: 1px 6px;
+  white-space: nowrap;
+  background: rgba(5, 14, 48, 0.9);
+  border: 1px solid #3294ED;
+  border-radius: 2px;
+  color: #00E5FF; font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
 
 /* ── L3 告警层 ── */
 .fm-canvas__alarm {

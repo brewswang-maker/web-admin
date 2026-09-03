@@ -106,6 +106,8 @@ function extractBbox(metadata: Record<string, unknown> | undefined): [number, nu
  *   假设水平视场角 HFOV=90°, bbox 中心 x ∈ [0,1] 线性映射扇形偏移角 [-45°, +45°];
  *   距离取 bbox 中心 y 映射 [0.35, 1.0] × fov_radius_m (y 大 = 目标近 = 落点近摄像头)。
  *   最终: 落点 = 摄像头点 + 距离(米→归一化) × (sin θ, -cos θ)。
+ * [FLOOR-MAP 2026-09-04] bbox 缺失兜底: 取画面中心 (0.5, 0.5) — 中轴 0.675×半径
+ *   落点, 有告警即有涟漪 (极视角稳健性对标; 此前无 bbox 时涟漪不渲染)。
  * [无标定简化] 误差 ±半径 20%, 文案注明 "近似定位"。
  */
 export function projectAlarmPoint(
@@ -113,10 +115,10 @@ export function projectAlarmPoint(
   map: { width_px: number; height_px: number; scale_m_per_px: number },
   metadata: Record<string, unknown> | undefined
 ): AlarmMapPoint | null {
+  if (!map.width_px || !map.height_px) return null
   const bbox = extractBbox(metadata)
-  if (!bbox || !map.width_px || !map.height_px) return null
-  const cx = (bbox[0] + bbox[2]) / 2
-  const cy = (bbox[1] + bbox[3]) / 2
+  const cx = bbox ? (bbox[0] + bbox[2]) / 2 : 0.5
+  const cy = bbox ? (bbox[1] + bbox[3]) / 2 : 0.5
   const HFOV = 90
   const yawOffset = (cx - 0.5) * HFOV                     // deg, 画面右 = 扇形右
   const angleDeg = binding.fov_yaw + yawOffset
