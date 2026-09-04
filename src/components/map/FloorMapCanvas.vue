@@ -385,9 +385,11 @@ const bboxStyle = computed(() => {
   width: 14px; height: 14px;
   border: 2px solid rgba(249, 58, 85, 0.85);
   border-radius: 50%;
-  animation: fm-ripple 1.6s ease-out infinite;
+  /* [FLOOR-MAP 2026-09-04] 涟漪 0.4s 半径扩散 (英伟达 Metropolis 对标,
+     原 1.6s 偏缓; 双环 0.2s 交错保持连续告警节奏) */
+  animation: fm-ripple 0.4s ease-out infinite;
 }
-.fm-canvas__ripple-ring--2 { animation-delay: 0.8s; }
+.fm-canvas__ripple-ring--2 { animation-delay: 0.2s; }
 @keyframes fm-ripple {
   0% { width: 14px; height: 14px; opacity: 1; }
   100% { width: 64px; height: 64px; opacity: 0; }

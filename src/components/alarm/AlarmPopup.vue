@@ -215,7 +215,11 @@
                   <div class="alarm-popup__map-switcher">
                     <div
                       class="alarm-popup__map-thumb"
-                      :class="{ 'alarm-popup__map-thumb--active': mapMode === 'plan' }"
+                      :class="{
+                        'alarm-popup__map-thumb--active': mapMode === 'plan',
+                        'alarm-popup__map-thumb--dot': mapPairs.length > 0 && mapMode !== 'plan',
+                      }"
+                      title="平面图"
                       @click="mapMode = 'plan'"
                     >
                       <svg viewBox="0 0 32 32" width="24" height="24"><rect x="4" y="6" width="24" height="20" fill="none" stroke="currentColor" stroke-width="2" /><path d="M4 14h24M14 14v12" stroke="currentColor" stroke-width="2" /></svg>
@@ -508,7 +512,13 @@ watch(currentAlarm, async (a) => {
     // 弹窗已切到下一条告警 → 丢弃过期结果
     if (String(currentAlarm.value?.channelId || '') !== ch) return
     mapPairs.value = pairs
-    if (pairs.length) loadFloorMapsQ().catch(() => {})  // 预热全量缓存 (同图全部点位)
+    if (pairs.length) {
+      // [FLOOR-MAP 2026-09-04] 触发即定位 (海康 iVMS-8700 对标): 有平面图绑定的告警
+      //   弹窗自动切 plan 模式聚焦落点涟漪 (无 bbox 时画面中心兜底亦有落点);
+      //   用户手动切 3d 后, 下一条新告警再次自动定位 — 每条告警重置一次, 不覆盖用户操作中的切换
+      mapMode.value = 'plan'
+      loadFloorMapsQ().catch(() => {})  // 预热全量缓存 (同图全部点位)
+    }
   } catch { /* 反查失败 → GPS 占位兑底 */ }
 }, { immediate: true })
 const mapCoords = computed(() => {
@@ -1302,6 +1312,7 @@ void jumpToPlayback; void openImageTab
   z-index: 3;
 }
 .alarm-popup__map-thumb {
+  position: relative;
   width: 44px; height: 36px;
   display: flex; align-items: center; justify-content: center;
   background: rgba(5, 14, 48, 0.78);
@@ -1310,6 +1321,15 @@ void jumpToPlayback; void openImageTab
   color: #B7CDE6;
   cursor: pointer;
   transition: border-color 0.15s, color 0.15s;
+}
+/* [FLOOR-MAP 2026-09-04] plan 缩略图红点: 有平面图绑定但当前在 3d 视图时提示可切回 */
+.alarm-popup__map-thumb--dot::after {
+  content: '';
+  position: absolute; top: 3px; right: 3px;
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: #00E5FF;
+  box-shadow: 0 0 4px rgba(0, 229, 255, 0.9);
 }
 .alarm-popup__map-thumb:hover { border-color: #00E5FF; color: #00E5FF; }
 .alarm-popup__map-thumb--active {

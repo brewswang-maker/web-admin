@@ -571,11 +571,17 @@
                   </template>
                 </el-checkbox-group>
                 <!-- [FLOOR-MAP 2026-09-03] 适用平面图多选: 纯可视化绑定 (告警弹窗
-                     地图 Tab 消费), 不参与触发匹配; 保存走 source_cond.map_ids 透传 -->
+                     地图 Tab 消费), 不参与触发匹配; 保存走 source_cond.map_ids 透传;
+                     [2026-09-04] scene_tag 分组展示 (大华 DSS9000 同场景包对标) -->
                 <el-form-item label="适用平面图" label-position="top" class="cond-form-item" style="margin-top: 8px">
                   <el-select v-model="form.mapIds" multiple collapse-tags collapse-tags-tooltip filterable
                     placeholder="不选=不限 (可在平面图页维护)" style="width: 100%">
-                    <el-option v-for="m in floorMaps" :key="m.id" :label="m.name" :value="m.id" />
+                    <template v-for="g in mapGroupsByScene" :key="g.label">
+                      <el-option-group :label="g.label">
+                        <el-option v-for="m in g.items" :key="m.id"
+                          :label="`${m.floor || m.name} · ${m.cameras?.length ? m.cameras.length + ' 路绑定' : '未绑定'}`" :value="m.id" />
+                      </el-option-group>
+                    </template>
                     <template #empty><span class="text-secondary">暂无平面图（可在 AI 智能 → 平面图页创建）</span></template>
                   </el-select>
                 </el-form-item>
@@ -654,6 +660,44 @@
               </div>
             </el-tab-pane>
           </el-tabs>
+
+          <!-- [FLOOR-MAP 2026-09-04] 联动平面图位置动作面板: 勾选 CLIENT_SHOW_MAP 后展示。
+               华为 iVMS 楼层联动配置独立对标 — map_ids 多选与触发条件区同源 (form.mapIds
+               双向同步), FloorMapCanvas 只读预览与告警弹窗同渲染 (所见即所得);
+               楼层展示顺序 = 平面图页绑定 is_primary 优先 (后端 getBindingsByChannel 排序) -->
+          <div v-if="actionState.CLIENT_SHOW_MAP" class="map-action-panel">
+            <el-divider content-position="left">联动平面图 (楼层图包)</el-divider>
+            <el-alert type="info" :closable="false" show-icon style="margin-bottom: 10px"
+              title="告警弹窗将自动定位至平面图并投影告警落点涟漪 (触发即定位); 多图时主图默认在前、支持楼层切换" />
+            <el-row :gutter="12">
+              <el-col :span="10">
+                <el-form-item label="关联平面图 (可多选, 与触发条件区同步)" label-position="top">
+                  <el-select v-model="form.mapIds" multiple collapse-tags collapse-tags-tooltip filterable
+                    placeholder="不选=不限 (按通道绑定反查)" style="width: 100%"
+                    @change="previewMapId = 0">
+                    <template v-for="g in mapGroupsByScene" :key="g.label">
+                      <el-option-group :label="g.label">
+                        <el-option v-for="m in g.items" :key="m.id"
+                          :label="`${m.floor || m.name} · ${m.cameras?.length ? m.cameras.length + ' 路绑定' : '未绑定'}`" :value="m.id" />
+                      </el-option-group>
+                    </template>
+                    <template #empty><span class="text-secondary">暂无平面图（可在 AI 智能 → 平面图页创建）</span></template>
+                  </el-select>
+                  <div class="map-action-tip">
+                    主图与楼层顺序在「AI 智能 → 平面图」绑定管理中维护 (is_primary 优先);
+                    摄像头落点/FOV 拖拽微调亦在该页编辑
+                  </div>
+                </el-form-item>
+              </el-col>
+              <el-col :span="14">
+                <!-- 只读预览 (华为对标): 底图+摄像头+FOV 扇形, 与告警弹窗 plan 模式同渲染 -->
+                <div v-if="previewMap" class="map-action-preview">
+                  <FloorMapCanvas :map="previewMap" :bindings="previewMap.cameras || []" />
+                </div>
+                <div v-else class="map-action-preview-empty">选择平面图后预览渲染</div>
+              </el-col>
+            </el-row>
+          </div>
           </div>
 
           <!-- [r25 2026-09-02] 化简向导为 3 步 (基本信息/触发条件/动作编排):
@@ -1279,6 +1323,9 @@ import { useLinkageOptions } from '@/composables/useLinkageOptions'
 import { syncAlgosForRule } from '@/composables/useAlgoRuleSync'
 // [FLOOR-MAP 2026-09-03] 适用平面图多选: 地图列表缓存 (与平面图页共用单例)
 import { useFloorMap } from '@/composables/useFloorMap'
+// [FLOOR-MAP 2026-09-04] 联动平面图动作面板: scene_tag 分组标签 + 只读预览画布
+import { sceneTagLabel, type FloorMapWithCameras } from '@/types/floorMap'
+import FloorMapCanvas from '@/components/map/FloorMapCanvas.vue'
 import { validateTemplateImport } from '@/api/templateSchema'
 import RoiPolygonEditor from '@/components/RoiPolygonEditor.vue'
 import TimeTemplateEditor from '@/components/TimeTemplateEditor.vue'
@@ -1739,6 +1786,34 @@ const { maps: floorMaps, loadMaps: loadFloorMaps } = useFloorMap()
 function mapNameById(id: number): string {
   return floorMaps.value.find((m) => m.id === id)?.name || `#${id}`
 }
+
+// [FLOOR-MAP 2026-09-04] 联动平面图位置动作面板: 勾选 CLIENT_SHOW_MAP 后展示。
+//   华为 iVMS 楼层联动配置对标 — map_ids 多选与触发条件区同源 (form.mapIds);
+//   scene_tag 分组 (大华 DSS9000 同场景包对标); FloorMapCanvas 只读预览与告警
+//   弹窗 plan 模式同渲染。map_ids 仍走 source_cond 透传, 引擎匹配零改动
+const previewMapId = ref(0)
+const previewMap = computed<FloorMapWithCameras | null>(() => {
+  const id = previewMapId.value && form.mapIds.includes(previewMapId.value)
+    ? previewMapId.value
+    : form.mapIds[0]
+  return floorMaps.value.find((m) => m.id === id) || null
+})
+const mapGroupsByScene = computed(() => {
+  const groups = new Map<string, FloorMapWithCameras[]>()
+  for (const m of floorMaps.value) {
+    const key = m.scene_tag || ''
+    if (!groups.has(key)) groups.set(key, [])
+    groups.get(key)!.push(m)
+  }
+  return [...groups.entries()].map(([tag, items]) => ({
+    label: tag ? `${sceneTagLabel(tag)} (${tag})` : '未分类',
+    items,
+  }))
+})
+watch(() => actionState.CLIENT_SHOW_MAP, (on) => {
+  // 面板展开时懒加载地图列表 (30s TTL 单例, 平面图页已拉过则直接吃缓存)
+  if (on && !floorMaps.value.length) loadFloorMaps().catch(() => {})
+})
 
 const form = reactive({
   name: '',
@@ -3392,6 +3467,33 @@ watch(mainTab, (tab) => {
 </script>
 
 <style scoped>
+/* ═══ [FLOOR-MAP 2026-09-04] 联动平面图位置动作面板 (华为 iVMS 楼层联动配置对标) ═══ */
+.map-action-panel {
+  margin-top: 12px;
+  padding: 12px 12px 4px;
+  border: 1px dashed var(--el-border-color);
+  border-radius: 6px;
+  background: var(--el-fill-color-extra-light);
+}
+.map-action-tip {
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--el-text-color-secondary);
+  margin-top: 4px;
+}
+.map-action-preview {
+  height: 260px;
+  border-radius: 4px;
+  overflow: hidden;
+}
+.map-action-preview-empty {
+  height: 260px;
+  display: flex; align-items: center; justify-content: center;
+  border: 1px dashed var(--el-border-color);
+  border-radius: 4px;
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+}
 /* ── 页面容器 ── */
 .linkage-page {
   /* padding: 20px 24px; */
