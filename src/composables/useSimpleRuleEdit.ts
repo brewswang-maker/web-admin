@@ -15,7 +15,7 @@
  */
 import { ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { linkageApi, type LinkageRule } from '@/api/linkage'
+import { linkageApi, getTargetForActionType, type LinkageRule } from '@/api/linkage'
 import type { SimpleCommitEvent, SimpleCommitPatch, TuneForm } from '@/components/linkage/SimpleRuleDrawer.vue'
 
 /** 猜时间预设 (与 SimpleRuleDrawer.guessPreset 同规则: 全天/标准白天/标准夜间, 其余 custom) */
@@ -45,8 +45,11 @@ export function buildTuneForm(rule: LinkageRule): TuneForm {
     // 预设判定用原始时段 (双空=全天); 显示值兜底默认时段, 选「全天」保存时整体清空
     timePreset: guessPreset(tc.time_start || '', tc.time_end || '', weekdays),
     timeStart, timeEnd, weekdays,
-    // [POPUP-AUTOCLOSE 2026-09-03] 弹窗自动关闭秒 (新建/编辑都可见, 0=永不自动关闭, >0=N 秒后关闭)
+    // [POPUP-AUTOCLOSE 2026-09-03] 弹窗自动关闭秒 (新建/编辑都可见, 0=永不自动 关闭, >0=N 秒后关闭)
     popupAutoCloseS: Number(rule.popup_auto_close_s ?? 0),
+    // [FLOOR-MAP 2026-09-04] 地图联动: 动作含 CLIENT_SHOW_MAP(107)=开, map_ids 预选
+    mapLinked: (rule.actions || []).some((a: any) => Number(a?.type) === 107),
+    mapIds: [...((src.map_ids as number[]) || [])],
   }
 }
 
@@ -77,6 +80,24 @@ export function buildRuleUpdatePatch(rule: LinkageRule, p: SimpleCommitPatch): P
   const out: Partial<LinkageRule> = { name: p.name.trim(), source_cond: src, time_cond }
   if (typeof p.popup_auto_close_s === 'number' && Number.isFinite(p.popup_auto_close_s)) {
     out.popup_auto_close_s = Math.max(0, Math.floor(p.popup_auto_close_s))
+  }
+  // [FLOOR-MAP 2026-09-04] 地图联动写回: map_ids 走 source_cond; CLIENT_SHOW_MAP(107)
+  //   动作以原 actions 拷贝增删 (后端 PUT actions 为全量替换, 严禁裸传增删后子集);
+  //   仅在 map_linked 字段显式传入时才动 actions (未传=保持原样 PATCH 语义)
+  if (typeof p.map_linked === 'boolean') {
+    src.map_ids = [...(p.map_ids || [])]
+    const prev: any[] = ((rule.actions || []) as any[]).filter(
+      (a) => Number(a?.type) !== 107,
+    )
+    if (p.map_linked) {
+      prev.push({
+        type: 107,
+        target: getTargetForActionType('CLIENT_SHOW_MAP'),
+        name: '联动地图位置',
+        enabled: true,
+      } as any)
+    }
+    out.actions = prev as any
   }
   return out
 }

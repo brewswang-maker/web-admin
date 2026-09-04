@@ -661,13 +661,20 @@
             </el-tab-pane>
           </el-tabs>
 
-          <!-- [FLOOR-MAP 2026-09-04] 联动平面图位置动作面板: 勾选 CLIENT_SHOW_MAP 后展示。
+          <!-- [FLOOR-MAP 2026-09-04] 联动平面图快捷卡: 常驻展示 (一等入口, 不必先钻
+               客户端 tab 勾选动作); switch 直绑 actionState.CLIENT_SHOW_MAP —— 与动作
+               tabs 内「联动地图位置」勾选框同源双向 (任一侧切换同步另一侧)。
                华为 iVMS 楼层联动配置独立对标 — map_ids 多选与触发条件区同源 (form.mapIds
                双向同步), FloorMapCanvas 只读预览与告警弹窗同渲染 (所见即所得);
                楼层展示顺序 = 平面图页绑定 is_primary 优先 (后端 getBindingsByChannel 排序) -->
-          <div v-if="actionState.CLIENT_SHOW_MAP" class="map-action-panel">
-            <el-divider content-position="left">联动平面图 (楼层图包)</el-divider>
-            <el-alert type="info" :closable="false" show-icon style="margin-bottom: 10px"
+          <div class="map-action-panel">
+            <div class="map-action-head">
+              <el-switch v-model="actionState.CLIENT_SHOW_MAP" />
+              <span class="map-action-title">联动平面图 (楼层图包)</span>
+              <span class="map-action-sub">触发时告警弹窗自动定位平面图 + 落点涟漪</span>
+            </div>
+            <template v-if="actionState.CLIENT_SHOW_MAP">
+            <el-alert type="info" :closable="false" show-icon style="margin: 10px 0"
               title="告警弹窗将自动定位至平面图并投影告警落点涟漪 (触发即定位); 多图时主图默认在前、支持楼层切换" />
             <el-row :gutter="12">
               <el-col :span="10">
@@ -697,6 +704,7 @@
                 <div v-else class="map-action-preview-empty">选择平面图后预览渲染</div>
               </el-col>
             </el-row>
+            </template>
           </div>
           </div>
 
@@ -2505,6 +2513,10 @@ function applySimplePatch(p: SimpleCommitPatch) {
   if (typeof p.cooldownMs === 'number') form.cooldownMs = p.cooldownMs
   // [POPUP-AUTOCLOSE] 弹窗自动关闭秒 (整型化兑底, 与 handleSave 提交倒钳位对称)
   if (typeof p.popup_auto_close_s === 'number') form.popupAutoCloseS = Math.max(0, Math.floor(p.popup_auto_close_s) || 0)
+  // [FLOOR-MAP 2026-09-04] 地图联动草稿回填: 简易→高级切换时 map_ids 与 CLIENT_SHOW_MAP
+  //   动作态随草稿进 vp6 表单 (快捷卡 switch 与条件区多选同源同步)
+  if (Array.isArray(p.map_ids)) form.mapIds = [...p.map_ids]
+  if (typeof p.map_linked === 'boolean') actionState.CLIENT_SHOW_MAP = p.map_linked
   form.conditions.eventType.enabled = true
   form.conditions.eventType.config.types = [...(p.eventTypes || [])]
   applySimpleTime(p)
@@ -3475,6 +3487,10 @@ watch(mainTab, (tab) => {
   border-radius: 6px;
   background: var(--el-fill-color-extra-light);
 }
+/* [FLOOR-MAP 2026-09-04] 常驻快捷卡头: switch + 标题 + 副说明 (一等入口) */
+.map-action-head { display: flex; align-items: center; gap: 10px; }
+.map-action-title { font-size: 14px; font-weight: 600; color: var(--el-text-color-primary); }
+.map-action-sub { font-size: 12px; color: var(--el-text-color-secondary); }
 .map-action-tip {
   font-size: 12px;
   line-height: 1.7;

@@ -122,6 +122,30 @@
             />
             <span class="srd-popup-close-hint">秒 · 0=永不自动关闭 (推荐), &gt;0=N 秒后自动关闭</span>
           </el-form-item>
+          <!-- [FLOOR-MAP 2026-09-04] 联动平面图 (编辑主路径一等字段, 华为楼层联动对标):
+               开关=CLIENT_SHOW_MAP(107) 动作增删; 多选=source_cond.map_ids (scene_tag 分组·大华);
+               保存后告警弹窗自动定位至平面图并投影落点涟漪 (海康触发即定位) -->
+          <el-form-item label="联动平面图">
+            <div class="srd-map-link">
+              <el-switch v-model="tune.mapLinked" active-text="触发时定位平面图" />
+              <template v-if="tune.mapLinked">
+                <el-select v-model="tune.mapIds" multiple collapse-tags collapse-tags-tooltip filterable
+                  placeholder="不选=不限 (按通道绑定反查)" style="flex: 1; min-width: 220px"
+                  class="srd-map-select">
+                  <template v-for="g in mapGroupsByScene" :key="g.label">
+                    <el-option-group :label="g.label">
+                      <el-option v-for="m in g.items" :key="m.id"
+                        :label="`${m.floor || m.name} · ${m.cameras?.length ? m.cameras.length + ' 路绑定' : '未绑定'}`" :value="m.id" />
+                    </el-option-group>
+                  </template>
+                  <template #empty>暂无平面图（可在 AI 智能 → 平面图页创建）</template>
+                </el-select>
+              </template>
+            </div>
+            <div v-if="tune.mapLinked" class="srd-map-hint">
+              告警弹窗将自动定位至平面图并投影告警落点涟漪; 多图时主图默认在前、支持楼层切换
+            </div>
+          </el-form-item>
         </el-form>
       </template>
 
@@ -159,6 +183,9 @@ import { ElMessage } from 'element-plus'
 import { ArrowRight, CopyDocument, EditPen, Setting } from '@element-plus/icons-vue'
 import type { RuleTemplate } from '@/api/linkage'
 import { useLinkageOptions } from '@/composables/useLinkageOptions'
+// [FLOOR-MAP 2026-09-04] 简易表单地图联动: 地图列表单例缓存 + scene_tag 分组 (大华同场景包对标)
+import { useFloorMap } from '@/composables/useFloorMap'
+import { sceneTagLabel, type FloorMapWithCameras } from '@/types/floorMap'
 import TemplateGallery from './TemplateGallery.vue'
 import DeviceChannelPicker from './DeviceChannelPicker.vue'
 
@@ -173,6 +200,10 @@ export interface SimpleCommitPatch {
   weekdays: number[]
   /** [POPUP-AUTOCLOSE 2026-09-03] 弹窗自动关闭秒: 0=永不自动关闭 (默认), >0=N 秒后自动关闭 */
   popup_auto_close_s?: number
+  /** [FLOOR-MAP 2026-09-04] 地图联动: 开关=CLIENT_SHOW_MAP(107) 动作增删;
+   *  map_ids 走 source_cond 透传 (引擎匹配零改动), 与 vp6 动作面板/条件区同语义 */
+  map_linked?: boolean
+  map_ids?: number[]
   /** 可选: 动作 key 列表 (切高级携带草稿时用); 模板分支不传 (动作由模板带入) */
   actions?: string[]
   priority?: number
@@ -209,9 +240,28 @@ const emit = defineEmits<{
 
 const { eventTypeOptions, fetchOptions } = useLinkageOptions()
 
+// ── [FLOOR-MAP 2026-09-04] 地图联动数据源 (useFloorMap 单例 30s TTL, 平面图页/vp6 面板共用) ──
+const { maps: floorMaps, loadMaps: loadFloorMaps } = useFloorMap()
+const mapGroupsByScene = computed(() => {
+  const groups = new Map<string, FloorMapWithCameras[]>()
+  for (const m of floorMaps.value) {
+    const key = m.scene_tag || ''
+    if (!groups.has(key)) groups.set(key, [])
+    groups.get(key)!.push(m)
+  }
+  return [...groups.entries()].map(([tag, items]) => ({
+    label: tag ? `${sceneTagLabel(tag)} (${tag})` : '未分类',
+    items,
+  }))
+})
+
 // ── 视图状态机 ──
 type View = 'choice' | 'template' | 'tune'
 const view = ref<View>('choice')
+// tune 表单进入时懒加载地图列表 (开关打开前就已可选, 避免开白屏下拉)
+watch(view, (v) => {
+  if (v === 'tune' && !floorMaps.value.length) loadFloorMaps().catch(() => {})
+})
 const picked = ref<RuleTemplate | null>(null)
 const committing = computed(() => !!props.committing)
 
@@ -248,6 +298,9 @@ watch(() => props.modelValue, (v) => {
       weekdays: [...props.initialTune.weekdays],
       // [POPUP-AUTOCLOSE 2026-09-03] 编辑态预填弹窗自动关闭秒
       popupAutoCloseS: props.initialTune.popupAutoCloseS ?? 0,
+      // [FLOOR-MAP 2026-09-04] 编辑态预填地图联动 (buildTuneForm 抽取)
+      mapLinked: props.initialTune.mapLinked ?? false,
+      mapIds: [...(props.initialTune.mapIds || [])],
     })
   } else {
     resetTune()
@@ -263,10 +316,12 @@ export interface TuneForm {
   name: string; eventTypes: string[]; channelIds: number[]; deviceIds: string[]
   timePreset: 'all' | 'day' | 'night' | 'custom'; timeStart: string; timeEnd: string; weekdays: number[]
   popupAutoCloseS: number
+  // [FLOOR-MAP 2026-09-04] 地图联动 (预填: rule.actions 含 107 + source_cond.map_ids)
+  mapLinked: boolean; mapIds: number[]
 }
-const tune = reactive<TuneForm>({ name: '', eventTypes: [], channelIds: [], deviceIds: [], timePreset: 'all', timeStart: '08:00', timeEnd: '20:00', weekdays: [1, 2, 3, 4, 5], popupAutoCloseS: 0 })
+const tune = reactive<TuneForm>({ name: '', eventTypes: [], channelIds: [], deviceIds: [], timePreset: 'all', timeStart: '08:00', timeEnd: '20:00', weekdays: [1, 2, 3, 4, 5], popupAutoCloseS: 0, mapLinked: false, mapIds: [] })
 
-function resetTune() { Object.assign(tune, { name: '', eventTypes: [], channelIds: [], deviceIds: [], timePreset: 'all', timeStart: '08:00', timeEnd: '20:00', weekdays: [1, 2, 3, 4, 5], popupAutoCloseS: 0 }) }
+function resetTune() { Object.assign(tune, { name: '', eventTypes: [], channelIds: [], deviceIds: [], timePreset: 'all', timeStart: '08:00', timeEnd: '20:00', weekdays: [1, 2, 3, 4, 5], popupAutoCloseS: 0, mapLinked: false, mapIds: [] }) }
 
 /** DeviceChannelPicker v-model 代理 (reactive 字段 → 对象) */
 const tuneScope = computed({
@@ -333,8 +388,11 @@ function tunePatch(): SimpleCommitPatch {
   return {
     name: tune.name.trim(), eventTypes: [...tune.eventTypes], channelIds: [...tune.channelIds], deviceIds: [...tune.deviceIds],
     timePreset: tune.timePreset, timeStart: tune.timeStart, timeEnd: tune.timeEnd, weekdays: [...tune.weekdays],
-    // [POPUP-AUTOCLOSE 2026-09-03] 透传弹窗自动关闭秒 (整数化兜底)
+    // [POPUP-AUTOCLOSE 2026-09-03] 透传弹窗自动关闭秒 (整数化兑底)
     popup_auto_close_s: Math.max(0, Math.floor(Number(tune.popupAutoCloseS) || 0)),
+    // [FLOOR-MAP 2026-09-04] 地图联动透传 (update: 写 actions+source_cond; 切高级: 草稿回填)
+    map_linked: tune.mapLinked,
+    map_ids: [...tune.mapIds],
   }
 }
 
@@ -406,5 +464,9 @@ function timePresetHint(p: 'day' | 'night'): string {
 .srd-time-hint { font-size: 12px; color: var(--el-text-color-secondary); }
 /* [POPUP-AUTOCLOSE 2026-09-03] 弹窗自动关闭输入提示 */
 .srd-popup-close-hint { margin-left: 10px; font-size: 12px; color: var(--el-text-color-secondary); }
+/* [FLOOR-MAP 2026-09-04] 地图联动配置行 */
+.srd-map-link { display: flex; align-items: center; gap: 12px; width: 100%; flex-wrap: wrap; }
+.srd-map-select { max-width: 360px; }
+.srd-map-hint { margin-top: 6px; font-size: 12px; line-height: 1.6; color: var(--el-text-color-secondary); }
 /* 平板 1024px 适配 */
 </style>
