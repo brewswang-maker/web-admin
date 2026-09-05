@@ -1328,7 +1328,8 @@ import { linkageApi, ACTION_TYPE_MAP, ACTION_TYPE_REVERSE_MAP, getTargetForActio
 import { regionApi } from '@/api/region'  // [FIX 2026-08-28] 画板绊线自动创建 (createTripwireWithMirror)
 import type { LinkageRule, LinkageAction, LinkageLog, ActionLogEntry, TimeTemplate, LinkagePlan, CEPPattern, ConditionNode, RuleConflict, RuleTriggerStat } from '@/api/linkage'
 import { useLinkageOptions } from '@/composables/useLinkageOptions'
-import { syncAlgosForRule } from '@/composables/useAlgoRuleSync'
+// [FIX 2026-09-04 老规则通道反解] 编辑存量规则时哈希反解需要 (import 原仅 syncAlgosForRule)
+import { syncAlgosForRule, safeChannelHash } from '@/composables/useAlgoRuleSync'
 // [FLOOR-MAP 2026-09-03] 适用平面图多选: 地图列表缓存 (与平面图页共用单例)
 import { useFloorMap } from '@/composables/useFloorMap'
 // [FLOOR-MAP 2026-09-04] 联动平面图动作面板: scene_tag 分组标签 + 只读预览画布
@@ -1524,6 +1525,35 @@ function dedupeChannelForms(raw: string[]): string[] {
     if (prev === base && c !== base) byBase.set(base, c)
   }
   return [...byBase.values()]
+}
+
+// [FIX 2026-09-04 老规则通道反解] 存量规则 (vp9 2026-09-01 前) 通道绑定只落
+//   source_cond.channel_ids (safeChannelHash int32; 真机实证 2056149937 =
+//   hash('11010500001110000001_ch0') 带后缀形态), 无 spatial_cond.bound_channel_ids
+//   字符串形态 → 编辑回填时绑定通道为空/事件源勾选不回显/ROI 快照无通道可加载。
+//   对通道选项双形态 (原样 + 剥 _chN) 建 hash→id 映射反解, 与后端逐位一致。
+function buildChannelHashIndex(): Map<number, string> {
+  const m = new Map<number, string>()
+  for (const opt of channelOptionsDynamic.value) {
+    const id = String(opt?.value ?? '')
+    if (!id) continue
+    m.set(safeChannelHash(id), id)
+    const base = id.replace(/_ch\d+$/, '')
+    if (base && base !== id) m.set(safeChannelHash(base), id)
+  }
+  return m
+}
+/** 哈希数组 → 通道串数组 (去重保序; 选项未就绪/反解不出时丢弃该项) */
+function resolveChannelsFromHashes(hashes: unknown): string[] {
+  if (!Array.isArray(hashes) || hashes.length === 0) return []
+  if (channelOptionsDynamic.value.length === 0) return [] // 深链竞态: 选项未就绪, 由下方 watch 补偿
+  const idx = buildChannelHashIndex()
+  const out: string[] = []
+  for (const h of hashes) {
+    const id = idx.get(Number(h))
+    if (id && !out.includes(id)) out.push(id)
+  }
+  return out
 }
 
 function dirToUpper(d: string): string {
@@ -2374,7 +2404,14 @@ function resetEditorState(rule: LinkageRule | null) {
         }))
       } catch { return [] as RoiData[] }
     })()
+    // [FIX 2026-09-04 老规则通道反解] 记录编辑源规则 (深链竞态 watch 补偿用); bound_channel_ids
+    //   缺失 (vp9 前存量规则) 时从 source_cond.channel_ids 哈希反解字符串形态 (绑定多选/快照通道回填来源)
+    lastEditSource = rule
     const hasSpatial = !!(sc.region_id || sc.location_id || sc.device_group_id || sc.roi_polygon?.length || sc.tripwire_id || sc.direction || (sc as any).bound_channel_ids?.length || (sc as any).roi_shapes_json)
+    const boundRaw = (((sc as any).bound_channel_ids as unknown[]) || []).map(String)
+    const boundResolved = boundRaw.length > 0
+      ? boundRaw
+      : resolveChannelsFromHashes(((rule.source_cond || {}) as any).channel_ids)
     form.conditions.region = {
       // [COND-PERSIST 2026-09-03] enabled/location/channelId 优先 ui 态 (channelId 后端无
       //   白名单字段, 唯一持久化途径; location 解决与 location.point 混写折叠)
@@ -2382,7 +2419,7 @@ function resetEditorState(rule: LinkageRule | null) {
       // [FIX 2026-08-27 P0-PERIMETER v3] tripwire + direction 从后端读出
       // [vp9 2026-09-01] bound_channel_ids 显式绑定通道回填 (字符串形态直存)
       // [FIX 2026-09-02] roiPolygon 从 roi_shapes_json 完整回显 (多形状/方向/角点)
-      config: { location: ui?.region?.location ?? (sc.location_id || ''), roi: sc.region_id || '', group: sc.device_group_id || '', roiPolygon: roiShapesFromJson, channelId: ui?.region?.channelId || '', tripwireId: sc.tripwire_id || '', direction: sc.direction || '', boundChannelIds: ((sc as any).bound_channel_ids || []).map(String) },
+      config: { location: ui?.region?.location ?? (sc.location_id || ''), roi: sc.region_id || '', group: sc.device_group_id || '', roiPolygon: roiShapesFromJson, channelId: ui?.region?.channelId || boundResolved[0] || '', tripwireId: sc.tripwire_id || '', direction: sc.direction || '', boundChannelIds: boundResolved },
     }
     form.conditions.location = {
       // [COND-PERSIST] enabled/point 优先 ui 态 (解决与 region.location 混写折叠)
@@ -2408,8 +2445,10 @@ function resetEditorState(rule: LinkageRule | null) {
     // [FIX 2026-08-28 双形态归一] device_ids 可能同时存主形态(不带 _ch0)与
     //   子码流形态(带 _ch0) — 同一通道只回填一个勾选值(带后缀优先,
     //   与通道选项 value 形态一致), 保存时再展开双形态。
+    // [FIX 2026-09-04 老规则通道反解] channel_ids 哈希先反解为通道串再归一 (原 map(String)
+    //   直落哈希串, 与通道选项 value (国标串) 不匹配 → 事件源勾选回显失败)
     const esChannels = esEnabled
-      ? dedupeChannelForms([...(src.channel_ids || []).map(String), ...(src.device_ids || [])])
+      ? dedupeChannelForms([...resolveChannelsFromHashes(src.channel_ids), ...(src.device_ids || [])])
       : (ui?.eventSource?.channels || [])
     form.conditions.eventSource = {
       enabled: esEnabled,
@@ -2433,6 +2472,10 @@ function resetEditorState(rule: LinkageRule | null) {
       enabled: ui?.autoMerge?.enabled ?? !!mc.enabled,
       config: { windowMs: mc.window_ms || 10000, maxCount: mc.max_merge_count || 10, dimension: mc.merge_by || 'channel' },
     }
+    // [FIX 2026-09-04 老规则快照] 编辑回填后 ROI 背景快照自动加载 (原仅 ROI 通道选择器
+    //   @change 触发; 老规则无 ui 态 channelId → 打开编辑画布恒空)
+    const snapChannel = form.conditions.region.config.channelId
+    if (snapChannel) loadChannelSnapshot(snapChannel)
   } else {
     form.conditions = defaultConditions()
   }
@@ -2458,6 +2501,31 @@ function resetEditorState(rule: LinkageRule | null) {
   }
 
 }
+
+// [FIX 2026-09-04 老规则通道反解] 编辑源规则快照 (深链竞态补偿 watch 用; 声明在 setup 顶层,
+//   resetEditorState 运行时已初始化)
+let lastEditSource: LinkageRule | null = null
+// 深链/嵌入编辑在 rules 就绪即打开, 通道选项 (fetchOptions) 可能未返回 → 哈希反解映射为空,
+// 绑定通道/快照/事件源回填落空。选项就绪后对当前编辑规则补填一次。
+watch(channelOptionsDynamic, (opts) => {
+  if (opts.length === 0 || !lastEditSource) return
+  const cfg = form.conditions.region.config
+  const src = (lastEditSource.source_cond || {}) as any
+  if (cfg.boundChannelIds.length === 0) {
+    const resolved = resolveChannelsFromHashes(src.channel_ids)
+    if (resolved.length > 0) {
+      cfg.boundChannelIds = resolved
+      if (!cfg.channelId) {
+        cfg.channelId = resolved[0]
+        loadChannelSnapshot(resolved[0])
+      }
+    }
+  }
+  if (form.conditions.eventSource.enabled && form.conditions.eventSource.config.channels.length === 0) {
+    const esResolved = dedupeChannelForms([...resolveChannelsFromHashes(src.channel_ids), ...((src.device_ids || []) as string[])])
+    if (esResolved.length > 0) form.conditions.eventSource.config.channels = esResolved
+  }
+})
 
 function openEditor(rule: LinkageRule | null) {
   resetEditorState(rule)

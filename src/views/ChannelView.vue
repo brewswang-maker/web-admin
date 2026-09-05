@@ -701,6 +701,16 @@ async function handleBatchEnable(enable: boolean) {
 }
 
 // ---- 行内重命名 ----
+// [docx#7/13b 2026-09-05] 通道名是告警列表设备列第一优先显示名 (enrich 链), 同样禁纯数字
+function isValidChannelName(n: string): boolean {
+  const v = (n || '').trim()
+  if (!v) return false
+  if (/^\d+$/.test(v)) {
+    ElMessage.warning('通道名称禁止纯数字, 请使用可读名称 (如「大门口摄像头」)')
+    return false
+  }
+  return true
+}
 function startInlineRename(ch: Channel) {
   currentChannel.value = ch
   renameValue.value = ch.name
@@ -708,7 +718,8 @@ function startInlineRename(ch: Channel) {
 }
 
 async function confirmRename() {
-  if (!currentChannel.value || !renameValue.value.trim()) return
+  if (!currentChannel.value) return
+  if (!isValidChannelName(renameValue.value)) return
   saving.value = true
   try {
     await channelApi.rename(currentChannel.value.id, renameValue.value.trim())
@@ -724,6 +735,7 @@ async function confirmRename() {
 
 async function saveChannelConfig() {
   if (!currentChannel.value) return
+  if (!isValidChannelName(configForm.value.name)) return  // [docx#13b] 禁纯数字
   saving.value = true
   try {
     await updateChannel(currentChannel.value.id, {

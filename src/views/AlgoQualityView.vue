@@ -198,7 +198,10 @@ async function load() {
       time: t.date,
       title: `${t.date} 推理运行汇总`,
     }))
-    lastUpdated.value = payload?.last_updated ?? new Date().toISOString().slice(0, 16).replace('T', ' ')
+    // [FIX 2026-09-05 时区] 兜底值 toISOString() 是 UTC (差 8 小时), 改本地时间拼接
+    const d = new Date(); const p2 = (n: number) => String(n).padStart(2, '0')
+    lastUpdated.value = payload?.last_updated
+      ?? `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())} ${p2(d.getHours())}:${p2(d.getMinutes())}`
     if (algorithms.value.length === 0 && (payload?.total ?? 0) === 0) {
       // 首次访问可能无 perf_logs 数据,这是正常的
       ElMessage.info('尚无算法性能数据,运行推理后将在此显示')

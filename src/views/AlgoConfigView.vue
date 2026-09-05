@@ -72,7 +72,17 @@
           <el-table-column label="算法" min-width="110">
             <template #default="{ row }">
               <div class="algo-name-cell">
-                <el-tag size="small" type="primary" :title="isAlgoFallback(row.algoId) ? '该算法未注册中文名' : ''">{{ row.algoName }}</el-tag>
+                <!-- [docx#5 P1-5 2026-09-05 大华/宇视实践] 规则订阅状态可视化:
+                     算法不独立产生告警动作, 弹窗/播报/快照/录像全在联动规则 actions 上;
+                     ruleCount=0 时显式警示, 让「算法↔规则」耦合关系对用户可读 -->
+                <div class="algo-name-line">
+                  <el-tag size="small" type="primary" :title="isAlgoFallback(row.algoId) ? '该算法未注册中文名' : ''">{{ row.algoName }}</el-tag>
+                  <el-tooltip v-if="row.enabled && row.ruleCount === 0" placement="top"
+                    content="未绑定事件规则: 告警不触发弹窗/联动 — 请点右上角「+ 绑定事件规则」">
+                    <el-icon class="algo-norule-warn"><WarningFilled /></el-icon>
+                  </el-tooltip>
+                  <el-tag v-else-if="row.ruleCount > 0" size="small" type="info" effect="plain" class="algo-rule-count">规则×{{ row.ruleCount }}</el-tag>
+                </div>
                 <!-- [UX 2026-09-01] 中文名与裸 id 混杂难辨识: 主名下附小字 algo_id (仅当两者不同) -->
                 <span v-if="row.algoName !== row.algoId" class="algo-id-sub">{{ row.algoId }}</span>
               </div>
@@ -118,6 +128,13 @@
                 <el-tag v-if="editForm.algoId" size="small" type="primary" :title="isAlgoFallback(editForm.algoId) ? '该算法未注册中文名' : ''">{{ editForm.algoName }}</el-tag>
               </div>
             </template>
+            <!-- [docx#5 P1-5 2026-09-05] 规则关系显式化: 选中算法无规则订阅时, 编辑卡顶部常驻警示
+                [FIX 2026-09-05b 文案语义修正] InferenceScheduler 不消费联动规则 (inference/ 零引用),
+                推理照调度运行 — 原文案「推理不会启动」不准确; 真实缺失的是告警消费者 (弹窗/联动动作) -->
+            <el-alert v-if="editForm.algoId && currentAlgoRuleCount === 0" type="warning" :closable="false" show-icon
+              class="edit-norule-alert"
+              title="该算法未绑定事件规则 — 告警不会触发弹窗/联动"
+              description="推理仍按调度运行, 但弹窗 / 语音播报 / 事件快照 / 事件录像均由联动规则 actions 驱动, 无订阅则告警仅落库无动作; 请点中栏右上角「+ 绑定事件规则」完成订阅。" />
             <el-form :model="editForm" label-width="92px" size="default" class="edit-form" @submit.prevent>
               <el-form-item label="算法">
                 <template v-if="editForm.algoId">
@@ -182,8 +199,11 @@
             </template>
             <el-tabs v-model="roiTab">
               <el-tab-pane :label="$t('detectionZone', '检测区域')" name="region">
+                <!-- [FIX 2026-09-03 问题1] :key 含通道+当前算法: 切算法/切通道时重挂载编辑器,
+                     画布草稿(顶点/绊线/撤消栈)随上下文重置清零, 再由 loadRegions 按新算法回填 -->
                 <RoiPolygonEditor
                   v-if="selected"
+                  :key="`roi_${selected.channelId}_${currentAlgoId}`"
                   :model-value="regions"
                   :background-image-url="roiBackgroundUrl"
                   :canvas-width="720" :canvas-height="405"
@@ -192,8 +212,13 @@
                 />
               </el-tab-pane>
               <el-tab-pane :label="$t('tripwire', '绊线')" name="tripwire">
+                <!-- [FIX 2026-09-03 问题1] :key 重挂载: TripwireEditor 草稿 points(A/B 两点)
+                     为组件内部状态, 之前切算法行不清零 → 上一算法画的绊线残留在画布上;
+                     配合 selectAlgoRow 重置 editingTripwire, 编辑会话与草稿一并归零,
+                     loadRegions 重新拉取本通道已保存绊线回显 -->
                 <TripwireEditor
                   v-if="selected"
+                  :key="`tw_${selected.channelId}_${currentAlgoId}`"
                   :image-url="roiBackgroundUrl"
                   :saved="tripwires.filter(t => !(t.channel_id_str || '').endsWith('_ch0'))"
                   :editing="editingTripwire ? { point_a: editingTripwire.point_a, point_b: editingTripwire.point_b, direction: editingTripwire.direction, name: editingTripwire.name } : null"
@@ -205,7 +230,16 @@
                 </div>
                 <div v-if="tripwires.length" class="tripwire-list">
                   <div v-for="tw in tripwires" :key="tw.id" class="tripwire-list__item">
-                    <span>{{ tw.name }}{{ (tw.channel_id_str || '').endsWith('_ch0') ? ' (镜像)' : '' }} ({{ tw.direction }})</span>
+                    <span>
+                      <!-- [FIX 2026-09-04 生效状态标识] 用户诉求: 多条绊线/多边形共存时
+                           必须一眼分辦哪些真正起作用。后端 getTripwires 硬过滤 enabled=false
+                           (停用即隐身), 故列表内恒为生效中; 条件分支向后兼容后端
+                           将来支持停用可见。'不再使用'的遗留绊线已清理/停用出列表。 -->
+                      <el-tag :type="tw.enabled === false ? 'info' : 'success'" size="small" style="margin-right: 6px">
+                        {{ tw.enabled === false ? '已停用' : '生效中' }}
+                      </el-tag>
+                      {{ tw.name }}{{ (tw.channel_id_str || '').endsWith('_ch0') ? ' (镜像)' : '' }} ({{ tw.direction }})
+                    </span>
                     <span v-if="!(tw.channel_id_str || '').endsWith('_ch0')">
                       <el-button text size="small" type="primary" @click="editingTripwire = tw">
                         {{ $t('edit', '编辑') }}
@@ -224,7 +258,9 @@
                 </div>
                 <PassagewayEditor
                   v-if="selected"
+                  :key="`pw_${selected.channelId}_${currentAlgoId}`"
                   :image-url="roiBackgroundUrl"
+                  :saved="passageways"
                   @confirm="onPassagewayConfirm"
                 />
                 <div v-if="passageways.length" class="tripwire-list">
@@ -254,6 +290,7 @@
                 </div>
                 <RoiPolygonEditor
                   v-if="selected"
+                  :key="`cz_${selected.channelId}_${currentAlgoId}`"
                   :model-value="countingZoneRois"
                   :background-image-url="roiBackgroundUrl"
                   :canvas-width="720" :canvas-height="405"
@@ -417,7 +454,7 @@
 import { ref, reactive, computed, onMounted, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Refresh, Plus, Delete, Edit, Search, CaretBottom } from '@element-plus/icons-vue'
+import { Refresh, Plus, Delete, Edit, Search, CaretBottom, WarningFilled } from '@element-plus/icons-vue'
 import { channelApi } from '@/api/channel'
 import { startSchedule, stopSchedule, getInferenceChannels } from '@/api/inference'
 import type { ScheduledChannel } from '@/api/inference'
@@ -426,7 +463,7 @@ import type { AlgorithmInfo } from '@/api/algorithms'
 import eventTypesApi, { type CanonicalEventType } from '@/api/eventTypes'
 import { useEventTypeZh } from '@/composables/useEventTypeZh'
 import {
-  syncRulesForAlgo, forgetAlgoInRuleMemory, safeChannelHash,
+  syncRulesForAlgo, forgetAlgoInRuleMemory, safeChannelHash, algoIdMatches,
   loadChannelDisabledMap, saveChannelDisabledMap,
 } from '@/composables/useAlgoRuleSync'
 import { linkageApi, type LinkageRule } from '@/api/linkage'
@@ -656,6 +693,10 @@ const algoRows = computed(() => {
   }))
 })
 
+/** [docx#5 P1-5] 当前选中算法的规则订阅数 (0 = 无规则, 推理不启动/告警被抑制) */
+const currentAlgoRuleCount = computed(() =>
+  algoRows.value.find((r) => r.algoId === currentAlgoId.value)?.ruleCount ?? 0)
+
 function algoRowClassName({ row }: { row: { algoId: string } }) {
   return currentAlgoId.value === row.algoId ? 'current-algo-row' : ''
 }
@@ -668,6 +709,10 @@ function selectAlgoRow(row: { algoId: string; algoName: string; mode: 'snapshot'
   editForm.mode = row.mode
   editForm.interval = row.interval
   formErrors.interval = ''; formErrors.confidence = ''; formErrors.nms = ''
+  // [FIX 2026-09-03 问题1] 切换算法行 → 绊线编辑会话一并重置:
+  //   editingTripwire 残留会让新算法下仍提示「正在编辑旧绊线」且画布载入旧线;
+  //   画布草稿 (A/B 两点) 由 TripwireEditor 的 :key 重挂载清零 (见模板)。
+  editingTripwire.value = null
   // [FIX 2026-09-01] 切换算法行 → 重载该算法的检测区域 (按 algo_id 隔离展示)
   loadRegions()
   nextTick(() => editCardRef.value?.$el?.scrollIntoView?.({ behavior: 'smooth', block: 'center' }))
@@ -872,19 +917,30 @@ async function loadRuleCounts() {
     const items: LinkageRule[] = res.data?.data?.items ?? (res.data as any)?.items ?? []
     channelRules.value = items
     const chIdStr = selected.value.channelId
-    const chNum = Number(chIdStr)
-    const chId = Number.isFinite(chNum) && Number.isSafeInteger(chNum) ? chNum : 0
     const sc = scheduledMap.value.get(chIdStr)
     const algoIds = String(sc?.algo_plugin || '').split(',').map((s) => s.trim()).filter(Boolean)
+    // [FIX 2026-09-05 两边没同步] 通道命中必须走 safeChannelHash 契约 (FNV-1a int32,
+    //   LinkageEngine.cpp 同源): 原 Number(chIdStr) 对 GB 通道 ('34020000001320000002_ch0'
+    //   → NaN → 0) 及数字通道均与规则库 hash 形态 channel_ids 永不匹配 → 已启用规则全被
+    //   continue 跳过 → 计数恒 0 → 算法页误报「未绑定事件规则 / 推理不会启动」。
+    //   GB 双流 _ch0 双形态 hash 都参与命中 (与 LinkageRuleView 反解注册同构)。
+    const baseId = chIdStr.replace(/_ch\d+$/, '')
+    const chHashes = new Set<number>([safeChannelHash(chIdStr)])
+    if (baseId && baseId !== chIdStr) chHashes.add(safeChannelHash(baseId))
     const counts = new Map<string, number>()
     for (const r of items) {
       const src: any = (r as any).source_cond ?? {}
       const chList: number[] = src.channel_ids ?? []
-      // GB 通道 int32 降 0 与其他通道规则可能同 0 → 算法 id 是主匹配键, 通道命中宽松处理
-      const chHit = chList.length === 0 || chList.includes(chId)
+      const chHit = chList.length === 0 || chList.some((h) => chHashes.has(h))
       if (!chHit) continue
       for (const a of (src.algorithm_ids ?? []) as string[]) {
-        if (algoIds.includes(a)) counts.set(a, (counts.get(a) ?? 0) + 1)
+        // [FIX 2026-09-05b 第三洞] 短名先过别名归一再双向尾段匹配: tailgate→tailgating
+        //   这类非前缀命名对 (第 8 字符 e/i 分叉) algoIdMatches 覆盖不了,
+        //   实测修复后 tailgating 计数仍 0 — 复用本组件 EVENT_ALGO_TYPE_ALIASES 同源归一
+        const normA = EVENT_ALGO_TYPE_ALIASES[a] ?? a
+        for (const id of algoIds) {
+          if (algoIdMatches(a, id) || algoIdMatches(normA, id)) counts.set(id, (counts.get(id) ?? 0) + 1)
+        }
       }
     }
     algoRuleCounts.value = counts
@@ -1353,9 +1409,14 @@ async function loadRegions() {
       regionApi.listRegions(curAlgo ? { channel_id: chId, algo_id: curAlgo } : { channel_id: chId }),
       regionApi.listTripwires({ channel_id: chId }),
       // 🆕 v5.0: 通道主路径 channel_id_str (GB28181 完整编码)
+      // [FIX 2026-09-03 问题2] algo_id 固定尾随插件 id: 创建侧 (onPassagewayConfirm)
+      //   固定写 'shield.algo.perimeter.tailgating', 而旧查询用当前选中算法 id 过滤
+      //   → 选中非尾随算法时 getPassagewaysByChannelStr 按 algo 精确匹配恒空
+      //   → 「通道已添加」后 loadRegions 回填空列表, 所画多边形从画布/列表消失。
+      //   数据约定: passageway 归属固定为尾随判定插件, 与用户当前选中哪个算法行无关。
       regionApi.listPassageways({
         channel_id_str: chStrNoSuffix,
-        algo_id: (editForm.algoId || form.algorithm || 'shield.algo.perimeter.tailgating').split(',')[0].trim()
+        algo_id: 'shield.algo.perimeter.tailgating',
       }),
       regionApi.listCountingZones({ channel_id: chId })
     ])
@@ -1743,6 +1804,8 @@ function onChannelSelect(row: ChannelItem | null) {
   selected.value = row
   currentAlgoId.value = ''
   editForm.algoId = ''; editForm.algoName = ''
+  // [FIX 2026-09-03 问题1] 切通道同样清绊线编辑会话 (旧通道的编辑对象在新通道无意义)
+  editingTripwire.value = null
   if (row) {
     form.enabled = row.inferenceEnabled
     form.algorithm = row.algoPlugin || ''
@@ -1890,6 +1953,11 @@ async function saveConfig() {
 .algo-table :deep(.el-table__row) { cursor: pointer; }
 /* [UX 2026-09-01] 算法名单元格: 主名 + 小字 id 双行 */
 .algo-name-cell { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; line-height: 1.2; }
+/* [docx#5 P1-5] 规则订阅状态行内标识 */
+.algo-name-line { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.algo-norule-warn { color: var(--el-color-warning); cursor: help; }
+.algo-rule-count { flex-shrink: 0; }
+.edit-card .edit-norule-alert { margin-bottom: 10px; padding: 6px 12px; }
 .algo-id-sub { font-size: 11px; color: var(--text-secondary); word-break: break-all; }
 .edit-card .algo-id-text { margin-left: 10px; font-size: 12px; color: var(--text-secondary); }
 .edit-actions { display: flex; justify-content: flex-end; gap: 12px; margin-top: 2px; padding-top: 8px; border-top: 1px solid var(--border-light); }

@@ -70,10 +70,11 @@
  * 性能: 自实现分组列表替代 el-tree, 100 设备 × N 通道勾选为 O(1) Set 操作。
  * [vp7 新建规则工坊 2026-09-01]
  */
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { Search } from '@element-plus/icons-vue'
 import { deviceApi } from '@/api/device'
 import { channelApi } from '@/api/channel'
+import { safeChannelHash } from '@/composables/useAlgoRuleSync'
 import type { DeviceItem, ChannelItem } from '@/types/device'
 
 interface DeviceRow extends DeviceItem { _expanded?: boolean }
@@ -176,10 +177,12 @@ const selectedChannels = ref(new Set<string>())
 const excludedChannels = ref(new Set<string>())
 
 function emitValue() {
-  // channel_ids: number[] — 收集所有被选中通道的 channelNo
+  // [FIX 2026-09-04 语义对齐] channel_ids: number[] — 收集 safeChannelHash(通道串), 与后端
+  //   LinkageEngine 事件匹配同语义 (原收集 channelNo 序号: 序号≠哈希 → 保存的规则永不触发);
+  //   channelNo 仅作 UI 展示 (CH1 标签), 不入规则字段
   const nums: number[] = []
   for (const ch of channels.value) {
-    if (isChannelSelected(ch)) nums.push(ch.channelNo)
+    if (isChannelSelected(ch)) nums.push(safeChannelHash(ch.id))
   }
   emit('update:modelValue', {
     deviceIds: [...value.value.deviceIds],
@@ -216,7 +219,7 @@ function collectChannelNums(ids: Set<string>): Set<number> {
   for (const ch of channels.value) {
     const did = String(ch.deviceId)
     if (ids.has(did) ? !excludedChannels.value.has(ch.id) : selectedChannels.value.has(ch.id)) {
-      s.add(ch.channelNo)
+      s.add(safeChannelHash(ch.id))
     }
   }
   return s
@@ -232,7 +235,9 @@ function clearAll() {
   emit('update:modelValue', { deviceIds: [], channelIds: [] })
 }
 
-/** 外部回填 (编辑规则): deviceIds + channelIds 反推勾选态 */
+/** 外部回填 (编辑规则): deviceIds + channelIds 反推勾选态。
+ *  [FIX 2026-09-04 语义对齐] channelNums 为 safeChannelHash(通道串) (规则 channel_ids 原样),
+ *  与收集侧同哈希比对 (原比 channelNo 序号 → 编辑回显永不命中)。 */
 function hydrate(deviceIds: string[], channelNums: number[]) {
   selectedChannels.value.clear()
   excludedChannels.value.clear()
@@ -240,15 +245,15 @@ function hydrate(deviceIds: string[], channelNums: number[]) {
   for (const did of deviceIds) {
     const chs = channelsOf(did)
     if (!chs.length) continue
-    const allSel = chs.every(ch => want.has(ch.channelNo))
+    const allSel = chs.every(ch => want.has(safeChannelHash(ch.id)))
     if (!allSel) {
       // 部分通道 → 勾设备 + 排除未选中通道
-      for (const ch of chs) if (!want.has(ch.channelNo)) excludedChannels.value.add(ch.id)
+      for (const ch of chs) if (!want.has(safeChannelHash(ch.id))) excludedChannels.value.add(ch.id)
     }
   }
   // 孤立通道 (设备未选但通道在选集): 反查归属
   for (const ch of channels.value) {
-    if (want.has(ch.channelNo) && !deviceIds.includes(String(ch.deviceId))) {
+    if (want.has(safeChannelHash(ch.id)) && !deviceIds.includes(String(ch.deviceId))) {
       selectedChannels.value.add(ch.id)
     }
   }
@@ -264,10 +269,32 @@ onMounted(async () => {
     ])
     // [r27 修复] 多层剥壳 + 多键兑底 (devices/items/list)
     devices.value = toArr<DeviceRow>(devRes, 'devices', 'items', 'list')
-    channels.value = toArr<ChannelItem>(chRes, 'channels', 'items', 'list')
+    // [FIX 2026-09-04 字段归一] 后端 GET /api/v1/channels 返回 snake_case (channel_id/device_id,
+    //   真机实证), ChannelItem 类型为 camelCase → 原 ch.id/ch.deviceId 恒 undefined:
+    //   deviceChannelMap 全落 'undefined' key → channelsOf(设备ID) 恒空 → 设备下通道列表全空
+    //   (「以前设置的摄像头和通道获取不到」根因)。对齐 useLinkageOptions.fetchChannelOptions 同款兼容。
+    channels.value = toArr<ChannelItem>(chRes, 'channels', 'items', 'list').map((ch: any) => ({
+      ...ch,
+      id: String(ch.channel_id ?? ch.id ?? ''),
+      deviceId: String(ch.device_id ?? ch.deviceId ?? ''),
+    }))
+    // [FIX 2026-09-04 编辑回显] 数据就绪后按当前 modelValue 恢复勾选 (编辑预填时序:
+    //   modelValue 先于通道数据到达, hydrate 需在数据就绪后补一次)
+    if (props.modelValue.deviceIds.length || props.modelValue.channelIds.length) {
+      hydrate([...props.modelValue.deviceIds], [...props.modelValue.channelIds])
+    }
   } finally {
     loading.value = false
   }
+})
+
+// [FIX 2026-09-04 编辑回显] 外部 modelValue 变化 (编辑另一条规则/预填到达) → 重算勾选态。
+//   hydrate(modelValue) 是 emitValue 的幂等逆运算 (勾选态 ⊂ modelValue 投影), 重复执行
+//   无副作用; 原 picker 从未消费 v-model 初始值 (无 watch 且 SimpleRuleDrawer 未调 hydrate),
+//   编辑回显全靠「设备勾选→继承全选」偶然覆盖, 通道级勾选永不恢复。
+watch(() => props.modelValue, (mv) => {
+  if (!channels.value.length) return // 数据未就绪: onMounted 尾部统一补
+  hydrate([...mv.deviceIds], [...mv.channelIds])
 })
 </script>
 

@@ -897,7 +897,23 @@ async function batchDelete() {
 }
 
 // ---- 添加设备 ----
+// [docx#7/13b 2026-09-05 研华实践] 设备名称规范: 必填且禁纯数字。
+//   根因: 原实现 confirmAdd 在名称空时静默兜底 device_name = deviceId (纯数字),
+//   告警 enrich 链路把数字名透传到告警列表 → 用户看到"设备名没写出来/全是数字"。
+function validateDeviceName(name: string): boolean {
+  const n = (name || '').trim()
+  if (!n) {
+    ElMessage.warning('请填写设备名称 (必填)')
+    return false
+  }
+  if (/^\d+$/.test(n)) {
+    ElMessage.warning('设备名称禁止纯数字, 请使用可读名称 (如「大门入口摄像头」)')
+    return false
+  }
+  return true
+}
 async function confirmAdd() {
+  if (!validateDeviceName(addForm.value.name)) return
   addLoading.value = true
   try {
     // 使用表单输入的 device_id，为空时自动生成
@@ -911,7 +927,7 @@ async function confirmAdd() {
     }
     const data: any = {
       device_id: deviceId,
-      device_name: addForm.value.name || deviceId,
+      device_name: addForm.value.name.trim(),  // [docx#7/13b] 已校验非空非纯数字, 移除 || deviceId 静默兜底
       device_type: addForm.value.deviceType,
       vendor: '',
       model: '',
@@ -980,10 +996,7 @@ function openEditDialog(row: DeviceItem) {
 }
 
 async function confirmEdit() {
-  if (!editForm.value.name) {
-    ElMessage.warning('请填写设备名称')
-    return
-  }
+  if (!validateDeviceName(editForm.value.name)) return  // [docx#13b] 必填 + 禁纯数字
   editLoading.value = true
   try {
     await deviceStore.updateDevice(editForm.value.deviceId, {
