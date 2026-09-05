@@ -30,6 +30,7 @@ declare module 'vue' {
     DataAnalysis: typeof import('@element-plus/icons-vue')['DataAnalysis']
     Delete: typeof import('@element-plus/icons-vue')['Delete']
     DeviceChannelPicker: typeof import('./components/linkage/DeviceChannelPicker.vue')['default']
+    DisposeDialog: typeof import('./components/alarm/DisposeDialog.vue')['default']
     Download: typeof import('@element-plus/icons-vue')['Download']
     Edit: typeof import('@element-plus/icons-vue')['Edit']
     EditPen: typeof import('@element-plus/icons-vue')['EditPen']

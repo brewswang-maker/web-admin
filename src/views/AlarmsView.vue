@@ -30,14 +30,10 @@
             <el-option label="🟢 低" value="low" />
           </el-select>
 
-          <!-- 告警类型筛选 -->
-          <el-select v-model="typeFilter" placeholder="告警类型" style="width: 140px" clearable @change="handleFilterChange">
+          <!-- [P0-9 2026-09-04] 告警类型筛选: 硬编码 6 项 → canonical SSOT 动态 (113 项全量 + zh 名, filterable) -->
+          <el-select v-model="typeFilter" placeholder="告警类型" style="width: 160px" clearable filterable @change="handleFilterChange">
             <el-option label="全部" value="" />
-            <el-option label="入侵检测" value="intrusion" />
-            <el-option label="烟火检测" value="fire" />
-            <el-option label="徘徊检测" value="loitering" />
-            <el-option label="安全帽检测" value="helmet" />
-            <el-option label="打架检测" value="violence" />
+            <el-option v-for="t in canonicalTypeOptions" :key="t.key" :label="t.zh" :value="t.key" />
           </el-select>
 
           <!-- 处理状态筛选 -->
@@ -51,6 +47,12 @@
             <el-option label="误报" value="false_alarm" />
             <el-option label="已关闭" value="closed" />
             <el-option label="已解决" value="resolved" />
+          </el-select>
+
+          <!-- [P0-12 2026-09-04] 设备分组筛选 (海康式分组过滤; 分组表为空时下拉自然为空) -->
+          <el-select v-model="groupFilter" placeholder="所属分组" style="width: 150px" clearable @change="handleFilterChange">
+            <el-option label="全部分组" value="" />
+            <el-option v-for="g in deviceGroups" :key="g.id" :label="g.name" :value="g.id" />
           </el-select>
 
           <!-- 时间范围 -->
@@ -266,20 +268,27 @@
           </template>
         </el-table-column>
 
-        <!-- 告警类型 -->
+        <!-- 告警类型 [P0-9 2026-09-04] 裸 key → canonical zh 名 (useEventTypeZh SSOT, 一处改名处处生效) -->
         <el-table-column prop="type" label="类型" width="130">
           <template #default="{ row }">
-            <span class="type-badge">{{ row.type }}</span>
+            <span class="type-badge">{{ zh(row.type) }}</span>
           </template>
         </el-table-column>
 
-        <!-- 设备 -->
+        <!-- 设备 [P0-7/13 2026-09-04] channel_name 友好名优先 (禁纯数字国标码裸奔) -->
         <el-table-column prop="deviceName" label="设备" width="160">
           <template #default="{ row }">
             <div class="device-cell">
               <span class="device-status-dot" :class="row.deviceStatus || 'online'"></span>
-              <span>{{ row.deviceName || row.deviceId }}</span>
+              <span>{{ row.channelName || row.deviceName || row.deviceId }}</span>
             </div>
+          </template>
+        </el-table-column>
+
+        <!-- [P0-6 2026-09-04] 所属分组 (channel→device_groups 反查; 未分组显示 '-') -->
+        <el-table-column label="所属分组" width="120">
+          <template #default="{ row }">
+            <span>{{ groupNameOf(row) }}</span>
           </template>
         </el-table-column>
 
@@ -339,40 +348,35 @@
         </el-table-column>
 
         <!-- 操作 -->
-        <el-table-column label="操作" width="340" fixed="right">
+        <!-- [P0-13 2026-09-04] 操作简化 (大华式): 未完结=「处警」, 已完结=「详情」, 其余收进「更多」 -->
+        <el-table-column label="操作" width="190" fixed="right">
           <template #default="{ row }">
             <div class="action-btns">
               <el-button
                 size="small"
                 type="primary"
                 link
-                @click="handleAck(row)"
-                v-if="row.status === 'unhandled'"
+                @click="openDisposeDialog(row)"
+                v-if="isDisposeEditable(row)"
               >
-                确认
+                处警
               </el-button>
+              <!-- [FIX 2026-09-05 docx#10/13] 详情打开处置记录对话框 (只读回显当时处置 + 追加入口);
+                   告警全景 (快照/视频/位置) 保留在「更多 → 详情」的 AlarmPopup -->
               <el-button
                 size="small"
-                type="success"
+                type="info"
                 link
-                @click="handleDispose(row)"
-                v-if="row.status === 'unhandled' || row.status === 'acknowledged' || row.status === 'escalated'"
+                @click="openDisposeDialog(row)"
+                v-else
               >
-                处置
-              </el-button>
-              <el-button
-                size="small"
-                type="warning"
-                link
-                @click="handleCloseAlarm(row)"
-                v-if="row.status === 'acknowledged' || row.status === 'disposed' || row.status === 'escalated' || row.status === 'reassigned'"
-              >
-                关闭
+                详情
               </el-button>
               <el-dropdown @command="(cmd: string) => handleLifecycleCommand(cmd, row)" trigger="click">
                 <el-button size="small" type="info" link>更多<el-icon class="el-icon--right"><ArrowDown /></el-icon></el-button>
                 <template #dropdown>
                   <el-dropdown-menu>
+                    <el-dropdown-item command="close" v-if="row.status === 'acknowledged' || row.status === 'disposed' || row.status === 'escalated' || row.status === 'reassigned'">关闭告警</el-dropdown-item>
                     <el-dropdown-item command="escalate" v-if="row.status !== 'closed' && row.status !== 'false_alarm'">升级告警</el-dropdown-item>
                     <el-dropdown-item command="reassign" v-if="row.status !== 'closed'">转派处理</el-dropdown-item>
                     <el-dropdown-item command="false_alarm" :disabled="row.status === 'closed'">标记误报</el-dropdown-item>
@@ -594,6 +598,9 @@
         </div>
       </div>
     </el-dialog>
+
+    <!-- [P0-10 2026-09-04] 规范处警对话框 (类型可选/已处警只读/追加) -->
+    <DisposeDialog v-model="disposeDialogVisible" :alarm="disposeTarget" @submitted="fetchAlarms" />
   </div>
 </template>
 
@@ -614,6 +621,9 @@ import type { AlarmHandleForm, AlarmEvidence, AlarmEvent } from '@/types/alarm'
 import { normalizeAlarmCore } from '@/types/alarm'
 import { useAuthStore } from '@/stores/auth'
 import { useWebSocket } from '@/composables/useWebSocket'
+// [P0-9/6/10 2026-09-04] canonical zh SSOT + 规范处警对话框
+import { useEventTypeZh } from '@/composables/useEventTypeZh'
+import DisposeDialog from '@/components/alarm/DisposeDialog.vue'
 // [UX 2026-08-31] 1b: 列表行点击 → 全局告警详情弹窗 (与首页同套 AlarmPopup)
 import { showAlarmPopup } from '@/composables/useAlarmPopup'
 import SnapshotAnnotated from '@/views/perimeter/SnapshotAnnotated.vue'
@@ -642,6 +652,40 @@ const loading = ref(false)
 
 // ── 告警数据 ──
 const alarms = shallowRef<any[]>([])
+
+// ── [P0-9/6/12 2026-09-04] canonical zh SSOT + 设备分组 ──
+const { ensure: ensureEventTypes, zh, canonicalTypes } = useEventTypeZh()
+/** 类型筛选下拉数据 (canonical SSOT 动态, zh 名) */
+const canonicalTypeOptions = computed(() =>
+  canonicalTypes.value.map((t) => ({ key: t.key, zh: zh(t.key) }))
+)
+
+/** 设备分组 (device_groups 表, /api/v1/devices/groups) */
+interface DeviceGroupItem { id: string; name: string; device_ids?: string[]; resolved_channel_ids?: string[] }
+const deviceGroups = ref<DeviceGroupItem[]>([])
+const groupFilter = ref('')
+async function fetchDeviceGroups() {
+  try {
+    const r = await recordingHttp.get('/api/v1/devices/groups')
+    const data = (r.data?.data ?? r.data) as { items?: DeviceGroupItem[] } | undefined
+    deviceGroups.value = data?.items ?? []
+  } catch {
+    deviceGroups.value = [] // 分组接口失败静默 (列显示 '-')
+  }
+}
+/** 行归属判定: resolved_channel_ids 精确匹配 / device_ids 剥 _chN 后缀匹配 */
+function groupHasAlarm(g: DeviceGroupItem, a: any): boolean {
+  const ch = String(a.channelId || '')
+  if (ch && (g.resolved_channel_ids || []).includes(ch)) return true
+  const dev = String(a.deviceId || '').replace(/_ch\d+$/, '')
+  return !!dev && (g.device_ids || []).includes(dev)
+}
+/** 分组列渲染: id→name 反查, 未分组 '-' */
+function groupNameOf(row: any): string {
+  if (!groupFilter.value && deviceGroups.value.length === 0) return '-'
+  const hit = deviceGroups.value.find((g) => groupHasAlarm(g, row))
+  return hit?.name || '-'
+}
 const totalAlarms = ref(0)
 
 // ── 详情弹窗 ──
@@ -666,7 +710,14 @@ function openSnapshotPreview(row: any) {
   if (typeof m === 'string') {
     try { m = JSON.parse(m) } catch { m = null }
   }
-  previewMeta.value = m && typeof m === 'object' && !Array.isArray(m) ? m : null
+  // [FIX 2026-09-04] AlarmDispatcher 直报链 (尾随/聚集/入侵等) metadata 为
+  //   数组 [{bbox,...}] (真机 gathering/tailgate 实锚): 原判空 !Array.isArray
+  //   直接置 null → 预览快照标注恒空。数组取首元素 (与 EventsView/AlarmPopup
+  //   口径对齐)。
+  if (Array.isArray(m)) {
+    m = (m[0] && typeof m[0] === 'object') ? m[0] : null
+  }
+  previewMeta.value = m && typeof m === 'object' ? m : null
   previewVisible.value = true
 }
 // [P3-VP2] 视图切换 + 证据库
@@ -1053,6 +1104,9 @@ const { alarmStatCards, filteredAlarms } = (() => {
     const lf = levelFilter.value
     const tf = typeFilter.value
     const sf = statusFilter.value
+    const gf = groupFilter.value
+    // [P0-12] 选中分组对象预解析 (循环外一次, 避免行级 find)
+    const activeGroup = gf ? deviceGroups.value.find((x) => x.id === gf) : null
     const q = search.value ? search.value.toLowerCase() : ''
     const hasDate = dateRange.value && dateRange.value.length === 2 && dateRange.value[0] && dateRange.value[1]
     const dateStart = hasDate ? dateRange.value![0]!.getTime() : 0
@@ -1068,6 +1122,8 @@ const { alarmStatCards, filteredAlarms } = (() => {
       if (lf && (a.severity || a.level) !== lf) continue
       if (tf && a.type !== tf) continue
       if (sf && a.status !== sf) continue
+      // [P0-12] 分组过滤 (当前页过滤, 与类型/状态筛选同模式; 未选中或组不在表时放行)
+      if (activeGroup && !groupHasAlarm(activeGroup, a)) continue
       if (q) {
         if (!((a.description || '').toLowerCase().includes(q) ||
               (a.title || '').toLowerCase().includes(q) ||
@@ -1208,22 +1264,18 @@ async function handleAck(row: any) {
   }).catch(() => {})
 }
 
-async function handleDispose(row: any) {
-  ElMessageBox.prompt('请输入处置结果说明', `处置告警：${row.description || row.title}`, {
-    confirmButtonText: '提交处置',
-    cancelButtonText: '取消',
-    inputPlaceholder: '处置结果说明...',
-    inputType: 'textarea',
-  }).then(async ({ value }) => {
-    try {
-      await alarmApi.dispose(row.id, value || '已处置')
-      row.status = 'disposed'
-      ElMessage.success('已提交处置')
-      fetchAlarms()
-    } catch (err) {
-      ElMessage.error('操作失败')
-    }
-  }).catch(() => {})
+/** [P0-10/13 2026-09-04] 规范处警对话框 (原 ElMessageBox.prompt 一句话处置废弃):
+ *  未完结=可编辑(处置类型可选+说明必填+处置人), 已完结=只读回显+「追加处警」解锁。
+ *  「确认」(ack) 独立按钮一并移除 — 处警提交 (status=disposed) 覆盖确认态, 流程更简。 */
+const disposeDialogVisible = ref(false)
+const disposeTarget = ref<any>(null)
+function openDisposeDialog(row: any) {
+  disposeTarget.value = row
+  disposeDialogVisible.value = true
+}
+/** 未完结生命周期 = 可处警态 (与 DisposeDialog.EDITABLE_STATUSES 对齐) */
+function isDisposeEditable(row: any): boolean {
+  return ['unhandled', 'acknowledged', 'escalated', 'reassigned', 'handling'].includes(String(row.status))
 }
 
 async function handleCloseAlarm(row: any) {
@@ -1345,6 +1397,9 @@ async function handleLifecycleCommand(cmd: string, row: any) {
       break
     case 'false_alarm':
       handleFalse(row)
+      break
+    case 'close':
+      handleCloseAlarm(row)
       break
     case 'ignore':
       handleIgnore(row)
@@ -1594,6 +1649,9 @@ onMounted(() => {
   fetchAlarms()
   loadFeedbackMap()
   loadFbStats()
+  // [P0-9/6/12] canonical zh 类型表 + 设备分组 预热 (非阻塞)
+  ensureEventTypes()
+  fetchDeviceGroups()
   window.addEventListener('alarm-clip-updated', onAlarmClipUpdated)
 })
 

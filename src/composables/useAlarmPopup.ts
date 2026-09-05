@@ -28,6 +28,9 @@ import { alarmApi } from '@/api/alarm'
 import type { LinkageRule, LinkageAction } from '@/api/linkage'
 import type { AlarmEvent } from '@/types/alarm'
 import { normalizeAlarmCore, ALARM_CATEGORY } from '@/types/alarm'
+// [FIX 2026-09-05 弹窗不显示回归] 通道 hash 契约: 与后端 LinkageEngine.cpp/
+//   AlgoConfigView.loadRuleCounts 同源 (FNV-1a int32), GB 双流 _ch0 双形态参命中
+import { safeChannelHash } from './useAlgoRuleSync'
 
 // ── 联动动作 → Tab/按钮 映射 ──
 const WEB_SHOW_LIVE = ACTION_TYPE_MAP.WEB_SHOW_LIVE         // 210
@@ -135,10 +138,22 @@ export async function findMatchingRule(alarm: AlarmEvent): Promise<LinkageRule |
     }
     const rules = cachedRules
     const alarmType = alarm.type
-    const chId = Number(alarm.channelId) || 0
+    // [FIX 2026-09-05 弹窗不显示回归] 原 Number(alarm.channelId)||0 与规则库 hash 形态
+    //   channel_ids 永不匹配 (GB 20 位→NaN→0, 数字通道→原值≠hash) → 带通道条件的
+    //   规则全被 continue → findMatchingRule 恒 null → popup suppressed 不弹窗。
+    //   设备端 isAlarmTypeSubscribed 用 safeChannelHash 正常放行 → 告警落库/WS 推送
+    //   均正常, 仅前端弹窗门槛失配 (症状: 列表有事件但弹窗不弹)。
+    //   修复: 双形态 hash 集合匹配 (chIdStr + 去 _ch0 后缀 baseId), 与 loadRuleCounts 同构。
+    const chIdStr = String(alarm.channelId || '')
+    const baseId = chIdStr.replace(/_ch\d+$/, '')
+    const chHashes = new Set<number>([safeChannelHash(chIdStr)])
+    if (baseId && baseId !== chIdStr) chHashes.add(safeChannelHash(baseId))
     const severity = (alarm.metadata?.severityNum as number) ?? 2
     const confidence = alarm.confidence
-
+    // [FIX 2026-09-05 弹窗不显示回归·第二拦截点] 规则库存的是百分数刻度
+    //   (真机: min_confidence 50.0/10.0), 后端加载时归一 (LinkageEngine.cpp L2302:
+    //   mc > 1.0 ? mc/100 : mc), 前端原直接比较 0.88 < 50 恒拦截 → 同源归一。
+    const normMinConf = (mc: number) => (mc > 1 ? mc / 100 : mc)
     // 按 priority 降序排列
     const sorted = [...rules]
       .filter(r => r.enabled)
@@ -155,12 +170,12 @@ export async function findMatchingRule(alarm: AlarmEvent): Promise<LinkageRule |
         )
         if (!typeMatch) continue
       }
-      // 通道匹配
-      if (src.channel_ids?.length && !src.channel_ids.includes(chId)) continue
+      // 通道匹配 (hash 口径, 与后端 LinkageEngine 同源)
+      if (src.channel_ids?.length && !src.channel_ids.some((h) => chHashes.has(h))) continue
       // 严重度匹配
       if (severity < src.min_severity) continue
-      // 置信度匹配
-      if (confidence < src.min_confidence) continue
+      // 置信度匹配 (刻度归一后比较)
+      if (confidence < normMinConf(src.min_confidence)) continue
       // 时间条件匹配 (与后端 LinkageEngine 一致)
       if (!checkTimeCondition(rule)) {
         console.log('[useAlarmPopup] Rule skipped by time condition:', rule.name,
@@ -176,7 +191,11 @@ export async function findMatchingRule(alarm: AlarmEvent): Promise<LinkageRule |
     // 失败时尝试使用缓存
     if (cachedRules) {
       const alarmType = alarm.type
-      const chId = Number(alarm.channelId) || 0
+      // hash 口径同主路径 (try 块内 chHashes 作用域出不来, 此处重算)
+      const chIdStr2 = String(alarm.channelId || '')
+      const baseId2 = chIdStr2.replace(/_ch\d+$/, '')
+      const chHashes2 = new Set<number>([safeChannelHash(chIdStr2)])
+      if (baseId2 && baseId2 !== chIdStr2) chHashes2.add(safeChannelHash(baseId2))
       const severity = (alarm.metadata?.severityNum as number) ?? 2
       const confidence = alarm.confidence
       const sorted = [...cachedRules]
@@ -190,9 +209,10 @@ export async function findMatchingRule(alarm: AlarmEvent): Promise<LinkageRule |
           )
           if (!typeMatch) continue
         }
-        if (src.channel_ids?.length && !src.channel_ids.includes(chId)) continue
+        // 通道匹配 (hash 口径, 同上)
+        if (src.channel_ids?.length && !src.channel_ids.some((h) => chHashes2.has(h))) continue
         if (severity < src.min_severity) continue
-        if (confidence < src.min_confidence) continue
+        if (confidence < normMinConf(src.min_confidence)) continue
         if (!checkTimeCondition(rule)) continue
         return rule
       }

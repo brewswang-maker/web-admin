@@ -329,18 +329,21 @@ async function handleAlarm(alarm: any) {
     if (now - lastTime < popupDebounceMs) {
       console.log('[useGlobalAlarm] popup debounced, key:', debounceKey,
         'elapsed:', Math.round((now - lastTime) / 1000) + 's')
-    } else if (await findMatchingRule(normalized)) {
-      lastPopupTime.set(debounceKey, now)
+    } else {
       // [POPUP-AUTOCLOSE 2026-09-03] 透传规则 popup_auto_close_s: 0=永不自动关闭 (默认), >0=N 秒后关闭
       //   详情入口不受此控制 (openAlarmDetailById 不传 options, 默认永不自关)
+      //   [FIX 2026-09-04] 单次调用: 原实现在条件与分支内各 await 一次 (双查询浪费, 若未来加副作用会双触发)
       const matchedRule = await findMatchingRule(normalized)
-      showAlarmPopup(normalized, { autoCloseSeconds: Number(matchedRule?.popup_auto_close_s) || 0 })
-    } else {
-      console.log('[useGlobalAlarm] popup suppressed (no matching linkage rule), type:',
-        normalized.type, 'ch:', normalized.channelId)
-      // [规则驱动告警 2026-09-01] TTS 与弹窗同门槛: 未命中规则的告警整链静默
-      //   (不弹窗不播报) — 用户决策「这些都依赖事件规则」
-      return
+      if (matchedRule) {
+        lastPopupTime.set(debounceKey, now)
+        showAlarmPopup(normalized, { autoCloseSeconds: Number(matchedRule.popup_auto_close_s) || 0 })
+      } else {
+        console.log('[useGlobalAlarm] popup suppressed (no matching linkage rule), type:',
+          normalized.type, 'ch:', normalized.channelId)
+        // [规则驱动告警 2026-09-01] TTS 与弹窗同门槛: 未命中规则的告警整链静默
+        //   (不弹窗不播报) — 用户决策「这些都依赖事件规则」
+        return
+      }
     }
 
     // 4. TTS 语音播报 — [规则驱动告警 2026-09-01] 已随弹窗门槛规则化: 走到这里

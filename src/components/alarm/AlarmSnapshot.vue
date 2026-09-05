@@ -22,11 +22,14 @@
     <div v-else class="alarm-snapshot__empty">
       <span>📸 无快照</span>
     </div>
-    <!-- Detection boxes overlay -->
+    <!-- Detection boxes + 原始几何形状 overlay
+         [FEAT 2026-09-04] data-shapes/data-boxes 供 DOM 探针验证渲染计数 -->
     <canvas
-      v-if="imageUrl && normalizedBoxes.length"
+      v-if="imageUrl && (normalizedBoxes.length || shapes.length)"
       ref="canvasRef"
       class="alarm-snapshot__canvas"
+      :data-shapes="shapes.length"
+      :data-boxes="normalizedBoxes.length"
     />
     <!-- [FEAT 2026-09-02] 下载标注图: 导出原始分辨率合成图 (快照+检测框标注) PNG -->
     <button
@@ -64,8 +67,12 @@
  * 在告警快照图片上叠加 Canvas 绘制的 detection boxes。
  * 坐标从归一化 (0-1) 转为像素坐标。
  */
-import { ref, computed, nextTick, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, nextTick, onMounted, onBeforeUnmount, watch } from 'vue'
 import { ElMessage } from 'element-plus'
+import {
+  drawDetsOnCtx, drawShapesOnCtx, downloadPngWithFallback,
+  markTriggerDet, parseDetections, useAlarmShapes, type ParsedDet,
+} from '@/composables/useAlarmShapes'
 
 /** [FEAT 2026-09-02] 全屏预览开关 (el-image-viewer v-if 挂载) */
 const viewerVisible = ref(false)
@@ -73,16 +80,6 @@ const viewerVisible = ref(false)
 interface DetectionBox {
   x: number; y: number; w: number; h: number
   label: string; confidence: number
-}
-
-const CLASS_COLORS: Record<string, string> = {
-  person: '#FF3D71',
-  car: '#00D4AA',
-  truck: '#FFB800',
-  bus: '#6C5CE7',
-  fire: '#FF4444',
-  smoke: '#888',
-  face: '#3B82F6',
 }
 
 const props = defineProps<{
@@ -94,8 +91,18 @@ const props = defineProps<{
   /** [任务4] 告警 metadata.detections 完整数组: 支持多检测目标叠加红框,
    *   每项可为 {x1,y1,x2,y2} / {x,y,w,h} / [x1,y1,x2,y2] 三种形态 */
   detections?: any[]
-  /** [任务4] 是否强制使用告警红 (#f56c6c); 默认 true */
+  /** [任务4] 显式 true 时全部检测框强制告警红; 默认 (缺省) 触发目标红 +
+   *   其余类别调色板 (与事件详情抽屉视觉一致) */
   dangerColor?: boolean
+  /** [FEAT 2026-09-04] 触发源通道 (GB28181 编码, _ch0 后缀可):
+   *  形状叠加 (检测区/绊线/方向线/计数区) 数据源定位 */
+  channelId?: string
+  /** [FEAT 2026-09-04] 触发算法 id (metadata.algo_id): 区域库回退链匹配 */
+  algoId?: string
+  /** [FEAT 2026-09-04 告警自包含] metadata.alarm_shapes: 插件上报时冻结的
+   *  当时生效区域几何 (区域库后续增删不影响历史告警取证), 非空时最高
+   *  优先级消费, 绕过规则链/区域库回退与共享缓存 */
+  alarmShapes?: unknown[]
 }>()
 
 const containerRef = ref<HTMLElement>()
@@ -103,63 +110,66 @@ const canvasRef = ref<HTMLCanvasElement>()
 // 图像自然尺寸 (像素坐标 bbox 归一化基准)
 const imageSize = ref<{ w: number; h: number }>({ w: 0, h: 0 })
 
-const normalizedBoxes = computed<DetectionBox[]>(() => {
-  if (props.detectionBoxes?.length) return props.detectionBoxes
-  // [任务4] 多检测源链: detections 数组 > bbox 单框 > metadata 键兑底
-  if (props.detections && props.detections.length) {
-    const { w: iw, h: ih } = imageSize.value
-    return props.detections
-      .map((d: any): DetectionBox | null => {
-        // 形态1: {x1,y1,x2,y2}
-        let x1 = d?.x1, y1 = d?.y1, x2 = d?.x2, y2 = d?.y2
-        // 形态2: {x,y,w,h}
-        if (x1 === undefined && d?.x !== undefined && d?.w !== undefined) {
-          x1 = d.x; y1 = d.y; x2 = d.x + d.w; y2 = d.y + d.h
-        }
-        // 形态3: [x1,y1,x2,y2]
-        if (x1 === undefined && Array.isArray(d) && d.length >= 4) {
-          x1 = d[0]; y1 = d[1]; x2 = d[2]; y2 = d[3]
-        }
-        if (typeof x1 !== 'number' || typeof y1 !== 'number'
-          || typeof x2 !== 'number' || typeof y2 !== 'number') return null
-        // 像素坐标 -> 归一化 (后续代码逻辑不变)
-        if (x1 > 1 || y1 > 1 || x2 > 1 || y2 > 1) {
-          if (!iw || !ih) return null
-          x1 /= iw; y1 /= ih; x2 /= iw; y2 /= ih
-        }
-        return {
-          x: x1, y: y1,
-          w: x2 - x1, h: y2 - y1,
-          label: d?.label || d?.class_name || d?.targetLabel || props.targetLabel || 'target',
-          confidence: typeof d?.confidence === 'number' ? d.confidence : (typeof d?.score === 'number' ? d.score : 1),
-        }
-      })
-      .filter((b): b is DetectionBox => b !== null)
-  }
-  if (!props.bbox || props.bbox.length < 4) return []
-  let [x1, y1, x2, y2] = props.bbox
+/** [FEAT 2026-09-04] 原始几何形状叠加 (检测区/排除区/绊线/方向线/计数区):
+ *  数据源两级链 (规则 roi_shapes_json → 区域库), 详见 useAlarmShapes.ts */
+const { shapes, load: loadShapes } = useAlarmShapes()
+watch(
+  [() => props.channelId, () => props.algoId, () => props.alarmShapes],
+  ([ch, algo, snap]) => {
+    loadShapes(ch, algo, snap).then(() => nextTick(drawBoxes)).catch(() => {})
+  },
+  { immediate: true },
+)
+
+/** 触发框归一化 [x1,y1,x2,y2] (像素坐标按图像自然尺寸归一; 未就绪返回 null) */
+const normBBox = computed<number[] | null>(() => {
+  const b = props.bbox
+  if (!Array.isArray(b) || b.length < 4) return null
+  let [x1, y1, x2, y2] = b
   // [vp6-P1.3 2026-09-01] 检测直报链兑底: metadata.detections 为原图像素坐标
   //   (真机 1920x1080 实证), 任一坐标 >1 判定为像素 → 按图像自然尺寸归一化;
   //   自然尺寸未就绪时先不出框, onImageLoad 后重算。
-  if (props.bbox.some((v) => v > 1)) {
+  if (b.some((v) => v > 1)) {
     const { w, h } = imageSize.value
-    if (!w || !h) return []
+    if (!w || !h) return null
     x1 /= w; y1 /= h; x2 /= w; y2 /= h
   }
+  return [x1, y1, x2, y2]
+})
+
+const normalizedBoxes = computed<ParsedDet[]>(() => {
+  // 形态0: 外部显式 detectionBoxes (整框视为触发目标)
+  if (props.detectionBoxes?.length) {
+    return props.detectionBoxes.map((b) => ({
+      x: b.x, y: b.y, w: b.w, h: b.h,
+      label: b.label, confidence: b.confidence, danger: true,
+    }))
+  }
+  // 形态1: metadata.detections 多目标全量 (触发目标红 + 其余类别调色板)
+  if (props.detections && props.detections.length) {
+    const dets = parseDetections(props.detections, imageSize.value, props.targetLabel || 'target')
+    return markTriggerDet(dets, normBBox.value, props.targetLabel)
+  }
+  // 形态2: bbox 单框回退
+  const nb = normBBox.value
+  if (!nb) return []
   return [{
-    x: x1, y: y1,
-    w: x2 - x1, h: y2 - y1,
+    x: nb[0], y: nb[1],
+    w: nb[2] - nb[0], h: nb[3] - nb[1],
     label: props.targetLabel || 'target',
     confidence: 1,
+    danger: true,
   }]
 })
 
 function drawBoxes() {
   const canvas = canvasRef.value
   const container = containerRef.value
-  if (!canvas || !container || !normalizedBoxes.value.length) return
+  if (!canvas || !container) return
+  if (!normalizedBoxes.value.length && !shapes.value.length) return
 
   const rect = container.getBoundingClientRect()
+  if (rect.width <= 0 || rect.height <= 0) return
   canvas.width = rect.width
   canvas.height = rect.height
 
@@ -167,34 +177,13 @@ function drawBoxes() {
   if (!ctx) return
 
   ctx.clearRect(0, 0, canvas.width, canvas.height)
-
-  for (const box of normalizedBoxes.value) {
-    const x = box.x * canvas.width
-    const y = box.y * canvas.height
-    const w = box.w * canvas.width
-    const h = box.h * canvas.height
-    // [任务4] 告警弹窗默认使用 Element Plus 危险色 #f56c6c (与 el-tag type=danger 一致);
-    //   dangerColor=false 时仍走原 CLASS_COLORS 颜色分类 (person=红、car=绿等)
-    const color = (props.dangerColor !== false)
-      ? '#f56c6c'
-      : (CLASS_COLORS[box.label] || '#FF3D71')
-
-    // 矩形框
-    ctx.strokeStyle = color
-    ctx.lineWidth = 2
-    ctx.strokeRect(x, y, w, h)
-
-    // 标签背景 (含置信度百分比, 例如 "person 95%")
-    const label = `${box.label} ${Math.round(box.confidence * 100)}%`
-    ctx.font = 'bold 11px sans-serif'
-    const textWidth = ctx.measureText(label).width + 8
-    ctx.fillStyle = color
-    ctx.fillRect(x, y - 18, textWidth, 18)
-
-    // 标签文字
-    ctx.fillStyle = '#fff'
-    ctx.fillText(label, x + 4, y - 5)
+  // 底层: 原始检测区/绊线/方向线/计数区 (半透明, 不覆盖检测框标注)
+  if (shapes.value.length) {
+    drawShapesOnCtx(ctx, shapes.value, canvas.width, canvas.height, 1)
   }
+  // 上层: 检测框 (触发目标危险色 #f56c6c + 其余 CLASS_COLORS 类别色;
+  //   dangerColor 显式 true 时保持旧全红行为)
+  drawDetsOnCtx(ctx, normalizedBoxes.value, canvas.width, canvas.height, 1, props.dangerColor === true)
 }
 
 // 图片加载/错误处理
@@ -229,55 +218,30 @@ function onImageError() {
   console.warn('[AlarmSnapshot] Image failed to load:', props.imageUrl)
 }
 
-/** [FEAT 2026-09-02] 下载标注图: 离屏 canvas 按快照原始分辨率合成 (背景+检测框),
- *  复用 normalizedBoxes 与屏幕绘制同款视觉 (色板/label+置信度), 线宽/字号随
- *  分辨率缩放 (屏幕 2px 在 1920 原图上过细)。跨域污染时降级下载原图 */
+/** [FEAT 2026-09-02 → 2026-09-04 升级] 下载标注图: 离屏 canvas 按快照原始分辨率
+ *  合成 (原图 + 原始几何形状 + 全部检测框), 与屏幕渲染同源同视觉
+ *  (drawShapesOnCtx/drawDetsOnCtx 共用), 线宽/字号随分辨率缩放。
+ *  跨域污染时降级为「标注层 + 原图」分别导出 */
 function downloadAnnotated() {
   const img = containerRef.value?.querySelector('img') as HTMLImageElement | null
   if (!img || !img.naturalWidth) {
     ElMessage.warning('快照尚未加载完成')
     return
   }
-  const canvas = document.createElement('canvas')
-  canvas.width = img.naturalWidth
-  canvas.height = img.naturalHeight
-  const ctx = canvas.getContext('2d')
-  if (!ctx) return
-  ctx.drawImage(img, 0, 0)
-  const scale = Math.max(1, canvas.width / 640)
-  for (const box of normalizedBoxes.value) {
-    const x = box.x * canvas.width
-    const y = box.y * canvas.height
-    const w = box.w * canvas.width
-    const h = box.h * canvas.height
-    const color = (props.dangerColor !== false)
-      ? '#f56c6c'
-      : (CLASS_COLORS[box.label] || '#FF3D71')
-    ctx.strokeStyle = color
-    ctx.lineWidth = 2 * scale
-    ctx.strokeRect(x, y, w, h)
-    const label = `${box.label} ${Math.round(box.confidence * 100)}%`
-    ctx.font = `bold ${Math.round(11 * scale)}px sans-serif`
-    const textWidth = ctx.measureText(label).width + 8 * scale
-    const th = 18 * scale
-    ctx.fillStyle = color
-    ctx.fillRect(x, y - th, textWidth, th)
-    ctx.fillStyle = '#fff'
-    ctx.fillText(label, x + 4 * scale, y - 5 * scale)
-  }
-  canvas.toBlob((blob) => {
-    if (!blob) {
-      ElMessage.error('标注图导出失败')
-      return
+  const build = (withImage: boolean) => {
+    const canvas = document.createElement('canvas')
+    canvas.width = img.naturalWidth
+    canvas.height = img.naturalHeight
+    const ctx = canvas.getContext('2d')
+    if (ctx) {
+      if (withImage) ctx.drawImage(img, 0, 0)
+      const scale = Math.max(1, canvas.width / 640)
+      if (shapes.value.length) drawShapesOnCtx(ctx, shapes.value, canvas.width, canvas.height, scale)
+      drawDetsOnCtx(ctx, normalizedBoxes.value, canvas.width, canvas.height, scale, props.dangerColor === true)
     }
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    const ts = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14)
-    a.href = url
-    a.download = `alarm-annotated-${ts}.png`
-    a.click()
-    URL.revokeObjectURL(url)
-  }, 'image/png')
+    return canvas
+  }
+  downloadPngWithFallback(() => build(true), () => build(false), props.imageUrl, 'alarm-annotated')
 }
 </script>
 
