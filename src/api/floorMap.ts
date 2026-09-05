@@ -22,6 +22,7 @@ import { http } from './http'
 import type {
   CameraMapBinding,
   FloorMapDef,
+  FloorMapDeviceType,
   FloorMapWithCameras,
   MapChannelPair,
 } from '@/types/floorMap'
@@ -37,6 +38,10 @@ export type CameraBindingBody = {
   fov_yaw?: number
   fov_radius_m?: number
   is_primary?: boolean
+  /** [P0-1] 未携带时后端继承存量值 (防部分更新抹回 camera) */
+  device_type?: FloorMapDeviceType
+  /** [P0-1] 非摄像头设备显示名 */
+  label?: string
 }
 
 export const floorMapApi = {

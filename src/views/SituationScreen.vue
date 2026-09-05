@@ -101,6 +101,8 @@
             <!-- <i class="iconfont1 icon1-yuanqu1 panel-title-icon" aria-hidden="true"></i> -->
             <div class="view-switcher" role="tablist" aria-label="中心视图切换">
               <button class="view-switch-btn" :class="{ active: centerView === '3d' }" type="button" role="tab" :aria-selected="centerView === '3d'" @click="setCenterView('3d')">{{ t('situationScreen.sceneMap') }}</button>
+              <!-- [FLOOR-MAP 2026-09-05 v2] 首页平面图视图 (华为 IVS 多视图联动对标): 与 3D/视频并列 tab -->
+              <button class="view-switch-btn" :class="{ active: centerView === 'floor' }" type="button" role="tab" :aria-selected="centerView === 'floor'" @click="setCenterView('floor')">平面地图</button>
               <button class="view-switch-btn" :class="{ active: centerView === 'video' }" type="button" role="tab" :aria-selected="centerView === 'video'" @click="setCenterView('video')">视频监控</button>
             </div>
             <span v-if="sceneIsDemo && centerView === '3d'" style="font-size:11px;color:#F4B400;border:1px solid rgba(244,180,0,0.6);border-radius:3px;padding:1px 6px;margin-left:4px;">演示数据</span>
@@ -203,6 +205,38 @@
                 </div>
                 <div v-if="slot.playing" class="vm-label">{{ slot.deviceName }}</div>
               </div>
+            </div>
+          </div>
+          </transition>
+          <!-- ═══ [FLOOR-MAP 2026-09-05 v2] 平面地图中央视图 (华为 IVS 多视图联动对标):
+                只读画布 + 实时告警涟漪/色环 (latestAlarms REST+WS 混源) + 告警自动定位图
+                (海康告警源自动定位对标) + 点位点击跳视频监控视图 ═══ -->
+          <transition :name="slideDirection" mode="out-in">
+          <div v-if="centerView === 'floor'" key="floor" class="center-view-floor">
+            <div v-if="floorMaps.length > 1" class="floor-toolbar">
+              <el-select v-model="currentFloorMapId" size="small" style="width: 150px">
+                <el-option v-for="m in floorMaps" :key="m.id" :label="floorMapLabel(m)" :value="m.id" />
+              </el-select>
+            </div>
+            <div class="floor-canvas-wrap">
+              <FloorMapCanvas
+                v-if="currentFloorMap"
+                :map="currentFloorMap"
+                :bindings="floorBindings"
+                :alarm-channel-id="floorLatestAlarmChannel"
+                :alarm-metadata="floorLatestAlarmMeta"
+                :alarm-channels="floorAlarmChannels"
+                :channel-labels="floorChannelLabels"
+                :channel-online="floorChannelOnline"
+                @device-click="onFloorDeviceClick"
+              />
+              <div v-else class="floor-empty">
+                <span>暂无平面图</span>
+                <span class="floor-empty-sub">请先在「平面图管理」上传底图并绑定设备</span>
+              </div>
+            </div>
+            <div v-if="floorAlarmCount > 0" class="floor-alarm-badge">
+              <span class="floor-alarm-dot" />实时告警联动 {{ floorAlarmCount }} 通道
             </div>
           </div>
           </transition>
@@ -416,6 +450,10 @@ import type { Building3DNode, SceneMeta } from '@/components/scene3d/types/scene
 import { useWebSocket } from '@/composables/useWebSocket'
 // [UX 2026-08-31] 实时告警条目点击 → 弹出详情弹窗 (不再跳转报警中心)
 import { openAlarmDetailById } from '@/composables/useAlarmPopup'
+// [FLOOR-MAP 2026-09-05 v2] 平面地图中央视图 (华为 IVS 多视图联动对标)
+import FloorMapCanvas from '@/components/map/FloorMapCanvas.vue'
+import { useFloorMap, channelIdVariants } from '@/composables/useFloorMap'
+import type { FloorMapWithCameras, CameraMapBinding } from '@/types/floorMap'
 import Scene3D from '@/components/Scene3D.vue'
 import SceneEditPanel from '@/components/SceneEditPanel.vue'
 import flvjs from 'flv.js'
@@ -470,6 +508,8 @@ interface Alarm {
   snapshotUrl?: string
   /** 后端 metadata 透传: 含 snapshot_base64/snapshot_format, 用于 base64 兜底 */
   metadata?: Record<string, unknown>
+  /** [FLOOR-MAP 2026-09-05 v2] 告警源通道 (平面图涟漪/色环联动; 后端缺省时为空 → 不联动) */
+  channelId?: string
 }
 const latestAlarms = ref<Alarm[]>([])
 
@@ -651,19 +691,90 @@ function onMinimapSelect(deviceId: string) {
 }
 
 // ── T2: 中间面板 3D/视频 手动切换 ──
-const centerView = ref<'3d' | 'video'>('3d')
+const centerView = ref<'3d' | 'video' | 'floor'>('3d')
+
+// ═══ [FLOOR-MAP 2026-09-05 v2] 平面地图中央视图 (华为 IVS 多视图联动对标) ═══
+// 懒加载: 首次切到 floor 视图才拉 maps/通道 (首页首屏零增量请求);
+// 告警联动 = latestAlarms (REST 初始 + /ws/situation alarm 推送增量) → 涟漪+色环+自动定位图
+const { maps: floorMapsRef, loadMaps: loadFloorMapsQ, mapsByChannel: floorMapsByChannel, bindingsOfMap: floorBindingsOfMap } = useFloorMap()
+const floorMaps = computed(() => floorMapsRef.value)
+const currentFloorMapId = ref(0)
+const currentFloorMap = computed(() => floorMaps.value.find(m => m.id === currentFloorMapId.value) || floorMaps.value[0])
+const floorBindings = computed(() => (currentFloorMap.value ? floorBindingsOfMap(currentFloorMap.value.id) : []))
+function floorMapLabel(m: FloorMapWithCameras) { return m.floor || m.building || m.name }
+// 告警联动映射: 告警裸形态通道展开变体 (_ch0) → 与绑定库双形态命中 (同 AlarmPopup 口径)
+const floorAlarmChannels = computed<Record<string, boolean>>(() => {
+  const o: Record<string, boolean> = {}
+  for (const a of latestAlarms.value) {
+    const ch = a.channelId || ''
+    if (!ch) continue
+    for (const v of channelIdVariants(ch)) o[v] = true
+  }
+  return o
+})
+const floorAlarmCount = computed(() => new Set(latestAlarms.value.map(a => a.channelId).filter(Boolean)).size)
+const floorLatestAlarmChannel = computed(() => latestAlarms.value[0]?.channelId || '')
+const floorLatestAlarmMeta = computed(() => latestAlarms.value[0]?.metadata)
+// 通道名/在线态 (chKey 双兼容 + status 双值域, 与 FloorMapView 同源逻辑)
+const floorChannelLabels = ref<Record<string, string>>({})
+const floorChannelOnline = ref<Record<string, boolean>>({})
+async function loadFloorChannels() {
+  try {
+    const res = await channelApi.getList({ pageSize: 200 })
+    const raw = res.data?.data as any
+    const channels = Array.isArray(raw) ? raw : (raw?.items || raw?.list || raw?.channels || [])
+    const labels: Record<string, string> = {}
+    const online: Record<string, boolean> = {}
+    for (const ch of channels) {
+      const key = ch.id || ch.channel_id || ch.deviceId || ''
+      if (!key) continue
+      labels[key] = ch.name || ch.channel_name || key
+      online[key] = ch.status === 'active' || ch.status === 'online'
+    }
+    floorChannelLabels.value = labels
+    floorChannelOnline.value = online
+  } catch { /* ignore */ }
+}
+// 首次进入 floor 视图懒加载
+let floorLoaded = false
+watch(centerView, (v) => {
+  if (v === 'floor' && !floorLoaded) {
+    floorLoaded = true
+    loadFloorMapsQ().then((maps) => {
+      if (!currentFloorMapId.value && maps.length) currentFloorMapId.value = maps[0].id
+    })
+    loadFloorChannels()
+  }
+})
+// 告警自动定位图 (海康告警源自动定位楼层对标): 最新告警通道未绑在当前图 → 反查切图
+watch(() => latestAlarms.value[0]?.channelId, async (ch) => {
+  if (!ch || !floorMaps.value.length) return
+  const bound = floorBindings.value.some(b => channelIdVariants(ch).includes(b.channel_id))
+  if (bound) return
+  const pairs = await floorMapsByChannel(ch).catch(() => [])
+  const target = pairs[0]?.map.id
+  if (target && target !== currentFloorMapId.value) currentFloorMapId.value = target
+})
+function onFloorDeviceClick(b: CameraMapBinding) {
+  if (b.device_type && b.device_type !== 'camera') {
+    ElMessage.info(`${b.label || b.channel_id} · 非视频设备`)
+    return
+  }
+  ElMessage.success(`已切换视频监控 · ${floorChannelLabels.value[b.channel_id] || b.channel_id}`)
+  setCenterView('video')
+}
 const slideDirection = ref<'slide-left' | 'slide-right'>('slide-left')
 
 // 全屏状态
 const isFullscreen = ref(false)
 const fullscreenScene3dRef = ref<InstanceType<typeof Scene3D> | null>(null)
 
-function setCenterView(view: '3d' | 'video') {
+function setCenterView(view: '3d' | 'video' | 'floor') {
   slideDirection.value = view === '3d' ? 'slide-right' : 'slide-left'
   centerView.value = view
 }
 
-function onViewSelectChange(val: '3d' | 'video') {
+function onViewSelectChange(val: '3d' | 'video' | 'floor') {
   slideDirection.value = val === '3d' ? 'slide-right' : 'slide-left'
 }
 
@@ -2096,6 +2207,9 @@ function toAlarm(s: SituationAlarmStream): Alarm {
     // [FIX 2026-07-30] 兼容 snake/camel 双形态, 与 AlarmsView.vue 行为一致
     snapshotUrl: s.snapshotUrl || s.snapshot_url,
     metadata: s.metadata,
+    // [FLOOR-MAP 2026-09-05 v2] 通道双形态兼容 (平面图联动数据源)
+    channelId: (s as { channelId?: string; channel_id?: string }).channelId
+      || (s as { channel_id?: string }).channel_id || '',
   }
 }
 
@@ -2973,6 +3087,62 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+}
+
+/* ═══ [FLOOR-MAP 2026-09-05 v2] 平面地图中央视图 ═══ */
+.center-view-floor {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  overflow: hidden;
+}
+.floor-toolbar {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 5;
+}
+.floor-canvas-wrap {
+  position: absolute;
+  inset: 0;
+}
+.floor-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  color: #4a5e80;
+  font-size: 14px;
+}
+.floor-empty-sub { font-size: 12px; opacity: 0.7; }
+.floor-alarm-badge {
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  background: rgba(5, 14, 48, 0.82);
+  border: 1px solid rgba(249, 58, 85, 0.55);
+  border-radius: 4px;
+  color: #F93A55;
+  font-size: 11px;
+}
+.floor-alarm-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #F93A55;
+  animation: floor-alarm-blink 1s ease-in-out infinite;
+}
+@keyframes floor-alarm-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
 }
 
 .center-view-video {

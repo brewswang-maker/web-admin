@@ -20,6 +20,11 @@
           <el-radio-button value="location">实时定位</el-radio-button>
           <el-radio-button value="track">轨迹回放</el-radio-button>
         </el-radio-group>
+        <!-- [FLOOR-MAP 2026-09-05 v2] 室外/室内切换 (大华 DSS 室内外地图联动对标) -->
+        <el-radio-group v-model="sceneMode" size="small" @change="onSceneModeChange">
+          <el-radio-button value="outdoor">室外地图</el-radio-button>
+          <el-radio-button value="indoor">室内平面</el-radio-button>
+        </el-radio-group>
         <el-button size="small" @click="refreshLocations" :loading="loading">
           <el-icon><Refresh /></el-icon> 刷新
         </el-button>
@@ -30,10 +35,36 @@
     <div class="main-content">
       <!-- 地图 -->
       <div class="map-container" ref="mapContainerRef">
-        <div id="location-map" class="map-canvas"></div>
+        <div v-show="sceneMode === 'outdoor'" id="location-map" class="map-canvas"></div>
 
-        <!-- 地图叠加控件 -->
-        <div class="map-overlay-top-left">
+        <!-- ═══ [FLOOR-MAP 2026-09-05 v2] 室内平面图视图 (大华室内外联动对标):
+             缩放/平移画布 + 侧栏设备/告警标记联动高亮 (金色光环) ═══ -->
+        <div v-if="sceneMode === 'indoor'" class="indoor-panel">
+          <div v-if="indoorMaps.length > 1" class="indoor-toolbar">
+            <el-select v-model="currentIndoorMapId" size="small" style="width: 160px">
+              <el-option v-for="m in indoorMaps" :key="m.id" :label="m.floor || m.building || m.name" :value="m.id" />
+            </el-select>
+          </div>
+          <div class="indoor-canvas">
+            <FloorMapCanvas
+              v-if="currentIndoorMap"
+              :map="currentIndoorMap"
+              :bindings="indoorBindings"
+              :channel-labels="indoorChannelLabels"
+              :highlight-channel-id="indoorHighlight"
+            />
+            <div v-else class="indoor-empty">
+              <span>暂无平面图</span>
+              <span class="indoor-empty-sub">请先在「平面图管理」上传底图并绑定设备</span>
+            </div>
+          </div>
+          <div class="indoor-hint">
+            滚轮缩放 · 拖拽平移 · 双击复位{{ indoorHighlight ? ' · 金色光环 = 联动选中设备' : '' }}
+          </div>
+        </div>
+
+        <!-- 地图叠加控件 (仅室外; 室内联动走侧栏点击) -->
+        <div v-show="sceneMode === 'outdoor'" class="map-overlay-top-left">
           <el-select
             v-model="selectedDeviceId"
             placeholder="选择设备"
@@ -57,8 +88,8 @@
           </el-select>
         </div>
 
-        <!-- 轨迹回放控制面板 -->
-        <div v-if="mapMode === 'track' && trackPoints.length > 0" class="track-control-panel">
+        <!-- 轨迹回放控制面板 (室外 AMap) -->
+        <div v-if="sceneMode === 'outdoor' && mapMode === 'track' && trackPoints.length > 0" class="track-control-panel">
           <div class="track-header">
             <span class="track-title">轨迹回放</span>
             <el-tag size="small" type="info">
@@ -220,6 +251,10 @@ import { http as _unused } from '@/api/http' // 保留以便后续需要
 import { useEventTypeNames } from '@/composables/useEventTypeNames'  // [P3-3] SSOT 事件类型名称
 // [UX 2026-08-31] 1d: 告警标记点击 → 全局告警详情弹窗 (不再只看摘要 InfoWindow)
 import { showAlarmPopup } from '@/composables/useAlarmPopup'
+// [FLOOR-MAP 2026-09-05 v2] 室内平面图 (大华室内外地图联动对标)
+import FloorMapCanvas from '@/components/map/FloorMapCanvas.vue'
+import { useFloorMap } from '@/composables/useFloorMap'
+import type { FloorMapWithCameras } from '@/types/floorMap'
 
 // ── 高德地图 JS SDK ──
 const AMAP_KEY = '7fe207317aeae03b556a6cfa10e9ceb8'
@@ -422,9 +457,38 @@ function handleDeviceSelect(deviceId: string | number) {
   selectedDeviceId.value = id
   showDeviceInfo.value = true
 
+  // [FLOOR-MAP 2026-09-05 v2] 室内联动: 侧栏选设备 → 平面图金色光环高亮 (双形态匹配)
+  //   (大华室内外地图联动对标; 定位设备无 GPS 时室内平面是唯一可视化手段)
+  indoorHighlight.value = id
+
   const d = devicesWithLocation.value.find(x => x.deviceId === id)
-  if (d && map) {
+  if (d && map && sceneMode.value === 'outdoor') {
     map.setZoomAndCenter(16, [d.longitude, d.latitude])
+  }
+}
+
+// ═══ [FLOOR-MAP 2026-09-05 v2] 室内平面图 (大华 DSS 室内外地图联动对标) ═══
+// 懒加载: 首次切室内才拉平面图列表; 侧栏设备点击/告警标记点击 → highlight 联动高亮
+const sceneMode = ref<'outdoor' | 'indoor'>('outdoor')
+const { maps: indoorMapsRef, loadMaps: loadIndoorMapsQ, bindingsOfMap: indoorBindingsOfMap } = useFloorMap()
+const indoorMaps = computed(() => indoorMapsRef.value)
+const currentIndoorMapId = ref(0)
+const currentIndoorMap = computed(() => indoorMaps.value.find(m => m.id === currentIndoorMapId.value) || indoorMaps.value[0])
+const indoorBindings = computed(() => (currentIndoorMap.value ? indoorBindingsOfMap(currentIndoorMap.value.id) : []))
+const indoorHighlight = ref('')
+// 通道名映射 (复用定位设备名; GB 通道绑定用 deviceId 匹配不上时退化为空)
+const indoorChannelLabels = computed<Record<string, string>>(() => {
+  const o: Record<string, string> = {}
+  for (const d of devices.value) {
+    if (d.deviceId) o[d.deviceId] = d.name || d.deviceId
+  }
+  return o
+})
+function onSceneModeChange() {
+  if (sceneMode.value === 'indoor' && !indoorMaps.value.length) {
+    loadIndoorMapsQ().then((maps) => {
+      if (!currentIndoorMapId.value && maps.length) currentIndoorMapId.value = maps[0].id
+    })
   }
 }
 
@@ -652,7 +716,11 @@ function onAlarmMapMarker(e: Event) {
 
   // [UX 2026-08-31] 1d: 点击闪烁标记 → 弹出完整告警详情弹窗
   //   (detail 为 WS 原始 payload, normalizeAlarmCore 直接兼容 snake_case)
-  marker.on('click', () => { showAlarmPopup(detail) })
+  // [FLOOR-MAP 2026-09-05 v2] 同时联动室内平面图高亮 (双形态取通道)
+  marker.on('click', () => {
+    indoorHighlight.value = String((detail as any).channelId || (detail as any).channel_id || '')
+    showAlarmPopup(detail)
+  })
 
   // [P3-3 FIX] 硬编码 alarmTypeCnMap → SSOT API 缓存
   const { getAlarmTypeName } = useEventTypeNames()
@@ -783,6 +851,46 @@ onUnmounted(() => {
 .map-container {
   flex: 1;
   position: relative;
+}
+
+/* ═══ [FLOOR-MAP 2026-09-05 v2] 室内平面图视图 ═══ */
+.indoor-panel {
+  position: absolute;
+  inset: 0;
+}
+.indoor-toolbar {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  z-index: 5;
+}
+.indoor-canvas {
+  position: absolute;
+  inset: 0;
+}
+.indoor-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  color: #909399;
+  font-size: 14px;
+}
+.indoor-empty-sub { font-size: 12px; opacity: 0.7; }
+.indoor-hint {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  z-index: 5;
+  padding: 2px 10px;
+  background: rgba(0, 0, 0, 0.45);
+  border-radius: 4px;
+  color: #e4e7ed;
+  font-size: 11px;
+  pointer-events: none;
 }
 
 .map-canvas {

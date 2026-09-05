@@ -51,20 +51,42 @@ function invalidateMaps() {
   byChannelCache.clear()
 }
 
-/** 通道 → 绑定地图对 (主图在前; 未绑定返回 []) */
+/**
+ * [FIX 2026-09-05 平面图未关联] GB 双流通道形态变体: 原样 / 去 _chN 后缀 / 主流 _ch0 后缀。
+ * 绑定库存通道表形态 (..._ch0), 告警 REST/WS 的 channel_id 是裸 20 位 — 互为异构,
+ * 后端 getBindingsByChannel 精确字符串匹配 (FloorMapStore.cpp L386) → 裸形态反查恒空
+ * → 弹窗 map Tab 退 GPS 占位。与联动规则 safeChannelHash 双形态同构 (useAlarmPopup)。
+ */
+export function channelIdVariants(ch: string): string[] {
+  if (!ch) return []
+  const base = ch.replace(/_ch\d+$/, '')
+  const out = [ch]
+  if (base && base !== ch) out.push(base)
+  if (base && !/_ch\d+$/.test(ch)) out.push(base + '_ch0')
+  return [...new Set(out)]
+}
+
+/** 通道 → 绑定地图对 (主图在前; 未绑定返回 [])
+ *  [FIX 2026-09-05] GB 双流形态兼容: 原样查空后依次试变体, 任一命中即返回;
+ *  各形态分别写缓存 (负缓存 10s 口径不变), 避免同告警重复串行请求。 */
 async function mapsByChannel(channelId: string, force = false): Promise<MapChannelPair[]> {
   if (!channelId) return []
   const hit = byChannelCache.get(channelId)
   const ttl = hit && hit.pairs.length > 0 ? LIST_TTL_MS : BY_CH_NEG_TTL_MS
   if (!force && hit && Date.now() - hit.at < ttl) return hit.pairs
+  let pairs: MapChannelPair[] = []
   try {
-    const pairs = await floorMapApi.mapsByChannel(channelId)
-    byChannelCache.set(channelId, { pairs, at: Date.now() })
-    return pairs
+    for (const id of channelIdVariants(channelId)) {
+      pairs = await floorMapApi.mapsByChannel(id)
+      byChannelCache.set(id, { pairs, at: Date.now() })
+      if (pairs.length) break
+    }
   } catch (e) {
     console.warn('[useFloorMap] mapsByChannel failed:', e)
     return hit?.pairs ?? []
   }
+  byChannelCache.set(channelId, { pairs, at: Date.now() })
+  return pairs
 }
 
 /** map_id → 该图绑定列表 (吃 listMaps 缓存里的 cameras) */

@@ -50,21 +50,26 @@
               <div v-show="activePrimaryTab === 'preview'" class="alarm-popup__pane alarm-popup__pane--preview">
                 <div class="alarm-popup__preview-wrap">
                   <MiniPlayer
-                    v-show="currentAlarm?.channelId && !playerError"
-                    :key="`preview-${currentAlarm?.channelId || 'none'}#${liveRebuildEpoch}`"
-                    :channel-id="currentAlarm?.channelId || ''"
+                    v-show="previewChannelId && !playerError"
+                    :key="`preview-${previewChannelId}#${liveRebuildEpoch}`"
+                    :channel-id="previewChannelId"
                     :show-controls="true" stream-type="main"
                     :visible="activePrimaryTab === 'preview'"
                     :skip-start-api="popupSkipStartApi"
                     @snapshot="onPlayerSnapshot" @error="onPlayerError" @playing="onPlayerPlaying"
                   />
                   <div v-if="isChannelStreaming" class="alarm-popup__stream-reused">🔗 复用现有视频流</div>
+                  <!-- [FLOOR-MAP 2026-09-05 v2] 点位点击预览非告警通道时提示可返回 -->
+                  <div v-if="activePrimaryTab === 'preview' && previewChannelOverride" class="alarm-popup__preview-src-tag">
+                    📍 平面图点位 · {{ previewChannelOverrideLabel }}
+                    <span class="alarm-popup__preview-src-back" @click="clearPreviewOverride">返回告警通道</span>
+                  </div>
                   <div v-if="activePrimaryTab === 'preview' && playerError" class="alarm-popup__preview-empty">
                     <p>⚠️ 实时视频不可用</p>
                     <p class="alarm-popup__hint">{{ playerError }}</p>
                     <p class="alarm-popup__hint alarm-popup__hint--small">可查看「图片」或「联动回放」</p>
                   </div>
-                  <div v-else-if="activePrimaryTab === 'preview' && !currentAlarm?.channelId" class="alarm-popup__preview-empty">
+                  <div v-else-if="activePrimaryTab === 'preview' && !previewChannelId" class="alarm-popup__preview-empty">
                     <p>⚠️ 无通道信息</p>
                     <p class="alarm-popup__hint">该告警未关联视频通道</p>
                   </div>
@@ -142,6 +147,9 @@
                     :bbox="popupBbox"
                     :detections="popupDetections"
                     :target-label="popupTargetLabel"
+                    :channel-id="currentAlarm?.channelId || ''"
+                    :algo-id="popupAlgoId"
+                    :alarm-shapes="popupAlarmShapes"
                   />
                   <div class="alarm-popup__thumbs">
                     <button class="alarm-popup__thumbs-nav" :disabled="imageIndex <= 0" @click="prevImage" aria-label="上一张">‹</button>
@@ -176,11 +184,14 @@
                       >{{ p.map.floor || p.map.name }}<span v-if="p.binding.is_primary" class="alarm-popup__map-floor-primary">主</span></button>
                     </div>
                     <div class="alarm-popup__map-livecanvas">
+                      <!-- [FLOOR-MAP 2026-09-05 v2] panZoom 只读自动启用 (缩放/平移/双击复位);
+                           @device-click: 点位点击跳联动预览 (海康通道点击展开预览对标) -->
                       <FloorMapCanvas
                         :map="activeMapPair.map"
                         :bindings="activeMapBindings"
                         :alarm-channel-id="alarmChannelIdStr"
                         :alarm-metadata="alarmMetadataObj"
+                        @device-click="onMapDeviceClick"
                       />
                     </div>
                     <!-- 右下角真实换算 (比例尺 scale_m_per_px) -->
@@ -310,6 +321,27 @@
                         <img v-if="currentSnapshotUrl" :src="currentSnapshotUrl" alt="告警快照" />
                       </div>
                     </div>
+                    <!-- [P0-8 2026-09-04 人脸比对] 抓拍 vs 注册照并列对比 (大华式) -->
+                    <div v-if="faceCompare" class="alarm-popup__detail-section">
+                      <div class="alarm-popup__detail-section-title" style="color:#00D4AA">人脸比对</div>
+                      <div class="alarm-popup__face-compare">
+                        <div class="alarm-popup__face-compare-item">
+                          <img :src="faceCompare.snapshot" alt="现场抓拍" />
+                          <span>现场抓拍</span>
+                        </div>
+                        <div class="alarm-popup__face-compare-item">
+                          <img v-if="faceCompare.enroll" :src="faceCompare.enroll" alt="注册照" />
+                          <div v-else class="alarm-popup__face-compare-none">未注册</div>
+                          <span>注册照片</span>
+                        </div>
+                        <div class="alarm-popup__face-compare-info">
+                          <div class="alarm-popup__face-compare-sim">相似度: {{ faceCompare.similarityPct }}</div>
+                          <div class="alarm-popup__face-compare-verdict" :class="{ 'is-known': faceCompare.known }">
+                            判定: {{ faceCompare.verdict }}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
                     <div v-if="currentAlarm.aiConclusion" class="alarm-popup__detail-section">
                       <div class="alarm-popup__detail-section-title" style="color:#6C5CE7">🧠 AI研判</div>
                       <div class="alarm-popup__ai-box">{{ currentAlarm.aiConclusion }}</div>
@@ -425,12 +457,14 @@ import { queryRecordings, toLocalISOString, type DeviceRecording } from '@/api/r
 import { recordingHttp } from '@/api/http'
 import { checkStreamAlive, stopStream } from '@/api/stream'
 import { useObjectLabel, type ObjectLabelMeta } from '@/composables/useObjectLabel'
+// [P0-14 2026-09-04 SSOT] 弹窗类型名优先走 canonical zh (与列表/规则页同源), 本地映射降为 fallback
+import { useEventTypeZh } from '@/composables/useEventTypeZh'
 import { useChannelStore } from '@/stores/channel'
 import { useRouter } from 'vue-router'
 // [FLOOR-MAP 2026-09-03] 地图 Tab 真实渲染: 只读画布 + 通道反查 (复用共享缓存)
 import FloorMapCanvas from '@/components/map/FloorMapCanvas.vue'
 import { useFloorMap } from '@/composables/useFloorMap'
-import type { MapChannelPair } from '@/types/floorMap'
+import type { MapChannelPair, CameraMapBinding } from '@/types/floorMap'
 
 const { getCategoryName, getTargetName, getAlarmTypeName } = useObjectLabel()
 
@@ -464,19 +498,50 @@ const alarmImageList = computed<string[]>(() => {
   const alarm = currentAlarm.value
   if (!alarm) return []
   const meta = (alarm.metadata || {}) as Record<string, unknown>
+  // [P0-8 2026-09-04 人脸比对] 场景图优先 (保留"场景+人"画面, 对标大华; 后端 face_detector 落盘)
+  const scene = typeof meta.scene_url === 'string' && meta.scene_url ? meta.scene_url : ''
   const direct = meta.snapshot_urls as string[] | undefined
-  if (Array.isArray(direct) && direct.length > 0) return direct.filter(Boolean)
-  const raw = meta.snapshot_urls_json as string | undefined
-  if (typeof raw === 'string' && raw.trim()) {
-    try {
-      const arr = JSON.parse(raw)
-      if (Array.isArray(arr) && arr.length > 0) return arr.filter((u: unknown): u is string => typeof u === 'string' && !!u)
-    } catch { /* 非法 JSON 忽略, 走单图兜底 */ }
+  let list: string[] = []
+  if (Array.isArray(direct) && direct.length > 0) list = direct.filter(Boolean)
+  else {
+    const raw = meta.snapshot_urls_json as string | undefined
+    if (typeof raw === 'string' && raw.trim()) {
+      try {
+        const arr = JSON.parse(raw)
+        if (Array.isArray(arr) && arr.length > 0) list = arr.filter((u: unknown): u is string => typeof u === 'string' && !!u)
+      } catch { /* 非法 JSON 忽略, 走单图兜底 */ }
+    }
   }
-  const primary = snapshotImageUrl.value
-  return primary ? [primary] : []
+  if (list.length === 0) {
+    const primary = snapshotImageUrl.value
+    if (primary) list = [primary]
+  }
+  return scene ? [scene, ...list] : list
 })
 const totalImageCount = computed(() => Math.max(1, alarmImageList.value.length))
+
+// ── [P0-8 2026-09-04 人脸比对] 抓拍 vs 注册照对比 (大华式双图 + 相似度 + 名单判定) ──
+const GROUP_TYPE_ZH: Record<string, string> = {
+  whitelist: '白名单', blacklist: '黑名单', visitor: '访客',
+  vip: 'VIP', staff: '员工', custom: '自定义', unknown: '陌生人', stranger: '陌生人',
+}
+const faceCompare = computed(() => {
+  const alarm = currentAlarm.value
+  if (!alarm) return null
+  // 仅人脸系告警展示比对卡
+  if (!String(alarm.type || '').startsWith('face')) return null
+  const meta = (alarm.metadata || {}) as Record<string, unknown>
+  const snap = snapshotImageUrl.value || String(meta.scene_url || '')
+  if (!snap) return null
+  const enroll = String(meta.enroll_photo_url || '')
+  const sim = Number(meta.similarity ?? 0)
+  const groupZh = GROUP_TYPE_ZH[String(meta.group_type || '').toLowerCase()] || ''
+  const name = String(meta.name || meta.enroll_name || '')
+  const pid = String(meta.person_id || '')
+  const known = !!pid && pid !== 'unknown'
+  const verdict = known ? `${groupZh || '已识别'}${name ? ' · ' + name : ''}` : '未命中名单'
+  return { snapshot: snap, enroll, similarityPct: sim > 0 ? `${(sim * 100).toFixed(1)}%` : '-', verdict, known }
+})
 const currentSnapshotUrl = computed(() => alarmImageList.value[imageIndex.value] || snapshotImageUrl.value)
 watch(totalImageCount, (n) => { if (imageIndex.value >= n) imageIndex.value = Math.max(0, n - 1) })
 watch(currentAlarm, () => { imageIndex.value = 0 })
@@ -502,6 +567,42 @@ const activeMapBindings = computed(() => {
   const all = bindingsOfMap(p.map.id)
   return all.length ? all : [p.binding]
 })
+
+// ═══ [FLOOR-MAP 2026-09-05 v2] 平面图点位点击 → 联动预览跳转 (海康通道点击展开预览对标) ═══
+// 点位点击后预览通道临时切换到该点位 (裸 20 位形态 — ZLM stream_id=gb_<裸>);
+// 非摄像头设备无视频可跳, 提示即可; 告警切换/关闭时自动回归告警通道
+const previewChannelOverride = ref('')
+const previewChannelOverrideLabel = ref('')
+const previewChannelId = computed(() =>
+  previewChannelOverride.value || String(currentAlarm.value?.channelId || ''))
+function onMapDeviceClick(b: CameraMapBinding) {
+  if (b.device_type && b.device_type !== 'camera') {
+    ElMessage.info(`${camDeviceLabel(b)} · 非视频设备, 无实时预览`)
+    return
+  }
+  previewChannelOverride.value = b.channel_id.replace(/_ch\d+$/, '')
+  previewChannelOverrideLabel.value = b.label || camLabelOf(b) || previewChannelOverride.value
+  playerError.value = ''
+  activePrimaryTab.value = 'preview'
+}
+function clearPreviewOverride() {
+  previewChannelOverride.value = ''
+  previewChannelOverrideLabel.value = ''
+  playerError.value = ''
+}
+function camDeviceLabel(b: CameraMapBinding): string {
+  const t = b.device_type || 'camera'
+  const zh: Record<string, string> = {
+    camera: '摄像头', access: '门禁', smoke: '烟感', radar: '雷达',
+    sos: '紧急按钮', broadcast: '广播', rfid: 'RFID', environment: '温湿度',
+  }
+  return `${zh[t] || t}${b.label ? ' ' + b.label : ''}`
+}
+function camLabelOf(b: CameraMapBinding): string {
+  return b.label || ''
+}
+watch(currentAlarm, () => clearPreviewOverride())
+
 watch(currentAlarm, async (a) => {
   activeMapIdx.value = 0
   mapPairs.value = []
@@ -646,7 +747,9 @@ function openImageTab() { activePrimaryTab.value = 'image' }
 // ── 码流复用检测 ──
 const channelStore = useChannelStore()
 const isChannelStreaming = computed(() => {
-  const chId = currentAlarm.value?.channelId
+  // [FLOOR-MAP 2026-09-05 v2] 按预览实际通道判断 (点位点击 override 后与告警通道不同;
+  //   原按告警通道判断会在 override 时误判"复用中"而跳过 start → 播放失败)
+  const chId = previewChannelId.value
   if (!chId) return false
   return channelStore.activeChannelIds.includes(String(chId))
 })
@@ -753,9 +856,14 @@ watch(popupVisible, (v) => {
 })
 
 // ── 计算属性 ──
+const { ensure: ensureEventTypes, zh: eventTypeZh } = useEventTypeZh()
+ensureEventTypes()
 const alarmTypeLabel = computed(() => {
   const t = currentAlarm.value?.type || ''
   if (!t) return '告警'
+  // [P0-14] canonical SSOT 优先 (113 事件类型 zh 名), 本地映射兜底
+  const viaCanonical = eventTypeZh(t)
+  if (viaCanonical && viaCanonical !== t) return viaCanonical
   return getAlarmTypeName(t) || t
 })
 const targetMeta = computed<ObjectLabelMeta>(() => {
@@ -806,10 +914,16 @@ const levelLabel = computed(() => {
 
 const popupBbox = computed<number[]>(() => {
   const m = (currentAlarm.value?.metadata || {}) as Record<string, unknown>
-  const b = m.bbox as number[] | undefined
+  // [FIX 2026-09-04] AlarmDispatcher 直报链 (尾随/聚集/入侵等行为插件)
+  //   metadata 为数组 [{bbox,...}]: normalize 展开后成 {0:{...}} —
+  //   m.bbox/m.detections 均取不到 → 弹窗快照标注恒空 (真机 tailgate
+  //   bbox=[0.53,0.51,0.66,0.99] 已落库但弹窗无框实锚)。数组形态取首元素,
+  //   与 EventsView 兜底口径对齐。
+  const src = ((m[0] && typeof m[0] === 'object') ? m[0] : m) as Record<string, unknown>
+  const b = src.bbox as number[] | undefined
   if (Array.isArray(b) && b.length >= 4) return b
-  const det = (Array.isArray(m.detections) ? m.detections[0] : null) as Record<string, unknown> | null
-  const cand = det ?? m
+  const det = (Array.isArray(src.detections) ? src.detections[0] : null) as Record<string, unknown> | null
+  const cand = det ?? src
   if (['x1', 'y1', 'x2', 'y2'].every((k) => typeof cand[k] === 'number')) {
     return [cand.x1 as number, cand.y1 as number, cand.x2 as number, cand.y2 as number]
   }
@@ -817,11 +931,26 @@ const popupBbox = computed<number[]>(() => {
 })
 const popupDetections = computed<any[]>(() => {
   const m = (currentAlarm.value?.metadata || {}) as Record<string, unknown>
-  return Array.isArray(m.detections) ? (m.detections as any[]) : []
+  const src = ((m[0] && typeof m[0] === 'object') ? m[0] : m) as Record<string, unknown>
+  return Array.isArray(src.detections) ? (src.detections as any[]) : []
 })
 const popupTargetLabel = computed(() => {
   const m = (currentAlarm.value?.metadata || {}) as Record<string, unknown>
-  return (m.targetLabel as string) || (m.target_label as string) || (m.class_name as string) || ''
+  const src = ((m[0] && typeof m[0] === 'object') ? m[0] : m) as Record<string, unknown>
+  return (src.targetLabel as string) || (src.target_label as string) || (src.class_name as string) || ''
+})
+/** [FEAT 2026-09-04 告警自包含] 插件上报时冻结的区域形状快照 (当时生效几何,
+ *  区域库后续增删不影响历史告警取证), 传给 AlarmSnapshot 最高优先级消费 */
+const popupAlarmShapes = computed<unknown[]>(() => {
+  const m = (currentAlarm.value?.metadata || {}) as Record<string, unknown>
+  const src = ((m[0] && typeof m[0] === 'object') ? m[0] : m) as Record<string, unknown>
+  return Array.isArray(src.alarm_shapes) ? (src.alarm_shapes as unknown[]) : []
+})
+/** [FEAT 2026-09-04] 触发算法 id (形状叠加区域库回退链匹配键) */
+const popupAlgoId = computed(() => {
+  const m = (currentAlarm.value?.metadata || {}) as Record<string, unknown>
+  const src = ((m[0] && typeof m[0] === 'object') ? m[0] : m) as Record<string, unknown>
+  return String(src.algo_id ?? src.algoId ?? '')
 })
 
 const locationNote = computed(() => {
@@ -1048,6 +1177,23 @@ void jumpToPlayback; void openImageTab
   position: absolute; top: 10px; right: 10px;
   display: flex; gap: 6px;
   z-index: 2;
+}
+/* [FLOOR-MAP 2026-09-05 v2] 平面图点位预览来源标签 (点位点击跳预览) */
+.alarm-popup__preview-src-tag {
+  position: absolute; top: 10px; left: 10px;
+  z-index: 2;
+  display: flex; align-items: center; gap: 8px;
+  padding: 2px 10px;
+  background: rgba(5, 14, 48, 0.85);
+  border: 1px solid #F4B400;
+  border-radius: 4px;
+  color: #F4B400;
+  font-size: 11px;
+}
+.alarm-popup__preview-src-back {
+  color: #00E5FF;
+  cursor: pointer;
+  text-decoration: underline;
 }
 .alarm-popup__switch-tag {
   background: #FFB800;
@@ -1459,6 +1605,58 @@ void jumpToPlayback; void openImageTab
 .alarm-popup__detail-images-thumb img {
   max-width: 100%; max-height: 100%;
   object-fit: contain;
+}
+
+/* [P0-8 2026-09-04 人脸比对] 抓拍 vs 注册照双图对比卡 */
+.alarm-popup__face-compare {
+  display: flex;
+  gap: 10px;
+  margin-top: 8px;
+  align-items: stretch;
+}
+.alarm-popup__face-compare-item {
+  flex: 0 0 96px;
+  display: flex; flex-direction: column;
+  gap: 4px;
+  text-align: center;
+}
+.alarm-popup__face-compare-item img {
+  width: 96px; height: 96px;
+  object-fit: cover;
+  border: 1px solid #ebeef5;
+  border-radius: 4px;
+  background: #0a0e1c;
+}
+.alarm-popup__face-compare-item span {
+  font-size: 11px;
+  color: #909399;
+}
+.alarm-popup__face-compare-none {
+  width: 96px; height: 96px;
+  display: flex; align-items: center; justify-content: center;
+  border: 1px dashed #dcdfe6;
+  border-radius: 4px;
+  font-size: 12px;
+  color: #c0c4cc;
+  background: #0a0e1c;
+}
+.alarm-popup__face-compare-info {
+  flex: 1;
+  display: flex; flex-direction: column;
+  justify-content: center;
+  gap: 6px;
+  font-size: 12px;
+}
+.alarm-popup__face-compare-sim {
+  color: #e6a23c;
+  font-weight: 600;
+}
+.alarm-popup__face-compare-verdict {
+  color: #909399;
+}
+.alarm-popup__face-compare-verdict.is-known {
+  color: #00d4aa;
+  font-weight: 600;
 }
 
 /* [POPUP-DISPOSE-ENTRY 2026-09-03] 详情面板底部「处警」粉红色入口按钮 */
