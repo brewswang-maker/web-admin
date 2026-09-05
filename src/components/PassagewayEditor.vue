@@ -50,11 +50,15 @@
  * RegionStore.h PassagewayDef 注释 / tailgating_detector deriveFromSensitivity。
  */
 import { computed, onMounted, ref, watch } from 'vue'
-import type { SuppressMode } from '@/types/region'
+import type { PassagewayDef, SuppressMode } from '@/types/region'
 
 const props = defineProps<{
   /** 背景图 URL (可选, 用相机快照) */
   imageUrl?: string
+  /** [FIX 2026-09-03 问题2] 已保存通道列表: 常驻回显到画布 (对标 TripwireEditor 的
+   *  saved 机制)。之前给 prop 都没有 → 确认添加后内部草稿 reset, 多边形从画布消失,
+   *  仅剩文字列表 — 「创建成功但区域消失」现象的直接成因之一。 */
+  saved?: PassagewayDef[]
 }>()
 
 const emit = defineEmits<{
@@ -113,6 +117,8 @@ watch(() => props.imageUrl, (url) => {
   img.src = url
 }, { immediate: true })
 watch([directionIn, suppressMode, sensitivity], draw)
+// [FIX 2026-09-03 问题2] 后端回填 (loadRegions → passageways) 变化时重绘已保存通道
+watch(() => props.saved, draw)
 
 onMounted(() => {
   if (wrapRef.value) {
@@ -183,6 +189,45 @@ function draw() {
     ctx.fillRect(0, 0, c.width, c.height)
   }
   const pts = points.value
+  // [FIX 2026-09-03 问题2] 已保存通道常驻回显: 绿色细实线 + 浅填充 + 顶点小圆 + 名字标签
+  //   (正在绘制的仍是蓝色顶点 + 绿色草稿折线, 视觉区分同 TripwireEditor)
+  for (const sp of props.saved ?? []) {
+    const poly = (sp.transit_polygon ?? []) as [number, number][]
+    if (poly.length < 3) continue
+    ctx.strokeStyle = 'rgba(103,194,58,0.9)'
+    ctx.fillStyle = 'rgba(103,194,58,0.15)'
+    ctx.lineWidth = 2
+    ctx.setLineDash([])
+    ctx.beginPath()
+    ctx.moveTo(poly[0][0] * c.width, poly[0][1] * c.height)
+    for (let i = 1; i < poly.length; i++) {
+      ctx.lineTo(poly[i][0] * c.width, poly[i][1] * c.height)
+    }
+    ctx.closePath()
+    ctx.fill()
+    ctx.stroke()
+    ctx.fillStyle = 'rgba(103,194,58,0.9)'
+    for (const [px, py] of poly) {
+      ctx.beginPath()
+      ctx.arc(px * c.width, py * c.height, 4, 0, Math.PI * 2)
+      ctx.fill()
+    }
+    const label = String(sp.name ?? '').slice(0, 16)
+    if (label) {
+      let cx = 0, cy = 0
+      for (const [px, py] of poly) { cx += px; cy += py }
+      cx = (cx / poly.length) * c.width
+      cy = (cy / poly.length) * c.height
+      ctx.font = '11px sans-serif'
+      const labelW = ctx.measureText(label).width
+      ctx.fillStyle = 'rgba(0,0,0,0.55)'
+      ctx.fillRect(cx - labelW / 2 - 4, cy - 20, labelW + 8, 16)
+      ctx.fillStyle = '#a0ffc8'
+      ctx.textAlign = 'center'
+      ctx.textBaseline = 'middle'
+      ctx.fillText(label, cx, cy - 12)
+    }
+  }
   if (pts.length === 0) return
   // 多边形填充 (≥3 点) / 折线预览 (<3 点)
   ctx.strokeStyle = '#67c23a'

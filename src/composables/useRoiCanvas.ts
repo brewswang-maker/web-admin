@@ -346,10 +346,20 @@ export function drawRectangle(
 
   if (points.length < 4) return
 
-  const x = Math.min(points[0], points[2])
-  const y = Math.min(points[1], points[3])
-  const w = Math.abs(points[2] - points[0])
-  const h = Math.abs(points[3] - points[1])
+  // [FIX 2026-09-03 问题3] bbox 取全部顶点: 旧实现取 points[0..3] 假定为两对角点,
+  //   但 rectFromDiagonal 产的是顺序化 4 顶点 [lx,ty, rx,ty, rx,by, lx,by],
+  //   前两点同 y → h = |points[3]-points[1]| = 0 → 已保存矩形/计数区渲染成
+  //   零高度线 (画完即"看不见")。改为全顶点包围盒后两种存储形态均正确:
+  //   2 点对角 (存量计数区) / 4 顶点 (新矩形与计数区)。
+  let x = Infinity, y = Infinity, x2 = -Infinity, y2 = -Infinity
+  for (let i = 0; i + 1 < points.length; i += 2) {
+    if (points[i] < x) x = points[i]
+    if (points[i] > x2) x2 = points[i]
+    if (points[i + 1] < y) y = points[i + 1]
+    if (points[i + 1] > y2) y2 = points[i + 1]
+  }
+  const w = x2 - x
+  const h = y2 - y
 
   ctx.beginPath()
   ctx.rect(x, y, w, h)

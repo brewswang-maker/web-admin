@@ -95,9 +95,14 @@
           <el-option label="A→B" value="a_to_b" />
           <el-option label="B→A" value="b_to_a" />
         </el-select>
+        <!-- [FIX 2026-09-04 生效状态文字化] 开关状态一眼可辨: 启=生效中
+             (画布正常透明度+快照叠加), 停=停用 (画布半透明, 不参与判定/叠加) -->
         <el-switch
           v-model="roi.is_active"
           size="small"
+          inline-prompt
+          active-text="启"
+          inactive-text="停"
           @change="emitRois"
           :disabled="disabled"
         />
@@ -605,7 +610,14 @@ function onMouseDown(e: MouseEvent) {
   }
 
   // [FIX 2026-09-02] 矩形: 按下记锚点, mousemove 橡皮筋, mouseup 展开 4 顶点完成
-  if (currentType.value === RoiType.RECTANGLE) {
+  // [FIX 2026-09-03 问题3] 计数区并入同一锚点式拖拽: 旧实现点击式收两点对角 —
+  //   ① 后端 POST /algos/counting-zones 强制 polygon ≥3 点 (RestApiHandlers.cpp
+  //      counting-zones handler), 两点对角必 400 → 创建失败, loadRegions 回填后
+  //      所画区域从画布消失;
+  //   ② 绘制过程无可见反馈: 首点 drawRectangle <4 坐标早退不落点, 橡皮筋仅在
+  //      按住鼠标时渲染 (onMouseMove 有 dragging 守卫), 松手即“白画”。
+  //   锚点式拖拽 + rectFromDiagonal 4 顶点一并解决可见性与后端契约。
+  if (currentType.value === RoiType.RECTANGLE || currentType.value === RoiType.COUNTING_ZONE) {
     rectAnchor.value = p
     points.value = []
     renderCanvas()
@@ -615,11 +627,8 @@ function onMouseDown(e: MouseEvent) {
   if (points.value.length < maxPoints.value) {
     points.value.push(p)
 
-    // 矩形只需两个点（对角），自动完成
-    if (currentType.value === RoiType.COUNTING_ZONE && points.value.length === 2) {
-      confirmAndAdd()
-      return
-    }
+    // [FIX 2026-09-03 问题3] 计数区旧点击式两点自动完成分支已删 (改锚点拖拽,
+    //   见 onMouseDown; 两点对角落后端 ≥3 点校验必 400)
 
     // 绊线/方向线两个点自动完成
     if ((currentType.value === RoiType.TRIPWIRE || currentType.value === RoiType.DIRECTIONAL_LINE)
@@ -795,12 +804,14 @@ function renderCanvas(previewPoint?: { x: number; y: number }) {
   // 绘制正在绘制的 ROI 预览
   if (rectAnchor.value) {
     // [FIX 2026-09-02] 矩形拖拽橡皮筋 (anchor → 鼠标当前点)
+    // [FIX 2026-09-03 问题3] 颜色随当前类型: 计数区用自身紫色 (#9C27B0),
+    //   不再固定矩形青绿色 → 拖拽中即可辨认所画的是计数区
     const a = normalizedToCanvas(rectAnchor.value, canvas.width, canvas.height, props.normalizeWidth, props.normalizeHeight)
     if (previewPoint) {
       const b = normalizedToCanvas(previewPoint, canvas.width, canvas.height, props.normalizeWidth, props.normalizeHeight)
       ctx.save()
       ctx.setLineDash([5, 4])
-      ctx.strokeStyle = typeColor(RoiType.RECTANGLE)
+      ctx.strokeStyle = typeColor(currentType.value)
       ctx.lineWidth = 2
       ctx.strokeRect(Math.min(a.x, b.x), Math.min(a.y, b.y), Math.abs(b.x - a.x), Math.abs(b.y - a.y))
       ctx.restore()
