@@ -251,7 +251,8 @@ export const ALARM_TYPE_CN: Record<string, string> = {
   face_pass_whitelist: '白名单通行',
   face_pass_visitor: '访客通行',
   face_pass_vip: 'VIP通行',
-  face_pass_staff: '内部员工通行',
+  face_pass_staff: '员工通行',
+
   face_pass_blacklist_hit: '黑名单记录',
   // ── 人脸业务 ──
   face_detected: '人脸检测',
@@ -263,54 +264,76 @@ export const ALARM_TYPE_CN: Record<string, string> = {
   face_whitelist: '白名单通行',
   face_visitor: '访客通行',
   // ── 周界行为 (GA/T 2000.273) ──
-  intrusion: '区域入侵',
-  tripwire: '绊线入侵',
-  climbing: '攀高检测',
+  intrusion: '周界入侵',
+
+  tripwire: '越界检测',
+
+  climbing: '攀爬检测',
+
   crowd: '人群聚集',
   loitering: '徘徊检测',
-  fall: '倒地检测',
-  fall_detected: '倒地检测',
+  fall: '跌倒检测',
+
+  fall_detected: '跌倒检测',
+
   running: '奔跑检测',
   wrong_direction: '逆行检测',
-  wrong_way: '逆行检测',
+  wrong_way: '逆行行驶',
+
   illegal_parking: '违停检测',
-  abandoned: '物品遗留',
-  fighting: '打架斗殴',
-  violence: '打架斗殴',
+  abandoned: '遗弃物品',
+
+  fighting: '打架检测',
+
+  violence: '打架检测',
+
   // ── 烟火环境 ──
-  fire: '烟火检测',
+  fire: '火焰检测',
+
   smoke: '烟雾检测',
   // ── 安全合规 ──
-  helmet: '安全帽检测',
-  helmet_violation: '未戴安全帽',
-  uniform_violation: '未穿工服',
-  mask_violation: '未戴口罩',
-  guard_absence: '值班离岗',
-  ppe_violation: 'PPE违规',
+  helmet: '安全帽违规',
+
+  helmet_violation: '安全帽违规',
+
+  uniform_violation: '工服违规',
+
+  mask_violation: '口罩违规',
+
+  guard_absence: '值班脱岗',
+
+  ppe_violation: '安全防护违规',
+
   phone_call: '打电话检测',
   smoking: '吸烟检测',
   seatbelt: '未系安全带',
   seatbelt_violation: '未系安全带',
   illegal_rider: '违规载人',
   // ── 设备状态 ──
-  gb28181_alarm: '设备告警',
+  gb28181_alarm: 'GB28181 告警',  // [P0-6 SSOT] canonical 显示名对齐 (原'设备告警')
   camera_tamper: '视频遮挡',
   brightness_abnormal: '亮度异常',
   image_freeze: '画面冻结',
   glare: '强光干扰',
   // ── 危险物 ──
-  weapon_detected: '危险物检测',
+  weapon_detected: '武器检测',
+
   weapon: '危险物检测',
-  dangerous_item: '危险物检测',
+  dangerous_item: '危险物品',
+
   // ── 兼容别名 ──
   plate: '车牌识别',
   plate_detected: '车牌识别',
-  ppe: '安全帽检测',
+  ppe: '安全防护违规',
+
   crowd_density: '人群密度',
-  gathering: '聚集检测',
-  intruder: '区域入侵',
+  gathering: '人群聚集',
+
+  intruder: '周界入侵',
+
   wandering: '徘徊检测',
-  falling: '倒地检测',
+  falling: '跌倒检测',
+
   // ── [P0-1 2026-08-20] 补齐 SSOT 99 项镜像 (48 项缺失, 中文名 = meta_table display_name_cn) ──
   // 审计: SSOT meta_table 99 vs 前端 72 keys; 服务端 getEventTypes() 已改遍历 meta_table,
   // 前端翻译表必须同步, 否则新 30 项事件类型在通知中心显示英文原名.
@@ -376,6 +399,51 @@ export const ALARM_TYPE_CN: Record<string, string> = {
   stream_degraded: '流质量降级',
   // ── 其他 ──
   other: '其他事件',
+  // ── [P0-6 2026-09-05] 补齐 canonical 14 项 (中文名 = meta_table display_name_cn,
+  //    审计源 scripts/audit_algo_name_alignment.py; 大型活动 EventGuard + 加油站 + 行李) ──
+  crowd_density_yellow: '人群密度黄色预警',
+  crowd_density_orange: '人群密度橙色预警',
+  crowd_density_red: '人群密度红色预警',
+  crowd_pre_warning: '人群异常预兆',
+  crowd_flow_anomaly: '人流方向紊乱',
+  stampede_risk: '踩踏风险告警',
+  queue_overflow: '排队溢出',
+  field_intrusion: '冲场入侵',
+  closing_clearance: '闭馆清场检测',
+  person_with_backpack: '人员携带背包',
+  unattended_baggage: '行李无人看管',
+  face_pass_custom: '自定义分组通行',
+  static_clip_missing: '静电夹未连接',
+  pipe_connect_state: '卸油管连接状态异常',
+  // ── [P0-6 2026-09-05] 能力降级表 26 项事件镜像 (中文名 = meta_table 新注册项,
+  //    与 EventTypeAliases.h P0-6 补齐同步, 双注册铁律) ──
+  card_pass: '刷卡通行',
+  qr_code_pass: '二维码通行',
+  temperature_detection: '温度检测',
+  body_temperature_abnormal: '体温异常',
+  reflective_vest_violation: '未穿反光背心',
+  safety_belt_violation: '未系安全带',
+  fall_protection_violation: '高空作业未防护',
+  excavation_work: '动土作业',
+  chef_hat_detection: '未戴厨师帽',
+  barefoot_detection: '赤脚检测',
+  gloves_detection: '未戴手套',
+  material_stack_height: '物料堆放过高',
+  oil_spill: '油污检测',
+  over_speed: '车辆超速',
+  emergency_lane_occupied: '应急车道占用',
+  lane_departure: '车道偏离',
+  vehicle_congestion: '车辆拥堵',
+  trash_bin_overflow: '垃圾桶满溢',
+  bare_soil: '裸土暴露',
+  water_level_warning: '水位预警',
+  dust_warning: '扬尘预警',
+  noise_warning: '噪声预警',
+  eating_detection: '进食检测',
+  drinking_detection: '饮水检测',
+  density_abnormal: '密度异常',
+  conveyor_belt_abnormal: '传送带异常',
+  pressure_abnormal: '压力异常',
 }
 
 /**
@@ -539,7 +607,13 @@ export function normalizeAlarmCore(raw: any): AlarmEvent {
       (md && typeof md === 'object' ? String(md.device_id ?? '') : '') ||
       (Array.isArray(md) && md[0] && typeof md[0] === 'object' ? String(md[0].device_id ?? '') : '') ||
       raw.device_id || raw.deviceId || raw.channel_id || '',
-    deviceName: raw.device_name || raw.deviceName || raw.zone || '',
+    // [P0-13 回归 2026-09-04] 后端 AlarmEvent 无 device_name 字段, GB28181 场景
+    //   deviceId 是 20 位国标编码 —— 弹窗「设备名称」兜底 deviceId 时裸显编号
+    //   (实机: "设备名称: 34020000001320000002")。channel_name 为后端拼好的
+    //   可读形态 ("华盾互联办公室摄像头 通道01"), 作为 deviceName 兜底源,
+    //   AlarmPopup 详情 + useAlarm 搜索同时受益; 不剥「 通道NN」后缀 (自定义名
+    //   可能含"通道"字样, 误伤风险 > 收益)。
+    deviceName: raw.device_name || raw.deviceName || raw.zone || raw.channel_name || raw.channelName || '',
     snapshotUrl: toAbsoluteUrl(raw.snapshot_url || raw.snapshotUrl || raw.snapshot_path),
     videoClipUrl: toAbsoluteUrl(raw.video_clip_url || raw.videoClipUrl),
     aiConclusion: raw.ai_conclusion || raw.aiConclusion || raw.ai_analysis || raw.aiAnalysis || '',
@@ -570,6 +644,10 @@ export function normalizeAlarmCore(raw: any): AlarmEvent {
       liveness_score: raw.liveness_score || raw.metadata?.liveness_score,
       quality_score: raw.quality_score || raw.metadata?.quality_score,
       face_box: raw.face_box || raw.metadata?.face_box,
+      // [P0-8 2026-09-04 人脸比对] 场景图/注册照/登记姓名 透传 (后端 face_detector 落盘 + FaceDatabase 反查)
+      scene_url: raw.scene_url || raw.metadata?.scene_url || '',
+      enroll_photo_url: raw.enroll_photo_url || raw.metadata?.enroll_photo_url || '',
+      enroll_name: raw.enroll_name || raw.metadata?.enroll_name || '',
       algo_id: raw.algo_id || gov.algo_id,
       snapshot_base64: raw.snapshot_base64 || raw.metadata?.snapshot_base64,
       snapshot_format: raw.snapshot_format || raw.metadata?.snapshot_format,
