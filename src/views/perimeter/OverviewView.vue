@@ -481,7 +481,12 @@ function packIcon(id: string): Component {
 
 function fmtTime(s: string | undefined): string {
   if (!s) return '—'
-  return s.replace('T', ' ').slice(5, 16)
+  // [FIX 2026-09-05 时区] 原字符串截断 slice(5,16) 直显 UTC 数值 (差 8 小时);
+  //   改为 Date 解析后按本地时区 (北京时间) 拼短格式 MM-DD HH:mm, 保持原列宽风格
+  const d = new Date(s)
+  if (Number.isNaN(d.getTime())) return s
+  const p = (n: number) => String(n).padStart(2, '0')
+  return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
 }
 
 function go(path: string) {

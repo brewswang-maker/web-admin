@@ -9,16 +9,50 @@
     <div v-else class="snap-placeholder">{{ t('perimeter.events.annotPlaceholder') }}</div>
     <!-- 检测框叠加: bbox 为归一化 [x1,y1,x2,y2], SVG viewBox 0-100 + none 保真映射;
          object-fit:fill 拉伸图像与 SVG 同步形变 → 坐标恒对齐 (标注精确性优先,
-         轻度纵横比形变可接受, 对齐 LiveView 检测框叠加语义) -->
-    <svg v-if="box" class="ann-overlay" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-      <rect :x="box[0] * 100" :y="box[1] * 100"
-            :width="(box[2] - box[0]) * 100" :height="(box[3] - box[1]) * 100"
-            class="ann-rect" />
+         轻度纵横比形变可接受, 对齐 LiveView 检测框叠加语义)
+         [FEAT 2026-09-04] 双层扩展: 底层原始几何形状 (检测区/排除区/绊线/方向线/
+         计数区, 规则 roi_shapes_json 优先→区域库回退) + 上层多目标全量标注
+         (metadata.detections 遍历, 触发目标危险色高亮, 其余类别调色板);
+         data-* 属性供 DOM 探针验证渲染计数 -->
+    <svg v-if="shapes.length || detBoxes.length || box" class="ann-overlay" viewBox="0 0 100 100"
+         preserveAspectRatio="none" aria-hidden="true"
+         :data-shape-count="shapes.length" :data-det-count="detBoxes.length">
+      <!-- 底层: 原始几何形状 (半透明, 不覆盖检测框) -->
+      <template v-for="(s, i) in shapes" :key="`sh-${i}`">
+        <polygon v-if="isAreaType(s.type)" :points="svgPoints(s.points)"
+                 :data-shape-type="s.type" :data-shape-source="s.source"
+                 :fill="shapeFill(s.type)" :stroke="SHAPE_STYLES[s.type]?.stroke"
+                 :stroke-dasharray="SHAPE_STYLES[s.type]?.dashed ? '2 1.2' : 'none'"
+                 class="ann-shape-poly" />
+        <g v-else :data-shape-type="s.type" :data-shape-source="s.source">
+          <polyline v-if="s.points.length >= 2" :points="svgPoints(s.points)"
+                    :stroke="SHAPE_STYLES[s.type]?.stroke" class="ann-shape-line" />
+          <circle v-for="(p, pi) in (s.type === 'point' ? s.points.slice(0, 1) : s.points)"
+                  :key="`pt-${pi}`" :cx="p[0] * 100" :cy="p[1] * 100" r="0.7"
+                  :fill="SHAPE_STYLES[s.type]?.stroke" />
+          <path v-for="(ar, ai) in lineArrows(s)" :key="`ar-${ai}`" :d="arrowPath(ar)"
+                :fill="SHAPE_STYLES[s.type]?.stroke" />
+        </g>
+        <text v-if="s.name" :x="s.points[0][0] * 100 + 0.8" :y="s.points[0][1] * 100 - 0.8"
+              class="ann-shape-name">{{ s.name }}</text>
+      </template>
+      <!-- 上层: 多目标全量标注 (触发目标 danger 红, 其余类别色) -->
+      <g v-for="(d, i) in detBoxes" :key="`det-${i}`" class="ann-det"
+         :data-det-label="d.label" :data-det-danger="d.danger">
+        <rect :x="d.x * 100" :y="d.y * 100" :width="d.w * 100" :height="d.h * 100"
+              :stroke="detColor(d)" class="ann-det-rect" />
+        <text :x="Math.max(1, d.x * 100)" :y="Math.max(2.5, d.y * 100 - 1)"
+              class="ann-det-text" :fill="detColor(d)">{{ d.label }} {{ Math.round(d.confidence * 100) }}%</text>
+      </g>
+      <!-- 回退: 无 detections 数组的旧告警单 bbox 桓星红框 -->
+      <g v-if="!detBoxes.length && box" class="ann-det" data-det-danger="true">
+        <rect :x="box[0] * 100" :y="box[1] * 100"
+              :width="(box[2] - box[0]) * 100" :height="(box[3] - box[1]) * 100"
+              class="ann-det-rect" stroke="#f56c6c" />
+        <text v-if="label" :x="Math.max(1, box[0] * 100)" :y="Math.max(2.5, box[1] * 100 - 1)"
+              class="ann-det-text" fill="#f56c6c">{{ label }}</text>
+      </g>
     </svg>
-    <span v-if="box && label" class="ann-label"
-          :style="{ left: clampPct(box[0] * 100, 2, 86), top: clampPct(box[1] * 100, 2, 92) }">
-      {{ label }}
-    </span>
     <!-- [FEAT 2026-09-02] 下载标注图: 导出原始分辨率合成图 (快照+检测框标注) PNG,
          与报警弹窗 AlarmSnapshot 下载能力同构 -->
     <button v-if="src" class="ann-download" :title="t('perimeter.events.downloadAnnotated', '导出带检测框标注的快照原图 (PNG)')" @click="downloadAnnotated">
@@ -51,9 +85,14 @@
  * fill+preserveAspectRatio="none" 组合保证框与目标像素级对齐;
  * vector-effect: non-scaling-stroke 防非均匀缩放导致的描边粗细变形。
  */
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
+import {
+  CLASS_COLORS, SHAPE_STYLES, drawDetsOnCtx, drawShapesOnCtx, downloadPngWithFallback,
+  markTriggerDet, parseDetections, useAlarmShapes,
+  type OverlayShape, type OverlayShapeType, type ParsedDet,
+} from '@/composables/useAlarmShapes'
 
 const { t } = useI18n()
 
@@ -74,16 +113,95 @@ function onImgLoad() {
 const props = defineProps<{
   /** 快照图 URL (可空: 空串时渲染网格占位底, overlay 仍画框) */
   src: string
-  /** normalize 后告警 metadata (bbox/target_label; 兜底合并在 EventsView 完成) */
+  /** normalize 后告警 metadata (bbox/target_label; 兑底合并在 EventsView 完成) */
   metadata?: Record<string, unknown>
+  /** [FEAT 2026-09-04] 触发源通道 (GB28181 编码, _ch0 后缀可):
+   *  形状叠加数据源定位; 缺省时兑底读 metadata.algo_id */
+  channelId?: string
+  /** [FEAT 2026-09-04] 触发算法 id (区域库回退链匹配) */
+  algoId?: string
 }>()
+
+/** [FEAT 2026-09-04] 原始几何形状叠加: 两级数据源 + 30s 模块级缓存 */
+const { shapes, load: loadShapes } = useAlarmShapes()
+const effAlgoId = computed(() => props.algoId
+  || String((props.metadata as Record<string, unknown>)?.algo_id ?? ''))
+watch(
+  [() => props.channelId, effAlgoId, () => (props.metadata as any)?.alarm_shapes],
+  ([ch, algo, snap]) => {
+    // ⓪ alarm_shapes: 告警自包含快照 (插件上报时冻结), 优先于规则链/区域库
+    loadShapes(ch, algo, snap).catch(() => {})
+  },
+  { immediate: true },
+)
+
+/** 多目标全量标注: metadata.detections 遍历 (触发目标 danger 红, 其余类别色);
+ *  像素坐标 (任一 >1) 按图像自然尺寸归一, 未加载完先不显示 (@load 后重算) */
+const detBoxes = computed<ParsedDet[]>(() => {
+  const m = (props.metadata || {}) as Record<string, unknown>
+  const dets = Array.isArray(m.detections) ? (m.detections as any[]) : []
+  if (!dets.length) return []
+  const parsed = parseDetections(dets, imgNat.value, label.value || 'target')
+  return markTriggerDet(parsed, box.value, label.value)
+})
+
+/** 检测框颜色 (触发目标危险色 #f56c6c / 其余 CLASS_COLORS 类别色) */
+function detColor(d: ParsedDet): string {
+  return d.danger ? '#f56c6c' : (CLASS_COLORS[d.label] || '#FF3D71')
+}
+
+// ── SVG 形状层 helper (viewBox 0-100 归一化坐标映射) ──
+const isAreaType = (t: OverlayShapeType) =>
+  ['detection_zone', 'exclusion_zone', 'counting_zone', 'rectangle'].includes(t)
+function shapeFill(t: OverlayShapeType): string {
+  return SHAPE_STYLES[t]?.fill !== 'none' ? (SHAPE_STYLES[t]?.fill || 'transparent') : 'none'
+}
+function svgPoints(pts: Array<[number, number]>): string {
+  return pts.map(([x, y]) => `${(x * 100).toFixed(2)},${(y * 100).toFixed(2)}`).join(' ')
+}
+interface SvgArrow { x: number; y: number; angle: number }
+/** 线类方向箭头 (tripwire: both=中点双向 / a_to_b=B 端 / b_to_a=A 端;
+ *  directional_line 默认 B 端; 与 canvas 版 drawShapesOnCtx 同语义) */
+function lineArrows(s: OverlayShape): SvgArrow[] {
+  if (s.points.length < 2) return []
+  const [a, b] = [s.points[0], s.points[s.points.length - 1]]
+  const angle = Math.atan2(b[1] - a[1], b[0] - a[0])
+  const A = { x: a[0] * 100, y: a[1] * 100 }
+  const B = { x: b[0] * 100, y: b[1] * 100 }
+  const dir = s.direction || (s.type === 'directional_line' ? 'a_to_b' : '')
+  if (dir === 'both') {
+    const m = { x: (A.x + B.x) / 2, y: (A.y + B.y) / 2 }
+    return [
+      { x: m.x + 1.6 * Math.cos(angle), y: m.y + 1.6 * Math.sin(angle), angle },
+      { x: m.x - 1.6 * Math.cos(angle), y: m.y - 1.6 * Math.sin(angle), angle: angle + Math.PI },
+    ]
+  }
+  if (dir === 'b_to_a') return [{ x: A.x, y: A.y, angle: angle + Math.PI }]
+  if (dir) return [{ x: B.x, y: B.y, angle }]
+  if (s.type === 'directional_line') return [{ x: B.x, y: B.y, angle }]
+  return []
+}
+function arrowPath(ar: SvgArrow): string {
+  const size = 2.2
+  const p1 = { x: ar.x - size * Math.cos(ar.angle - 0.42), y: ar.y - size * Math.sin(ar.angle - 0.42) }
+  const p2 = { x: ar.x - size * Math.cos(ar.angle + 0.42), y: ar.y - size * Math.sin(ar.angle + 0.42) }
+  return `M ${ar.x.toFixed(2)} ${ar.y.toFixed(2)} L ${p1.x.toFixed(2)} ${p1.y.toFixed(2)} L ${p2.x.toFixed(2)} ${p2.y.toFixed(2)} Z`
+}
 
 /** 归一化检测框 [x1,y1,x2,y2]; 防御式校验 (缺失/越界/退化一律不渲染)。
  *  [vp6 收尾补测 2026-09-01] 检测直报链兜底: metadata.bbox 缺失时回退
  *  detections[0] / 数组形态 metadata 首元素 (原图像素坐标 x1/y1/x2/y2),
  *  任一坐标 >1 判像素 → 按图像自然尺寸归一化 (未加载完先不出框, @load 后重算) */
 const box = computed<number[] | null>(() => {
-  const m = (props.metadata || {}) as Record<string, unknown>
+  // [FIX 2026-09-04] 真正实现注释声称的「数组形态 metadata 首元素」兑底:
+  //   AlarmDispatcher 直报链 (尾随/聚集/入侵等) metadata 为数组 [{bbox,...}],
+  //   此前仅 detections[0]/m.x1 两级兑底取不到 → 标注恒空 (各调用方已修,
+  //   此处终端兑底保证未来新链路不再断)。
+  let m = (props.metadata || {}) as Record<string, unknown>
+  if (Array.isArray(m) || (m[0] && typeof m[0] === 'object' && !('bbox' in m))) {
+    m = m[0] as Record<string, unknown>
+  }
+  if (!m || typeof m !== 'object') return null
   let b = m.bbox as unknown
   if (!Array.isArray(b) || b.length < 4) {
     const det = Array.isArray(m.detections) ? m.detections[0] : null
@@ -107,64 +225,60 @@ const box = computed<number[] | null>(() => {
 
 /** 目标标签角标 (英文模型标签; target_label / targetLabel / class_name 三级回退) */
 const label = computed(() => {
-  const m = (props.metadata || {}) as Record<string, unknown>
+  let m = (props.metadata || {}) as Record<string, unknown>
+  if (Array.isArray(m)) m = (m[0] ?? {}) as Record<string, unknown>
   const v = m.target_label ?? m.targetLabel ?? m.class_name
   return typeof v === 'string' && v.trim() ? v.trim() : ''
 })
 
-/** 角标位置钳位 (百分比字符串, 防标签溢出容器) */
-function clampPct(v: number, min: number, max: number): string {
-  return `${Math.min(max, Math.max(min, v))}%`
-}
 
-/** [FEAT 2026-09-02] 下载标注图: 离屏 canvas 按快照原始分辨率合成 (背景+红框+
- *  目标标签), 视觉与屏幕 SVG overlay 同款 (危险色红框/角标)。无框时导出原图 */
+/** [FEAT 2026-09-02 → 2026-09-04 升级] 下载标注图: 离屏 canvas 按快照原始分辨率
+ *  合成 (原图 + 原始几何形状 + 全部目标检测框), 屏幕渲染同源同视觉
+ *  (drawShapesOnCtx/drawDetsOnCtx 共用)。无 detections 回退单框。
+ *  跨域污染时降级为「标注层 + 原图」分别导出 */
 function downloadAnnotated() {
   const img = rootRef.value?.querySelector('img') as HTMLImageElement | null
   if (!img || !img.naturalWidth) {
     ElMessage.warning('快照尚未加载完成')
     return
   }
-  const canvas = document.createElement('canvas')
-  canvas.width = img.naturalWidth
-  canvas.height = img.naturalHeight
-  const ctx = canvas.getContext('2d')
-  if (!ctx) return
-  ctx.drawImage(img, 0, 0)
-  const b = box.value
-  if (b) {
-    const scale = Math.max(1, canvas.width / 640)
-    const x = b[0] * canvas.width
-    const y = b[1] * canvas.height
-    const w = (b[2] - b[0]) * canvas.width
-    const h = (b[3] - b[1]) * canvas.height
-    ctx.strokeStyle = '#f56c6c'
-    ctx.lineWidth = 2 * scale
-    ctx.strokeRect(x, y, w, h)
-    const text = label.value
-    if (text) {
-      ctx.font = `bold ${Math.round(12 * scale)}px sans-serif`
-      const tw = ctx.measureText(text).width + 12 * scale
-      const th = 20 * scale
-      ctx.fillStyle = 'rgba(0, 0, 0, 0.62)'
-      ctx.fillRect(x, y - th, tw, th)
-      ctx.fillStyle = '#fff'
-      ctx.fillText(text, x + 6 * scale, y - 5 * scale)
+  const build = (withImage: boolean) => {
+    const canvas = document.createElement('canvas')
+    canvas.width = img.naturalWidth
+    canvas.height = img.naturalHeight
+    const ctx = canvas.getContext('2d')
+    if (ctx) {
+      if (withImage) ctx.drawImage(img, 0, 0)
+      const scale = Math.max(1, canvas.width / 640)
+      if (shapes.value.length) drawShapesOnCtx(ctx, shapes.value, canvas.width, canvas.height, scale)
+      if (detBoxes.value.length) {
+        drawDetsOnCtx(ctx, detBoxes.value, canvas.width, canvas.height, scale)
+      } else {
+        const b = box.value
+        if (b) {
+          const x = b[0] * canvas.width
+          const y = b[1] * canvas.height
+          const w = (b[2] - b[0]) * canvas.width
+          const h = (b[3] - b[1]) * canvas.height
+          ctx.strokeStyle = '#f56c6c'
+          ctx.lineWidth = 2 * scale
+          ctx.strokeRect(x, y, w, h)
+          const text = label.value
+          if (text) {
+            ctx.font = `bold ${Math.round(12 * scale)}px sans-serif`
+            const tw = ctx.measureText(text).width + 12 * scale
+            const th = 20 * scale
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.62)'
+            ctx.fillRect(x, y - th, tw, th)
+            ctx.fillStyle = '#fff'
+            ctx.fillText(text, x + 6 * scale, y - 5 * scale)
+          }
+        }
+      }
     }
+    return canvas
   }
-  canvas.toBlob((blob) => {
-    if (!blob) {
-      ElMessage.error('标注图导出失败')
-      return
-    }
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    const ts = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14)
-    a.href = url
-    a.download = `event-annotated-${ts}.png`
-    a.click()
-    URL.revokeObjectURL(url)
-  }, 'image/png')
+  downloadPngWithFallback(() => build(true), () => build(false), props.src, 'event-annotated')
 }
 </script>
 
@@ -208,20 +322,39 @@ function downloadAnnotated() {
   stroke-width: 2;
   vector-effect: non-scaling-stroke;
 }
-.ann-label {
-  position: absolute;
-  transform: translateY(-100%);
-  padding: 1px 6px;
-  border-radius: 3px;
-  background: rgba(0, 0, 0, 0.62);
-  color: #fff;
-  font-size: 12px;
-  line-height: 18px;
+/* [FEAT 2026-09-04] 形状层: 半透明填充+描边 (排除区/计数区虚线区分),
+   vector-effect 防非均匀缩放描边变形 (对齐 ann-rect 语义) */
+.ann-shape-poly {
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+  fill-opacity: 1;
+}
+.ann-shape-line {
+  fill: none;
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+.ann-shape-name {
+  font-size: 2.8px;
+  paint-order: stroke;
+  stroke: rgba(0, 0, 0, 0.75);
+  stroke-width: 0.7px;
+  fill: #fff;
   pointer-events: none;
-  max-width: 92%;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+}
+/* [FEAT 2026-09-04] 多目标层: 触发目标 danger 红, 其余类别色; 文字黑描边白填 */
+.ann-det-rect {
+  fill: transparent;
+  stroke-width: 1.6;
+  vector-effect: non-scaling-stroke;
+}
+.ann-det-text {
+  font-size: 3.2px;
+  font-weight: bold;
+  paint-order: stroke;
+  stroke: rgba(0, 0, 0, 0.65);
+  stroke-width: 0.6px;
+  pointer-events: none;
 }
 /* [FEAT 2026-09-02] 下载标注图悬浮按钮 */
 .ann-download {

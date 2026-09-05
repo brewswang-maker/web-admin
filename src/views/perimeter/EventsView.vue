@@ -123,7 +123,8 @@
         <!-- [fix 2026-09-01 真机探针] 渲染条件扩为 有快照 || 有 bbox: 融合等
              程序化告警无快照但标注数据在位, 占位底+overlay 仍可定位目标 -->
         <SnapshotAnnotated v-if="active.snapshotUrl || hasBox(active.metadata)"
-                           :src="active.snapshotUrl ?? ''" :metadata="active.metadata" />
+                           :src="active.snapshotUrl ?? ''" :metadata="active.metadata"
+                           :channel-id="active.channelId" :algo-id="detailAlgoId" />
         <el-empty v-else :description="t('perimeter.events.noSnapshot')" :image-size="80" />
 
         <el-descriptions :column="1" border size="small" class="detail-desc">
@@ -278,7 +279,13 @@ function hasBox(md?: Record<string, unknown>): boolean {
 }
 function fmtTime(s: string | undefined): string {
   if (!s) return '—'
-  return s.replace('T', ' ').slice(0, 19)
+  // [FIX 2026-09-05 时区] 原字符串截断 s.replace('T',' ').slice(0,19) 把 UTC ISO
+  //   (normalizeAlarmCore toISOString 带 Z) 的 UTC 数值当本地时间直显 → 差 8 小时。
+  //   改为 Date 解析 + 本地时区 (浏览器=北京时间) 格式化, 与 AlarmsView/AlarmPopup
+  //   formatTime (toLocaleString zh-CN hour12:false) 全站口径对齐。
+  const d = new Date(s)
+  if (Number.isNaN(d.getTime())) return s
+  return d.toLocaleString('zh-CN', { hour12: false })
 }
 
 async function reload() {
@@ -303,7 +310,14 @@ async function reload() {
       if (typeof rawMeta === 'string') {
         try { rawMeta = JSON.parse(rawMeta) } catch { rawMeta = undefined }
       }
-      if (rawMeta && typeof rawMeta === 'object' && !Array.isArray(rawMeta)) {
+      // [FIX 2026-09-04] AlarmDispatcher 直报链 (尾随/聚集/入侵等行为插件)
+      //   metadata 为数组 [{bbox,...}] (真机 tailgate 实锚): 原判空逻辑
+      //   !Array.isArray 显式排除数组 → bbox 永不合并 → 事件列表/详情
+      //   标注框恒空。数组取首元素展开合并。
+      if (Array.isArray(rawMeta)) {
+        rawMeta = (rawMeta[0] && typeof rawMeta[0] === 'object') ? rawMeta[0] : undefined
+      }
+      if (rawMeta && typeof rawMeta === 'object') {
         n.metadata = { ...(rawMeta as Record<string, unknown>), ...n.metadata }
       }
       return n
@@ -314,6 +328,12 @@ async function reload() {
     loading.value = false
   }
 }
+
+/** [FEAT 2026-09-04] 触发算法 id (快照形状叠加区域库回退链匹配键) */
+const detailAlgoId = computed(() => {
+  const m = (active.value?.metadata || {}) as Record<string, unknown>
+  return String(m.algo_id ?? m.algoId ?? '')
+})
 
 function openDetail(row: AlarmEvent) {
   active.value = row
