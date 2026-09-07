@@ -303,7 +303,7 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-.gas-section { padding: 16px; }
+/*.gas-section { padding: 16px; }*/
 .t6-banner { margin-bottom: 14px; }
 .t6-banner :deep(.el-alert__title) { font-size: 13px; }
 .tile-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin-bottom: 14px; }

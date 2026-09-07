@@ -296,7 +296,7 @@ onMounted(loadTemplates)
 </script>
 
 <style scoped>
-.screening-rules { padding: 16px; }
+/*.screening-rules { padding: 16px; }*/
 .hint-alert { margin-bottom: 16px; }
 .template-card { margin-bottom: 16px; }
 .card-header { display: flex; justify-content: space-between; align-items: center; }

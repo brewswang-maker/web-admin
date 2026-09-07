@@ -347,9 +347,9 @@ function formatTime(time: string): string {
 </script>
 
 <style scoped>
-.user-management {
+/*.user-management {
   max-width: 1400px;
-}
+}*/
 .page-header {
   display: flex;
   justify-content: space-between;

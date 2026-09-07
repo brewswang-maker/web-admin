@@ -355,6 +355,8 @@ onMounted(() => {
 .pack-meta { display: flex; gap: 8px; margin-bottom: 12px; }
 .pack-actions { display: flex; justify-content: flex-end; gap: 8px; }
 .drawer-desc { font-size: 13px; color: var(--el-text-color-regular); margin-bottom: 8px; }
+/* el-drawer 内部元素在子组件作用域外, 需 :deep 穿透 */
+.sc-packs-page :deep(.el-drawer__header) { margin-bottom: 0; }
 .sec-title { margin: 18px 0 8px; font-size: 14px; }
 .mono { font-family: 'JetBrains Mono', Consolas, monospace; font-size: 12px; }
 .algo-list { display: flex; flex-direction: column; gap: 5px; }

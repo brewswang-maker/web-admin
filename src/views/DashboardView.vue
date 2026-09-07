@@ -219,7 +219,7 @@
 
       <!-- 项目热力图 -->
       <el-col :span="12">
-        <el-card shadow="hover">
+        <el-card shadow="hover" style="height:100%">
           <template #header>
             <div class="card-header">
               <span class="card-header-title">{{ t('dashboard.projectHeatmap') }}</span>

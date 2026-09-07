@@ -415,7 +415,7 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-.le-density-page { padding: 16px; }
+/*.le-density-page { padding: 16px; }*/
 .toolbar-card { margin-bottom: 12px; }
 .toolbar { display: flex; justify-content: space-between; align-items: center; }
 .toolbar-left { display: flex; align-items: center; gap: 12px; }

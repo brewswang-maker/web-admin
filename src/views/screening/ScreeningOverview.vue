@@ -58,7 +58,7 @@
     <!-- ===== 中部: 动线六分区 + 通道/设备实况 ===== -->
     <el-row :gutter="14">
       <el-col :span="16">
-        <el-card shadow="never" class="block-card">
+        <el-card shadow="never" class="block-card" style="height:100%">
           <template #header>
             <div class="card-header">
               <span class="card-title">安检动线 × 算法覆盖 <span class="card-title-sub">方案 v1.0 §4 六分区</span></span>
@@ -96,7 +96,7 @@
       </el-col>
 
       <el-col :span="8">
-        <el-card shadow="never" class="block-card side-card">
+        <el-card shadow="never" class="block-card side-card" style="height:100%">
           <template #header>
             <div class="card-header"><span class="card-title">通道与设备实况</span></div>
           </template>
@@ -154,7 +154,7 @@
     </el-row>
 
     <!-- ===== 最近安检事件流 ===== -->
-    <el-card shadow="never" class="block-card">
+    <el-card shadow="never" class="block-card" style="margin-top:14px;">
       <template #header>
         <div class="card-header">
           <span class="card-title">最近安检事件 <span class="card-title-sub">security_screening 场景 · 每页 {{ listLimit }} 条</span></span>
@@ -634,7 +634,10 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-.screening-overview { padding: 16px; background: #f5f7fa; min-height: calc(100vh - 84px); }
+.screening-overview {
+    background: #f5f7fa;
+    /*min-height: calc(100vh - 84px);*/
+}
 .act-handle { margin-left: 8px; }  /* [行操作 2026-09-01] dropdown 包裹后相邻按钮间距失效 */
 
 /* ── 页头 ── */

@@ -106,7 +106,7 @@ function isDashboard(route: RouteLocationNormalized) {
 </script>
 
 <style>
-/* 
+/*
  * 🛡️ FOUC 防护：index.html 内联 style 设置 #app { display: none } 防止未渲染内容闪现。
  * Vue 挂载后此全局样式覆盖 display:none，使应用正常显示。
  * App.vue 的 <style>（无 scoped）在 DOM 中位于内联 style 之后，优先级更高。
@@ -138,4 +138,6 @@ function isDashboard(route: RouteLocationNormalized) {
   transform: translateY(-6px);
 }
 
+/* 全局样式: el-drawer teleport 到 body, scoped 作用不到, 用非 scoped 块 */
+.el-drawer__header { margin-bottom: 0 !important ;}
 </style>

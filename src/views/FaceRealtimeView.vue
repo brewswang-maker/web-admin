@@ -260,6 +260,7 @@
                 class="event-image"
                 :preview-src-list="[evt.snapshotDataUrl]"
                 hide-on-click-modal
+                preview-teleported
               />
               <div v-else class="event-image-placeholder">
                 <el-icon :size="48" color="#909399"><User /></el-icon>

@@ -501,4 +501,6 @@ onMounted(() => {
 .sc-count { margin-top: 10px; font-size: 12px; color: var(--el-text-color-secondary); }
 .redlines { display: flex; flex-direction: column; gap: 6px; }
 .rl-item { font-size: 12px; color: var(--el-text-color-regular); line-height: 1.6; padding: 6px 10px; background: #fdf6ec; border-radius: 4px; }
+.gs-packs-page :deep(.el-drawer__header) { margin-bottom: 0; }
+
 </style>

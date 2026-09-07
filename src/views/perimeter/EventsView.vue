@@ -1,5 +1,6 @@
 <template>
   <div class="vp-events-page">
+    <el-card shadow="hover">
     <!-- ===== 页头 + 过滤器 ===== -->
     <div class="events-header">
       <div>
@@ -147,6 +148,7 @@
         </el-descriptions>
       </template>
     </el-drawer>
+    </el-card>
   </div>
 </template>
 
@@ -384,7 +386,7 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-.vp-events-page { padding: 16px 20px; }
+/*.vp-events-page { padding: 16px 20px; }*/
 .events-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 16px; }
 .events-title { margin: 0 0 4px; font-size: 20px; }
 .events-sub { color: var(--el-text-color-secondary); font-size: 13px; }

@@ -29,7 +29,7 @@
     </el-row>
 
     <!-- ===== 趋势区 ===== -->
-    <el-row :gutter="12">
+    <el-row :gutter="12"  class="trend-row">
       <el-col :xs="24" :lg="16">
         <el-card shadow="never" class="chart-card">
           <template #header><span class="card-title">告警 / 通行趋势 ({{ hours }}h 按小时)</span></template>
@@ -47,7 +47,7 @@
     </el-row>
 
     <!-- ===== 分布区 ===== -->
-    <el-row :gutter="12">
+    <el-row :gutter="12"  class="trend-row">
       <el-col :xs="24" :lg="8">
         <el-card shadow="never" class="chart-card">
           <template #header><span class="card-title">告警类型分布 ({{ days }} 天)</span></template>
@@ -72,7 +72,7 @@
     </el-row>
 
     <!-- ===== 质控 + 出入口 ===== -->
-    <el-row :gutter="12">
+    <el-row :gutter="12"  class="trend-row">
       <el-col :xs="24" :md="14">
         <el-card shadow="never" class="qc-card">
           <template #header><span class="card-title">复核质控汇总 ({{ days }} 天)</span></template>
@@ -115,7 +115,7 @@
     </el-row>
 
     <!-- ===== [校园二期] 调度水位 (GET /stats/tpu 真实 IRM/Scheduler 统计) ===== -->
-    <el-row :gutter="12">
+    <el-row :gutter="12"  class="trend-row">
       <el-col :span="24">
         <el-card shadow="never" class="qc-card">
           <template #header>
@@ -389,7 +389,7 @@ onUnmounted(() => {
 
 <style scoped>
 .campus-dashboard {
-  padding: 14px; background: #f0f2f5; min-height: calc(100vh - 84px);
+  padding: 14px; background: #f0f2f5;
 }
 .campus-dashboard.fullscreen {
   position: fixed; inset: 0; z-index: 2000; overflow-y: auto; min-height: 100vh;
@@ -429,4 +429,10 @@ onUnmounted(() => {
 .sched-num { display: block; font-size: 20px; font-weight: 700; color: #303133; font-variant-numeric: tabular-nums; }
 .sched-label { color: #909399; font-size: 12px; }
 .sched-note { color: #c0c4cc; font-size: 11px; margin-top: 6px; }
+
+.trend-row { margin-bottom: 12px; }
+.trend-row .el-card { height: 100%; margin-bottom: 0; }
+
+
+
 </style>

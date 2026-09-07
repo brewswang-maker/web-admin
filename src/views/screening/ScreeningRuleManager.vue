@@ -371,7 +371,7 @@ onMounted(loadRules)
 </script>
 
 <style scoped>
-.rule-manager { padding: 16px; }
+/*.rule-manager { padding: 16px; }*/
 .hint-alert { margin-bottom: 16px; }
 .filter-card { margin-bottom: 16px; }
 .filter-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }

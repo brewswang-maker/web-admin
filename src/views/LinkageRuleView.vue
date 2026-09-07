@@ -164,7 +164,7 @@
         @sort-change="handleSortChange"
         @selection-change="handleSelectionChange">
         <el-table-column type="selection" width="45" />
-        <el-table-column prop="enabled" label="状态" width="80" align="center">
+        <el-table-column prop="enabled" label="状态" width="60" align="center">
           <template #default="{ row }">
             <el-switch v-model="row.enabled" size="small" inline-prompt active-text="开" inactive-text="关" @change="toggleRule(row)" />
           </template>
@@ -180,7 +180,7 @@
             <el-tag size="small" :type="row.enabled ? 'success' : 'info'" effect="plain" class="priority-tag">P{{ row.priority ?? '-' }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="标签" min-width="120">
+        <el-table-column label="标签" min-width="200">
           <template #default="{ row }">
             <div class="cell-tags">
               <el-tag v-for="tag in (row.tags || [])" :key="tag" size="small" type="info" effect="plain">{{ tag }}</el-tag>
@@ -3643,11 +3643,11 @@ watch(mainTab, (tab) => {
   /* max-width: var(--content-max-width, 1440px); */
   /* margin: 0 auto; */
   animation: fadeIn 0.3s ease;
-  
+
 }
 
 /* ── 主页面 Tabs ── */
-.main-tabs :deep(.el-tabs__content) { padding: 16px 0 0 0; overflow: visible; }
+.main-tabs :deep(.el-tabs__content) { padding: 16px; overflow: visible; }
 .main-tabs :deep(.el-tabs__header) { margin-bottom: 0; }
 .main-tabs :deep(.el-tabs__nav-wrap::after) { height: 0; }
 .tab-toolbar { display: flex; align-items: center; gap: 8px; margin-bottom: 8px;margin-left: 8px;margin-right: 8px; }

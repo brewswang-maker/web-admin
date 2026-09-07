@@ -1916,7 +1916,7 @@ async function saveConfig() {
 .page-header { padding: 10px 24px; background: var(--bg-card); border-bottom: 1px solid var(--border-light); }
 .page-title { margin: 0 0 2px; font-size: 17px; color: var(--text-primary); }
 .page-desc { font-size: 12px; color: var(--text-secondary); }
-.layout-body { flex: 1; display: flex; gap: 12px; padding: 12px 24px; overflow: hidden; }
+.layout-body { flex: 1; display: flex; gap: 12px; padding: 12px 0px; overflow: hidden; }
 .panel-left { width: var(--panel-left-width); flex-shrink: 0; overflow-y: auto; }
 .panel-left :deep(.el-card__body) { padding: 0; }
 /* [2026-09-01] 三栏布局: 通道列表 | 算法列表 | 编辑区; 中列全高表格内滚动,

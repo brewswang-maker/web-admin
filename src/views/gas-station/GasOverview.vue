@@ -50,7 +50,7 @@
     </div>
 
     <!-- ===== 24h 告警趋势 + 五级分卡 ===== -->
-    <el-row :gutter="14">
+    <el-row :gutter="14" class="trend-row">
       <el-col :span="17">
         <el-card shadow="never" class="block-card">
           <template #header>
@@ -66,7 +66,7 @@
         </el-card>
       </el-col>
       <el-col :span="7">
-        <el-card shadow="never" class="block-card">
+        <el-card shadow="never" class="block-card" >
           <template #header>
             <div class="card-header"><span class="card-title">今日告警五级分布 <span class="card-title-sub">T6 仅前 2 级</span></span></div>
           </template>
@@ -86,7 +86,7 @@
     </el-row>
 
     <!-- ===== 中部: 加油站三圈实况 + 通道与安全实况 ===== -->
-    <el-row :gutter="14">
+    <el-row :gutter="14" class="trend-row">
       <el-col :span="16">
         <el-card shadow="never" class="block-card">
           <template #header>
@@ -462,7 +462,7 @@ refreshTimer = setInterval(loadAll, 30000)
 </script>
 
 <style scoped>
-.gas-overview { padding: 16px; }
+/*.gas-overview { padding: 16px; }*/
 .ov-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
 .ov-head-left { display: flex; flex-direction: column; gap: 4px; }
 .ov-title { font-size: 22px; font-weight: 700; color: #303133; }
@@ -573,4 +573,7 @@ refreshTimer = setInterval(loadAll, 30000)
 .bar-blue { background: #409eff; }
 .bar-warning { background: #e6a23c; }
 .bar-teal { background: #14b8b8; }
+
+.trend-row .block-card { height: calc(100% - 14px); }
+
 </style>

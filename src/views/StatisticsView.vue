@@ -28,7 +28,7 @@
         </el-card>
       </el-col>
       <el-col :span="18">
-        <el-card :header="t('statistics.securityDimensions')" class="dimension-card">
+        <el-card :header="t('statistics.securityDimensions')" class="dimension-card" style="height:100%;">
           <div class="dimension-bars">
             <div v-for="d in dimensions" :key="d.label" class="dimension-item">
               <span class="dim-label">{{ d.label }}</span>
@@ -71,7 +71,7 @@
     <!-- AI Agent 活跃度 + 项目告警统计 -->
     <el-row :gutter="16">
       <el-col :span="12">
-        <el-card :header="'🟣 ' + t('statistics.agentActivity')">
+        <el-card :header="'🟣 ' + t('statistics.agentActivity')" style="height:100%;">
           <LazyChart :option="agentActivityOption" height="280px" />
           <div class="agent-metrics">
             <div class="agent-metric">
@@ -98,7 +98,7 @@
         </el-card>
       </el-col>
       <el-col :span="12">
-        <el-card :header="t('statistics.projectAlarmStats')">
+        <el-card :header="t('statistics.projectAlarmStats')" style="height:100%;">
           <LazyChart :option="projectAlarmOption" height="280px" />
         </el-card>
       </el-col>

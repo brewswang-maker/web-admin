@@ -624,7 +624,7 @@ async function fetchDemandStatus() {
 </script>
 
 <style scoped>
-.stream-page { padding: 0 4px; }
+/*.stream-page { padding: 0 4px; }*/
 .stat-card { text-align: center; }
 .stat-value { font-size: 28px; font-weight: 700; }
 .stat-label { font-size: 13px; color: #8c8c8c; margin-top: 4px; }

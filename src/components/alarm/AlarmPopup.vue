@@ -298,7 +298,7 @@
                            <span class="alarm-popup__detail-key">状态:</span>
                           <span class="alarm-popup__status">{{ statusLabel(currentAlarm.status) }}</span>
                       </div>
-                     
+
                     </div>
                     <div class="alarm-popup__detail-row">
                       <span class="alarm-popup__detail-key">发生时间:</span>
@@ -391,7 +391,7 @@
                     <template v-if="!isDisposed || appendEditing">
                       <div class="alarm-popup__dispose-row alarm-popup__dispose-row--col">
                         <span class="alarm-popup__dispose-key alarm-popup__dispose-key--required">告警类型:</span>
-                        <el-select v-model="disposeType" placeholder="请选择" size="small" class="alarm-popup__dispose-select">
+                        <el-select v-model="disposeType" placeholder="请选择" size="small" class="alarm-popup__dispose-select" popper-class="alarm-popup__dispose-popper">
                           <el-option label="误报" value="false_alarm" />
                           <el-option label="真实告警" value="true_positive" />
                           <el-option label="存疑" value="unsure" />
@@ -1160,9 +1160,9 @@ void jumpToPlayback; void openImageTab
 .alarm-popup__tab--active::after {
   content: '';
   position: absolute;
-  bottom: 0; 
+  bottom: 0;
   left: 0;
-  width: 100%; 
+  width: 100%;
   height: 1px;
   background: #00E5FF;
   border-radius: 2px;
@@ -1749,7 +1749,7 @@ void jumpToPlayback; void openImageTab
 .alarm-popup__level-badge {
   display: inline-block;
   padding: 0px 14px;
-  font-size: 13px; 
+  font-size: 13px;
   color: #fff;
   margin-left: 4px;
 }
@@ -1832,6 +1832,12 @@ void jumpToPlayback; void openImageTab
 .alarm-popup__dispose-textarea {
   width: 100%;
 }
+.alarm-popup__dispose-select :deep(.el-select__wrapper) {
+  min-height: 32px;
+}
+:global(.alarm-popup__dispose-popper) {
+  z-index: 10000 !important;
+}
 .alarm-popup__dispose-section {
   background: #fafbfc;
   border: 1px solid #ebeef5;
@@ -1840,7 +1846,7 @@ void jumpToPlayback; void openImageTab
   margin-top: 10px;
 }
 .alarm-popup__dispose-section-title {
-  font-size: 14px; font-weight: 600;  
+  font-size: 14px; font-weight: 600;
   color: #606266;
   margin-bottom: 4px;
 }
@@ -1859,7 +1865,7 @@ void jumpToPlayback; void openImageTab
   height: 48px; flex: 0 0 48px;
   background: #050E30;
   /* border-top: 1px solid #1C4A7D; */
-  display: flex; align-items: center; 
+  display: flex; align-items: center;
   padding: 0 16px;
 }
 .alarm-popup__footer-left {

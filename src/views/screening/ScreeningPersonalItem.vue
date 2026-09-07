@@ -376,7 +376,7 @@ onMounted(async () => {
 </script>
 
 <style scoped>
-.screening-personal-item { padding: 16px; }
+/*.screening-personal-item { padding: 16px; }*/
 .status-card { margin-bottom: 16px; }
 .status-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
 .status-cell { background: #fafbfc; padding: 12px; border-radius: 6px; }

@@ -384,7 +384,7 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.hu-events-page { padding: 4px 0; }
+/*.hu-events-page { padding: 4px 0; }*/
 .act-handle { margin-left: 8px; }  /* [行操作 2026-09-01] dropdown 包裹后相邻按钮间距失效 */
 .filter-card { margin-bottom: 16px; }
 .scene-bar { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
@@ -392,7 +392,7 @@ onMounted(() => {
 .bar-count { font-size: 12px; color: var(--el-color-success); }
 .bar-refresh { margin-left: auto; }
 .type-chips { display: flex; flex-wrap: wrap; gap: 8px; }
-.type-chips :deep(.el-check-tag) { height: 26px; padding: 0 10px; font-size: 12px; }
+.type-chips :deep(.el-check-tag) { height: 26px; line-height: 26px; padding: 0 10px; font-size: 12px; }
 .type-chips :deep(.el-check-tag.is-checked.chip-intercept) { background: #f56c6c; }
 .group-select { width: 116px; align-self: center; }
 .err-hint { margin-top: 10px; font-size: 12px; color: var(--el-text-color-secondary); }

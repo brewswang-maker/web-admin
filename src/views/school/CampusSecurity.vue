@@ -124,7 +124,11 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-.campus-security { padding: 16px; background: #f5f7fa; min-height: calc(100vh - 84px); }
+.campus-security {
+    /*padding: 16px; */
+    background: #f5f7fa;
+    min-height: calc(100vh - 84px);
+}
 .sec-head { margin-bottom: 14px; }
 .sec-title { font-size: 20px; font-weight: 700; color: #1f2d3d; margin-right: 12px; }
 .sec-sub { color: #909399; font-size: 12px; }

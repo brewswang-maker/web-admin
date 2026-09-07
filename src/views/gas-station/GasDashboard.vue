@@ -82,7 +82,7 @@
     </el-row>
 
     <!-- ===== EHS 闭环 + 调度水位卡 ===== -->
-    <el-row :gutter="12">
+    <el-row :gutter="12" class="trend-row">
       <el-col :xs="24" :md="14">
         <el-card shadow="never" class="qc-card">
           <template #header><span class="card-title">EHS 闭环指标 ({{ days }} 天)</span></template>
@@ -409,7 +409,7 @@ refreshTimer = setInterval(loadAll, 30000)
 </script>
 
 <style scoped>
-.gas-dashboard { padding: 12px; background: linear-gradient(180deg, #fafbfc 0%, #f5f7fa 100%); min-height: 100vh; }
+.gas-dashboard {  background: linear-gradient(180deg, #fafbfc 0%, #f5f7fa 100%);  }
 .gas-dashboard.fullscreen { background: #0e1a2b; padding: 18px; }
 .dash-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
 .dash-title { display: flex; align-items: center; gap: 8px; font-size: 18px; font-weight: 700; color: #303133; }
@@ -453,4 +453,8 @@ refreshTimer = setInterval(loadAll, 30000)
 .th-med { background: #ecf5ff; color: #409eff; }
 .th-low { background: #f0f9eb; color: #67c23a; }
 .th-info { background: #f4f4f5; color: #909399; }
+
+.trend-row { margin-bottom: 12px; }
+.trend-row .el-card { height: 100%; margin-bottom: 0; }
+
 </style>

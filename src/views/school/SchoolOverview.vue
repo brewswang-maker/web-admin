@@ -41,7 +41,7 @@
     </div>
 
     <!-- ===== 24h 态势 + 五级分卡 ===== -->
-    <el-row :gutter="14">
+    <el-row :gutter="14"  class="trend-row">
       <el-col :span="17">
         <el-card shadow="never" class="block-card">
           <template #header>
@@ -77,7 +77,7 @@
     </el-row>
 
     <!-- ===== 中部: 校园分区实况 + 通道与安全实况 ===== -->
-    <el-row :gutter="14">
+    <el-row :gutter="14"  class="trend-row">
       <el-col :span="16">
         <el-card shadow="never" class="block-card">
           <template #header>
@@ -534,7 +534,11 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-.school-overview { padding: 16px; background: #f5f7fa; min-height: calc(100vh - 84px); }
+.school-overview {
+    /*padding: 16px; */
+    background: #f5f7fa;
+    min-height: calc(100vh - 84px);
+}
 
 /* ── 页头 ── */
 .ov-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
@@ -641,4 +645,7 @@ onUnmounted(() => {
 .rank-bar-wrap { height: 6px; background: #f0f2f5; border-radius: 3px; overflow: hidden; }
 .rank-bar { height: 100%; background: linear-gradient(90deg, #409eff, #79bbff); border-radius: 3px; transition: width 0.4s; }
 .rank-bar.bar-teal { background: linear-gradient(90deg, #14b8b8, #82dcdc); }
+/* 趋势行两卡等高: el-col 被 flex 行拉伸, 卡片自身撑满列高 (扣除自身 margin-bottom) */
+.trend-row .block-card { height: calc(100% - 14px); }
+
 </style>

@@ -328,9 +328,9 @@ function formatTime(time: string | undefined): string {
 </script>
 
 <style scoped>
-.role-management {
+/*.role-management {
   max-width: 1400px;
-}
+}*/
 .page-header {
   display: flex;
   justify-content: space-between;

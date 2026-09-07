@@ -267,7 +267,7 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-.school-section { padding: 16px; }
+/*.school-section { padding: 16px; }*/
 .tile-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin-bottom: 14px; }
 .tile {
   background: #fff; border: 1px solid #ebeef5; border-radius: 10px; padding: 14px;

@@ -164,7 +164,11 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-.school-attendance { padding: 16px; background: #f5f7fa; min-height: calc(100vh - 84px); }
+.school-attendance {
+    /*padding: 16px; */
+    background: #f5f7fa;
+    min-height: calc(100vh - 104px);
+}
 .kpi-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 14px; }
 .kpi-card {
   background: #fff; border-radius: 10px; padding: 16px; display: flex; gap: 12px;
@@ -179,7 +183,7 @@ onUnmounted(() => {
 .val-blue { color: #409eff; } .val-teal { color: #14b8b8; } .val-green { color: #67c23a; }
 .kpi-label { color: #606266; font-size: 13px; margin-top: 2px; }
 .kpi-sub { color: #909399; font-size: 11px; margin-top: 2px; }
-.block-card { border-radius: 10px; }
+.block-card { border-radius: 10px;height:100%; }
 .block-card :deep(.el-card__header) { padding: 12px 16px; }
 .card-header { display: flex; justify-content: space-between; align-items: center; }
 .card-title { font-weight: 600; color: #303133; font-size: 14px; }

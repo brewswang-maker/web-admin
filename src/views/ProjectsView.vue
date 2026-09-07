@@ -442,7 +442,7 @@ onMounted(() => {
 <style scoped>
 .toolbar-card :deep(.el-card__body),
 .project-list-card :deep(.el-card__body) {
-  padding: 20px 24px;
+  padding: 20px;
 }
 
 .project-list-card {

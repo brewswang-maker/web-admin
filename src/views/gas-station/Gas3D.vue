@@ -262,7 +262,7 @@ refreshTimer = setInterval(() => load(true), 30000)
 </script>
 
 <style scoped>
-.gas-3d { padding: 14px; }
+/*.gas-3d { padding: 14px; }*/
 .full-row { min-height: calc(100vh - 120px); }
 .scene-card { height: 100%; }
 .scene-card :deep(.el-card__body) { position: relative; height: 100%; min-height: 480px; }

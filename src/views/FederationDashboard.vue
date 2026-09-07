@@ -58,7 +58,7 @@
     <!-- 隐私保护 + 安全设置 -->
     <el-row :gutter="16" style="margin-bottom: 16px">
       <el-col :span="12">
-        <el-card header="🛡️ 隐私保护状态">
+        <el-card header="🛡️ 隐私保护状态" style="height: 100%;">
           <div class="privacy-rows">
             <div class="privacy-row">
               <span class="privacy-label">差分隐私预算</span>
@@ -81,7 +81,7 @@
         </el-card>
       </el-col>
       <el-col :span="12">
-        <el-card header="📋 训练任务列表">
+        <el-card header="📋 训练任务列表" style="height: 100%;">
           <el-table :data="federationTasks" stripe size="small" style="width:100%">
             <el-table-column prop="name" label="任务名称" min-width="120" />
             <el-table-column prop="modelType" label="类型" width="70">
@@ -114,8 +114,8 @@
 
     <!-- [P1-4] 轮次历史 + 参与节点 -->
     <el-row :gutter="16" style="margin-bottom: 16px">
-      <el-col :span="14">
-        <el-card header="📊 训练轮次历史">
+      <el-col :span="12">
+        <el-card header="📊 训练轮次历史" style="height: 100%;">
           <el-table :data="federationRounds" stripe size="small" style="width:100%" max-height="240">
             <el-table-column prop="round" label="轮次" width="70">
               <template #default="{ row }">R{{ row.round }}</template>
@@ -135,8 +135,8 @@
           <el-empty v-if="!federationRounds.length" description="暂无训练记录，点击上方按钮执行训练" :image-size="40" style="padding:16px" />
         </el-card>
       </el-col>
-      <el-col :span="10">
-        <el-card header="🖥️ 参与节点">
+      <el-col :span="12">
+        <el-card header="🖥️ 参与节点" style="height: 100%;">
           <el-table :data="federationNodes" stripe size="small" style="width:100%" max-height="240">
             <el-table-column prop="client_id" label="节点ID" min-width="100" />
             <el-table-column label="状态" width="70">

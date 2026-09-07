@@ -27,7 +27,7 @@
 
       <template v-else>
         <!-- ===== KPI 指标卡 (对齐效果图: 数字+图标+色块+跳转+副文本; 处理率环形) ===== -->
-        <el-row :gutter="16" class="stat-row">
+        <el-row :gutter="16" class="stat-row trend-row">
           <el-col :xs="12" :sm="6">
             <el-card shadow="hover" class="kpi-card" @click="go('/video-perimeter/events')">
               <div class="kpi-body">
@@ -92,7 +92,7 @@
         </el-row>
 
         <!-- ===== 近 7 日告警趋势 + 通道统计 (对齐效果图「AI告警统计柱状图 / 设备统计」) ===== -->
-        <el-row :gutter="16" class="stat-row">
+        <el-row :gutter="16" class="stat-row trend-row">
           <el-col :xs="24" :sm="16">
             <el-card shadow="hover" class="trend-card">
               <template #header>
@@ -144,7 +144,7 @@
         </el-row>
 
         <!-- ===== 最新预警抓拍 + 场景包布防状态 (对齐效果图「AI预警抓拍」) ===== -->
-        <el-row :gutter="16" class="stat-row">
+        <el-row :gutter="16" class="stat-row trend-row">
           <el-col :xs="24" :sm="14">
             <el-card shadow="hover" class="snap-card">
               <template #header>
@@ -201,7 +201,7 @@
           </el-col>
         </el-row>
 
-        <el-row :gutter="16">
+        <el-row :gutter="16" class="trend-row">
           <!-- ===== 事件类型分布 (19 键 vp5, 中文名对齐效果图; tooltip 保留裸 key) ===== -->
           <el-col :xs="24" :sm="14">
             <el-card shadow="hover" class="dist-card">
@@ -533,7 +533,7 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.vp-overview-page { padding: 16px 20px; }
+/*.vp-overview-page { padding: 16px 20px; }*/
 .ov-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 16px; }
 .ov-title { margin: 0 0 4px; font-size: 20px; }
 .ov-sub { color: var(--el-text-color-secondary); font-size: 13px; }
@@ -624,4 +624,8 @@ onMounted(() => {
   .snap-grid { grid-template-columns: 1fr; }
   .dev-grid { grid-template-columns: repeat(2, 1fr); }
 }
+
+.trend-row { margin-bottom: 12px; }
+.trend-row .el-card { height: 100%; margin-bottom: 0; }
+
 </style>

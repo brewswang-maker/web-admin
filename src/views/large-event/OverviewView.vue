@@ -18,7 +18,7 @@
       </el-col>
     </el-row>
 
-    <el-row :gutter="16">
+    <el-row :gutter="16" class="trend-row">
       <!-- ===== 三圈布防状态 ===== -->
       <el-col :span="10">
         <el-card shadow="never" class="section-card">
@@ -329,7 +329,7 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-.le-overview-page { padding: 16px; }
+/*.le-overview-page { padding: 16px; }*/
 .stat-row { margin-bottom: 16px; }
 .stat-card .stat-content { display: flex; align-items: center; gap: 12px; }
 .stat-icon {
@@ -364,4 +364,8 @@ onUnmounted(() => {
 .level-chip.yellow { background: #e6a23c; }
 .level-chip.orange { background: #f56c6c; opacity: 0.85; }
 .level-chip.red { background: #c40000; }
+
+.trend-row { margin-bottom: 12px; }
+.trend-row .el-card { height: 100%; margin-bottom: 0; }
+
 </style>

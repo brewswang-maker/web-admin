@@ -105,8 +105,8 @@
               <button class="view-switch-btn" :class="{ active: centerView === 'floor' }" type="button" role="tab" :aria-selected="centerView === 'floor'" @click="setCenterView('floor')">平面地图</button>
               <button class="view-switch-btn" :class="{ active: centerView === 'video' }" type="button" role="tab" :aria-selected="centerView === 'video'" @click="setCenterView('video')">视频监控</button>
             </div>
-            <span v-if="sceneIsDemo && centerView === '3d'" style="font-size:11px;color:#F4B400;border:1px solid rgba(244,180,0,0.6);border-radius:3px;padding:1px 6px;margin-left:4px;">演示数据</span>
-            <span v-if="!sceneIsDemo && sceneRealCount > 0 && centerView === '3d'" style="font-size:11px;color:#39C76F;border:1px solid rgba(57,199,111,0.6);border-radius:3px;padding:1px 6px;margin-left:4px;">实况接入 {{ sceneRealCount }} 台</span>
+            <span v-if="sceneIsDemo && centerView === '3d'" style="font-size:11px;color:#F4B400;border-radius:3px;padding:1px 6px;margin-left:4px;">演示数据</span>
+            <span v-if="!sceneIsDemo && sceneRealCount > 0 && centerView === '3d'" style="font-size:11px;color:#39C76F;border-radius:3px;padding:1px 6px;margin-left:4px;">实况接入 {{ sceneRealCount }} 台</span>
             <!-- 3D视图操作按钮 -->
             <div v-if="centerView === '3d'" class="scene-actions">
               <el-select
@@ -139,6 +139,7 @@
               <button class="scene-edit-btn" :class="{active: videoLayout === 1}" @click="setVideoLayout(1)">1分屏</button>
               <button class="scene-edit-btn" :class="{active: videoLayout === 4}" @click="setVideoLayout(4)">4分屏</button>
               <button class="scene-edit-btn" :class="{active: videoPollingActive}" @click="toggleVideoPolling">{{ videoPollingActive ? '停止轮巡' : '开始轮巡' }}</button>
+              <span v-if="videoPollingActive" class="video-poll-countdown">下次轮巡：{{ videoPollRemainingSec }}秒</span>
               <span style="font-size:11px;color:#236db7;">{{ videoDeviceList.length }}个通道</span>
             </div>
             <!-- 全屏按钮（推至右侧） -->
@@ -399,6 +400,7 @@
                 <button class="scene-edit-btn" :class="{active: videoLayout === 1}" @click="setVideoLayout(1)">1分屏</button>
                 <button class="scene-edit-btn" :class="{active: videoLayout === 4}" @click="setVideoLayout(4)">4分屏</button>
                 <button class="scene-edit-btn" :class="{active: videoPollingActive}" @click="toggleVideoPolling">{{ videoPollingActive ? '停止轮巡' : '开始轮巡' }}</button>
+                <span v-if="videoPollingActive" class="video-poll-countdown">下次轮巡：{{ videoPollRemainingSec }}秒</span>
                 <span style="font-size:12px;color:#236db7;margin-left:auto">{{ videoDeviceList.length }}个通道</span>
               </div>
               <div class="fullscreen-video-grid" :class="'vm-grid-' + videoLayout">
@@ -875,6 +877,7 @@ watch(isFullscreen, () => {
   }
   // 暂停轮巡定时器（防止 reattach 期间定时器触发新拉流）
   if (videoPollTimer) { clearInterval(videoPollTimer); videoPollTimer = null }
+  if (videoPollCountdownTimer) { clearInterval(videoPollCountdownTimer); videoPollCountdownTimer = null }
   // 等待 transition leave 完成(~350ms) + 新 video DOM 挂载后重新绑定播放器
   fullscreenTimer = setTimeout(() => {
     fullscreenTimer = null
@@ -882,7 +885,7 @@ watch(isFullscreen, () => {
     for (let i = 0; i < 4; i++) reattachPlayer(i)
     // 恢复轮巡定时器
     if (videoPollingActive.value) {
-      videoPollTimer = setInterval(() => pollVideoBatch(), videoPollIntervalSec.value * 1000)
+      startVideoPollTimers()
     }
   }, 500)
 })
@@ -943,11 +946,13 @@ const videoDisplaySlots = computed(() => videoLayout.value === 1 ? [videoSlots[0
 const videoSlotRefs = ref<Record<number, HTMLVideoElement>>({})
 const videoPollingActive = ref(false)
 let videoPollTimer: ReturnType<typeof setInterval> | null = null
+let videoPollCountdownTimer: ReturnType<typeof setInterval> | null = null
 const videoDeviceList = ref<Array<{ channelId: string; deviceName: string }>>([])
 const videoPollOffset = ref(0)
 // GB28181 设备需要 BYE 冷却(~5s) + SIP INVITE + RTP 建立(~5s) = ~10s 开销
 // 30s 间隔确保至少 20s 实际观看时间，避免设备频繁断连
 const videoPollIntervalSec = ref(30)
+const videoPollRemainingSec = ref(0)
 
 function setVideoSlotRef(el: any, idx: number) {
   if (el) videoSlotRefs.value[idx] = el as HTMLVideoElement
@@ -1389,6 +1394,21 @@ function pollVideoBatch() {
   }
 }
 
+function resetVideoPollCountdown() {
+  videoPollRemainingSec.value = videoPollIntervalSec.value
+}
+
+function startVideoPollTimers() {
+  resetVideoPollCountdown()
+  videoPollTimer = setInterval(() => {
+    pollVideoBatch()
+    resetVideoPollCountdown()
+  }, videoPollIntervalSec.value * 1000)
+  videoPollCountdownTimer = setInterval(() => {
+    if (videoPollRemainingSec.value > 0) videoPollRemainingSec.value--
+  }, 1000)
+}
+
 function startVideoPolling() {
   if (videoPollingActive.value) return
   if (!videoDeviceList.value.length) {
@@ -1398,7 +1418,7 @@ function startVideoPolling() {
   videoPollingActive.value = true
   videoPollOffset.value = 0
   pollVideoBatch()
-  videoPollTimer = setInterval(() => pollVideoBatch(), videoPollIntervalSec.value * 1000)
+  startVideoPollTimers()
 }
 
 function stopVideoPolling() {
@@ -1410,6 +1430,8 @@ function stopVideoPolling() {
 function stopVideoPollingTimer() {
   videoPollingActive.value = false
   if (videoPollTimer) { clearInterval(videoPollTimer); videoPollTimer = null }
+  if (videoPollCountdownTimer) { clearInterval(videoPollCountdownTimer); videoPollCountdownTimer = null }
+  videoPollRemainingSec.value = 0
 }
 
 function toggleVideoPolling() {
@@ -2858,6 +2880,13 @@ onUnmounted(() => {
   background: rgba(0, 180, 255, 0.25);
   color: #00E4FF;
   border-color: rgba(0, 228, 255, 0.5);
+}
+
+.video-poll-countdown {
+  color: #00B4FF;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 .scene-container-with-panel {

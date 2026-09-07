@@ -244,7 +244,11 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-.campus-3d { padding: 16px; background: #f5f7fa; min-height: calc(100vh - 84px); }
+.campus-3d {
+    /*padding: 16px; */
+    background: #f5f7fa;
+    min-height: calc(100vh - 84px);
+}
 .full-row { height: calc(100vh - 116px); }
 .scene-card { height: 100%; border-radius: 10px; overflow: hidden; position: relative; }
 .block-card { border-radius: 10px; height: 100%; display: flex; flex-direction: column; }

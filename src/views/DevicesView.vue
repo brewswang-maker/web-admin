@@ -286,7 +286,7 @@
     </el-dialog>
 
     <!-- 添加设备对话框 -->
-    <el-dialog v-model="showAddDialog" title="添加设备" width="640px" @closed="resetAddForm">
+    <el-dialog v-model="showAddDialog" title="添加设备" width="640px" @closed="resetAddForm" top="2vh">
       <el-form :model="addForm" label-width="110px">
         <!-- 协议选择 -->
         <el-form-item label="接入协议">
@@ -1257,7 +1257,7 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-.devices-page { padding: 0 4px; }
+/*.devices-page { padding: 0 4px; }*/
 .toolbar-card { margin-bottom: 0; }
 .toolbar { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; }
 .toolbar-left { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }

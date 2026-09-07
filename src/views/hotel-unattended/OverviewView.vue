@@ -46,7 +46,7 @@
         </el-col>
       </el-row>
 
-      <el-row :gutter="16">
+      <el-row :gutter="16" class="trend-row">
         <!-- ===== 6 包布防状态 ([P1-2 v2.1] 恰 5→6) ===== -->
         <el-col :span="10">
           <el-card shadow="never" class="section-card">
@@ -120,7 +120,7 @@
         </el-col>
       </el-row>
 
-      <el-row :gutter="16">
+      <el-row :gutter="16" class="trend-row">
         <!-- ===== 人员分类构成 (六分类: 人脸库统计 × 24h 通行聚合) ===== -->
         <el-col :span="10">
           <el-card shadow="never" class="section-card">
@@ -439,7 +439,7 @@ onMounted(() => { reload() })
 </script>
 
 <style scoped>
-.hu-overview-page { padding: 4px 0; }
+/*.hu-overview-page { padding: 4px 0; }*/
 .page-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
 .page-title { margin: 0; font-size: 18px; font-weight: 600; }
 .page-sub { margin-top: 4px; font-size: 12px; color: var(--el-text-color-secondary); }
@@ -469,4 +469,8 @@ onMounted(() => { reload() })
 .group-compose-table :deep(tbody tr) { cursor: pointer; }
 .group-compose-table :deep(tr.group-row--active > td) { background: var(--el-fill-color-light); }
 .pass-filter-actions { display: inline-flex; align-items: center; gap: 2px; }
+
+.trend-row { margin-bottom: 12px; }
+.trend-row .el-card { height: 100%; margin-bottom: 0; }
+
 </style>

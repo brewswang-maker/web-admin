@@ -1,260 +1,261 @@
 <template>
   <div class="retrieval-view">
-    <div class="page-header">
-      <h2>智能检索</h2>
-      <span class="sub">混合检索 (P4-E) / 以文搜图 / 以图搜图 [P0-B] / 跨镜轨迹 [校园二期]</span>
-    </div>
+    <el-card  shadow="hover">
+        <div class="page-header">
+        <h2>智能检索</h2>
+        <span class="sub">混合检索 (P4-E) / 以文搜图 / 以图搜图 [P0-B] / 跨镜轨迹 [校园二期]</span>
+        </div>
 
-    <el-tabs v-model="activeTab" class="retrieval-tabs">
-      <!-- ════ Tab 1: P4-E 混合检索 ════ -->
-      <el-tab-pane label="混合检索" name="hybrid">
-        <el-form label-width="110px" class="query-form">
-          <el-form-item label="检索模式">
-            <el-radio-group v-model="hybridForm.mode">
-              <el-radio-button value="hybrid">hybrid 三信号</el-radio-button>
-              <el-radio-button value="face">face 人脸特征</el-radio-button>
-              <el-radio-button value="attr">attr 结构化</el-radio-button>
-            </el-radio-group>
-          </el-form-item>
+        <el-tabs v-model="activeTab" class="retrieval-tabs">
+        <!-- ════ Tab 1: P4-E 混合检索 ════ -->
+        <el-tab-pane label="混合检索" name="hybrid">
+            <el-form label-width="110px" class="query-form">
+            <el-form-item label="检索模式">
+                <el-radio-group v-model="hybridForm.mode">
+                <el-radio-button value="hybrid">hybrid 三信号</el-radio-button>
+                <el-radio-button value="face">face 人脸特征</el-radio-button>
+                <el-radio-button value="attr">attr 结构化</el-radio-button>
+                </el-radio-group>
+            </el-form-item>
 
-          <el-form-item v-if="hybridForm.mode !== 'attr'" label="人脸向量">
-            <el-input
-              v-model="hybridForm.embeddingText"
-              type="textarea"
-              :rows="3"
-              placeholder="512 维向量, 逗号/空格分隔 (face/hybrid 模式必填)"
-            />
-          </el-form-item>
-
-          <el-form-item v-if="hybridForm.mode !== 'face'" label="attr 条件">
-            <div v-for="(c, i) in hybridForm.conditions" :key="i" class="cond-row">
-              <el-select v-model="c.key" filterable placeholder="属性 key (白名单)" class="cond-key">
-                <el-option v-for="o in attributeKeyOptions()" :key="o.value" :label="o.label" :value="o.value" />
-              </el-select>
-              <el-select v-model="c.op" class="cond-op">
-                <el-option v-for="op in opsForKey(c.key)" :key="op" :label="op" :value="op" />
-              </el-select>
-              <el-input-number v-model="c.value" :precision="3" :step="0.1" class="cond-value" />
-              <el-button text type="danger" @click="hybridForm.conditions.splice(i, 1)">删除</el-button>
-            </div>
-            <el-button size="small" @click="addCondition">+ 添加条件</el-button>
-            <div class="hint">key 白名单与算子契约来自 docs/attribute-key-contract.md (P4-B/P4-D)</div>
-          </el-form-item>
-
-          <el-form-item label="通道">
-            <el-input v-model="hybridForm.channel_id" placeholder="留空 = 全部通道" style="width: 240px" />
-          </el-form-item>
-          <el-form-item label="时间范围">
-            <el-date-picker
-              v-model="hybridForm.timeRange"
-              type="datetimerange"
-              value-format="x"
-              start-placeholder="开始"
-              end-placeholder="结束"
-            />
-          </el-form-item>
-          <el-form-item v-if="hybridForm.mode === 'hybrid'" label="关联窗口(ms)">
-            <el-input-number v-model="hybridForm.window_ms" :min="1000" :step="10000" />
-          </el-form-item>
-          <el-form-item label="Top-K / Limit">
-            <el-input-number v-model="hybridForm.top_k" :min="1" :max="50" />
-            <el-input-number v-model="hybridForm.limit" :min="1" :max="200" class="ml" />
-          </el-form-item>
-          <el-form-item>
-            <el-button type="primary" :loading="loading" @click="runHybrid">检索</el-button>
-          </el-form-item>
-        </el-form>
-      </el-tab-pane>
-
-      <!-- ════ Tab 2: 以文搜图 ════ -->
-      <el-tab-pane label="以文搜图" name="nl">
-        <el-form label-width="110px" class="query-form">
-          <el-form-item label="自然语言">
-            <el-input v-model="nlForm.nl" placeholder="例: 昨天的火情 / 穿红色衣服的人在跑" @keyup.enter="runNL" />
-          </el-form-item>
-          <!-- [校园二期增强] 时间窗: 走后端 searchWithFilter 窗口裁剪 (start_ms/end_ms) -->
-          <el-form-item label="时间范围">
-            <el-radio-group v-model="nlForm.timeRange" @change="onNlTimeRangeChange">
-              <el-radio-button value="all">全部</el-radio-button>
-              <el-radio-button value="1h">近 1 小时</el-radio-button>
-              <el-radio-button value="24h">近 24 小时</el-radio-button>
-              <el-radio-button value="7d">近 7 天</el-radio-button>
-              <el-radio-button v-if="nlForm.startMs || nlForm.endMs" value="custom">自定义窗</el-radio-button>
-            </el-radio-group>
-            <span v-if="nlForm.timeRange === 'custom'" class="hint" style="margin-left: 10px">
-              {{ formatTs(nlForm.startMs) }} ~ {{ formatTs(nlForm.endMs) }}
-            </span>
-          </el-form-item>
-          <el-form-item label="Top-K">
-            <el-input-number v-model="nlForm.top_k" :min="1" :max="100" />
-          </el-form-item>
-          <el-form-item>
-            <el-button type="primary" :loading="loading" @click="runNL">搜索</el-button>
-          </el-form-item>
-        </el-form>
-      </el-tab-pane>
-
-      <!-- ════ Tab 3: 以图搜图 [P0-A] ════ -->
-      <el-tab-pane label="以图搜图" name="image">
-        <el-form label-width="110px" class="query-form">
-          <el-form-item label="查询快照">
-            <el-upload
-              :auto-upload="false"
-              :show-file-list="false"
-              accept="image/jpeg,image/png"
-              :on-change="onFilePicked"
-            >
-              <el-button>选择图片</el-button>
-            </el-upload>
-            <el-image
-              v-if="imageForm.previewUrl"
-              :src="imageForm.previewUrl"
-              fit="contain"
-              class="preview"
-            />
-          </el-form-item>
-          <el-form-item label="相似度阈值">
-            <el-slider v-model="imageForm.min_similarity" :min="0" :max="1" :step="0.05" style="width: 280px" show-input />
-          </el-form-item>
-          <el-form-item label="通道">
-            <el-input v-model="imageForm.channel_id" placeholder="留空 = 全部通道" style="width: 240px" />
-          </el-form-item>
-          <el-form-item label="时间范围">
-            <el-date-picker
-              v-model="imageForm.timeRange"
-              type="datetimerange"
-              value-format="x"
-              start-placeholder="开始"
-              end-placeholder="结束"
-            />
-          </el-form-item>
-          <el-form-item label="Top-K">
-            <el-input-number v-model="imageForm.top_k" :min="1" :max="100" />
-          </el-form-item>
-          <el-form-item>
-            <el-button type="primary" :loading="loading" :disabled="!imageForm.base64" @click="runByImage">以图搜图</el-button>
-          </el-form-item>
-        </el-form>
-
-        <!-- [P0-A] 501: 图像塔未就绪 → 显式激活指引 (不伪装空结果) -->
-        <el-alert
-          v-if="towerUnavailable"
-          type="warning"
-          :closable="false"
-          class="tower-alert"
-        >
-          <template #title>图像塔未就绪 ({{ towerUnavailable.reason }}) — 以图搜图暂不可用</template>
-          <div>{{ towerUnavailable.hint }}</div>
-          <div class="hint">期望模型文件: {{ towerUnavailable.bmodel_expected }}</div>
-          <div class="hint">配置项: 环境变量 SHIELD_SOPHON_BMODEL_BASE (TPU-MLIR 转换产物, 见 P1-A 批次)</div>
-        </el-alert>
-      </el-tab-pane>
-
-      <!-- ════ Tab 4: 跨镜轨迹 [校园二期增强 2026-08-30] ════ -->
-      <el-tab-pane label="跨镜轨迹" name="trajectory">
-        <el-form label-width="110px" class="query-form">
-          <el-form-item label="Global ID">
-            <el-input-number v-model="trajForm.global_id" :min="0" :step="1" placeholder="0 = 不使用" style="width: 220px" />
-            <span class="hint" style="margin-left: 10px">与下方 通道+轨迹 ID 二选一</span>
-          </el-form-item>
-          <el-form-item label="通道 / 轨迹 ID">
-            <el-input-number v-model="trajForm.camera_id" :min="0" :controls="false" placeholder="camera_id" style="width: 160px" />
-            <el-input-number v-model="trajForm.track_id" :min="0" :controls="false" placeholder="track_id" style="width: 160px" class="ml" />
-          </el-form-item>
-          <el-form-item label="关联窗口(ms)">
-            <el-input-number v-model="trajForm.window_ms" :min="0" :step="1000" />
-            <span class="hint" style="margin-left: 10px">ReID 节点与告警的时空关联窗口</span>
-          </el-form-item>
-          <el-form-item>
-            <el-button type="primary" :loading="trajLoading" @click="runTrajectory">查询轨迹</el-button>
-          </el-form-item>
-        </el-form>
-
-        <el-alert type="info" :closable="false" class="tower-alert" title="轨迹数据口径 (诚实降级)">
-          ReID 特征库为内存态 LRU (默认回溯窗口约 5 分钟, 重启即失);
-          轨迹仅覆盖最近回溯窗口内的跨镜出现。历史事件请用「以文搜图」。
-        </el-alert>
-
-        <!-- 轨迹结果: 时间轴节点 (ts 升序) -->
-        <template v-if="trajResult">
-          <el-divider content-position="left">
-            轨迹 {{ trajResult.total }} 节点 · 跨 {{ trajResult.channel_count }} 通道 · global_id={{ trajResult.global_id }}
-          </el-divider>
-          <el-empty
-            v-if="!trajResult.total"
-            :description="trajEmptyText"
-          />
-          <el-timeline v-else class="traj-timeline">
-            <el-timeline-item
-              v-for="(n, i) in trajResult.nodes"
-              :key="i"
-              :timestamp="formatTs(n.ts_ms)"
-              :type="n.alarm_id ? 'danger' : 'primary'"
-            >
-              <div class="traj-node">
-                <el-image
-                  v-if="n.snapshot_path"
-                  :src="n.snapshot_path"
-                  fit="cover"
-                  class="traj-snap"
-                  :preview-src-list="[n.snapshot_path]"
-                  preview-teleported
-                >
-                  <template #error><div class="traj-snap traj-snap-fallback">无快照</div></template>
-                </el-image>
-                <div v-else class="traj-snap traj-snap-fallback">无快照</div>
-                <div class="traj-meta">
-                  <div class="traj-ch">{{ n.channel_name || n.channel_id_str || `camera ${n.camera_id}` }}</div>
-                  <div class="traj-line">
-                    track {{ n.track_id }}
-                    <el-tag v-if="n.alarm_type" size="small" type="danger" class="ml">
-                      {{ n.alarm_type }} (Δ{{ n.delta_ms }}ms)
-                    </el-tag>
-                  </div>
-                  <div class="traj-line hint">命中 {{ n.hit_count ?? 1 }} 次 · {{ n.class_name || 'person' }}</div>
-                </div>
-              </div>
-            </el-timeline-item>
-          </el-timeline>
-        </template>
-      </el-tab-pane>
-    </el-tabs>
-
-    <!-- ════ 结果栅格 (共用; 跨镜轨迹 tab 独立时间轴呈现, 不复用) ════ -->
-    <template v-if="items.length && activeTab !== 'trajectory'">
-      <el-divider content-position="left">
-        检索结果 {{ items.length }} 条 ({{ resultModeText }})
-      </el-divider>
-      <el-row :gutter="12">
-        <el-col v-for="(it, idx) in items" :key="idx" :xs="12" :sm="8" :md="6" :lg="4">
-          <el-card shadow="hover" class="result-card" @click="openDetail(it)">
-            <el-image
-              v-if="thumbOf(it)"
-              :src="thumbOf(it)"
-              fit="cover"
-              class="thumb"
-            >
-              <template #error><div class="thumb-fallback">无快照</div></template>
-            </el-image>
-            <div v-else class="thumb thumb-fallback">无快照</div>
-            <div class="meta">
-              <div class="sim">
-                <span>相似度</span>
-                <el-progress
-                  :percentage="Math.round(((it.similarity ?? it.score ?? it.face_similarity ?? 0) as number) * 100)"
-                  :stroke-width="8"
+            <el-form-item v-if="hybridForm.mode !== 'attr'" label="人脸向量">
+                <el-input
+                v-model="hybridForm.embeddingText"
+                type="textarea"
+                :rows="3"
+                placeholder="512 维向量, 逗号/空格分隔 (face/hybrid 模式必填)"
                 />
-              </div>
-              <div class="line">通道: {{ it.channel_id_str || it.channel_id || '—' }}</div>
-              <div class="line">时间: {{ formatTs(it.timestamp) }}</div>
-              <div class="line id">{{ it.image_id || it.alarm_id || it.person_id || '—' }}</div>
-            </div>
-          </el-card>
-        </el-col>
-      </el-row>
-    </template>
-    <el-empty v-else-if="searched && !loading && !towerUnavailable && activeTab !== 'trajectory'" description="无匹配结果" />
+            </el-form-item>
 
+            <el-form-item v-if="hybridForm.mode !== 'face'" label="attr 条件">
+                <div v-for="(c, i) in hybridForm.conditions" :key="i" class="cond-row">
+                <el-select v-model="c.key" filterable placeholder="属性 key (白名单)" class="cond-key">
+                    <el-option v-for="o in attributeKeyOptions()" :key="o.value" :label="o.label" :value="o.value" />
+                </el-select>
+                <el-select v-model="c.op" class="cond-op">
+                    <el-option v-for="op in opsForKey(c.key)" :key="op" :label="op" :value="op" />
+                </el-select>
+                <el-input-number v-model="c.value" :precision="3" :step="0.1" class="cond-value" />
+                <el-button text type="danger" @click="hybridForm.conditions.splice(i, 1)">删除</el-button>
+                </div>
+                <el-button size="small" @click="addCondition">+ 添加条件</el-button>
+                <div class="hint">key 白名单与算子契约来自 docs/attribute-key-contract.md (P4-B/P4-D)</div>
+            </el-form-item>
+
+            <el-form-item label="通道">
+                <el-input v-model="hybridForm.channel_id" placeholder="留空 = 全部通道" style="width: 240px" />
+            </el-form-item>
+            <el-form-item label="时间范围">
+                <el-date-picker
+                v-model="hybridForm.timeRange"
+                type="datetimerange"
+                value-format="x"
+                start-placeholder="开始"
+                end-placeholder="结束"
+                />
+            </el-form-item>
+            <el-form-item v-if="hybridForm.mode === 'hybrid'" label="关联窗口(ms)">
+                <el-input-number v-model="hybridForm.window_ms" :min="1000" :step="10000" />
+            </el-form-item>
+            <el-form-item label="Top-K / Limit">
+                <el-input-number v-model="hybridForm.top_k" :min="1" :max="50" />
+                <el-input-number v-model="hybridForm.limit" :min="1" :max="200" class="ml" />
+            </el-form-item>
+            <el-form-item>
+                <el-button type="primary" :loading="loading" @click="runHybrid">检索</el-button>
+            </el-form-item>
+            </el-form>
+        </el-tab-pane>
+
+        <!-- ════ Tab 2: 以文搜图 ════ -->
+        <el-tab-pane label="以文搜图" name="nl">
+            <el-form label-width="110px" class="query-form">
+            <el-form-item label="自然语言">
+                <el-input v-model="nlForm.nl" placeholder="例: 昨天的火情 / 穿红色衣服的人在跑" @keyup.enter="runNL" />
+            </el-form-item>
+            <!-- [校园二期增强] 时间窗: 走后端 searchWithFilter 窗口裁剪 (start_ms/end_ms) -->
+            <el-form-item label="时间范围">
+                <el-radio-group v-model="nlForm.timeRange" @change="onNlTimeRangeChange">
+                <el-radio-button value="all">全部</el-radio-button>
+                <el-radio-button value="1h">近 1 小时</el-radio-button>
+                <el-radio-button value="24h">近 24 小时</el-radio-button>
+                <el-radio-button value="7d">近 7 天</el-radio-button>
+                <el-radio-button v-if="nlForm.startMs || nlForm.endMs" value="custom">自定义窗</el-radio-button>
+                </el-radio-group>
+                <span v-if="nlForm.timeRange === 'custom'" class="hint" style="margin-left: 10px">
+                {{ formatTs(nlForm.startMs) }} ~ {{ formatTs(nlForm.endMs) }}
+                </span>
+            </el-form-item>
+            <el-form-item label="Top-K">
+                <el-input-number v-model="nlForm.top_k" :min="1" :max="100" />
+            </el-form-item>
+            <el-form-item>
+                <el-button type="primary" :loading="loading" @click="runNL">搜索</el-button>
+            </el-form-item>
+            </el-form>
+        </el-tab-pane>
+
+        <!-- ════ Tab 3: 以图搜图 [P0-A] ════ -->
+        <el-tab-pane label="以图搜图" name="image">
+            <el-form label-width="110px" class="query-form">
+            <el-form-item label="查询快照">
+                <el-upload
+                :auto-upload="false"
+                :show-file-list="false"
+                accept="image/jpeg,image/png"
+                :on-change="onFilePicked"
+                >
+                <el-button>选择图片</el-button>
+                </el-upload>
+                <el-image
+                v-if="imageForm.previewUrl"
+                :src="imageForm.previewUrl"
+                fit="contain"
+                class="preview"
+                />
+            </el-form-item>
+            <el-form-item label="相似度阈值">
+                <el-slider v-model="imageForm.min_similarity" :min="0" :max="1" :step="0.05" style="width: 280px" show-input />
+            </el-form-item>
+            <el-form-item label="通道">
+                <el-input v-model="imageForm.channel_id" placeholder="留空 = 全部通道" style="width: 240px" />
+            </el-form-item>
+            <el-form-item label="时间范围">
+                <el-date-picker
+                v-model="imageForm.timeRange"
+                type="datetimerange"
+                value-format="x"
+                start-placeholder="开始"
+                end-placeholder="结束"
+                />
+            </el-form-item>
+            <el-form-item label="Top-K">
+                <el-input-number v-model="imageForm.top_k" :min="1" :max="100" />
+            </el-form-item>
+            <el-form-item>
+                <el-button type="primary" :loading="loading" :disabled="!imageForm.base64" @click="runByImage">以图搜图</el-button>
+            </el-form-item>
+            </el-form>
+
+            <!-- [P0-A] 501: 图像塔未就绪 → 显式激活指引 (不伪装空结果) -->
+            <el-alert
+            v-if="towerUnavailable"
+            type="warning"
+            :closable="false"
+            class="tower-alert"
+            >
+            <template #title>图像塔未就绪 ({{ towerUnavailable.reason }}) — 以图搜图暂不可用</template>
+            <div>{{ towerUnavailable.hint }}</div>
+            <div class="hint">期望模型文件: {{ towerUnavailable.bmodel_expected }}</div>
+            <div class="hint">配置项: 环境变量 SHIELD_SOPHON_BMODEL_BASE (TPU-MLIR 转换产物, 见 P1-A 批次)</div>
+            </el-alert>
+        </el-tab-pane>
+
+        <!-- ════ Tab 4: 跨镜轨迹 [校园二期增强 2026-08-30] ════ -->
+        <el-tab-pane label="跨镜轨迹" name="trajectory">
+            <el-form label-width="110px" class="query-form">
+            <el-form-item label="Global ID">
+                <el-input-number v-model="trajForm.global_id" :min="0" :step="1" placeholder="0 = 不使用" style="width: 220px" />
+                <span class="hint" style="margin-left: 10px">与下方 通道+轨迹 ID 二选一</span>
+            </el-form-item>
+            <el-form-item label="通道 / 轨迹 ID">
+                <el-input-number v-model="trajForm.camera_id" :min="0" :controls="false" placeholder="camera_id" style="width: 160px" />
+                <el-input-number v-model="trajForm.track_id" :min="0" :controls="false" placeholder="track_id" style="width: 160px" class="ml" />
+            </el-form-item>
+            <el-form-item label="关联窗口(ms)">
+                <el-input-number v-model="trajForm.window_ms" :min="0" :step="1000" />
+                <span class="hint" style="margin-left: 10px">ReID 节点与告警的时空关联窗口</span>
+            </el-form-item>
+            <el-form-item>
+                <el-button type="primary" :loading="trajLoading" @click="runTrajectory">查询轨迹</el-button>
+            </el-form-item>
+            </el-form>
+
+            <el-alert type="info" :closable="false" class="tower-alert" title="轨迹数据口径 (诚实降级)">
+            ReID 特征库为内存态 LRU (默认回溯窗口约 5 分钟, 重启即失);
+            轨迹仅覆盖最近回溯窗口内的跨镜出现。历史事件请用「以文搜图」。
+            </el-alert>
+
+            <!-- 轨迹结果: 时间轴节点 (ts 升序) -->
+            <template v-if="trajResult">
+            <el-divider content-position="left">
+                轨迹 {{ trajResult.total }} 节点 · 跨 {{ trajResult.channel_count }} 通道 · global_id={{ trajResult.global_id }}
+            </el-divider>
+            <el-empty
+                v-if="!trajResult.total"
+                :description="trajEmptyText"
+            />
+            <el-timeline v-else class="traj-timeline">
+                <el-timeline-item
+                v-for="(n, i) in trajResult.nodes"
+                :key="i"
+                :timestamp="formatTs(n.ts_ms)"
+                :type="n.alarm_id ? 'danger' : 'primary'"
+                >
+                <div class="traj-node">
+                    <el-image
+                    v-if="n.snapshot_path"
+                    :src="n.snapshot_path"
+                    fit="cover"
+                    class="traj-snap"
+                    :preview-src-list="[n.snapshot_path]"
+                    preview-teleported
+                    >
+                    <template #error><div class="traj-snap traj-snap-fallback">无快照</div></template>
+                    </el-image>
+                    <div v-else class="traj-snap traj-snap-fallback">无快照</div>
+                    <div class="traj-meta">
+                    <div class="traj-ch">{{ n.channel_name || n.channel_id_str || `camera ${n.camera_id}` }}</div>
+                    <div class="traj-line">
+                        track {{ n.track_id }}
+                        <el-tag v-if="n.alarm_type" size="small" type="danger" class="ml">
+                        {{ n.alarm_type }} (Δ{{ n.delta_ms }}ms)
+                        </el-tag>
+                    </div>
+                    <div class="traj-line hint">命中 {{ n.hit_count ?? 1 }} 次 · {{ n.class_name || 'person' }}</div>
+                    </div>
+                </div>
+                </el-timeline-item>
+            </el-timeline>
+            </template>
+        </el-tab-pane>
+        </el-tabs>
+
+        <!-- ════ 结果栅格 (共用; 跨镜轨迹 tab 独立时间轴呈现, 不复用) ════ -->
+        <template v-if="items.length && activeTab !== 'trajectory'">
+        <el-divider content-position="left">
+            检索结果 {{ items.length }} 条 ({{ resultModeText }})
+        </el-divider>
+        <el-row :gutter="12">
+            <el-col v-for="(it, idx) in items" :key="idx" :xs="12" :sm="8" :md="6" :lg="4">
+            <el-card shadow="hover" class="result-card" @click="openDetail(it)">
+                <el-image
+                v-if="thumbOf(it)"
+                :src="thumbOf(it)"
+                fit="cover"
+                class="thumb"
+                >
+                <template #error><div class="thumb-fallback">无快照</div></template>
+                </el-image>
+                <div v-else class="thumb thumb-fallback">无快照</div>
+                <div class="meta">
+                <div class="sim">
+                    <span>相似度</span>
+                    <el-progress
+                    :percentage="Math.round(((it.similarity ?? it.score ?? it.face_similarity ?? 0) as number) * 100)"
+                    :stroke-width="8"
+                    />
+                </div>
+                <div class="line">通道: {{ it.channel_id_str || it.channel_id || '—' }}</div>
+                <div class="line">时间: {{ formatTs(it.timestamp) }}</div>
+                <div class="line id">{{ it.image_id || it.alarm_id || it.person_id || '—' }}</div>
+                </div>
+            </el-card>
+            </el-col>
+        </el-row>
+        </template>
+        <el-empty v-else-if="searched && !loading && !towerUnavailable && activeTab !== 'trajectory'" description="无匹配结果" />
+    </el-card>
     <!-- 详情弹窗 -->
     <el-dialog v-model="detailVisible" title="结果详情" width="560"
                :close-on-click-modal="false" :close-on-press-escape="false">
@@ -573,7 +574,6 @@ void valueControlKind
 </script>
 
 <style scoped>
-.retrieval-view { padding: 16px; }
 .page-header { margin-bottom: 12px; }
 .page-header h2 { margin: 0 0 4px; font-size: 20px; }
 .page-header .sub { color: var(--el-text-color-secondary); font-size: 12px; }

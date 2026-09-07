@@ -317,7 +317,7 @@ onMounted(async () => {
 </script>
 
 <style scoped>
-.screening-xray { padding: 16px; }
+/*.screening-xray { padding: 16px; }*/
 .compliance-alert { margin-bottom: 16px; }
 .roadmap-card { margin-bottom: 16px; }
 .card-header { display: flex; justify-content: space-between; align-items: center; }

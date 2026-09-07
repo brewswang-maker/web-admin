@@ -4,7 +4,7 @@
     <el-header class="header">
       <button class="logo" type="button" aria-label="ShieldAI 首页" @click="router.push('/situation')">
         <img :src="logoUrl" alt="ShieldAI" height="48" />
-        <span class="logo-text">v7.0</span>
+        <span class="logo-text">v1.0</span>
       </button>
 
       <div class="header-left">
@@ -1216,16 +1216,16 @@ function handleUserCommand(command: string) {
 }
 
 .menu-badge {
+  display: inline-flex;
+  align-items: center;
   margin-left: 8px;
   vertical-align: middle;
 }
 
 .menu-badge :deep(.el-badge__content) {
   font-size: 10px;
+  position: static;
   transform: none;
-  position: relative;
-  top: auto;
-  right: auto;
 }
 
 /* 折叠按钮 */
@@ -1645,7 +1645,7 @@ function handleUserCommand(command: string) {
   flex-direction: column;
   min-height: 0;
   position: relative;
-  padding: 20px 24px;
+  padding: 20px 14px;
 }
 
 /* ── 页面过渡动画 ── */

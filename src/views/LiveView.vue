@@ -2672,7 +2672,7 @@ onUnmounted(() => {
   min-height: 0;
   flex: 1;
   align-items: stretch;
-  margin:-16px -20px !important;
+  margin:0 0 !important;
 
 }
 .live-main-column,
@@ -2727,12 +2727,12 @@ onUnmounted(() => {
 
 /* 视频网格 */
 .video-grid { display: grid; min-height: 0; flex: 1; gap: 2px; background: #000; }
-.grid-1 { grid-template-columns: 1fr; }
-.grid-4 { grid-template-columns: 1fr 1fr; }
-.grid-9 { grid-template-columns: 1fr 1fr 1fr; }
-.grid-16 { grid-template-columns: 1fr 1fr 1fr 1fr; }
+.grid-1 { grid-template-columns: 1fr; grid-template-rows: 1fr; }
+.grid-4 { grid-template-columns: repeat(2, 1fr); grid-template-rows: repeat(2, minmax(0, 1fr)); }
+.grid-9 { grid-template-columns: repeat(3, 1fr); grid-template-rows: repeat(3, minmax(0, 1fr)); }
+.grid-16 { grid-template-columns: repeat(4, 1fr); grid-template-rows: repeat(4, minmax(0, 1fr)); }
 
-.video-cell { position: relative; background: #111; cursor: pointer; overflow: hidden; border: 2px solid transparent; transition: border-color 0.2s; min-height: 120px; }
+.video-cell { position: relative; min-width: 0; min-height: 0; background: #111; cursor: pointer; overflow: hidden; border: 2px solid transparent; transition: border-color 0.2s; }
 .video-cell.active { border-color: #1A73E8; }
 .video-cell.has-stream:hover .video-bottom-bar { opacity: 1; transform: translateY(0); }
 
@@ -2908,8 +2908,8 @@ onUnmounted(() => {
 .ptz-advanced > span { width: 32px; flex-shrink: 0; }
 .ptz-3d-hint { display: flex; align-items: center; gap: 4px; width: 100%; font-size: 11px; color: #4A4D58; margin-top: 4px; }
 /* 25/36 宫格大屏模式 */
-.video-grid.grid-25 { display: grid; grid-template-columns: repeat(5, 1fr); grid-template-rows: repeat(5, 1fr); }
-.video-grid.grid-36 { display: grid; grid-template-columns: repeat(6, 1fr); grid-template-rows: repeat(6, 1fr); }
+.video-grid.grid-25 { display: grid; grid-template-columns: repeat(5, 1fr); grid-template-rows: repeat(5, minmax(0, 1fr)); }
+.video-grid.grid-36 { display: grid; grid-template-columns: repeat(6, 1fr); grid-template-rows: repeat(6, minmax(0, 1fr)); }
 
 .live-page > .el-row > .el-col:nth-child(2) :deep(.el-card) {
   background: #fff;

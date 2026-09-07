@@ -185,7 +185,7 @@ onMounted(async () => {
 </script>
 
 <style scoped>
-.screening-channels { padding: 16px; }
+/*.screening-channels { padding: 16px; }*/
 .filter-card { margin-bottom: 16px; }
 .filter-bar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .bar-label { color: #909399; font-size: 13px; flex-shrink: 0; }
