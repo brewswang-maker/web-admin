@@ -260,6 +260,9 @@ import type { EventTypeMetadataItem } from '@/api/eventTypes'
 import { normalizeAlarmCore, type AlarmEvent, type AlarmLevel, type AlarmStatus } from '@/types/alarm'
 import { useAlarmRowActions } from '@/composables/useAlarmRowActions'
 import { ArrowDown } from '@element-plus/icons-vue'
+import { useRealtimeAlarmEvents } from '@/composables/useRealtimeAlarmEvents'
+// [FIX realtime-push 2026-09-06] 场景页实时刷新: WS 告警到达去抖静默重拉 (无 loading 遮罩闪烁)
+useRealtimeAlarmEvents(() => loadAll(true))
 
 const { openAlarmPopup, handleAlarmRow } = useAlarmRowActions()
 

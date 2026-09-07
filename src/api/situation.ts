@@ -60,6 +60,8 @@ export interface SituationAlarmStream {
   snapshotUrl?: string
   /** 兼容 snake_case 字段 (部分场景 WS 推送仍可能用 snake) */
   snapshot_url?: string
+  /** [DEV-GROUP 2026-09-07] 告警源设备 ID (态势屏"所属分组"列反查 device_ids 用) */
+  device_id?: string
   /** 后端 metadata 透传: 含 snapshot_base64/snapshot_format 用于前端兜底 */
   metadata?: Record<string, unknown>
 }

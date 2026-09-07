@@ -117,10 +117,13 @@ import { Refresh } from '@element-plus/icons-vue'
 import { alarmApi } from '@/api/alarm'
 import eventTypesApi from '@/api/eventTypes'
 import type { EventTypeMetadataItem } from '@/api/eventTypes'
-import type { AlarmEvent, AlarmStatus } from '@/types/alarm'
+import { normalizeAlarmCore, type AlarmEvent, type AlarmStatus } from '@/types/alarm'
 import { useAlarmRowActions } from '@/composables/useAlarmRowActions'
 import { ArrowDown } from '@element-plus/icons-vue'
-import { LARGE_EVENT_SCENES, NEW_LARGE_EVENT_TYPES } from '@/types/largeEvent'
+import { LARGE_EVENT_SCENES } from '@/types/largeEvent'
+import { useRealtimeAlarmEvents } from '@/composables/useRealtimeAlarmEvents'
+// [FIX realtime-push 2026-09-06] 场景页实时刷新: WS 告警到达去抖重拉 (零新增连接)
+useRealtimeAlarmEvents(() => fetchEvents())
 
 const sceneOptions = [
   { tag: 'large_event_stadium', label: '体育场馆' },
@@ -194,10 +197,13 @@ function levelText(row: AlarmEvent) {
 }
 
 const filteredEvents = computed(() => {
+  // [SSOT 2026-09-07] 数据源已带 scene 过滤 (fetchEvents scene=四场景并集/选中场景,
+  //   后端 isEventInScene → SQL IN, 与 scene_tags 登记自动同步) — 未选类型 chip 时
+  //   显示场景全部事件 (原 fallback 仅 NEW_LARGE_EVENT_TYPES 9 键, 四场景其余
+  //   15~20 键事件被隐藏, “场景列表缺事件”根因之一)。
   const keys = activeTypeKeys.value
-  const fallback = new Set<string>([...NEW_LARGE_EVENT_TYPES])
-  const eff = keys.size > 0 ? keys : fallback
-  return events.value.filter(a => eff.has(String(a.type)))
+  if (keys.size === 0) return events.value
+  return events.value.filter(a => keys.has(String(a.type)))
 })
 
 function onSelectType(alarmType: string) {
@@ -245,9 +251,16 @@ async function fetchTypes() {
 async function fetchEvents() {
   loading.value = true
   try {
-    const res = await alarmApi.getList({ page: 1, pageSize: 500 })
+    // [SSOT 2026-09-07] 场景过滤下沉服务端: scene=选中场景或四场景并集 (逗号多值),
+    //   与 scene_tags 登记自动同步 — 后端补 tag 前端零改动。
+    const scene = sceneTag.value
+      || sceneOptions.map(s => s.tag).join(',')
+    const res = await alarmApi.getList({ page: 1, pageSize: 500, scene })
+    // [FIX scene-empty 2026-09-07] 裸 items 字段是 alarm_type/alarm_id/timestamp
+    //   (无 type/createdAt), 页面模板与 String(a.type) 过滤全读 undefined → 恒 0 条;
+    //   统一走 normalizeAlarmCore (SSOT, 与周界/安检/加油站同范式)。
     events.value =
-      (res.data?.data as unknown as { items?: AlarmEvent[] })?.items ?? []
+      ((res.data?.data as unknown as { items?: unknown[] })?.items ?? []).map(e => normalizeAlarmCore(e))
   } catch {
     events.value = []
   } finally {
@@ -259,6 +272,8 @@ function onSceneChange() {
   selectedType.value = ''
   page.value = 1
   fetchTypes()
+  // [SSOT 2026-09-07] 场景切换同时重拉数据 (原只重拉类型 chips, 数据不随场景变)
+  fetchEvents()
 }
 
 function refreshAll() {

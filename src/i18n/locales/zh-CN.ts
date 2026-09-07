@@ -1340,6 +1340,7 @@ const zhCN = {
     colSnapshot: '抓拍缩略图',
     colGroup: '所属分组',
     colType: '告警类型',
+    colDevice: '设备名称',
     colTime: '告警时间',
     colStatus: '处理状态',
     colAction: '操作',

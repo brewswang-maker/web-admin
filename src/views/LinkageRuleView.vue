@@ -437,8 +437,8 @@
                 </el-form-item>
                 <el-form-item label="关联通道(快照背景)" label-position="top" class="cond-form-item">
                   <el-select v-model="form.conditions.region.config.channelId" placeholder="选择通道加载快照" clearable style="width: 100%" @change="loadChannelSnapshot">
-                    <el-option v-for="ch in channelOptionsDynamic" :key="ch.value" :label="ch.label" :value="ch.value" />
-                    <template #empty><span class="text-secondary">暂无通道</span></template>
+                    <el-option v-for="ch in cameraChannelOptions" :key="ch.value" :label="ch.label" :value="ch.value" />
+                    <template #empty><span class="text-secondary">暂无摄像头通道</span></template>
                   </el-select>
                 </el-form-item>
                 <el-form-item label="ROI绘制区域" label-position="top" class="cond-form-item">
@@ -453,6 +453,16 @@
                     :canvas-width="440" :canvas-height="248"
                     :types="['detection_zone', 'exclusion_zone', 'rectangle', 'tripwire', 'point']"
                   />
+                  <!-- [ROI-GAP 2026-09-06] 多区域组合语义 (引擎 matchRoiShapes v2):
+                       并集=任一检测区命中即通过 / 交集=全部命中才通过;
+                       排除区恒为拦截语义 (命中即拦) 不参与组合计数。 -->
+                  <div v-if="activeAreaRoiCount >= 2" style="display:flex; align-items:center; gap:8px; margin-top:6px; flex-wrap:wrap">
+                    <span class="cond-sub-label">多区域组合</span>
+                    <el-radio-group v-model="form.conditions.region.config.roiCombine" size="small">
+                      <el-radio-button value="union">并集 (任一命中)</el-radio-button>
+                      <el-radio-button value="intersection">交集 (全部命中)</el-radio-button>
+                    </el-radio-group>
+                  </div>
                 </el-form-item>
                 <!-- [FIX 2026-08-27 P0-PERIMETER v3] 越界 (Tripwire) 联动 -->
                 <el-form-item label="越界绊线" label-position="top" class="cond-form-item">
@@ -1421,11 +1431,25 @@ const boundChannelDraft = computed<string[]>({
   get: () => form.conditions.region.config.boundChannelIds || [],
   set: v => { form.conditions.region.config.boundChannelIds = v },
 })
-/// 选完通道联动预览: 无快照背景时取第一个绑定通道加载 ROI 背景
+// [FIX cam-ch 2026-09-07] 快照背景通道仅列摄像头 (IPCamera) 设备的通道 —
+//   ROI 画板背景需拉实时快照, NVR/DVR/EdgeBox 通道无快照语义;
+//   绑定通道/事件源等多选不受限 (NVR 子通道仍是合法告警源)。
+const cameraChannelOptions = computed(() =>
+  channelOptionsDynamic.value.filter(ch => !ch.deviceType || ch.deviceType === 'IPCamera'))
+/// 选完通道联动预览: 无快照背景时取第一个摄像头通道加载 ROI 背景
+/// [FIX cam-ch 2026-09-07] 背景快照仅摄像头 (IPCamera) 通道有快照语义 —
+///   非盲取 ids[0] (绑定通道允许勾选 NVR/DVR 子通道, 但它们不能做背景)
+function firstCameraChannel(ids: string[]): string {
+  const camSet = new Set(cameraChannelOptions.value.map(c => c.value))
+  return ids.find(id => camSet.has(id)) || ''
+}
 function onBoundChannelsChange(ids: string[]) {
   if (ids.length > 0 && !form.conditions.region.config.channelId) {
-    form.conditions.region.config.channelId = ids[0]
-    loadChannelSnapshot(ids[0])
+    const firstCam = firstCameraChannel(ids)
+    if (firstCam) {
+      form.conditions.region.config.channelId = firstCam
+      loadChannelSnapshot(firstCam)
+    }
   }
 }
 
@@ -1450,6 +1474,16 @@ const roiOptions = ['全部区域', '周界线A', '绊线B', '区域C']
 // 改为解析 url 后预加载校验 (nginx 已 alias /snapshots/ → /data/shield/snapshots/);
 // ZLM getSnap 偶发产出 0 字节 JPEG (~3%), 加载失败自动重试一次。
 const roiBackgroundUrl = ref('')
+
+// [ROI-GAP 2026-09-06] 区域类形状 (引擎 matchRoiShapes pointInPolygon 判定,
+//   组合语义作用域): 绊线走 tripwire_id 镜像链路, 关注点仅持久化回显不参与
+//   空间判定 (契约文档化, 对标海康检测区+排除区组合 / DeepStream ROI-Filter)。
+//   提为组件级常量: combine 选择器显隐 + handleSave 兼容字段同源引用。
+const AREA_ROI_TYPES = ['detection_zone', 'exclusion_zone', 'rectangle']
+// 激活区域类形状数 ≥2 时展示「并集/交集」组合选择器 (单形状无组合语义)
+const activeAreaRoiCount = computed(() =>
+  form.conditions.region.config.roiPolygon
+    .filter(r => r.is_active && AREA_ROI_TYPES.includes(r.roi_type)).length)
 async function fetchSnapshotUrl(channelId: string): Promise<string> {
   const res = await fetch(`/api/v1/channels/${channelId}/snapshot`, { credentials: 'include' })
   if (!res.ok) return ''
@@ -1811,7 +1845,7 @@ const formRules = reactive<FormRules>({
 function defaultConditions() {
   return {
     time: { enabled: false, config: { startTime: '08:00', endTime: '20:00', weekdays: [1, 2, 3, 4, 5], monthdays: [] as number[] } },
-    region: { enabled: false, config: { location: '', roi: '', group: '', roiPolygon: [] as RoiData[], channelId: '', tripwireId: '', direction: '', boundChannelIds: [] as string[] } },
+    region: { enabled: false, config: { location: '', roi: '', group: '', roiPolygon: [] as RoiData[], channelId: '', tripwireId: '', direction: '', boundChannelIds: [] as string[], roiCombine: 'union' as 'union' | 'intersection' } },
     location: { enabled: false, config: { point: '' } },
     eventType: { enabled: true, config: { types: [] as string[], minSeverity: 3, minConfidence: 50 } },
     eventSource: { enabled: false, config: { channels: [] as string[] } },
@@ -1965,8 +1999,14 @@ function applyTemplateToForm(t: any) {
     }
     if (tsc.roi_shapes_json) {
       try {
-        const shapes = JSON.parse(tsc.roi_shapes_json) as Array<{ shape: string; name?: string; active?: boolean; direction?: string; points: number[] }>
-        if (Array.isArray(shapes) && shapes.length) {
+        // [ROI-GAP 2026-09-06] v2 形态 {combine, shapes} 兼容 (同编辑回显链)
+        const parsedTpl = JSON.parse(tsc.roi_shapes_json)
+        const shapes = (Array.isArray(parsedTpl) ? parsedTpl
+          : Array.isArray(parsedTpl?.shapes) ? parsedTpl.shapes : []) as Array<{ shape: string; name?: string; active?: boolean; direction?: string; points: number[] }>
+        if (!Array.isArray(parsedTpl) && typeof parsedTpl?.combine === 'string') {
+          form.conditions.region.config.roiCombine = parsedTpl.combine === 'intersection' ? 'intersection' : 'union'
+        }
+        if (shapes.length) {
           form.conditions.region.config.roiPolygon = shapes.filter(s => s && Array.isArray(s.points)).map((s, i) => ({
             roi_id: `roi_tpl_${Date.now()}_${i}`,
             roi_name: s.name || `区域 ${i + 1}`,
@@ -2389,12 +2429,19 @@ function resetEditorState(rule: LinkageRule | null) {
     // [FIX 2026-09-02] 画板形状回显: roi_shapes_json (归一化 [0,1]) → RoiData[] (1920×1080);
     //   修复编辑重开时画布恒空 (原回填写死 []); 含绊线方向/矩形角点/点坐标完整恢复。
     //   无 roi_shapes_json 的老规则维持空画板 (原行为, roi_polygon 不可反推形状类型)。
-    const roiShapesFromJson = (() => {
+    //   [ROI-GAP 2026-09-06] v2 形态 {combine, shapes} 兼容: shapes 回填画板,
+    //   combine 回填组合选择器 (老 v1 数组默认 union)。
+    const roiShapesEcho = (() => {
+      const empty = { list: [] as RoiData[], combine: 'union' as 'union' | 'intersection' }
       try {
         const raw = (sc as any).roi_shapes_json
-        if (!raw) return [] as RoiData[]
-        const arr = JSON.parse(raw) as Array<{ shape: string; name?: string; active?: boolean; direction?: string; points: number[] }>
-        return arr.filter(s => s && Array.isArray(s.points)).map((s, i) => ({
+        if (!raw) return empty
+        const parsed = JSON.parse(raw)
+        const arr = (Array.isArray(parsed) ? parsed
+          : Array.isArray(parsed?.shapes) ? parsed.shapes : []) as Array<{ shape: string; name?: string; active?: boolean; direction?: string; points: number[] }>
+        const combine: 'union' | 'intersection' =
+          (!Array.isArray(parsed) && parsed?.combine === 'intersection') ? 'intersection' : 'union'
+        const list = arr.filter(s => s && Array.isArray(s.points)).map((s, i) => ({
           roi_id: `roi_echo_${Date.now()}_${i}`,
           roi_name: s.name || `区域 ${i + 1}`,
           roi_type: s.shape as RoiData['roi_type'],
@@ -2402,7 +2449,8 @@ function resetEditorState(rule: LinkageRule | null) {
           is_active: s.active !== false,
           direction: (s.direction || undefined) as RoiData['direction'],
         }))
-      } catch { return [] as RoiData[] }
+        return { list, combine }
+      } catch { return empty }
     })()
     // [FIX 2026-09-04 老规则通道反解] 记录编辑源规则 (深链竞态 watch 补偿用); bound_channel_ids
     //   缺失 (vp9 前存量规则) 时从 source_cond.channel_ids 哈希反解字符串形态 (绑定多选/快照通道回填来源)
@@ -2419,7 +2467,7 @@ function resetEditorState(rule: LinkageRule | null) {
       // [FIX 2026-08-27 P0-PERIMETER v3] tripwire + direction 从后端读出
       // [vp9 2026-09-01] bound_channel_ids 显式绑定通道回填 (字符串形态直存)
       // [FIX 2026-09-02] roiPolygon 从 roi_shapes_json 完整回显 (多形状/方向/角点)
-      config: { location: ui?.region?.location ?? (sc.location_id || ''), roi: sc.region_id || '', group: sc.device_group_id || '', roiPolygon: roiShapesFromJson, channelId: ui?.region?.channelId || boundResolved[0] || '', tripwireId: sc.tripwire_id || '', direction: sc.direction || '', boundChannelIds: boundResolved },
+      config: { location: ui?.region?.location ?? (sc.location_id || ''), roi: sc.region_id || '', group: sc.device_group_id || '', roiPolygon: roiShapesEcho.list, channelId: ui?.region?.channelId || firstCameraChannel(boundResolved), tripwireId: sc.tripwire_id || '', direction: sc.direction || '', boundChannelIds: boundResolved, roiCombine: roiShapesEcho.combine },
     }
     form.conditions.location = {
       // [COND-PERSIST] enabled/point 优先 ui 态 (解决与 region.location 混写折叠)
@@ -2516,8 +2564,12 @@ watch(channelOptionsDynamic, (opts) => {
     if (resolved.length > 0) {
       cfg.boundChannelIds = resolved
       if (!cfg.channelId) {
-        cfg.channelId = resolved[0]
-        loadChannelSnapshot(resolved[0])
+        // [FIX cam-ch 2026-09-07] 背景快照优先摄像头通道 (同编辑回填口径)
+        const firstCam = firstCameraChannel(resolved)
+        if (firstCam) {
+          cfg.channelId = firstCam
+          loadChannelSnapshot(firstCam)
+        }
       }
     }
   }
@@ -2743,12 +2795,19 @@ async function handleSave(): Promise<boolean> {
       }
       return out
     }
-    const buildRoiShapesJson = (list: RoiData[]) => list.length === 0 ? '' : JSON.stringify(list.map(r => ({
-      shape: r.roi_type, name: r.roi_name, active: r.is_active,
-      direction: r.direction || '', points: buildNormPoints(r.polygon),
-    })))
-    // 区域类形状 (引擎 pointInPolygon 判定); 绊线走 tripwire_id 镜像链路, 关注点不做空间过滤
-    const AREA_ROI_TYPES = ['detection_zone', 'exclusion_zone', 'rectangle']
+    // [ROI-GAP 2026-09-06] v2 形态: {combine:'union'|'intersection', shapes:[...]} —
+    //   引擎 matchRoiShapes v2 解析 (组合语义可配, exclusion_zone 恒拦截);
+    //   老数组 v1 形态仍被引擎/useAlarmShapes 兼容读取 (默认并集), 存量规则
+    //   行为不变。
+    const buildRoiShapesJson = (list: RoiData[]) => list.length === 0 ? '' : JSON.stringify({
+      combine: rc.config.roiCombine === 'intersection' ? 'intersection' : 'union',
+      shapes: list.map(r => ({
+        shape: r.roi_type, name: r.roi_name, active: r.is_active,
+        direction: r.direction || '', points: buildNormPoints(r.polygon),
+      })),
+    })
+    // 区域类形状 (组件级 AREA_ROI_TYPES: 引擎 pointInPolygon 判定);
+    // 绊线走 tripwire_id 镜像链路, 关注点不做空间过滤
     const firstActiveArea = rc.config.roiPolygon.find(r => r.is_active && AREA_ROI_TYPES.includes(r.roi_type))
     const spatial_cond = (rc.enabled || lc.enabled) ? {
       region_id: cleanLocation(rc.config.roi || ''),

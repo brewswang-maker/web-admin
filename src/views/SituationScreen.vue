@@ -228,6 +228,7 @@
                 :alarm-channels="floorAlarmChannels"
                 :channel-labels="floorChannelLabels"
                 :channel-online="floorChannelOnline"
+                :highlight-channel-id="floorHighlight"
                 @device-click="onFloorDeviceClick"
               />
               <div v-else class="floor-empty">
@@ -256,6 +257,7 @@
               <span>{{ t('situationScreen.colSnapshot') }}</span>
               <span>{{ t('situationScreen.colGroup') }}</span>
               <span>{{ t('situationScreen.colType') }}</span>
+              <span>{{ t('situationScreen.colDevice') }}</span>
               <span>{{ t('situationScreen.colTime') }}</span>
               <span>{{ t('situationScreen.colStatus') }}</span>
               <span>{{ t('situationScreen.colAction') }}</span>
@@ -286,8 +288,15 @@
                       <i class="iconfont1 icon1-wushuju" aria-hidden="true"></i>
                     </span>
                   </span>
-                  <span class="alarm-location" :title="alarm.location">{{ alarm.location }}</span>
-                  <span class="alarm-type" :title="alarm.type">{{ alarm.type }}</span>
+                  <!-- [DEV-GROUP 2026-09-07] "所属分组"列改真正的分组反查 (对齐
+                       AlarmsView P0-6 范式): 未分组显示 '-', 悬停 title 看设备名 -->
+                  <span class="alarm-location" :title="`${groupOfAlarm(alarm)} · ${alarm.location}`">{{ groupOfAlarm(alarm) }}</span>
+                  <!-- [FIX type-zh 2026-09-07] 告警类型英文 key → 中文 (canonical SSOT
+                       优先 + ALARM_TYPE_CN 本地兑底, 与 AlarmPopup alarmTypeLabel 同口径) -->
+                  <span class="alarm-type" :title="alarmTypeText(alarm)">{{ alarmTypeText(alarm) }}</span>
+                  <!-- [DEV-NAME-COL 2026-09-07] 设备名称列: 后端 deviceName 已经三级兑底
+                       (设备列表页口径), location 即设备名; 空时 '-' -->
+                  <span class="alarm-device" :title="alarm.location">{{ alarm.location || '-' }}</span>
                   <span class="alarm-time">{{ alarm.time }}</span>
                   <span class="alarm-status">
                     <el-tag :type="alarm.status === '已处置' ? 'success' : 'warning'" size="small" effect="dark">
@@ -427,6 +436,13 @@
       <video ref="previewVideoRef" muted autoplay playsinline style="width:100%;max-height:420px;background:#000;display:block" />
     </div>
   </el-dialog>
+
+  <!-- [FLOOR-MAP 2026-09-05 v5] 平面图设备详情弹窗 (实时预览/录像回放/历史告警; teleport body) -->
+  <DeviceDetailDialog
+    :binding="detailBinding"
+    :map-label="currentFloorMap ? floorMapLabel(currentFloorMap) : ''"
+    @close="onDeviceDetailClose"
+  />
 </template>
 
 <script setup lang="ts">
@@ -444,6 +460,11 @@ import { situationApi, type SituationOverview, type SituationAlarmStream, type S
 import { statsHttp, streamHttp } from '@/api/http'
 import { normalizeStreamUrl } from '@/utils/streamUrl'
 import { locationApi } from '@/api/location'
+// [DEV-GROUP 2026-09-07] "所属分组"列反查数据源 (与 AlarmsView 同款 deviceGroupApi)
+import { deviceGroupApi } from '@/api/deviceGroups'
+// [FIX type-zh 2026-09-07] 实时告警列表类型中文化: canonical SSOT + 本地兑底
+import { ALARM_TYPE_CN } from '@/types/alarm'
+import { useEventTypeZh } from '@/composables/useEventTypeZh'
 import { sceneApi } from '@/api/scene'
 import { DEFAULT_BUILDINGS, STADIUM_SCENE_META } from '@/components/scene3d/constants/defaultSceneData'
 import type { Building3DNode, SceneMeta } from '@/components/scene3d/types/scene3d'
@@ -452,6 +473,8 @@ import { useWebSocket } from '@/composables/useWebSocket'
 import { openAlarmDetailById } from '@/composables/useAlarmPopup'
 // [FLOOR-MAP 2026-09-05 v2] 平面地图中央视图 (华为 IVS 多视图联动对标)
 import FloorMapCanvas from '@/components/map/FloorMapCanvas.vue'
+// [FLOOR-MAP 2026-09-05 v5] 设备详情弹窗 (点位点击 → 预览/录像/告警就地查看)
+import DeviceDetailDialog from '@/components/map/DeviceDetailDialog.vue'
 import { useFloorMap, channelIdVariants } from '@/composables/useFloorMap'
 import type { FloorMapWithCameras, CameraMapBinding } from '@/types/floorMap'
 import Scene3D from '@/components/Scene3D.vue'
@@ -510,8 +533,41 @@ interface Alarm {
   metadata?: Record<string, unknown>
   /** [FLOOR-MAP 2026-09-05 v2] 告警源通道 (平面图涟漪/色环联动; 后端缺省时为空 → 不联动) */
   channelId?: string
+  /** [DEV-GROUP 2026-09-07] 告警源设备 ID (分组反查 device_ids 用) */
+  deviceId?: string
 }
 const latestAlarms = ref<Alarm[]>([])
+
+// ── [DEV-GROUP 2026-09-07] "所属分组"列分组反查 (对齐 AlarmsView P0-6 范式) ──
+interface DeviceGroupItem { id: string; name: string; device_ids?: string[]; resolved_channel_ids?: string[] }
+const deviceGroups = ref<DeviceGroupItem[]>([])
+async function fetchDeviceGroups() {
+  try {
+    const r = await deviceGroupApi.listGroups()
+    const data = (r.data?.data ?? r.data) as { items?: DeviceGroupItem[] } | undefined
+    deviceGroups.value = data?.items ?? []
+  } catch { deviceGroups.value = [] } // 分组接口失败静默 (列显示 '-')
+}
+// ── [FIX type-zh 2026-09-07] 告警类型英文 key → 中文 (与 AlarmPopup 同口径) ──
+const { ensure: ensureEventTypes, zh: eventTypeZh } = useEventTypeZh()
+/** canonical SSOT (113 事件类型) 优先, ALARM_TYPE_CN 本地表兑底, 均未注册返回原文 */
+function alarmTypeText(a: Alarm): string {
+  const key = String(a.type || '')
+  if (!key) return '未知告警'
+  const viaCanonical = eventTypeZh(key)
+  if (viaCanonical && viaCanonical !== key) return viaCanonical
+  return ALARM_TYPE_CN[key] || key
+}
+
+/** 行归属判定: channelId 匹配 resolved_channel_ids / deviceId 剥 _chN 匹配 device_ids */
+function groupOfAlarm(a: Alarm): string {
+  const ch = String(a.channelId || '')
+  const dev = String(a.deviceId || '').replace(/_ch\d+$/, '')
+  const hit = deviceGroups.value.find(g =>
+    (!!ch && (g.resolved_channel_ids || []).includes(ch))
+    || (!!dev && (g.device_ids || []).includes(dev)))
+  return hit?.name || '-'
+}
 
 function goToAlarms() {
   router.push('/alarms')
@@ -755,13 +811,17 @@ watch(() => latestAlarms.value[0]?.channelId, async (ch) => {
   const target = pairs[0]?.map.id
   if (target && target !== currentFloorMapId.value) currentFloorMapId.value = target
 })
+// [FLOOR-MAP 2026-09-05 v5] 点位点击 → 设备详情弹窗 (实时预览/录像回放/历史告警) + 金色光环高亮
+//   (v2 行为「跳视频监控视图」升级为就地弹窗; 非视频设备同样可看详情与历史告警 — 华为 iVMS 点位详情对标)
+const detailBinding = ref<CameraMapBinding | null>(null)
+const floorHighlight = ref('')
 function onFloorDeviceClick(b: CameraMapBinding) {
-  if (b.device_type && b.device_type !== 'camera') {
-    ElMessage.info(`${b.label || b.channel_id} · 非视频设备`)
-    return
-  }
-  ElMessage.success(`已切换视频监控 · ${floorChannelLabels.value[b.channel_id] || b.channel_id}`)
-  setCenterView('video')
+  detailBinding.value = b
+  floorHighlight.value = b.channel_id
+}
+function onDeviceDetailClose() {
+  detailBinding.value = null
+  floorHighlight.value = ''
 }
 const slideDirection = ref<'slide-left' | 'slide-right'>('slide-left')
 
@@ -2210,6 +2270,8 @@ function toAlarm(s: SituationAlarmStream): Alarm {
     // [FLOOR-MAP 2026-09-05 v2] 通道双形态兼容 (平面图联动数据源)
     channelId: (s as { channelId?: string; channel_id?: string }).channelId
       || (s as { channel_id?: string }).channel_id || '',
+    // [DEV-GROUP 2026-09-07] 设备 ID 透传 (分组反查 device_ids 用)
+    deviceId: (s as { device_id?: string }).device_id || '',
   }
 }
 
@@ -2436,13 +2498,40 @@ function onSnapshotError(evt: Event) {
   }
 }
 
-/** WebSocket 推送新告警时更新列表 */
+/** WebSocket 推送新告警时更新列表
+ *  [FIX realtime-push 2026-09-06] 兼容 alarm.new 推送体: WS 顶层是
+ *    alarm_id / timestamp_ms / device_name / severity(int 1-5) /
+ *    snapshot_url (BoxService setWsPushFn 平铺, 无 id/time/level 字段),
+ *    原判 raw?.id 恒 falsy → 实时推送全部静默丢弃 (首页实时报警
+ *    列表不刷新的根因)。双形态归一后入表。 */
 function onAlarmPush(data: unknown) {
-  const raw = data as SituationAlarmStream
-  if (raw?.id) {
-    latestAlarms.value.unshift(toAlarm(raw))
-    if (latestAlarms.value.length > 20) latestAlarms.value.length = 20
+  const raw = data as Record<string, any>
+  if (!raw || typeof raw !== 'object') return
+  const id = raw.id || raw.alarm_id || raw.event_id
+  if (!id) return
+  const sevNum = Number(raw.severity)
+  const level: string = typeof raw.level === 'string' && raw.level
+    ? raw.level
+    : sevNum >= 1 && sevNum <= 5
+      ? (['low', 'low', 'medium', 'high', 'critical'] as const)[sevNum - 1]
+      : 'medium'
+  const time: string = raw.time || (raw.timestamp_ms
+    ? new Date(Number(raw.timestamp_ms)).toLocaleString('zh-CN', { hour12: false })
+    : new Date().toLocaleString('zh-CN', { hour12: false }))
+  const s: SituationAlarmStream & { channel_id?: string } = {
+    id: String(id),
+    level,
+    description: raw.description || raw.alarm_type || '未知告警',
+    deviceName: raw.deviceName || raw.device_name || raw.channel_id || '',
+    time,
+    snapshotUrl: raw.snapshotUrl || raw.snapshot_url,
+    snapshot_url: raw.snapshot_url,
+    metadata: raw.metadata,
+    channel_id: raw.channel_id ?? raw.channelId ?? '',
+    device_id: raw.device_id ?? raw.deviceId ?? '',
   }
+  latestAlarms.value.unshift(toAlarm(s))
+  if (latestAlarms.value.length > 20) latestAlarms.value.length = 20
 }
 
 function onFullscreenEsc(e: KeyboardEvent) {
@@ -2458,6 +2547,12 @@ onMounted(async () => {
 
   // 订阅实时告警推送
   unsubAlarm = subscribe('alarm', onAlarmPush)
+
+  // [FIX type-zh 2026-09-07] 事件类型 SSOT 预热 (模块级单例缓存, 静默失败)
+  ensureEventTypes()
+
+  // [DEV-GROUP 2026-09-07] 分组列表 ("所属分组"列反查; 静默失败)
+  fetchDeviceGroups()
 
   // [v8.6] 非阻塞: 并行加载各面板数据, 到达即渲染
   fetchSituationData()
@@ -2796,7 +2891,8 @@ onUnmounted(() => {
 
 .alarm-table-row {
   display: grid;
-  grid-template-columns: 54px 100px minmax(180px, 1.5fr) minmax(105px, 0.9fr) 150px 88px 70px;
+  /* [DEV-NAME-COL 2026-09-07] 7→8 列: 类型后新增设备名称; 分组收窄让位 */
+  grid-template-columns: 54px 100px minmax(90px, 0.8fr) minmax(90px, 0.9fr) minmax(140px, 1.2fr) 140px 88px 70px;
   align-items: center;
 }
 

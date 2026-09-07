@@ -48,6 +48,9 @@ export interface EventTypeOption {
 export interface ChannelOption {
   label: string
   value: string
+  // [FIX cam-ch 2026-09-07] 所属设备类型 (后端 deviceType, 空则默认 IPCamera 与后端口径一致);
+  //   快照背景等摄像头语义选择器按此过滤 (NVR/DVR/EdgeBox 通道无实时快照)
+  deviceType?: string
 }
 
 /** 位置选项（从设备数据提取） */
@@ -224,10 +227,12 @@ async function fetchChannelOptions(): Promise<ChannelOption[]> {
       const raw = res.data as any
       // 后端 GET /api/v1/channels 返回格式: { data: { channels: [...], total: N } }
       // 通道字段: channel_id (int32), device_id, name, source_url, ...
+      // [FIX cam-ch 2026-09-07] 透传 deviceType (后端空值默认 IPCamera, 与 RestApiHandlers 口径一致)
       const items: any[] = raw?.data?.channels ?? raw?.data?.items ?? raw?.data ?? raw?.items ?? []
       return items.map((ch: any) => ({
         label: ch.name || `通道 ${ch.channel_id ?? ch.channelNo ?? ''}`,
         value: String(ch.channel_id ?? ch.id ?? ''),
+        deviceType: ch.deviceType || 'IPCamera',
       }))
     } catch {
       return []

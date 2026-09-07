@@ -241,6 +241,9 @@ import type { ScenePack } from '@/types/largeEvent'
 import type { LinkageRule } from '@/api/linkage'
 import type { AlarmEvent } from '@/types/alarm'
 import type { FaceDatabaseStats, FacePassRecord } from '@/api/face'
+import { useRealtimeAlarmEvents } from '@/composables/useRealtimeAlarmEvents'
+// [FIX realtime-push 2026-09-06] 场景页实时刷新: WS 告警到达去抖重拉 (零新增连接)
+useRealtimeAlarmEvents(() => fetchEvents())
 
 const { t } = useI18n()
 const router = useRouter()

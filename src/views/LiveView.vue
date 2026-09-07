@@ -101,12 +101,16 @@
               <div v-if="slot.playing && adaptiveBitrate.qualityLevels[idx]" class="quality-badge">
                 {{ adaptiveBitrate.getQualityInfo(idx).labelShort }}
               </div>
+              <!-- [FIX osd-top 2026-09-07] 通道名称移顶部常驻 (海康/大华 OSD 口径: 名称
+                   常驻左上角; 原挤在底部 hover 工具条, 与操作按钮争位) -->
+              <div v-if="slot.channelId" class="video-top-bar">
+                <span class="bl-name">{{ slot.name || `CH${idx + 1}` }}</span>
+                <span class="bl-badge" :class="slot.status === 'streaming' ? 'on' : 'off'">{{ slot.status === 'streaming' ? 'LIVE' : 'OFF' }}</span>
+              </div>
               <!-- 视频叠加层(仅无流时隐藏，有流时信息在底部栏) -->
-              <!-- 海康风格底部工具条 -->
+              <!-- 海康风格底部工具条: 次要信息(codec/延迟/时间) + hover 操作按钮 -->
               <div v-if="slot.channelId" class="video-bottom-bar">
                 <div class="bottom-left">
-                  <span class="bl-name">{{ slot.name || `CH${idx + 1}` }}</span>
-                  <span class="bl-badge" :class="slot.status === 'streaming' ? 'on' : 'off'">{{ slot.status === 'streaming' ? 'LIVE' : 'OFF' }}</span>
                   <span v-if="slot.codec" class="bl-codec">{{ slot.codec }}</span>
                   <span v-if="slot.currentFormat && slot.status === 'streaming'" class="bl-latency">{{ FORMAT_LATENCY_INFO[slot.currentFormat] }}</span>
                   <span class="bl-time">{{ currentTime }}</span>
@@ -2763,11 +2767,12 @@ onUnmounted(() => {
   pointer-events: none;
 }
 
-/* 质量等级标签 */
+/* 质量等级标签 ([FIX osd-top 2026-09-07] 左上→右上避让常驻名称条, 在锁图标左侧) */
 .quality-badge {
   position: absolute;
   top: 6px;
-  left: 8px;
+  left: auto;
+  right: 38px;
   padding: 1px 6px;
   border-radius: 3px;
   font-size: 10px;
@@ -2812,6 +2817,22 @@ onUnmounted(() => {
 @keyframes spin { to { transform: rotate(360deg); } }
 
 /* HUD叠加 */
+/* [FIX osd-top 2026-09-07] 顶部 OSD: 通道名称位于窗口左上 (hover 显示) */
+/* [FIX osd-hover 2026-09-07] 顶部名称改 hover 显示 (与底部工具条同交互, 用户口径) */
+.video-top-bar {
+  position: absolute; top: 0; left: 0; z-index: 10;
+  display: flex; align-items: center; gap: 8px;
+  padding: 5px 10px;
+  background: linear-gradient(rgba(0,0,0,0.65), transparent);
+  border-radius: 0 0 4px 0;
+  font-size: 12px; color: #fff;
+  max-width: 70%;
+  pointer-events: none;
+  opacity: 0; transform: translateY(-4px);
+  transition: opacity 0.25s, transform 0.25s;
+}
+.video-cell.has-stream:hover .video-top-bar { opacity: 1; transform: translateY(0); }
+.video-top-bar .bl-name { text-shadow: 0 1px 2px rgba(0,0,0,0.8); max-width: 180px; }
 /* 海康风格底部工具条 */
 .video-bottom-bar {
   position: absolute; bottom: 0; left: 0; right: 0;

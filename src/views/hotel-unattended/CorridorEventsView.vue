@@ -181,11 +181,14 @@ import { ElMessage } from 'element-plus'
 import { useI18n } from 'vue-i18n'
 import { hotelUnattendedApi, isHotelEvent, CORRIDOR_INTERCEPT_TYPES, CORRIDOR_METADATA_KEYS,
          PERSON_GROUPS } from '@/api/hotelUnattended'
-import type { AlarmEvent, AlarmStatus } from '@/types/alarm'
+import { normalizeAlarmCore, type AlarmEvent, type AlarmStatus } from '@/types/alarm'
 import { useAlarmRowActions } from '@/composables/useAlarmRowActions'
 import { ArrowDown } from '@element-plus/icons-vue'
 // [FEAT 2026-09-02] 详情抽屉快照展示: 复用周界标注组件 (上轮已带全屏/下载按钮)
 import SnapshotAnnotated from '../perimeter/SnapshotAnnotated.vue'
+import { useRealtimeAlarmEvents } from '@/composables/useRealtimeAlarmEvents'
+// [FIX realtime-push 2026-09-06] 场景页实时刷新: WS 告警到达去抖重拉 (零新增连接)
+useRealtimeAlarmEvents(() => fetchEvents())
 
 const { t } = useI18n()
 const { openAlarmPopup, handleAlarmRow } = useAlarmRowActions()
@@ -214,7 +217,9 @@ const activeTypeKeys = computed(() => new Set(typeItems.value.map(i => i.alarm_t
 const typeChips = computed(() => typeItems.value)
 
 const filteredEvents = computed(() =>
-  events.value.filter(isHotelEvent).filter(a =>
+  // [FIX scene-empty 2026-09-07] isHotelEvent 收到的是整行对象 (String → "[object Object]")
+  //   恒 false → 通道事件恒 0 条; 改传归一化后的 a.type 字段。
+  events.value.filter(a => isHotelEvent(a.type)).filter(a =>
     (interceptOnly.value
       ? (CORRIDOR_INTERCEPT_TYPES as readonly string[]).includes(String(a.type))
       : true) &&
@@ -308,6 +313,26 @@ function openDetail(row: AlarmEvent) {
 }
 
 // ── 数据拉取 ──
+/** [FIX scene-empty 2026-09-07] 单行归一化: normalizeAlarmCore (SSOT) + 原始
+ *  metadata 展开 (三形态: 字符串/对象/数组, 与周界 EventsView normalizeRow 同口径)。
+ *  原裸赋值 events.value = list: 后端 /alarms 返回 alarm_type/alarm_id/
+ *  snapshot_url/timestamp (无 type/id/snapshotUrl/createdAt), 页面模板与
+ *  isHotelEvent 全部读 undefined → 恒 0 条 (后端同参数实返 100 条)。 */
+function normalizeRow(e: unknown): AlarmEvent {
+  const n = normalizeAlarmCore(e)
+  let rawMeta = (e as { metadata?: unknown })?.metadata
+  if (typeof rawMeta === 'string') {
+    try { rawMeta = JSON.parse(rawMeta) } catch { rawMeta = undefined }
+  }
+  if (Array.isArray(rawMeta)) {
+    rawMeta = (rawMeta[0] && typeof rawMeta[0] === 'object') ? rawMeta[0] : undefined
+  }
+  if (rawMeta && typeof rawMeta === 'object') {
+    n.metadata = { ...(rawMeta as Record<string, unknown>), ...n.metadata }
+  }
+  return n
+}
+
 async function fetchTypes() {
   try {
     const res = await hotelUnattendedApi.listEventMetadata()
@@ -330,7 +355,7 @@ async function fetchEvents() {
     const res = await hotelUnattendedApi.listAlarms()
     const list = res.data?.data?.items ?? []
     if (list.length === 0 && !res.data) throw new Error(t('hotel.common.emptyResp'))
-    events.value = list
+    events.value = list.map(e => normalizeRow(e))
   } catch (e: unknown) {
     const msg = (e as Error)?.message ?? String(e)
     loadError.value = msg.includes('404')

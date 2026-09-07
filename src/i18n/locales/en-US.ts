@@ -1341,6 +1341,7 @@ const enUS: MessageSchema = {
     colSnapshot: 'Snapshot',
     colGroup: 'Group',
     colType: 'Type',
+    colDevice: 'Device',
     colTime: 'Time',
     colStatus: 'Status',
     colAction: 'Action',

@@ -10,13 +10,14 @@
  *        (deploy=true → stable rule_id "le-{pack}-{tid}"; 酒店 6 包 id 直接可用)
  *   GET  /api/v1/linkage/rules?tag=hotel_unattended   apply 合并 tag 含 scene_tag 本身
  *        [L21396-21403], 按 tag=hotel_unattended 过滤即酒店规则全集
- *   GET  /api/v1/linkage/rule-templates               [L15883] 全量模板, 前端取 HT-* 21 条
- *        ([P1-2 v2.1] 18→21: +HT-receiving-unauthorized/loitering/tailgate)
+ *   GET  /api/v1/linkage/rule-templates               [L15883] 全量模板, 前端取 HT-* 22 条
+ *        ([P1-2 v2.1] 18→21: +HT-receiving-* 3 条; [v2.0 §5.5 2026-09-07] 21→22:
+ *         +HT-corridor-blacklist 黑名单命中拦截)
  *   GET  /api/v1/linkage/rule-stats                   触发统计 (RulesView 增强信息)
  *   GET  /api/v1/alarms                               告警列表 (CorridorEvents 前端按
  *        hotel_unattended 场景事件键并集过滤, 对齐 large-event EventListView 范式)
  *   GET  /api/v1/event-types/metadata?scene=hotel_unattended  [EventTypeAliases.h
- *        scene_tags L353+] SSOT 场景事件类型动态拉取 (16 键)
+ *        scene_tags L353+] SSOT 场景事件类型动态拉取 (17 键, 2026-09-07 +face_blacklist)
  *
  * 注意: 相对路径 (不带 /api/v1 前缀) — 由 http 实例 baseURL 统一拼接,
  *       规避 baseURL 双前缀陷阱 (同 api/largeEvent.ts 范式)。
@@ -34,12 +35,22 @@ import type { FaceDatabaseResponse, FaceDatabaseStats, FacePassRecord } from './
 /** 场景 tag (apply 合并 tags 之一, 规则过滤主键) */
 export const HOTEL_SCENE_TAG = 'hotel_unattended'
 
-/** hotel_unattended 场景 16 事件键 (EventTypeAliases.h 既有行补 tag, 2026-08-30) */
+/**
+ * hotel_unattended 场景 28 事件键 (EventTypeAliases.h 既有行补 tag, 2026-08-30;
+ *   [v2.0 §5.5 2026-09-07] 16→17 +face_blacklist; 17→24 六分类人员分组全覆盖;
+ *   24→28 场景相关事件补齐 (+fire/smoke 夜间巡检消防第一响应 v1.0 §5 night_patrol
+ *   algo_set 含 fire.fire_smoke 原漏登记, +phone_call 值守行为合规,
+ *   +wrong_direction 收货/员工通道反向通行))
+ */
 export const HOTEL_EVENT_TYPES = [
   'face_stranger', 'face_tailgate', 'gathering', 'queue_length',
   'running', 'fall_detected', 'fight', 'tailgate', 'intrusion',
   'loitering', 'person_with_backpack', 'unattended_baggage',
-  'abandoned', 'object_removal', 'climbing', 'tripwire',
+  'abandoned', 'object_removal', 'climbing', 'tripwire', 'face_blacklist',
+  'face_pass_whitelist', 'face_pass_visitor', 'face_pass_vip',
+  'face_pass_staff', 'face_pass_custom', 'face_pass_blacklist_hit',
+  'face_visitor_expired',
+  'fire', 'smoke', 'phone_call', 'wrong_direction',
 ] as const
 
 /** 员工通道 fusion 插件核心拦截事件 (canonical 归一后) */
@@ -123,8 +134,11 @@ export const hotelUnattendedApi = {
 
   // ----- 事件 (告警列表 + SSOT 场景事件类型) -----
   listAlarms() {
+    // [SSOT 2026-09-07] 数据源场景过滤: scene=hotel_unattended 后端按 scene_tags
+    //   (isEventInScene → SQL IN) 过滤 — 28 键及后续新增 tag 自动跟随;
+    //   页内 isHotelEvent 保留作双保险兑底。
     return http.get<ApiResponse<{ items?: AlarmEvent[] }>>('/alarms', {
-      params: { page: 1, pageSize: 500 },
+      params: { page: 1, pageSize: 500, scene: HOTEL_SCENE_TAG },
     })
   },
 

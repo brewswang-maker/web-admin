@@ -161,6 +161,9 @@ import { alarmApi } from '@/api/alarm'
 import { schoolApi } from '@/api/school'
 import type { AlarmEvent } from '@/types/alarm'
 import { normalizeAlarmCore } from '@/types/alarm'
+import { useRealtimeAlarmEvents } from '@/composables/useRealtimeAlarmEvents'
+// [FIX realtime-push 2026-09-06] 场景页实时刷新: WS 告警到达去抖重拉 (零新增连接)
+useRealtimeAlarmEvents(() => loadAll())
 
 const pageRoot = ref<HTMLElement | null>(null)
 const isFullscreen = ref(false)

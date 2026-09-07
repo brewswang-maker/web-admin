@@ -47,19 +47,23 @@ export function stopPlayback(id: string) {
 /**
  * 下载录像
  * Phase 14 P0 修复 14.3: BE 返回 JSON {download_url, recording_id},前端解析 URL 后触发浏览器下载
+ * [REC-DL 2026-09-06] id 为 ZLM 磁盘绝对路径 (含 '/', 不能作 path 参数) →
+ *   改走 download-file?path=; 返回的 download_url 是 nginx /record/ 静态直链
+ *   (8088 同源, Range 206 实测), filename 为真实文件名。
  */
 export async function downloadRecording(id: string): Promise<void> {
-  const resp = await recordingHttp.get<ApiResponse<{ download_url: string; recording_id: string }>>(
-    `/${id}/download`
-  )
+  const resp = await recordingHttp.get<
+    ApiResponse<{ download_url: string; recording_id: string; filename?: string; file_size?: number }>
+  >('/download-file', { params: { path: id } })
   const url = resp.data?.data?.download_url
   if (!url) {
     throw new Error('download_url not provided by backend')
   }
-  // 浏览器触发下载: 创建隐藏 <a download> 元素
+  // 浏览器触发下载: 创建隐藏 <a download> 元素 (download 属性强制落盘,
+  //   即使 nginx 对 .mp4 是 inline 也不会变成播放页)
   const a = document.createElement('a')
   a.href = url
-  a.download = `${id}.mp4`
+  a.download = resp.data?.data?.filename || `${Date.now()}.mp4`
   a.style.display = 'none'
   document.body.appendChild(a)
   a.click()

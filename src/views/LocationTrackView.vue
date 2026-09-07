@@ -52,6 +52,7 @@
               :bindings="indoorBindings"
               :channel-labels="indoorChannelLabels"
               :highlight-channel-id="indoorHighlight"
+              @device-click="onIndoorDeviceClick"
             />
             <div v-else class="indoor-empty">
               <span>暂无平面图</span>
@@ -81,6 +82,11 @@
               :value="d.deviceId"
             >
               <span class="device-option">
+                <!-- [FIX camera-icon 2026-09-06] 摄像头定位页补摄像头图标 (与平面图
+                     deviceIconMeta('camera') 同形状, 视觉识别一致) -->
+                <svg class="cam-icon" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
+                  <path d="M8 9.5 16.5 7v7L8 12.5z M12 9.6a2.4 2.4 0 1 0 0 4.8 2.4 2.4 0 0 0 0-4.8z" fill="currentColor"/>
+                </svg>
                 <span class="dot" :class="d.status === 'online' ? 'online' : 'offline'"></span>
                 {{ d.name || d.deviceId }}
               </span>
@@ -121,7 +127,14 @@
         <!-- 设备信息浮窗 -->
         <div v-if="selectedDevice && showDeviceInfo" class="device-info-popup">
           <div class="popup-header">
-            <span>{{ selectedDevice.name || selectedDevice.deviceId }}</span>
+            <!-- [FIX camera-icon 2026-09-06] 浮窗头部补摄像头图标 (包 flex 容器
+                 防 space-between 把图标与名称分开) -->
+            <span class="popup-title">
+              <svg class="cam-icon" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+                <path d="M8 9.5 16.5 7v7L8 12.5z M12 9.6a2.4 2.4 0 1 0 0 4.8 2.4 2.4 0 0 0 0-4.8z" fill="currentColor"/>
+              </svg>
+              <span>{{ selectedDevice.name || selectedDevice.deviceId }}</span>
+            </span>
             <el-icon class="popup-close" @click="showDeviceInfo = false"><Close /></el-icon>
           </div>
           <div class="popup-body">
@@ -197,6 +210,10 @@
               @click="handleDeviceSelect(d.deviceId)"
             >
               <div class="device-card-header">
+                <!-- [FIX camera-icon 2026-09-06] 设备卡片头部补摄像头图标 -->
+                <svg class="cam-icon" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
+                  <path d="M8 9.5 16.5 7v7L8 12.5z M12 9.6a2.4 2.4 0 1 0 0 4.8 2.4 2.4 0 0 0 0-4.8z" fill="currentColor"/>
+                </svg>
                 <span class="dot" :class="d.status === 'online' ? 'online' : 'offline'"></span>
                 <span class="device-name">{{ d.name || d.deviceId }}</span>
               </div>
@@ -239,6 +256,13 @@
         <el-button type="primary" @click="queryTrack" :loading="trackLoading">查询</el-button>
       </template>
     </el-dialog>
+
+    <!-- [FLOOR-MAP 2026-09-05 v5] 室内平面图设备详情弹窗 (与首页行为一致; teleport body) -->
+    <DeviceDetailDialog
+      :binding="detailBinding"
+      :map-label="currentIndoorMap ? (currentIndoorMap.floor || currentIndoorMap.building || currentIndoorMap.name) : ''"
+      @close="onIndoorDetailClose"
+    />
   </div>
 </template>
 
@@ -254,7 +278,9 @@ import { showAlarmPopup } from '@/composables/useAlarmPopup'
 // [FLOOR-MAP 2026-09-05 v2] 室内平面图 (大华室内外地图联动对标)
 import FloorMapCanvas from '@/components/map/FloorMapCanvas.vue'
 import { useFloorMap } from '@/composables/useFloorMap'
-import type { FloorMapWithCameras } from '@/types/floorMap'
+import type { FloorMapWithCameras, CameraMapBinding } from '@/types/floorMap'
+// [FLOOR-MAP 2026-09-05 v5] 设备详情弹窗 (室内点位点击 → 预览/录像/告警, 与首页行为一致)
+import DeviceDetailDialog from '@/components/map/DeviceDetailDialog.vue'
 
 // ── 高德地图 JS SDK ──
 const AMAP_KEY = '7fe207317aeae03b556a6cfa10e9ceb8'
@@ -476,6 +502,17 @@ const currentIndoorMapId = ref(0)
 const currentIndoorMap = computed(() => indoorMaps.value.find(m => m.id === currentIndoorMapId.value) || indoorMaps.value[0])
 const indoorBindings = computed(() => (currentIndoorMap.value ? indoorBindingsOfMap(currentIndoorMap.value.id) : []))
 const indoorHighlight = ref('')
+// [FLOOR-MAP 2026-09-05 v5] 点位点击 → 设备详情弹窗 (与首页态势屏行为一致: 预览/录像/告警 + 金色光环)
+const detailBinding = ref<CameraMapBinding | null>(null)
+function onIndoorDeviceClick(b: CameraMapBinding) {
+  detailBinding.value = b
+  indoorHighlight.value = b.channel_id
+}
+function onIndoorDetailClose() {
+  detailBinding.value = null
+  // 高亮回退侧栏选中设备 (保持既有联动语义; 无选中则清空)
+  indoorHighlight.value = selectedDeviceId.value ? String(selectedDeviceId.value) : ''
+}
 // 通道名映射 (复用定位设备名; GB 通道绑定用 deviceId 匹配不上时退化为空)
 const indoorChannelLabels = computed<Record<string, string>>(() => {
   const o: Record<string, string> = {}
@@ -1146,6 +1183,18 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+/* [FIX camera-icon 2026-09-06] 摄像头图标通用: 不挤压文本 */
+.cam-icon {
+  flex: none;
+  opacity: 0.9;
+}
+.popup-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
 }
 
 /* 自定义地图标记样式 */

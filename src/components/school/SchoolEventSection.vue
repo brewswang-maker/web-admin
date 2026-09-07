@@ -98,6 +98,9 @@ import { schoolApi, SCHOOL_EVENT_SECTIONS, type SchoolSectionKey } from '@/api/s
 import type { AlarmEvent, AlarmLevel } from '@/types/alarm'
 import { normalizeAlarmCore } from '@/types/alarm'
 import type { EventTypeMetadataItem } from '@/api/eventTypes'
+import { useRealtimeAlarmEvents } from '@/composables/useRealtimeAlarmEvents'
+// [FIX realtime-push 2026-09-06] 场景页实时刷新: WS 告警到达去抖静默重拉 (无 loading 遮罩闪烁)
+useRealtimeAlarmEvents(() => load(true))
 
 const props = defineProps<{
   title: string

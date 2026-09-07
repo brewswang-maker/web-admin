@@ -422,15 +422,45 @@
             <!-- 快照 -->
             <el-col :span="12">
               <div class="evidence-section">
-                <div class="evidence-section-title">告警快照</div>
-                <el-image
-                  v-if="evidenceData?.snapshotUrl"
-                  :src="evidenceData?.snapshotUrl"
-                  fit="contain"
-                  style="width:100%;max-height:300px;border-radius:8px;border:1px solid var(--app-border)"
-                  :preview-src-list="evidenceData?.snapshotUrl ? [evidenceData.snapshotUrl] : []"
-                  :preview-teleported="true"
-                />
+                <div class="evidence-section-title">
+                  告警快照
+                  <span v-if="evidenceGallery.length > 1" class="evidence-gallery-counter">
+                    {{ evidenceImageIndex + 1 }}/{{ evidenceGallery.length }}
+                  </span>
+                </div>
+                <!-- [POPUP-GALLERY 2026-09-07] 多图画廊: 与 AlarmPopup 同款交互 —
+                     主图左右翻页 + 下方缩略图列表点击切换; 取证帧 (事前/事中/
+                     事后) 并入画廊带角标 (原单 el-image 只展示主快照) -->
+                <template v-if="evidenceGallery.length">
+                  <div class="evidence-gallery">
+                    <button class="evidence-gallery-nav" :disabled="evidenceImageIndex <= 0" @click="evidenceImageIndex--" aria-label="上一张">‹</button>
+                    <el-image
+                      :key="`evimg-${evidenceImageIndex}`"
+                      :src="evidenceGallery[evidenceImageIndex].url"
+                      fit="contain"
+                      class="evidence-gallery-main"
+                      :preview-src-list="evidenceGallery.map(g => g.url)"
+                      :initial-index="evidenceImageIndex"
+                      :preview-teleported="true"
+                    />
+                    <button class="evidence-gallery-nav" :disabled="evidenceImageIndex >= evidenceGallery.length - 1" @click="evidenceImageIndex++" aria-label="下一张">›</button>
+                  </div>
+                  <div v-if="evidenceGallery.length > 1" class="evidence-gallery-thumbs">
+                    <div
+                      v-for="(img, idx) in evidenceGallery" :key="idx"
+                      class="evidence-gallery-thumb"
+                      :class="{
+                        'is-active': idx === evidenceImageIndex,
+                        'is-evidence': !!img.tag,
+                      }"
+                      :style="{ backgroundImage: `url(${img.url})` }"
+                      :title="img.tag || '主快照'"
+                      @click="evidenceImageIndex = idx"
+                    >
+                      <span v-if="img.tag" class="evidence-gallery-thumb-tag">{{ img.tag }}</span>
+                    </div>
+                  </div>
+                </template>
                 <el-empty v-else description="无快照" :image-size="60" />
               </div>
             </el-col>
@@ -547,6 +577,8 @@
       align-center
     >
       <SnapshotAnnotated :src="previewImageUrl" :metadata="previewMeta ?? undefined" />
+      <!-- [ROI-GAP 2026-09-06] 多帧取证 (预览弹窗同步展示, 字段缺失自动隐藏) -->
+      <EvidenceFrames :metadata="(previewMeta ?? undefined) as Record<string, unknown> | undefined" />
     </el-dialog>
 
     <!-- Gallery 灯箱预览 (支持左右切换) -->
@@ -616,6 +648,7 @@ import { alarmApi } from '@/api/alarm'
 import { screeningApi, type AlarmFeedbackItem } from '@/api/screening'
 import { exportApi } from '@/api/export'
 import { queryRecordings, toLocalISOString, type DeviceRecording } from '@/api/recording'
+import { deviceGroupApi } from '@/api/deviceGroups'
 import { recordingHttp } from '@/api/http'
 import type { AlarmHandleForm, AlarmEvidence, AlarmEvent } from '@/types/alarm'
 import { normalizeAlarmCore } from '@/types/alarm'
@@ -627,6 +660,7 @@ import DisposeDialog from '@/components/alarm/DisposeDialog.vue'
 // [UX 2026-08-31] 1b: 列表行点击 → 全局告警详情弹窗 (与首页同套 AlarmPopup)
 import { showAlarmPopup } from '@/composables/useAlarmPopup'
 import SnapshotAnnotated from '@/views/perimeter/SnapshotAnnotated.vue'
+import EvidenceFrames from '@/components/EvidenceFrames.vue'
 import { useRouter } from 'vue-router'
 import flvjs from 'flv.js'
 
@@ -666,7 +700,10 @@ const deviceGroups = ref<DeviceGroupItem[]>([])
 const groupFilter = ref('')
 async function fetchDeviceGroups() {
   try {
-    const r = await recordingHttp.get('/api/v1/devices/groups')
+    // [FIX 2026-09-06] 原用 recordingHttp.get('/api/v1/devices/groups') — recordingHttp
+    //   baseURL=/api/v1/recordings, 传绝对路径拼成双重前缀恒 404 (告警中心实测
+    //   GET /api/v1/recordings/api/v1/devices/groups)。改用正主 deviceGroupApi。
+    const r = await deviceGroupApi.listGroups()
     const data = (r.data?.data ?? r.data) as { items?: DeviceGroupItem[] } | undefined
     deviceGroups.value = data?.items ?? []
   } catch {
@@ -698,6 +735,19 @@ const showEvidenceDialog = ref(false)
 const evidenceLoading = ref(false)
 const evidenceData = ref<AlarmEvidence | null>(null)
 const evidenceAlarmId = ref('')
+// [POPUP-GALLERY 2026-09-07] 证据链弹窗多图画廊: 主快照 + 取证帧 (事前/事中/
+//   事后) 并入同列表 — 与 AlarmPopup 缩略图画廊同款交互 (左右翻页/点击切换)
+const evidenceImageIndex = ref(0)
+const evidenceGallery = computed(() => {
+  const list: Array<{ url: string; tag: string }> = []
+  const main = evidenceData.value?.snapshotUrl
+  if (main) list.push({ url: main, tag: '' })
+  for (const f of evidenceData.value?.evidenceFrames || []) {
+    if (f.url && !list.some(g => g.url === f.url)) list.push({ url: f.url, tag: f.tag })
+  }
+  return list
+})
+watch(() => evidenceData.value, () => { evidenceImageIndex.value = 0 })
 const analyzeLoading = ref(false)
 const previewVisible = ref(false)
 const previewImageUrl = ref('')
@@ -1536,7 +1586,22 @@ async function playEvidenceRecording(rec: DeviceRecording) {
 
 function goToRecording(recordingId: string) {
   showEvidenceDialog.value = false
-  router.push({ name: 'Recording', query: { recordingId, alarmId: evidenceAlarmId.value } })
+  // [T5-P5 2026-09-06] 跳转回放页带全告警上下文: RecordingView.applyAlarmJumpParams
+  //   只消费 channelId/deviceId/time (recordingId 原先无人消费), 只传
+  //   recordingId+alarmId → 设备/通道下拉退回默认值而非告警绑定通道，
+  //   需手动重选。与 AlarmPopup.jumptToPlayback 传参对齐。
+  const row = evidenceAlarmRow.value
+  const t = row?.createdAt ? new Date(row.createdAt).getTime() : Date.now()
+  router.push({
+    name: 'Recording',
+    query: {
+      recordingId,
+      alarmId: evidenceAlarmId.value,
+      channelId: row?.channelId || '',
+      deviceId: row?.deviceId || '',
+      time: String(t),
+    },
+  })
 }
 
 async function doAnalyze() {
@@ -1936,6 +2001,38 @@ onUnmounted(() => {
 
 /* ── 证据链 ── */
 .evidence-section { margin-bottom: 8px; }
+/* [POPUP-GALLERY 2026-09-07] 证据链弹窗多图画廊 (主图翻页 + 缩略图列表) */
+.evidence-gallery { display: flex; align-items: center; gap: 6px; }
+.evidence-gallery-main {
+  flex: 1; min-width: 0; width: 100%; max-height: 300px;
+  border-radius: 8px; border: 1px solid var(--app-border);
+}
+.evidence-gallery-nav {
+  flex: none; width: 26px; height: 40px; border: none; border-radius: 6px;
+  background: rgba(0, 0, 0, 0.06); color: #606266; font-size: 18px;
+  line-height: 1; cursor: pointer;
+}
+.evidence-gallery-nav:hover:not(:disabled) { background: rgba(0, 0, 0, 0.12); }
+.evidence-gallery-nav:disabled { opacity: 0.3; cursor: default; }
+.evidence-gallery-counter { margin-left: 8px; font-size: 12px; color: #999; font-weight: normal; }
+.evidence-gallery-thumbs { display: flex; gap: 6px; margin-top: 8px; overflow-x: auto; }
+.evidence-gallery-thumb {
+  position: relative; flex: none; width: 56px; height: 40px;
+  border-radius: 4px; background-size: cover; background-position: center;
+  border: 2px solid transparent; cursor: pointer;
+}
+.evidence-gallery-thumb.is-active { border-color: var(--el-color-primary); }
+.evidence-gallery-thumb.is-evidence::after {
+  content: '';
+  position: absolute; inset: 0;
+  border-radius: 2px;
+  box-shadow: inset 0 0 0 100px rgba(245, 158, 11, 0.12);
+}
+.evidence-gallery-thumb-tag {
+  position: absolute; left: 0; bottom: 0; right: 0;
+  font-size: 10px; line-height: 14px; text-align: center; color: #fff;
+  background: rgba(245, 158, 11, 0.85); border-radius: 0 0 2px 2px;
+}
 .evidence-section-title {
   font-size: 14px;
   font-weight: 600;

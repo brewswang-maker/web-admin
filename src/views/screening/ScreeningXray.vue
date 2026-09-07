@@ -137,6 +137,9 @@ import { retrievalApi, extractTowerUnavailable, type ImageSearchItem } from '@/a
 import eventTypesApi from '@/api/eventTypes'
 import type { EventTypeMetadataItem } from '@/api/eventTypes'
 import type { AlarmEvent, AlarmLevel } from '@/types/alarm'
+import { useRealtimeAlarmEvents } from '@/composables/useRealtimeAlarmEvents'
+// [FIX realtime-push 2026-09-06] 场景页实时刷新: WS 告警到达去抖重拉 (零新增连接)
+useRealtimeAlarmEvents(() => loadEvents())
 
 // ── 合规声明 ──
 

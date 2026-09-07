@@ -16,7 +16,7 @@
           <el-option v-for="ty in typeOptions" :key="ty" :value="ty" :label="zh(ty)" />
         </el-select>
         <el-select v-model="levelFilter" size="default" class="filter-level" clearable
-                   :placeholder="t('perimeter.events.allLevels')" @change="page = 1">
+                   :placeholder="t('perimeter.events.allLevels')" @change="onLevelFilterChange">
           <el-option v-for="lv in LEVELS" :key="lv" :value="lv" :label="levelText(lv)" />
         </el-select>
         <el-select v-model="statusFilter" size="default" class="filter-status" clearable
@@ -126,6 +126,9 @@
                            :src="active.snapshotUrl ?? ''" :metadata="active.metadata"
                            :channel-id="active.channelId" :algo-id="detailAlgoId" />
         <el-empty v-else :description="t('perimeter.events.noSnapshot')" :image-size="80" />
+        <!-- [ROI-GAP 2026-09-06] 多帧取证 (尾随/消失/遗留/攀爬/入侵 双帧或三帧,
+             字段缺失自动隐藏, 与弹窗快照 Tab 同组件同渲染) -->
+        <EvidenceFrames :metadata="active.metadata" :algo-id="detailAlgoId" />
 
         <el-descriptions :column="1" border size="small" class="detail-desc">
           <el-descriptions-item :label="t('perimeter.events.colType')">
@@ -153,7 +156,7 @@
  * /api/v1/alarms 拉取 → PERIMETER_EVENT_TYPES 并集过滤 → severity 分档 + 抓拍详情。
  * 范式对齐 hotel-unattended 视图 (防御式解包, i18n 三语言)。
  */
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Refresh, ArrowDown, Search } from '@element-plus/icons-vue'
 import { useDebounceFn } from '@vueuse/core'
@@ -162,6 +165,7 @@ import { normalizeAlarmCore, type AlarmEvent, type AlarmLevel, type AlarmStatus 
 import { useAlarmRowActions } from '@/composables/useAlarmRowActions'
 import { useEventTypeZh } from '@/composables/useEventTypeZh'
 import SnapshotAnnotated from './SnapshotAnnotated.vue'
+import EvidenceFrames from '@/components/EvidenceFrames.vue'
 
 const { t } = useI18n()
 const { openAlarmPopup, handleAlarmRow } = useAlarmRowActions()
@@ -202,6 +206,14 @@ const onKeywordInput = useDebounceFn(() => {
   keyword.value = keywordInput.value.trim()
   page.value = 1
 }, 300)
+
+/** [ALARMS-FILTER 2026-09-06] level 筛选下沉服务端: 原页内过滤 (filtered
+ *  计算属性) 只能筛当次拉取的 500 条, 换级重新请求 — 由后端 alarm_level IN
+ *  精确过滤; 页内过滤行保留 (服务端已滤恒真, 防其他路径改动回归) */
+function onLevelFilterChange() {
+  page.value = 1
+  reload()
+}
 
 const filtered = computed(() => {
   const kw = keyword.value.toLowerCase()
@@ -288,45 +300,64 @@ function fmtTime(s: string | undefined): string {
   return d.toLocaleString('zh-CN', { hour12: false })
 }
 
+/** [vp6 P1-3 2026-09-01] 单行归一化: normalizeAlarmCore (SSOT) + 原始 metadata
+ *  展开 (三形态: 字符串/对象/数组), reload 与 WS 实时插入共用同一口径 */
+function normalizeRow(e: unknown): AlarmEvent {
+  const n = normalizeAlarmCore(e)
+  // [vp6 收尾补测 2026-09-01] metadata 三形态兼容: REST 端点不同分页下返回
+  //   JSON 字符串或对象 (真机实测同端点两形态并存), 字符串先 parse 再合并
+  let rawMeta = (e as { metadata?: unknown })?.metadata
+  if (typeof rawMeta === 'string') {
+    try { rawMeta = JSON.parse(rawMeta) } catch { rawMeta = undefined }
+  }
+  // [FIX 2026-09-04] AlarmDispatcher 直报链 (尾随/聚集/入侵等行为插件)
+  //   metadata 为数组 [{bbox,...}] (真机 tailgate 实锚): 原判空逻辑
+  //   !Array.isArray 显式排除数组 → bbox 永不合并 → 事件列表/详情
+  //   标注框恒空。数组取首元素展开合并。
+  if (Array.isArray(rawMeta)) {
+    rawMeta = (rawMeta[0] && typeof rawMeta[0] === 'object') ? rawMeta[0] : undefined
+  }
+  if (rawMeta && typeof rawMeta === 'object') {
+    n.metadata = { ...(rawMeta as Record<string, unknown>), ...n.metadata }
+  }
+  return n
+}
+
 async function reload() {
   loading.value = true
   loadError.value = ''
   try {
-    const res = await videoPerimeterApi.listAlarms()
+    // [ALARMS-FILTER 2026-09-06] level 透传服务端 (名称形态, 后端映射 1-5)
+    const res = await videoPerimeterApi.listAlarms(levelFilter.value || undefined)
     const d = (res.data as { data?: { items?: AlarmEvent[] } })?.data
     const list = Array.isArray(d?.items) ? d.items : []
     // [normalize 修复 2026-09-01] 原始响应字段是 alarm_type (无 type), 直接
     //   过滤 e?.type 全落空 → 事件列表恒空; 统一走 normalizeAlarmCore (SSOT
     //   归一化, alarm_type→type) 再过滤, 表格列 createdAt/snapshotUrl/status 同步受益
-    // [vp6 P1-3 2026-09-01] 快照标注兜底合并: normalizeAlarmCore 的 metadata 是
-    //   白名单重建结构, 不含后端新增的 bbox/target_label 等任意键; types/alarm.ts
-    //   属用户红线零触碰 → 在此从原始行 metadata 展开 (normalize 白名单键优先,
-    //   原始键兜底), SnapshotAnnotated 据此渲染检测框叠加
-    events.value = list.map(e => {
-      const n = normalizeAlarmCore(e)
-      // [vp6 收尾补测 2026-09-01] metadata 三形态兼容: REST 端点不同分页下返回
-      //   JSON 字符串或对象 (真机实测同端点两形态并存), 字符串先 parse 再合并
-      let rawMeta = (e as { metadata?: unknown })?.metadata
-      if (typeof rawMeta === 'string') {
-        try { rawMeta = JSON.parse(rawMeta) } catch { rawMeta = undefined }
-      }
-      // [FIX 2026-09-04] AlarmDispatcher 直报链 (尾随/聚集/入侵等行为插件)
-      //   metadata 为数组 [{bbox,...}] (真机 tailgate 实锚): 原判空逻辑
-      //   !Array.isArray 显式排除数组 → bbox 永不合并 → 事件列表/详情
-      //   标注框恒空。数组取首元素展开合并。
-      if (Array.isArray(rawMeta)) {
-        rawMeta = (rawMeta[0] && typeof rawMeta[0] === 'object') ? rawMeta[0] : undefined
-      }
-      if (rawMeta && typeof rawMeta === 'object') {
-        n.metadata = { ...(rawMeta as Record<string, unknown>), ...n.metadata }
-      }
-      return n
-    }).filter(e => isPerimeterEvent(e?.type))
+    events.value = list.map(e => normalizeRow(e)).filter(e => isPerimeterEvent(e?.type))
   } catch (e) {
     loadError.value = e instanceof Error ? e.message : String(e)
   } finally {
     loading.value = false
   }
+}
+
+/** [FIX realtime-push 2026-09-06] WS 实时插入: useGlobalAlarm 单例 (App.vue
+ *  启动, 无限重连+断线补拉) 对 alarm 类消息派发 linkage-ws-event — 零新增
+ *  连接复用。原页面仅 onMounted reload 一次, 新告警需手动 F5。同 id 去重
+ *  (alarm.new 全量链与 linkage_alarm 弹窗链可能双推同一告警)。 */
+function onWsAlarmEvent(ev: Event) {
+  const payload = (ev as CustomEvent).detail
+  if (!payload || typeof payload !== 'object') return
+  const row = normalizeRow(payload)
+  if (!row.id || !isPerimeterEvent(row.type)) return
+  const idx = events.value.findIndex(e => e.id === row.id)
+  if (idx >= 0) {
+    // 已存在 (双推/历史行): 保留处置状态, 只补齐标注/快照等富化字段
+    events.value[idx] = { ...events.value[idx], ...row, status: events.value[idx].status }
+    return
+  }
+  events.value.unshift(row)
 }
 
 /** [FEAT 2026-09-04] 触发算法 id (快照形状叠加区域库回退链匹配键) */
@@ -343,6 +374,12 @@ function openDetail(row: AlarmEvent) {
 onMounted(() => {
   reload()
   ensureEventTypes() // 事件类型中文名预热 (非阻塞)
+  // [FIX realtime-push 2026-09-06] WS 实时插入 (见 onWsAlarmEvent)
+  window.addEventListener('linkage-ws-event', onWsAlarmEvent as EventListener)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('linkage-ws-event', onWsAlarmEvent as EventListener)
 })
 </script>
 

@@ -598,6 +598,10 @@ export const linkageApi = {
     severity?: number
     region_id?: string
     location_id?: string
+    /** [ROI-GAP 2026-09-06] 可选检测框 [x1,y1,x2,y2] 归一化坐标:
+     *  透传后引擎 matchRoiShapes 按规则 ROI 判定通过/拦截 (构造 ROI 内/外
+     *  bbox 可程序化验证空间判定链); 缺省时与原行为完全一致 */
+    bbox?: number[]
   }) {
     return http.post<ApiResponse<DryRunResult>>('/linkage/rules/dry-run', data)
   },

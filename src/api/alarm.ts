@@ -137,13 +137,62 @@ export const alarmApi = {
       console.log('[alarmApi] getEvidence raw:', JSON.stringify(d).substring(0, 300))
       console.log('[alarmApi] getEvidence resolved snapshotUrl:', snapshotUrl, 'videoClipUrl:', videoClipUrl)
       
+      // [FIX evidence-nan 2026-09-07] detectionBoxes 数据源修正: 后端 evidence
+      //   响应的 d.metadata 是告警 metadata 整体 (数组首元素含 detections/bbox/
+      //   class_name), 旧代码整对象直接塞表格 → label/confidence 列 undefined
+      //   → 置信度 NaN% / 位置 [, , , ] (真机证据链弹窗实录)。正确链:
+      //   metadata[0].detections (AlarmDispatcher 兜底产物, x1y1x2y2 像素坐标)
+      //   → 归一为表格契约 x/y/w/h; 无 detections 时 bbox 单框合成;
+      //   confidence 非有限数兑底 0 (防 NaN)。
+      const mdRaw = d.metadata
+      const md0: any = Array.isArray(mdRaw) && mdRaw.length && typeof mdRaw[0] === 'object'
+        ? mdRaw[0]
+        : (mdRaw && typeof mdRaw === 'object' ? mdRaw : {})
+      const rawBoxes: any[] = Array.isArray(md0.detections) && md0.detections.length
+        ? md0.detections
+        : Array.isArray(d.detectionBoxes) ? d.detectionBoxes : []
+      let detectionBoxes = rawBoxes.map((b: any) => {
+        const x1 = Number(b.x1 ?? b.x ?? 0), y1 = Number(b.y1 ?? b.y ?? 0)
+        const x2 = Number(b.x2 ?? (b.x ?? 0) + (b.w ?? 0)), y2 = Number(b.y2 ?? (b.y ?? 0) + (b.h ?? 0))
+        const conf = Number(b.confidence)
+        return {
+          label: String(b.label ?? b.class_name ?? 'target'),
+          confidence: Number.isFinite(conf) && conf >= 0 && conf <= 1 ? conf : 0,
+          x: x1, y: y1, w: Math.max(0, x2 - x1), h: Math.max(0, y2 - y1),
+        }
+      })
+      if (!detectionBoxes.length && Array.isArray(md0.bbox) && md0.bbox.length >= 4) {
+        const [bx1, by1, bx2, by2] = md0.bbox.map(Number)
+        const confTop = Number(d.confidence ?? md0.detect_confidence)
+        detectionBoxes = [{
+          label: String(md0.class_name ?? md0.class_name_zh ?? 'target'),
+          confidence: Number.isFinite(confTop) && confTop >= 0 && confTop <= 1 ? confTop : 0,
+          x: bx1, y: by1, w: Math.max(0, bx2 - bx1), h: Math.max(0, by2 - by1),
+        }]
+      }
+
+      // [POPUP-GALLERY 2026-09-07] 取证帧提取: metadata[0] 的 pre/mid/post
+      //   _snapshot_url (EvidenceFrameCache base64 直可用) — 证据链弹窗
+      //   多图画廊数据源, 带语义角标; 无则空数组 (画廊退化单图)
+      const evFrameDefs: Array<[string, string]> = [
+        ['pre_snapshot_url', '事前'],
+        ['mid_snapshot_url', '事中'],
+        ['post_snapshot_url', '事后'],
+      ]
+      const evidenceFrames: Array<{ url: string; tag: string }> = []
+      for (const [k, tag] of evFrameDefs) {
+        const u = typeof md0[k] === 'string' ? md0[k] as string : ''
+        if (u && !evidenceFrames.some(f => f.url === u)) evidenceFrames.push({ url: u, tag })
+      }
+
       return {
         snapshotUrl,
         videoClipUrl,
-        detectionBoxes: d.metadata ?? d.detectionBoxes ?? [],
+        detectionBoxes,
         aiAnalysis: d.ai_analysis ?? d.aiAnalysis ?? '',
         relatedRecordingId: d.related_recording_id ?? d.relatedRecordingId ?? '',
         relatedRecordingTime: d.related_recording_time ?? d.relatedRecordingTime ?? '',
+        evidenceFrames,
       }
     } catch {
       return null

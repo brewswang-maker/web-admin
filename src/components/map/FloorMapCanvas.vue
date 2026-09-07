@@ -9,6 +9,8 @@
     @dblclick="resetView"
     @keydown="onKeyDown"
     @mousedown="startPan"
+    @mousemove="onGhostMove"
+    @mouseleave="ghostPos = null"
   >
     <!-- ═══ [FLOOR-MAP 2026-09-05 v2] 视口层: 包住 L1/L2/L3 统一 transform 缩放平移
          (海康 iSecure 自由缩放 / 大华滚轮缩放对标); transform-origin 0 0 + 合成层,
@@ -61,6 +63,8 @@
             'fm-canvas__cam--primary': b.is_primary,
             'fm-canvas__cam--hl': isHighlighted(b),
             'fm-canvas__cam--clickable': panEnabled,
+            /* [v4-B8] 摄像头明确离线 → 图标 dim (opacity+灰度); 非网络设备不 dim */
+            'fm-canvas__cam--off': devStatus(b) === 'offline' && b.device_type === 'camera',
           }"
           :style="camStyle(b)"
           :title="camTitle(b)"
@@ -95,6 +99,17 @@
         <div class="fm-canvas__guide fm-canvas__guide--v" :style="{ left: `${dragPos.x * 100}%` }" />
         <div class="fm-canvas__guide fm-canvas__guide--h" :style="{ top: `${dragPos.y * 100}%` }" />
       </template>
+      <!-- [v4-C10] 落点幽灵图标: 待落点时跟随光标 (类型色半透明 + 虚线环; snap 预览) -->
+      <div
+        v-if="ghostType && ghostPos"
+        class="fm-canvas__ghost"
+        :style="{ left: `${ghostPos.x * 100}%`, top: `${ghostPos.y * 100}%`, '--gc': iconMeta(ghostType).color }"
+      >
+        <svg viewBox="0 0 24 24" width="26" height="26" fill="none">
+          <circle cx="12" cy="12" r="10.4" :fill="iconMeta(ghostType).color" opacity="0.5" stroke-dasharray="0" />
+          <path :d="iconMeta(ghostType).path" fill="#fff" opacity="0.8" />
+        </svg>
+      </div>
     </div>
 
     <!-- ═══ Layer 3: 告警层 (落点涟漪 + bbox 叠加; 极视角/Metropolis 对标) ═══ -->
@@ -147,7 +162,7 @@
  *   大华 FOV 实时预览的正确缩放语义); 编辑模式默认关闭 (与落点/拖拽语义冲突)。
  */
 import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
-import type { CameraMapBinding, FloorMapDef } from '@/types/floorMap'
+import type { CameraMapBinding, FloorMapDef, FloorMapDeviceType } from '@/types/floorMap'
 import { deviceTypeLabel, deviceIconMeta } from '@/types/floorMap'
 import { floorMapApi } from '@/api/floorMap'
 import { fovRadiusNormalized, projectAlarmPoint, channelIdVariants, type AlarmMapPoint } from '@/composables/useFloorMap'
@@ -173,6 +188,8 @@ const props = withDefaults(defineProps<{
   panZoom?: boolean
   /** [FLOOR-MAP 2026-09-05 v2] 选中设备通道 (金色光环; 双形态匹配同 alarmChannelId) */
   highlightChannelId?: string
+  /** [v4-C10] 落点幽灵图标设备类型 (待落点选中通道/编号后跟随光标; '' = 关闭) */
+  ghostType?: FloorMapDeviceType | ''
 }>(), {
   editable: false,
   alarmChannelId: '',
@@ -183,6 +200,7 @@ const props = withDefaults(defineProps<{
   alarmChannels: () => ({}),
   panZoom: undefined,
   highlightChannelId: '',
+  ghostType: '',
 })
 
 const emit = defineEmits<{
@@ -347,7 +365,20 @@ function onCanvasClick(ev: MouseEvent) {
   const p = toLocalNorm(ev.clientX, ev.clientY)
   const x = Math.min(1, Math.max(0, p.x))
   const y = Math.min(1, Math.max(0, p.y))
+  ghostPos.value = null
   emit('canvas-click', snap(x), snap(y))
+}
+
+// ── [v4-C10] 落点幽灵图标: 跟随光标预览落点效果 (宇视拖拽预览对标) ──
+// 与落点同口径 snap+clamp — 用户所见即落点真实位置 (栅格吸附预览)
+const ghostPos = ref<{ x: number; y: number } | null>(null)
+function onGhostMove(ev: MouseEvent) {
+  if (!props.editable || !props.ghostType || !wrapEl.value) return
+  const p = toLocalNorm(ev.clientX, ev.clientY)
+  ghostPos.value = {
+    x: snap(Math.min(1, Math.max(0, p.x))),
+    y: snap(Math.min(1, Math.max(0, p.y))),
+  }
 }
 
 // ── 编辑交互: 图标拖拽微调 (mousedown → window mousemove → mouseup) ──
@@ -542,6 +573,11 @@ const bboxStyle = computed(() => {
   cursor: grab;
 }
 .fm-canvas--edit .fm-canvas__cam { cursor: move; }
+/* [v4-B8] 摄像头明确离线 dim 化 (需求: opacity 0.5 + 灰度滤镜) */
+.fm-canvas__cam.fm-canvas__cam--off {
+  opacity: 0.55;
+  filter: grayscale(0.6) drop-shadow(0 0 4px rgba(100, 116, 139, 0.35));
+}
 /* [FLOOR-MAP 2026-09-05 v2] 尺寸反向补偿: viewport 缩放后图标/标签/状态点/坐标读数
    保持视觉恒定 (--fmz 继承自 viewport); FOV 扇形不补偿 — 与底图等比跟随才是正确语义 */
 .fm-canvas__cam svg,
@@ -625,6 +661,28 @@ const bboxStyle = computed(() => {
   color: #00E5FF; font-size: 10px;
   font-variant-numeric: tabular-nums;
   pointer-events: none;
+}
+
+/* ── [v4-C10] 落点幽灵图标 (待落点光标预览; 虚线环呼吸) ── */
+.fm-canvas__ghost {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  z-index: 4;
+  opacity: 0.75;
+}
+.fm-canvas__ghost svg { transform: scale(calc(1 / var(--fmz, 1))); }
+.fm-canvas__ghost::after {
+  content: '';
+  position: absolute;
+  inset: -6px;
+  border: 1.5px dashed var(--gc, #3294ED);
+  border-radius: 50%;
+  animation: fm-ghost-pulse 1.2s ease-in-out infinite;
+}
+@keyframes fm-ghost-pulse {
+  0%, 100% { opacity: 0.9; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(1.18); }
 }
 
 /* ── L3 告警层 ── */

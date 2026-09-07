@@ -842,7 +842,12 @@ async function autoFetchRecordingsIfNeeded() {
     const alarmMs = pendingJumpMs.value
     const alarmDate = new Date(alarmMs)
     const alarmStr = alarmDate.toTimeString().substring(0, 8)
-    const matching = recordings.value.find(r => {
+    // [T5-P5 2026-09-06] 告警详情「回放页」跳转带 recordingId: 优先精确命中
+    //   该录像段; 时间区间匹配仅是兜底 (跨段边界时刻可能选中相邻段)。
+    //   空字符串时恒 false 走兜底, 无副作用。
+    const wantedRecId = String(route.query.recordingId || '')
+    const matching = (wantedRecId && recordings.value.find(r => String(r.id) === wantedRecId)) ||
+      recordings.value.find(r => {
       const s = r.startTime?.split('T')[1]?.substring(0, 8) || ''
       const e = r.endTime?.split('T')[1]?.substring(0, 8) || ''
       return s <= alarmStr && e >= alarmStr

@@ -436,6 +436,36 @@ export async function showAlarmPopup(rawAlarm: any, options?: { autoCloseSeconds
     }
   }
 
+  // [FIX popup-anno 2026-09-06] 同告警双推送富化合并 — 同一条告警有两个 WS
+  //   推送 (setWsPushFn alarm.new 全量 metadata 先发 / WEB_POPUP executor
+  //   精简字段后发), findMatchingRule 首查慢二查快 (缓存) → 竞态下精简帧
+  //   常先弹且防抖挡掉富帧 → 实时弹窗快照无标注而列表详情有 (用户实测)。
+  //   同 id 后到帧不重置弹窗, 只补稀疏字段 (metadata 深合并/快照/视频 URL)。
+  if (popupVisible.value && currentAlarm.value && currentAlarm.value.id === alarm.id) {
+    const cur = currentAlarm.value as any
+    const mergedMeta = { ...(cur.metadata || {}), ...(alarm.metadata || {}) } as any
+    // detections/bbox: 后到帧非空才覆盖 (富帧在前被清空的风险隔离)
+    for (const k of ['detections', 'bbox', 'face_box', 'alarm_shapes'] as const) {
+      const nv = (alarm.metadata as any)?.[k]
+      const ov = (cur.metadata as any)?.[k]
+      if ((Array.isArray(nv) && nv.length === 0) || nv === undefined) {
+        if (ov !== undefined) mergedMeta[k] = ov
+      }
+    }
+    currentAlarm.value = {
+      ...alarm,
+      // 弹窗态字段保持 (不重置自动关闭秒数/规则匹配)
+      snapshotUrl: alarm.snapshotUrl || cur.snapshotUrl,
+      videoClipUrl: alarm.videoClipUrl || cur.videoClipUrl,
+      deviceName: alarm.deviceName || cur.deviceName,
+      channelName: alarm.channelName || cur.channelName,
+      metadata: mergedMeta,
+    } as typeof alarm
+    console.log('[useAlarmPopup] same-alarm enrich merged, id:', alarm.id,
+      'meta keys:', Object.keys(mergedMeta).length)
+    return
+  }
+
   currentAlarm.value = alarm
   linkageLogs.value = []
   queueIndex.value = 0

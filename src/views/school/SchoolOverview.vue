@@ -196,6 +196,9 @@ import { deviceApi } from '@/api/device'
 import { schoolApi, type CampusDashboard } from '@/api/school'
 import type { AlarmEvent, AlarmLevel } from '@/types/alarm'
 import { normalizeAlarmCore } from '@/types/alarm'
+import { useRealtimeAlarmEvents } from '@/composables/useRealtimeAlarmEvents'
+// [FIX realtime-push 2026-09-06] 场景页实时刷新: WS 告警到达去抖静默重拉 (无 loading 遮罩闪烁)
+useRealtimeAlarmEvents(() => loadAll(true))
 
 // ── 状态 ──
 

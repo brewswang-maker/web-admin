@@ -26,6 +26,8 @@
           </el-select>
         </div>
         <div class="toolbar-right">
+          <!-- [DEV-GROUP 2026-09-07] 分组管理入口: 设备页直接跳转分组实体管理页 -->
+          <el-button plain @click="$router.push('/device-groups')">分组管理</el-button>
           <el-dropdown trigger="click" @command="handleToolbarDiscover">
             <el-button type="success" plain>
               <el-icon><Search /></el-icon>发现设备<el-icon style="margin-left:4px"><ArrowDown /></el-icon>
@@ -148,11 +150,33 @@
           </template>
         </el-table-column>
         <el-table-column prop="location" label="位置" width="100" show-overflow-tooltip />
-        <el-table-column label="操作" width="360" fixed="right">
+        <!-- [DEV-GROUP 2026-09-07] 分组列: 设备级绑定 (device_ids) + 通道级
+             resolved 反查 (20 位码/_ch0 前缀匹配), 超出 2 个折叠 +N -->
+        <el-table-column label="分组" width="160">
+          <template #default="{ row }">
+            <template v-if="groupsOf(row).length">
+              <el-tag v-for="g in groupsOf(row).slice(0, 2)" :key="g.id" size="small" type="info" effect="plain" style="margin-right:4px">{{ g.name }}</el-tag>
+              <el-tooltip v-if="groupsOf(row).length > 2" :content="groupsOf(row).map((g: DeviceGroup) => g.name).join('、')">
+                <el-tag size="small" type="info" effect="plain">+{{ groupsOf(row).length - 2 }}</el-tag>
+              </el-tooltip>
+            </template>
+            <span v-else style="color:#8c8c8c">-</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="480" fixed="right">
           <template #default="{ row }">
             <el-button size="small" link type="primary" @click="$router.push(`/devices/${row.id}`)">详情</el-button>
             <el-button size="small" link type="warning" @click="openEditDialog(row)">编辑</el-button>
+            <!-- [DEV-GROUP 2026-09-07] 行内设置分组: 勾选即多组绑定 (设备视角) -->
+            <el-button size="small" link type="primary" @click="openGroupDialog(row)">分组</el-button>
             <el-button size="small" link type="success" @click="handleLive(row)">预览</el-button>
+            <!-- [DEV-CTRL 2026-09-06] 按 deviceType 动态控制按钮:
+                 IPCamera → 云台 (真调 /ptz/control, 后端 device:control 权限+审计);
+                 NVR/DVR → 录像检索 (设备端存储); 其他类型不出对应按钮 -->
+            <el-button v-if="row.deviceType === 'IPCamera'" size="small" link type="primary" @click="openPtzDialog(row)">云台</el-button>
+            <el-button v-if="row.deviceType === 'NVR' || row.deviceType === 'DVR'" size="small" link type="primary" @click="goRecordings(row)">录像</el-button>
+            <!-- [FLOOR-LINK 2026-09-06] ⑤ 设备所在平面图反查跳转 -->
+            <el-button size="small" link type="success" @click="goFloorMap(row)">平面图</el-button>
             <el-button size="small" link type="info" @click="openLocationPicker(row)">
               <el-icon><LocationFilled /></el-icon>选点
             </el-button>
@@ -500,6 +524,26 @@
       </template>
     </el-dialog>
 
+    <!-- [DEV-GROUP 2026-09-07] 行内设置分组对话框 (设备视角勾选;
+         分组实体 CRUD/通道级绑定在 /device-groups 独立页) -->
+    <el-dialog v-model="groupDlgVisible" :title="`设置分组 — ${groupDlgDevice?.name || ''}`" width="420px">
+      <div v-if="activeGroups.length === 0" style="color:#8c8c8c;padding:8px 0">
+        暂无可用分组，先到右上角「分组管理」创建。
+      </div>
+      <el-checkbox-group v-else v-model="draftGroupIds">
+        <div v-for="g in activeGroups" :key="g.id" style="padding:4px 0">
+          <el-checkbox :value="g.id" :label="g.id">
+            {{ g.name }}
+            <el-tag size="small" type="info" effect="plain" style="margin-left:6px">{{ groupTypeLabel(g.group_type) }}</el-tag>
+          </el-checkbox>
+        </div>
+      </el-checkbox-group>
+      <template #footer>
+        <el-button @click="groupDlgVisible = false">取消</el-button>
+        <el-button type="primary" :loading="groupSaving" @click="saveGroups">保存</el-button>
+      </template>
+    </el-dialog>
+
     <!-- 地图选点对话框（复用组件） -->
     <LocationPickerDialog
       v-if="pickerDevice"
@@ -511,6 +555,36 @@
       :address="pickerDevice.address"
       @saved="onLocationSaved"
     />
+
+    <!-- [DEV-CTRL 2026-09-06] 设备页内嵌云台控制 (真实 GB28181 PTZ:
+         后端 /ptz/control + /ptz/stop, device:control 权限 + device_control_audit 审计) -->
+    <el-dialog v-model="ptzDialogVisible" :title="`云台控制 — ${ptzDevice?.name || ''}`" width="360px">
+      <div v-if="ptzDialogVisible" style="display:flex;flex-direction:column;align-items:center;gap:14px">
+        <div style="display:grid;grid-template-columns:repeat(3,56px);grid-template-rows:repeat(3,56px);gap:6px">
+          <span></span>
+          <el-button circle size="large" @mousedown="ptzMove('up')" @mouseup="ptzHalt" @mouseleave="ptzHalt">↑</el-button>
+          <span></span>
+          <el-button circle size="large" @mousedown="ptzMove('left')" @mouseup="ptzHalt" @mouseleave="ptzHalt">←</el-button>
+          <el-button circle size="large" @click="ptzHalt">■</el-button>
+          <el-button circle size="large" @mousedown="ptzMove('right')" @mouseup="ptzHalt" @mouseleave="ptzHalt">→</el-button>
+          <span></span>
+          <el-button circle size="large" @mousedown="ptzMove('down')" @mouseup="ptzHalt" @mouseleave="ptzHalt">↓</el-button>
+          <span></span>
+        </div>
+        <div style="display:flex;gap:8px">
+          <el-button @mousedown="ptzMove('zoom_in')" @mouseup="ptzHalt">变倍 +</el-button>
+          <el-button @mousedown="ptzMove('zoom_out')" @mouseup="ptzHalt">变倍 -</el-button>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px">
+          <span style="font-size:13px;color:#606266">速度</span>
+          <el-slider v-model="ptzSpeedVal" :min="1" :max="5" :step="1" style="width:180px" />
+          <span style="font-size:13px;width:14px">{{ ptzSpeedVal }}</span>
+        </div>
+        <div style="font-size:12px;color:#909399">
+          通道 {{ ptzChannelId || ptzDevice?.id || '—' }} · 权限不足时后端将拒绝 (403)
+        </div>
+      </div>
+    </el-dialog>
   </div>
 </template>
 
@@ -522,10 +596,15 @@ import { useWebSocket } from '@/composables/useWebSocket'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { discoverGB28181, getGB28181Config } from '@/api/devices'
 import { deviceApi } from '@/api/device'
+import { deviceGroupApi } from '@/api/deviceGroups'
+import type { DeviceGroup } from '@/api/deviceGroups'
 import type { DeviceItem, ProtocolType, DiscoveredDevice } from '@/types/device'
 import type { GB28181Config } from '@/api/devices'
 import { PROTOCOL_OPTIONS } from '@/types/device'
 import LocationPickerDialog from '@/components/LocationPickerDialog.vue'
+// [DEV-CTRL 2026-09-06] 设备控制 + 平面图反查 (③⑤)
+import { ptzControl, ptzStop } from '@/api/ptz'
+import { floorMapApi } from '@/api/floorMap'
 
 // ---- 地图选点对话框 ----
 const showLocationPicker = ref(false)
@@ -611,6 +690,67 @@ const selected = ref<DeviceItem[]>([])
 // ---- 通道展开 ----
 const channelMap = ref<Record<string, any[]>>({})
 const channelLoading = ref('')
+
+// ── [DEV-GROUP 2026-09-07] 设备分组闭环: 列表页查看/设置分组 ──
+// 分组实体管理在 /device-groups 独立页 (左分组/右成员绑定); 此处补设备视角
+// 的归属反查与快捷绑定, 避免两边割裂 (用户在设备页找不到设分组入口)。
+const deviceGroups = ref<DeviceGroup[]>([])
+const groupDlgVisible = ref(false)
+const groupDlgDevice = ref<DeviceItem | null>(null)
+const draftGroupIds = ref<string[]>([])
+const groupSaving = ref(false)
+
+const activeGroups = computed(() => deviceGroups.value.filter(g => g.status === 'active'))
+
+async function loadGroups() {
+  try {
+    const res = await deviceGroupApi.listGroups()
+    deviceGroups.value = res.data?.data?.items ?? []
+  } catch { deviceGroups.value = [] }
+}
+
+function groupTypeLabel(t: string) {
+  return t === 'LOCATION' ? '按位置' : t === 'PURPOSE' ? '按用途' : '自定义'
+}
+
+/** 设备所属分组: 设备级绑定 (device_ids) 或通道级 resolved 反查
+ *  (resolved_channel_ids 含 20 位码/_ch0 码, 与设备国标码前缀匹配) */
+function groupsOf(d: DeviceItem): DeviceGroup[] {
+  return activeGroups.value.filter(g =>
+    (g.device_ids ?? []).includes(d.id)
+    || (g.resolved_channel_ids ?? []).some(c => c === d.id || c.startsWith(d.id + '_')))
+}
+
+function openGroupDialog(row: DeviceItem) {
+  groupDlgDevice.value = row
+  draftGroupIds.value = groupsOf(row).map(g => g.id)
+  groupDlgVisible.value = true
+}
+
+/** 设备视角保存: diff 出加入/移除的分组, 逐组 setMembers 全量回写
+ *  (保留各组原有 channel_ids 与其他 device_ids 不变) */
+async function saveGroups() {
+  if (!groupDlgDevice.value) return
+  const dev = groupDlgDevice.value
+  const before = new Set(groupsOf(dev).map(g => g.id))
+  const after = new Set(draftGroupIds.value)
+  const changed = activeGroups.value.filter(g => before.has(g.id) !== after.has(g.id))
+  if (changed.length === 0) { groupDlgVisible.value = false; return }
+  groupSaving.value = true
+  try {
+    for (const g of changed) {
+      const ids = after.has(g.id)
+        ? [...(g.device_ids ?? []), dev.id]
+        : (g.device_ids ?? []).filter((x: string) => x !== dev.id)
+      await deviceGroupApi.setMembers(g.id, { device_ids: ids, channel_ids: g.channel_ids ?? [] })
+    }
+    ElMessage.success(`已更新「${dev.name}」的分组绑定 (${changed.length} 组)`)
+    groupDlgVisible.value = false
+    loadGroups()
+  } catch (e) {
+    ElMessage.error(`分组保存失败: ${(e as Error)?.message ?? e}`)
+  } finally { groupSaving.value = false }
+}
 
 async function handleExpandChange(row: DeviceItem, expandedRows: DeviceItem[]) {
   if (expandedRows.find((r: DeviceItem) => r.id === row.id)) {
@@ -848,6 +988,61 @@ function onSearch() { page.value = 1; fetchData() }
 function handleLive(row: DeviceItem) {
   router.push(`/live?deviceId=${row.id}`)
 }
+
+// ---- [DEV-CTRL 2026-09-06] ③ 按类型动态控制: 设备页云台 (真实 PTZ 链路) ----
+const ptzDialogVisible = ref(false)
+const ptzDevice = ref<DeviceItem | null>(null)
+const ptzChannelId = ref('')
+const ptzSpeedVal = ref(2)
+
+function openPtzDialog(row: DeviceItem) {
+  ptzDevice.value = row
+  // GB28181 IPC: 通道=设备自身; 多通道设备取首通道 (channelMap 由展开行懒加载)
+  const chs = channelMap.value[row.id]
+  ptzChannelId.value = chs?.length ? String(chs[0].id ?? chs[0].channel_id ?? '') : row.id
+  ptzDialogVisible.value = true
+}
+
+function ptzMove(direction: 'up' | 'down' | 'left' | 'right' | 'zoom_in' | 'zoom_out') {
+  if (!ptzDevice.value) return
+  ptzControl({
+    deviceId: ptzDevice.value.id,
+    channelId: ptzChannelId.value || ptzDevice.value.id,
+    direction,
+    speed: ptzSpeedVal.value,
+  }).catch((e: unknown) => {
+    const msg = (e as { response?: { data?: { message?: string } } })?.response?.data?.message
+    ElMessage.error(msg ? `云台控制被拒绝: ${msg}` : '云台控制失败')
+  })
+}
+
+function ptzHalt() {
+  if (!ptzDevice.value) return
+  ptzStop(ptzDevice.value.id, ptzChannelId.value || ptzDevice.value.id).catch(() => {})
+}
+
+// [FLOOR-LINK 2026-09-06] ⑤ 该设备所在平面图反查 → 跳转定位高亮
+async function goFloorMap(row: DeviceItem) {
+  try {
+    const pairs = await floorMapApi.mapsByChannel(row.id)
+    if (!pairs.length) {
+      ElMessage.info(`设备「${row.name}」未绑定任何平面图，可在平面图页手动落点`)
+      return
+    }
+    // 多图绑定时跳主图 (服务端已按主图在前排序)
+    // [FLOOR-JUMP FIX 2026-09-06] path '/floormap' 不存在 (路由表注册 'maps' /
+    //   name 'FloorMap') — 绑定设备场景实测 404。改命名路由跳转。
+    const mapId = pairs[0]?.map?.id
+    router.push({ name: 'FloorMap', query: { map_id: String(mapId ?? ''), ch: row.id } })
+  } catch {
+    ElMessage.error('平面图反查失败')
+  }
+}
+
+// [DEV-CTRL 2026-09-06] ③ NVR/DVR → 设备端录像检索
+function goRecordings(row: DeviceItem) {
+  router.push({ name: 'Recording', query: { deviceId: row.id } })
+}
 async function handleSync(row: DeviceItem) {
   try { await deviceStore.syncDevice(row.id); ElMessage.success(`设备 ${row.name} 同步指令已发送`) }
   catch { ElMessage.error('同步失败') }
@@ -1034,6 +1229,7 @@ let devicePollTimer: ReturnType<typeof setInterval> | null = null
 onMounted(() => {
   loadModelList()
   fetchData()
+  loadGroups()
   deviceStore.fetchTemplates()
   fetchSipConfig()
 

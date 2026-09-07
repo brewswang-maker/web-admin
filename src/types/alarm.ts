@@ -179,7 +179,7 @@ export interface AlarmQuery {
   start_ms?: number      // 后端时间戳参数
   end_ms?: number
   since?: number         // [P0-4-d] WS 断线重连补拉: 只返回 created_at > since 的告警 (ms, 排他)
-  scene?: string         // [校园方案 2026-08-30] 场景过滤 (逗号分隔多值, 后端 SSOT 展开 SQL IN)
+  scene?: string         // [校园方案 2026-08-30] 场景过滤 (逗号分隔多值, 后端 SSOT 展开 SQL IN); [2026-09-07] 各场景事件页数据源统一走此参数 (与 scene_tags 登记自动同步)
   search?: string
   dateRange?: [string, string]
 }
@@ -209,6 +209,9 @@ export interface AlarmEvidence {
   aiAnalysis?: string
   relatedRecordingId?: string
   relatedRecordingTime?: string
+  // [POPUP-GALLERY 2026-09-07] 取证帧 (后端 metadata[0] 的 pre/mid/post
+  //   _snapshot_url, data:base64 直可用) — 证据链弹窗并入多图画廊
+  evidenceFrames?: Array<{ url: string; tag: string }>
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -349,6 +352,9 @@ export const ALARM_TYPE_CN: Record<string, string> = {
   // ── 人员安全/医疗 ──
   drowning_detected: '溺水检测',
   unsafe_operation: '危险操作',
+  // [遗留收口 2026-09-06] 高空抛物独立 canonical (与后端 EventTypeAliases/
+  //   算法目录“高空抛物检测”对齐; 原归一到 unsafe_operation 显示“危险操作”)
+  falling_object: '高空抛物检测',
   body_temp_abnormal: '体温异常',
   // ── 交通事件 ──
   traffic_accident: '交通事故',
@@ -625,6 +631,11 @@ export function normalizeAlarmCore(raw: any): AlarmEvent {
     location: raw.location || raw.location_name || raw.zone || '',
     metadata: {
       bbox: raw.bbox || [],
+      // [FIX popup-anno 2026-09-06] 多目标检测框透传 — WS 实时推送体顶层
+      //   detections (WEB_POPUP executor 补推) 进 metadata 白名单, 实时弹窗
+      //   AlarmSnapshot 多框标注与 REST 详情 (读库 metadata.detections) 同源;
+      //   原仅 metadata 内层键可进 → 实时弹窗无标注而列表详情有 (分裂)。
+      detections: raw.detections || raw.metadata?.detections,
       targetLabel: raw.target_label || raw.targetLabel || '',
       // 🆕 v6.3: 多类别检测元数据（后端 AlarmLabels 注入 + 前端透传）
       objectCategory: raw.object_category || raw.objectCategory || '',

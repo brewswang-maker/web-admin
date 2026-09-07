@@ -131,11 +131,21 @@ async function loadFromRules(channelId: string): Promise<OverlayShape[]> {
     const isWildcard = srcChs.length + bound.length === 0
     if (!chHit && !isWildcard) continue
     try {
-      const parsed = JSON.parse(rawJson) as Array<{
+      // [ROI-GAP 2026-09-06] v2 形态兼容: {combine:'union'|'intersection', shapes:[...]}
+      //   (引擎组合语义可配, LinkageRuleView combine 选择器写入; 渲染层只取
+      //   shapes 数组 — combine 是引擎判定语义, 不影响叠加几何); 老规则纯
+      //   数组 v1 形态照旧。
+      const parsed = JSON.parse(rawJson) as unknown
+      const shapesSrc = (Array.isArray(parsed) ? parsed
+        : Array.isArray((parsed as any)?.shapes) ? (parsed as any).shapes : []) as Array<{
         shape?: string; name?: string; active?: boolean; direction?: string; points?: number[]
       }>
-      const list = (Array.isArray(parsed) ? parsed : [])
-        .filter((s) => s && s.active !== false && Array.isArray(s.points) && s.points.length >= 4)
+      const list = shapesSrc
+        // [FIX 2026-09-06] 需求二.1: 关注点必须叠加渲染 — 原 flat≥4 过滤把
+        //   单顶点 point (flat 仅 2 数) 滤掉, 规则链画了关注点弹窗却不显示;
+        //   线/区类仍要求 ≥2 顶点 (flat ≥4)
+        .filter((s) => s && s.active !== false && Array.isArray(s.points)
+          && ((s.shape === 'point' && s.points.length >= 2) || s.points.length >= 4))
         .map((s) => ({
           type: (s.shape || 'detection_zone') as OverlayShapeType,
           name: s.name || '',
@@ -143,7 +153,7 @@ async function loadFromRules(channelId: string): Promise<OverlayShape[]> {
           points: normFlatPoints(s.points as number[]),
           source: 'rule' as const,
         }))
-        .filter((s) => s.points.length >= 2)
+        .filter((s) => s.points.length >= (s.type === 'point' ? 1 : 2))
       if (!list.length) continue
       if (chHit) return list // 显式绑定优先, 即取
       if (!wildcardShapes) wildcardShapes = list
@@ -208,11 +218,14 @@ export function useAlarmShapes() {
     //    per-alarm 数据, 绕过模块级共享缓存 (同 key 不同告警不可互相污染)。
     if (Array.isArray(alarmShapes) && alarmShapes.length) {
       shapes.value = alarmShapes
-        .filter((s: any) => s && Array.isArray(s.points) && s.points.length >= 2)
+        // [FIX 2026-09-06] 同规则链: point 单顶点放行 (顶点数组 [[x,y]] ≥1)
+        .filter((s: any) => s && Array.isArray(s.points)
+          && (s.points.length >= 2 || (s.type === 'point' && s.points.length >= 1)))
         .map((s: any) => ({
           type: (s.type || 'detection_zone') as OverlayShapeType,
           name: s.name || '',
-          direction: s.direction || '',
+          // [FIX region-type 2026-09-06] 冻结链 direction 归一小写 (与渲染判定同口径)
+          direction: String(s.direction || '').toLowerCase(),
           points: normPoints(s.points),
           // source 复用 'region' 渲染分支 (绘制按 type 不按 source),
           // 与区域库回退同色同形, 语义差异仅在于数据已冻结在告警里
@@ -358,7 +371,10 @@ export function drawShapesOnCtx(
         ctx.beginPath(); ctx.arc(p[0], p[1], 2.6 * scale, 0, Math.PI * 2); ctx.fill()
       }
       const angle = Math.atan2(b[1] - a[1], b[0] - a[0])
-      const dir = s.direction || (s.type === 'directional_line' ? 'a_to_b' : '')
+      // [FIX region-type 2026-09-06] direction 大小写归一: 后端冻结链 (alarm_shapes)
+      //   与规则链 cross_direction 是大写 'A_TO_B'/'B_TO_A'/'BOTH', 此处判定用
+      //   小写 — 不归一绊线方向箭头永远走不到 (else if (dir) 默认分支单向)。
+      const dir = String(s.direction || (s.type === 'directional_line' ? 'a_to_b' : '')).toLowerCase()
       if (dir === 'both') {
         const mx = (a[0] + b[0]) / 2, my = (a[1] + b[1]) / 2
         drawArrow(ctx, mx + 6 * scale * Math.cos(angle), my + 6 * scale * Math.sin(angle), angle, 7 * scale)
@@ -442,6 +458,22 @@ export function downloadPngWithFallback(
   } catch { fallback() }
 }
 
+/** [trash-misclass 2026-09-06] 检测 label 英→中: 后端 baggage 模型 7 类
+ *  中文展示 (垃圾桶被模型混淆为 suitcase/handbag 时, 中文标签 + 真实
+ *  conf 让用户肉眼复核快照更直观); 未命中原样返回 */
+const LABEL_ZH: Record<string, string> = {
+  person: '人员',
+  backpack: '背包',
+  crossbody_bag: '斜挎包',
+  handbag: '手提包',
+  suitcase: '行李箱',
+  shoulder_bag: '单肩包',
+  other_bag: '其他物品',
+}
+export function zhLabel(label: string): string {
+  return LABEL_ZH[label] || label
+}
+
 /** 检测框绘制 (屏幕/导出共用视觉: danger 红 #f56c6c, 其余类别调色板) */
 export function drawDetsOnCtx(
   ctx: CanvasRenderingContext2D,
@@ -457,7 +489,7 @@ export function drawDetsOnCtx(
     ctx.strokeStyle = color
     ctx.lineWidth = 2 * scale
     ctx.strokeRect(x, y, bw, bh)
-    const label = `${d.label} ${Math.round(d.confidence * 100)}%`
+    const label = `${zhLabel(d.label)} ${Math.round(d.confidence * 100)}%`
     ctx.font = `bold ${Math.round(11 * scale)}px sans-serif`
     const tw = ctx.measureText(label).width + 8 * scale
     const th = 18 * scale

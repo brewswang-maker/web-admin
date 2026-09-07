@@ -145,6 +145,9 @@ import type { CapacityProfile } from '@/types/largeEvent'
 import { LARGE_EVENT_SCENES, LARGE_EVENT_CIRCLES, NEW_LARGE_EVENT_TYPES } from '@/types/largeEvent'
 import type { AlarmEvent } from '@/types/alarm'
 import type { EventTypeMetadataItem } from '@/api/eventTypes'
+import { useRealtimeAlarmEvents } from '@/composables/useRealtimeAlarmEvents'
+// [FIX realtime-push 2026-09-06] 场景页实时刷新: WS 告警到达去抖重拉 (零新增连接)
+useRealtimeAlarmEvents(() => fetchRecentEvents())
 
 const router = useRouter()
 

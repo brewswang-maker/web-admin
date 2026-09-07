@@ -9,7 +9,15 @@
 
           <!-- ═══ 顶栏: 红色短标题 + 倒计时 + ✕ ═══ -->
           <div class="alarm-popup__header">
-            <span class="alarm-popup__title">事件详情</span>
+            <!-- [FIX camera-icon 2026-09-06] 顶栏补摄像头图标: 与平面图
+                 deviceIconMeta('camera') 同形状 (枪机+镜头, 视觉识别一致);
+                 包 flex 容器防 header space-between 把标题挤到中间 -->
+            <span class="alarm-popup__title-wrap">
+              <svg class="alarm-popup__title-icon" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+                <path d="M8 9.5 16.5 7v7L8 12.5z M12 9.6a2.4 2.4 0 1 0 0 4.8 2.4 2.4 0 0 0 0-4.8z" fill="currentColor"/>
+              </svg>
+              <span class="alarm-popup__title">事件详情</span>
+            </span>
             <div class="alarm-popup__header-right">
               <!-- [POPUP-AUTOCLOSE 2026-09-03] 仅 autoCloseSeconds>0 时显示倒计时, 0=永不自动关闭 -->
               <span v-if="currentPopupAutoCloseS > 0" class="alarm-popup__countdown">{{ countdown }}s</span>
@@ -151,16 +159,25 @@
                     :algo-id="popupAlgoId"
                     :alarm-shapes="popupAlarmShapes"
                   />
+                  <!-- [POPUP-EV-MERGE 2026-09-07] 取证帧并入下方缩略图画廊 (pre/mid/post
+                       带语义角标, 左右翻页/点击查看) — 原 EvidenceFrames compact
+                       独立区块随之移除避免重复; 组件保留供 AlarmsView 详情使用 -->
                   <div class="alarm-popup__thumbs">
                     <button class="alarm-popup__thumbs-nav" :disabled="imageIndex <= 0" @click="prevImage" aria-label="上一张">‹</button>
                     <div class="alarm-popup__thumbs-track">
                       <div
                         v-for="(img, idx) in alarmImageList" :key="idx"
                         class="alarm-popup__thumb"
-                        :class="{ 'alarm-popup__thumb--active': idx === imageIndex }"
-                        :style="{ backgroundImage: `url(${img})` }"
+                        :class="{
+                          'alarm-popup__thumb--active': idx === imageIndex,
+                          'alarm-popup__thumb--evidence': !!img.tag,
+                        }"
+                        :style="{ backgroundImage: `url(${img.url})` }"
+                        :title="img.tag || '主快照'"
                         @click="imageIndex = idx"
-                      />
+                      >
+                        <span v-if="img.tag" class="alarm-popup__thumb-tag">{{ img.tag }}</span>
+                      </div>
                     </div>
                     <button class="alarm-popup__thumbs-nav" :disabled="imageIndex >= totalImageCount - 1" @click="nextImage" aria-label="下一张">›</button>
                   </div>
@@ -301,6 +318,8 @@
                     </div>
                     <div class="alarm-popup__detail-row">
                       <span class="alarm-popup__detail-key">设备名称:</span>
+                      <!-- [FIX align 2026-09-07] 移除装饰性摄像头小图标: 设备名称值与告警类型/
+                           设备编号行错位 ~18px, 视觉上疑似隐藏字符; 三行同构对齐 -->
                       <span class="alarm-popup__detail-val">{{ currentAlarm.deviceName || currentAlarm.deviceId || '-' }}</span>
                     </div>
                     <div class="alarm-popup__detail-row">
@@ -444,6 +463,7 @@ import { ElMessage } from 'element-plus'
 import { Loading } from '@element-plus/icons-vue'
 import MiniPlayer from '@/components/video/MiniPlayer.vue'
 import AlarmSnapshot from '@/components/alarm/AlarmSnapshot.vue'
+import EvidenceFrames from '@/components/EvidenceFrames.vue' // [POPUP-EV-MERGE 2026-09-07] 弹窗内已并入画廊, import 保留给未来复用 (无副作用)
 import {
   popupVisible, currentAlarm, matchedRule, linkageLogs,
   currentPopupAutoCloseS,  // [POPUP-AUTOCLOSE 2026-09-03] 弹窗自动关闭秒数 (0=不启用)
@@ -492,31 +512,52 @@ watch(priorityMode, (v) => localStorage.setItem(PRIORITY_KEY, v))
 
 // ── 图片 Tab 缩略图翻页 ──
 // [POPUP-IMAGE-LIST 2026-09-03] 本次报警事件图片: 有几张显示几张 (1 张 = 1/1, 多张 = 1/N 可翻页)
-//   数据源优先级: metadata.snapshot_urls[] > metadata.snapshot_urls_json > alarm.snapshotUrl/base64 兜底 1 张
+//   数据源优先级: metadata.snapshot_urls[] > metadata.snapshot_urls_json > alarm.snapshotUrl/base64 兑底 1 张
+// [POPUP-EV-MERGE 2026-09-07] 取证帧并入画廊: pre/mid/post_snapshot_url 追加在主快照后
+//   (带语义角标), metadata 兼容数组/对象两形态 (DB 存数组, REST 部分路径 flatten);
+//   与已有 URL 去重 (同一帧可能既是主快照又入 evidence)
+interface GalleryImage { url: string; tag: string }
 const imageIndex = ref(0)
-const alarmImageList = computed<string[]>(() => {
+const alarmImageList = computed<GalleryImage[]>(() => {
   const alarm = currentAlarm.value
   if (!alarm) return []
-  const meta = (alarm.metadata || {}) as Record<string, unknown>
+  const rawMeta = (alarm.metadata || {}) as unknown
+  const metaSrc = Array.isArray(rawMeta) && rawMeta.length && typeof rawMeta[0] === 'object'
+    ? rawMeta[0] as Record<string, unknown>
+    : (rawMeta && typeof rawMeta === 'object' ? rawMeta as Record<string, unknown> : {})
   // [P0-8 2026-09-04 人脸比对] 场景图优先 (保留"场景+人"画面, 对标大华; 后端 face_detector 落盘)
-  const scene = typeof meta.scene_url === 'string' && meta.scene_url ? meta.scene_url : ''
-  const direct = meta.snapshot_urls as string[] | undefined
+  const scene = typeof metaSrc.scene_url === 'string' && metaSrc.scene_url ? metaSrc.scene_url : ''
+  const direct = metaSrc.snapshot_urls as string[] | undefined
   let list: string[] = []
   if (Array.isArray(direct) && direct.length > 0) list = direct.filter(Boolean)
   else {
-    const raw = meta.snapshot_urls_json as string | undefined
+    const raw = metaSrc.snapshot_urls_json as string | undefined
     if (typeof raw === 'string' && raw.trim()) {
       try {
         const arr = JSON.parse(raw)
         if (Array.isArray(arr) && arr.length > 0) list = arr.filter((u: unknown): u is string => typeof u === 'string' && !!u)
-      } catch { /* 非法 JSON 忽略, 走单图兜底 */ }
+      } catch { /* 非法 JSON 忽略, 走单图兑底 */ }
     }
   }
   if (list.length === 0) {
     const primary = snapshotImageUrl.value
     if (primary) list = [primary]
   }
-  return scene ? [scene, ...list] : list
+  const mainUrls = scene ? [scene, ...list] : list
+  // [POPUP-EV-MERGE] 取证帧 (语义顺序 pre→mid→post, 与 EvidenceFrames 组件口径一致)
+  const evidenceDefs: Array<[string, string]> = [
+    ['pre_snapshot_url', '事前'],
+    ['mid_snapshot_url', '事中'],
+    ['post_snapshot_url', '事后'],
+  ]
+  const evidence: GalleryImage[] = []
+  for (const [key, tag] of evidenceDefs) {
+    const u = typeof metaSrc[key] === 'string' ? metaSrc[key] as string : ''
+    if (u && !mainUrls.includes(u) && !evidence.some(e => e.url === u)) {
+      evidence.push({ url: u, tag })
+    }
+  }
+  return [...mainUrls.map(u => ({ url: u, tag: '' })), ...evidence]
 })
 const totalImageCount = computed(() => Math.max(1, alarmImageList.value.length))
 
@@ -542,7 +583,7 @@ const faceCompare = computed(() => {
   const verdict = known ? `${groupZh || '已识别'}${name ? ' · ' + name : ''}` : '未命中名单'
   return { snapshot: snap, enroll, similarityPct: sim > 0 ? `${(sim * 100).toFixed(1)}%` : '-', verdict, known }
 })
-const currentSnapshotUrl = computed(() => alarmImageList.value[imageIndex.value] || snapshotImageUrl.value)
+const currentSnapshotUrl = computed(() => alarmImageList.value[imageIndex.value]?.url || snapshotImageUrl.value)
 watch(totalImageCount, (n) => { if (imageIndex.value >= n) imageIndex.value = Math.max(0, n - 1) })
 watch(currentAlarm, () => { imageIndex.value = 0 })
 function prevImage() { if (imageIndex.value > 0) imageIndex.value-- }
@@ -1060,6 +1101,17 @@ void jumpToPlayback; void openImageTab
 .alarm-popup__title {
   font-size: 18px; font-weight: 400;
 }
+/* [FIX camera-icon 2026-09-06] 顶栏摄像头图标: 随标题色, 微降饱和 */
+.alarm-popup__title-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+.alarm-popup__title-icon {
+  opacity: 0.9;
+  flex: none;
+}
 .alarm-popup__header-right {
   display: flex; align-items: center; gap: 14px;
 }
@@ -1337,6 +1389,7 @@ void jumpToPlayback; void openImageTab
   scrollbar-width: thin;
 }
 .alarm-popup__thumb {
+  position: relative;
   flex: 0 0 36px; height: 36px;
   background: #1A1F2C;
   border: 1px solid #2A3550;
@@ -1353,6 +1406,19 @@ void jumpToPlayback; void openImageTab
 }
 .alarm-popup__thumb-label {
   font-size: 10px; color: #888;
+}
+/* [POPUP-EV-MERGE 2026-09-07] 取证帧缩略图: 青色边框区分主快照 + 语义角标 */
+.alarm-popup__thumb--evidence {
+  border-color: #1C6E8C;
+}
+.alarm-popup__thumb-tag {
+  position: absolute; left: 0; right: 0; bottom: 0;
+  font-size: 9px; line-height: 12px;
+  color: #9BE8FF;
+  background: rgba(5, 30, 60, 0.85);
+  text-align: center;
+  border-radius: 0 0 3px 3px;
+  pointer-events: none;
 }
 .alarm-popup__thumbs-counter {
   font-size: 11px; color: #00E5FF;
