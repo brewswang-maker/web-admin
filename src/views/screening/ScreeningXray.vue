@@ -243,7 +243,8 @@ function levelText(level: AlarmLevel): string {
 function formatTime(ts?: string | number): string {
   if (!ts) return '-'
   const d = new Date(ts)
-  if (isNaN(d.getTime())) return ts
+  // [FIX tsc 2026-09-07] isNaN 分支返回入参需归一 string (原返回 string|number → TS2322)
+  if (isNaN(d.getTime())) return String(ts)
   const pad = (n: number) => String(n).padStart(2, '0')
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
 }
@@ -271,7 +272,7 @@ async function snapshotToBase64(url: string): Promise<string> {
 }
 
 async function handleTrace(row: AlarmEvent) {
-  const channelId = String((row as Record<string, unknown>).channelId ?? '')
+  const channelId = String((row as unknown as Record<string, unknown>).channelId ?? '')
   traceLoading.value = row.id
   traceItems.value = []
   traceError.value = ''

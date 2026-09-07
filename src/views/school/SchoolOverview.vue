@@ -185,6 +185,9 @@
  * 风格基线: ScreeningOverview (安检总览门面) — 渐变徽章/hover/排行条/色点 统一
  */
 import { computed, onMounted, onUnmounted, ref, type Component } from 'vue'
+// [FIX tsc 2026-09-07] LazyChart option 要求 EChartsOption, 字面量 trigger/type
+//   需上下文类型收窄 (原推断 string → TS2322)
+import type { EChartsOption } from 'echarts'
 import {
   Refresh, InfoFilled, TrendCharts, Search, MapLocation, User, Bell, Tickets, Monitor, Timer,
   MagicStick, School, OfficeBuilding, Basketball, House, Food, Reading,
@@ -292,7 +295,7 @@ const levelRows = computed(() => {
 
 // ── 24h 趋势图 (alarm_trend + passage_trend 小时桶对齐) ──
 
-const trendOption = computed(() => {
+const trendOption = computed<EChartsOption | null>(() => {
   const d = dash.value
   if (!d) return null
   const alarmB = d.alarm_trend || []

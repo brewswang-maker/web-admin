@@ -681,7 +681,10 @@ const algoRows = computed(() => {
   const disabledIds = Array.from(new Set([...disabledListOf(selected.value.channelId), ...leftoverIds]))
   // 串内=启用行; 禁用记忆/遗留串=禁用行; 按稳定顺序渲染 (原地启停不跳位)
   const all = stableAlgoOrder(selected.value.channelId, activeIds, disabledIds)
-  return all.map((id) => ({
+  // [FIX tsc 2026-09-07] 显式返回类型锁定 mode 联合字面量 (原推断放宽为 string,
+  //   selectAlgoRow 入参/editForm.mode 赋值两处报 TS2345/TS2322)
+  type AlgoRow = { algoId: string; algoName: string; mode: 'snapshot' | 'streaming'; interval: number; enabled: boolean; running: boolean; ruleCount: number }
+  return all.map((id): AlgoRow => ({
     algoId: id,
     // [FIX 2026-09-01] 解析链: 统一走 algoNameOf (目录全量映射 → SSOT 兑底表 → options → 裸 id)
     algoName: algoNameOf(id),
@@ -1426,7 +1429,7 @@ async function loadRegions() {
     // 编辑器 RoiData {roi_id,roi_name,roi_type,polygon:number[]一维,is_active} —
     // 之前直接透传二维结构, 编辑器按一维消费 → 已保存区域渲染错乱/不显示,
     // 且 roi_id undefined → 新画区域与存量无法区分。
-    const rawRegions: any[] = curAlgo ? (rRes.data?.data?.regions ?? rRes.data?.regions ?? []) : []
+    const rawRegions: any[] = curAlgo ? ((rRes.data as any)?.data?.regions ?? (rRes.data as any)?.regions ?? []) : []
     regions.value = rawRegions.map((r: any) => ({
       roi_id: `reg_${r.id}`,
       roi_name: r.name,
@@ -1438,14 +1441,14 @@ async function loadRegions() {
     lastLoadedRegions.value = regions.value.map((r: any) => ({ ...r }))
     // GET /algos/tripwires 后端仅支持 int32 channel_id (GB 超大数全部存 0),
     // 会混出其他通道的绊线 → 本地按 channel_id_str 过滤
-    tripwires.value = (tRes.data?.data?.tripwires ?? tRes.data?.tripwires ?? []).filter(
-      (t) => stripChSuffix(t.channel_id_str || '') === chStrNoSuffix
+    tripwires.value = ((tRes.data as any)?.data?.tripwires ?? (tRes.data as any)?.tripwires ?? []).filter(
+      (t: any) => stripChSuffix(t.channel_id_str || '') === chStrNoSuffix
     )
-    passageways.value = (pRes.data?.data?.passageways ?? pRes.data?.passageways ?? []).filter(
-      (p) => stripChSuffix(p.channel_id_str || '') === chStrNoSuffix
+    passageways.value = ((pRes.data as any)?.data?.passageways ?? (pRes.data as any)?.passageways ?? []).filter(
+      (p: any) => stripChSuffix(p.channel_id_str || '') === chStrNoSuffix
     )
     // 计数区 (int32 维度, GB 场景全 0 → 列表为全部; 名称带通道尾 4 位便于区分)
-    countingZoneList.value = czRes.data?.data?.counting_zones ?? czRes.data?.counting_zones ?? []
+    countingZoneList.value = (czRes.data as any)?.data?.counting_zones ?? (czRes.data as any)?.counting_zones ?? []
     countingZoneRois.value = countingZoneList.value.map((cz) => ({
       roi_id: `cz_${cz.id}`,
       roi_name: cz.name,
@@ -1677,7 +1680,7 @@ async function migrateTripwires() {
   const algoId = 'shield.algo.perimeter.tailgating'
   try {
     const res = await regionApi.migratePassageways(algoId)
-    const n = res.data?.data?.migrated ?? res.data?.migrated ?? 0
+    const n = (res.data as any)?.data?.migrated ?? (res.data as any)?.migrated ?? 0
     ElMessage.success(n > 0 ? `已迁移 ${n} 条老绊线为通道` : '无可迁移的老绊线 (或已全部迁移)')
     await loadRegions()
   } catch (e: any) {

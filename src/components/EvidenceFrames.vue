@@ -82,11 +82,13 @@ const frames = computed<EvFrame[]>(() => {
   //   metadata.algo_id 尾段 → description_key 首段 ("personal_item.abandoned"
   //   → personal_item)。此前只看 algoId 一级, SSOT 归一后的 canonical 名
   //   (abandoned) 未命中时直接退通用文案 (真机弹窗实录"事发前/事发后")。
+  // [FIX tsc 2026-09-07] .pop() 返回 string|undefined, filter(Boolean) 不收窄 →
+  //   类型谓词收窄为 string[], 否则 ALGO_LABELS[t] 索引报 TS2538 (两处同修)
   const tails = [
     String(props.algoId || '').split('.').pop(),
     String(m.algo_id || '').split('.').pop(),
     String(m.description_key || '').split('.')[0],
-  ].filter(Boolean)
+  ].filter((t): t is string => Boolean(t))
   let labels = { pre: '事发前', mid: '过程中', post: '事发后' }
   for (const t of tails) {
     if (ALGO_LABELS[t]) { labels = ALGO_LABELS[t]; break }
@@ -108,7 +110,7 @@ const algoHint = computed(() => {
     String(props.algoId || '').split('.').pop(),
     String(m.algo_id || '').split('.').pop(),
     String(m.description_key || '').split('.')[0],
-  ].filter(Boolean)
+  ].filter((t): t is string => Boolean(t))
   const hit = tails.find((t) => ALGO_LABELS[t]) || ''
   return hit ? `${hit} 取证帧` : '取证帧'
 })

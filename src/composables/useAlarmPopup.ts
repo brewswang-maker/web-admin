@@ -127,6 +127,9 @@ function checkTimeCondition(rule: LinkageRule): boolean {
 }
 
 // ── 联动规则匹配 ──
+// [FIX tsc 2026-09-07] normMinConf 提升为模块级 (原定义在首个匹配分支内,
+//   第二分支 (cachedRules 缓存链) L215 引用不到 → TS2304; 纯函数无状态提升零风险)
+const normMinConf = (mc: number) => (mc > 1 ? mc / 100 : mc)
 // [规则驱动弹窗 2026-09-01] 导出供 useGlobalAlarm 弹窗前置门槛复用
 export async function findMatchingRule(alarm: AlarmEvent): Promise<LinkageRule | null> {
   try {
@@ -150,10 +153,6 @@ export async function findMatchingRule(alarm: AlarmEvent): Promise<LinkageRule |
     if (baseId && baseId !== chIdStr) chHashes.add(safeChannelHash(baseId))
     const severity = (alarm.metadata?.severityNum as number) ?? 2
     const confidence = alarm.confidence
-    // [FIX 2026-09-05 弹窗不显示回归·第二拦截点] 规则库存的是百分数刻度
-    //   (真机: min_confidence 50.0/10.0), 后端加载时归一 (LinkageEngine.cpp L2302:
-    //   mc > 1.0 ? mc/100 : mc), 前端原直接比较 0.88 < 50 恒拦截 → 同源归一。
-    const normMinConf = (mc: number) => (mc > 1 ? mc / 100 : mc)
     // 按 priority 降序排列
     const sorted = [...rules]
       .filter(r => r.enabled)

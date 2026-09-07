@@ -46,7 +46,9 @@ export const regionApi = {
    *  channel_id_str 精确查询绊线 (RegionStore 无后缀归一) → 单条记录必有一半
    *  实例 miss (日志表现 GATE-MISS)。镜像创建失败不阻塞 (主形态仍可用)。 */
   async createTripwireWithMirror(body: Omit<TripwireDef, 'id' | 'created_at' | 'updated_at'>): Promise<number> {
-    const res = await http.post<{ id: number }>('/algos/tripwires', body)
+    // [FIX tsc 2026-09-07] 泛型改为实际响应壳形态 (拦截器不剥业务壳, id 在
+    //   res.data.data.id; 原单层 {id} 泛型使 .data?.data 访问报 TS2339)
+    const res = await http.post<{ data?: { id?: number }; id?: number }>('/algos/tripwires', body)
     // [FIX 2026-08-28] http 拦截器不剥业务壳: id 在 res.data.data.id
     const mainId = res.data?.data?.id ?? res.data?.id ?? 0
     if (body.channel_id_str) {

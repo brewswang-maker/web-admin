@@ -1332,7 +1332,8 @@ const channelOnline = computed<Record<string, boolean>>(() => {
   const o: Record<string, boolean> = {}
   for (const ch of channels.value) {
     // status 值域双兼容: "active" (类型声明) / "online" (API 实测)
-    o[chKey(ch)] = ch.status === 'active' || ch.status === 'online'
+    // [FIX tsc 2026-09-07] 声明类型无 'online', as string 放宽比较 (TS2367)
+    o[chKey(ch)] = ch.status === 'active' || (ch.status as string) === 'online'
   }
   return o
 })

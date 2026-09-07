@@ -80,6 +80,9 @@
  * 红线: alarm_events 无身份列 → 不伪造个人考勤, 只呈现真实通行流量 (禁 mock)
  */
 import { computed, onMounted, onUnmounted, ref } from 'vue'
+// [FIX tsc 2026-09-07] LazyChart option 要求 EChartsOption, 字面量 trigger/type
+//   需上下文类型收窄 (原推断 string → TS2322)
+import type { EChartsOption } from 'echarts'
 import { Refresh, User, Timer, Location } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import LazyChart from '@/components/LazyChart.vue'
@@ -108,7 +111,7 @@ const peakLabel = computed(() => {
 })
 const peakCount = computed(() => peak.value?.cnt ?? 0)
 
-const trendOption = computed(() => {
+const trendOption = computed<EChartsOption | null>(() => {
   const list = dash.value?.passage_trend || []
   if (!list.length) return null
   const hrs = [...list].sort((a, b) => a.hr - b.hr).slice(-24)

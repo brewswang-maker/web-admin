@@ -161,9 +161,9 @@ export interface LinkageRuleInfo {
   [k: string]: unknown
 }
 
-/** 规则运营指标 (GET /linkage/rules/stats) */
+/** 规则运营指标 (GET /linkage/rules/stats)
+ *  [FIX tsc 2026-09-07] 删重复索引签名 ([rule_id] 与 [k] 同为 string 键, TS2374) */
 export interface RuleStatsInfo {
-  [rule_id: string]: unknown
   [k: string]: unknown
 }
 

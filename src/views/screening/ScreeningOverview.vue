@@ -247,6 +247,9 @@
  *   - GET /api/v1/alarms — 最近事件流 (表格 + 动线分区计数)
  */
 import { computed, onMounted, onUnmounted, ref } from 'vue'
+// [FIX tsc 2026-09-07] LazyChart option 要求 EChartsOption, 字面量 trigger/type
+//   需上下文类型收窄 (原推断 string → TS2322)
+import type { EChartsOption } from 'echarts'
 import {
   Refresh, InfoFilled, TrendCharts, Search, Setting, User, Bell, Tickets, Monitor, Timer,
 } from '@element-plus/icons-vue'
@@ -299,6 +302,9 @@ const devicesOnline = ref(0)
 const devicesTotal = ref(0)
 const channelsTotal = ref(0)
 const listLimit = ref(20)
+// [FIX tsc 2026-09-07] 补回缺失的 pagedEvents computed (模板 L166 引用但 script
+//   无定义 → TS2339; 语义: 加载更多模式下表格只展示前 listLimit 条)
+const pagedEvents = computed(() => events.value.slice(0, listLimit.value))
 let refreshTimer: ReturnType<typeof setInterval> | null = null
 
 // ── 事件类型名 (SSOT scene metadata) ──
@@ -368,7 +374,7 @@ function todayKeyCount(): number {
 
 // ── 24h 趋势图 (alarm_trend + passage_trend 按小时桶对齐) ──
 
-const trendOption = computed(() => {
+const trendOption = computed<EChartsOption | null>(() => {
   const d = dash.value
   if (!d) return null
   const alarmB = d.alarm_trend || []
@@ -545,7 +551,7 @@ async function loadAll(silent = false) {
     const keys = new Set(screeningEventTypes.value.map(t => t.alarm_type))
     // [normalize 修复 2026-09-01] 原始响应字段是 alarm_type (无 type), 直接
     //   keys.has(e.type) 全落空 → 事件恒空; 先走 normalizeAlarmCore (SSOT) 再过滤
-    events.value = all.map((e: AlarmEvent) => normalizeAlarmCore(e)).filter(e => keys.has(e.type))
+    events.value = all.map((e: AlarmEvent) => normalizeAlarmCore(e)).filter((e: AlarmEvent) => keys.has(e.type))
     loadZoneCounts()
   } else { failed++; console.error('[ScreeningOverview] events failed', evtR.reason) }
   loadFailed.value = failed === 3
