@@ -122,9 +122,12 @@
           </el-table-column>
           <el-table-column label="状态" width="90" align="center">
             <template #default="{ row }">
-              <el-tag :type="row.enabled ? 'success' : 'info'" size="small">
-                {{ row.enabled ? '启用' : '停用' }}
-              </el-tag>
+              <!-- [SCENE-RULE-TOGGLE 2026-09-08] 行内启停开关 (对齐 perimeter 范式:
+                   PUT /linkage/rules/{id} 只传 enabled; loading 防连点, 失败不落库) -->
+              <el-switch size="small" :model-value="row.enabled"
+                :loading="togglingId === row.id" :disabled="togglingId === row.id"
+                :style="togglingId === row.id ? 'opacity: 0.7' : ''"
+                @change="toggleRule(row)" />
             </template>
           </el-table-column>
           <el-table-column label="触发统计" width="170">
@@ -244,6 +247,26 @@ function fmtTime(ms?: number): string {
   return d.toDateString() === now.toDateString()
     ? hm
     : `${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${hm}`
+}
+
+// ─── [SCENE-RULE-TOGGLE 2026-09-08] 行内启停 (对齐 perimeter/RulesView 范式) ───
+//     PUT /linkage/rules/{id} 只传 enabled (后端 contains 守卫不丢绑定);
+//     成功才落本地状态 (失败开关回弹), togglingId 全局单飞防连点。
+const togglingId = ref('')
+async function toggleRule(rule: LinkageRule) {
+  if (togglingId.value) return
+  const next = !rule.enabled
+  togglingId.value = rule.id
+  try {
+    await linkageApi.updateRule(rule.id, { enabled: next } as Partial<LinkageRule>)
+    rule.enabled = next
+    ElMessage.success(`规则「${rule.name || rule.id}」已${next ? '启用' : '停用'}`)
+  } catch (e: unknown) {
+    const msg = (e as Error)?.message ?? String(e)
+    ElMessage.error(`规则「${rule.name || rule.id}」启停失败: ${msg}`)
+  } finally {
+    togglingId.value = ''
+  }
 }
 
 async function fetchAll() {

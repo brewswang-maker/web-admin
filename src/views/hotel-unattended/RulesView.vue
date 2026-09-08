@@ -118,9 +118,12 @@
           </el-table-column>
           <el-table-column :label="t('hotel.rules.colStatus')" width="90" align="center">
             <template #default="{ row }">
-              <el-tag :type="row.enabled ? 'success' : 'info'" size="small">
-                {{ row.enabled ? t('hotel.rules.enabled') : t('hotel.rules.disabled') }}
-              </el-tag>
+              <!-- [SCENE-RULE-TOGGLE 2026-09-08] 行内启停开关 (对齐 perimeter 范式:
+                   PUT /linkage/rules/{id} 只传 enabled; loading 防连点, 失败不落库) -->
+              <el-switch size="small" :model-value="row.enabled"
+                :loading="togglingId === row.id" :disabled="togglingId === row.id"
+                :style="togglingId === row.id ? 'opacity: 0.7' : ''"
+                @change="toggleRule(row)" />
             </template>
           </el-table-column>
           <el-table-column :label="t('hotel.rules.colTriggerStat')" width="170">
@@ -193,7 +196,7 @@ import { useI18n } from 'vue-i18n'
 import { CircleCheckFilled, Refresh, Box } from '@element-plus/icons-vue'
 
 import { hotelUnattendedApi, pickHotelPacks, pickHotelTemplates } from '@/api/hotelUnattended'
-import type { LinkageRule, RuleTemplate, RuleTriggerStat } from '@/api/linkage'
+import { linkageApi, type LinkageRule, type RuleTemplate, type RuleTriggerStat } from '@/api/linkage'
 // [SCENE-EDIT-INPLACE 2026-09-03] 就地编辑: 内嵌平台编辑器 (嵌入模式, 编辑器单一来源)
 import LinkageRuleView from '@/views/LinkageRuleView.vue'
 import type { ScenePack } from '@/types/largeEvent'
@@ -243,6 +246,27 @@ function fmtTime(ms?: number): string {
   return d.toDateString() === now.toDateString()
     ? hm
     : `${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${hm}`
+}
+
+// ─── [SCENE-RULE-TOGGLE 2026-09-08] 行内启停 (对齐 perimeter/RulesView 范式) ───
+//     PUT /linkage/rules/{id} 只传 enabled (后端 contains 守卫不丢绑定);
+//     成功才落本地状态 (失败开关回弹), togglingId 全局单飞防连点。
+const togglingId = ref('')
+async function toggleRule(rule: LinkageRule) {
+  if (togglingId.value) return
+  const next = !rule.enabled
+  togglingId.value = rule.id
+  try {
+    await linkageApi.updateRule(rule.id, { enabled: next } as Partial<LinkageRule>)
+    rule.enabled = next
+    const stateTxt = next ? t('hotel.rules.stateOn', '启用') : t('hotel.rules.stateOff', '停用')
+    ElMessage.success(t('hotel.rules.toggleOk', `规则「${rule.name || rule.id}」已${stateTxt}`))
+  } catch (e: unknown) {
+    const msg = (e as Error)?.message ?? String(e)
+    ElMessage.error(t('hotel.rules.toggleFail', `规则「${rule.name || rule.id}」启停失败: ${msg}`))
+  } finally {
+    togglingId.value = ''
+  }
 }
 
 async function fetchAll() {
