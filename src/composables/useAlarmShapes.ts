@@ -308,7 +308,11 @@ export interface ParsedDet {
 }
 
 /** detections 数组三形态解析: {x1,y1,x2,y2} / {x,y,w,h} / [x1,y1,x2,y2];
- *  像素坐标 (任一 >1) 按图像自然尺寸归一 (与 AlarmSnapshot 既有语义一致) */
+ *  像素坐标 (任一 >1.5) 按图像自然尺寸归一 (与 AlarmSnapshot 既有语义一致)
+ *  [FIX bbox-guard 2026-09-08 R3] 防御性归一化三重保险 (对标业界跨服务
+ *  边界归一口径): ① NaN/Inf 非有限值丢弃 (后端栈垃圾/脏数据不画);
+ *  ② 判像素阈值 1→1.5 (容忍归一坐标轻微越界噪声, 1~1.5 clamp 到 1);
+ *  ③ 退化框 (w/h≤0.2%) 丢弃 — 事件级告警无定位语义 (坐标置零) 不画框 */
 export function parseDetections(
   dets: any[],
   imgNat: { w: number; h: number },
@@ -324,10 +328,16 @@ export function parseDetections(
       x1 = d[0]; y1 = d[1]; x2 = d[2]; y2 = d[3]
     }
     if (typeof x1 !== 'number' || typeof y1 !== 'number' || typeof x2 !== 'number' || typeof y2 !== 'number') continue
-    if (x1 > 1 || y1 > 1 || x2 > 1 || y2 > 1) {
+    if (![x1, y1, x2, y2].every(Number.isFinite)) continue
+    if (x1 > 1.5 || y1 > 1.5 || x2 > 1.5 || y2 > 1.5) {
       if (!imgNat.w || !imgNat.h) continue
       x1 /= imgNat.w; y1 /= imgNat.h; x2 /= imgNat.w; y2 /= imgNat.h
     }
+    x1 = Math.min(Math.max(x1, 0), 1)
+    y1 = Math.min(Math.max(y1, 0), 1)
+    x2 = Math.min(Math.max(x2, 0), 1)
+    y2 = Math.min(Math.max(y2, 0), 1)
+    if (x2 - x1 <= 0.002 || y2 - y1 <= 0.002) continue
     out.push({
       x: x1, y: y1, w: x2 - x1, h: y2 - y1,
       label: d?.label || d?.class_name || d?.targetLabel || fallbackLabel,
@@ -525,8 +535,12 @@ export function drawDetsOnCtx(
   forceDanger = false,
 ) {
   for (const d of dets) {
+    // [FIX bbox-guard 2026-09-08 R3] 退化框跳过: w/h 归一后不足 1px 不画
+    //   框与 label (事件级告警无定位语义, 避免左上角残留文字块)
+    const bw = d.w * w, bh = d.h * h
+    if (bw < 1 || bh < 1) continue
     const color = (forceDanger || d.danger) ? '#f56c6c' : (CLASS_COLORS[d.label] || '#FF3D71')
-    const x = d.x * w, y = d.y * h, bw = d.w * w, bh = d.h * h
+    const x = d.x * w, y = d.y * h
     ctx.strokeStyle = color
     ctx.lineWidth = 2 * scale
     ctx.strokeRect(x, y, bw, bh)

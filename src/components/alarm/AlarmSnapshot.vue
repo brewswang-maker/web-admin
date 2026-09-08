@@ -129,11 +129,21 @@ const normBBox = computed<number[] | null>(() => {
   // [vp6-P1.3 2026-09-01] 检测直报链兑底: metadata.detections 为原图像素坐标
   //   (真机 1920x1080 实证), 任一坐标 >1 判定为像素 → 按图像自然尺寸归一化;
   //   自然尺寸未就绪时先不出框, onImageLoad 后重算。
-  if (b.some((v) => v > 1)) {
+  // [FIX bbox-guard 2026-09-08 R3] 防御性归一化 (与 useAlarmShapes
+  //   parseDetections 同口径): NaN/Inf 非有限值不画; 判像素阈值 1→1.5
+  //   (1~1.5 视为归一坐标轻微越界, clamp 到 1); 归一后 clamp [0,1];
+  //   退化框 (w/h≤0.2%) 返回 null 不画 — 事件级告警无定位语义 (坐标置零)。
+  if (![x1, y1, x2, y2].every(Number.isFinite)) return null
+  if (b.some((v) => v > 1.5)) {
     const { w, h } = imageSize.value
     if (!w || !h) return null
     x1 /= w; y1 /= h; x2 /= w; y2 /= h
   }
+  x1 = Math.min(Math.max(x1, 0), 1)
+  y1 = Math.min(Math.max(y1, 0), 1)
+  x2 = Math.min(Math.max(x2, 0), 1)
+  y2 = Math.min(Math.max(y2, 0), 1)
+  if (x2 - x1 <= 0.002 || y2 - y1 <= 0.002) return null
   return [x1, y1, x2, y2]
 })
 
