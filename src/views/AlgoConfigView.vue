@@ -1409,7 +1409,7 @@ async function loadRegions() {
     // 插件消费即按单 ID 精确查询): 未选中算法时载入空列表, 杜绝 "画一个区域所有算法都有" 观感
     const curAlgo = (editForm.algoId || '').split(',')[0].trim()
     const [rRes, tRes, pRes, czRes] = await Promise.all([
-      regionApi.listRegions(curAlgo ? { channel_id: chId, algo_id: curAlgo } : { channel_id: chId }),
+      regionApi.listRegions(curAlgo ? { channel_id: chId, algo_id: curAlgo, channel_id_str: chStrNoSuffix } : { channel_id: chId, channel_id_str: chStrNoSuffix }),
       regionApi.listTripwires({ channel_id: chId }),
       // 🆕 v5.0: 通道主路径 channel_id_str (GB28181 完整编码)
       // [FIX 2026-09-03 问题2] algo_id 固定尾随插件 id: 创建侧 (onPassagewayConfirm)
@@ -1513,6 +1513,10 @@ async function onRegionsChange(updated: any[]) {
   const chIdStr = selected.value.channelId
   const chIdNum = Number(chIdStr)
   const chId = Number.isFinite(chIdNum) && Number.isSafeInteger(chIdNum) ? chIdNum : 0
+  // [FIX 2026-09-07 B5] 区域保存补传 channel_id_str (剥 _ch0 后缀, 同绊线
+  //   createTripwireWithMirror 先例) — 之前没传 → 落库空串 → intrusion 主查询
+  //   getRegionsByChannelStr 永远查不到, 绘制/检测/弹窗标注通道键三张皮。
+  const chStrNoSuffix = stripChSuffix(chIdStr)
   // [FIX 2026-09-01] algo_id 必须是当前选中算法的单个 ID:
   // 之前 form.algorithm 是调度完整串 (onChannelSelect 赋值 algo_plugin 整串),
   // 整串写入 region.algo_id → 插件按单 ID 精确匹配永远失败 (区域对所有算法无效)
@@ -1543,6 +1547,7 @@ async function onRegionsChange(updated: any[]) {
     try {
       await regionApi.createRegion({
         channel_id: chId,
+        channel_id_str: chStrNoSuffix,
         algo_id: algoId,
         name: r.roi_name ?? '检测区域',
         region_type: r.roi_type === 'exclusion_zone' ? 'exclusion_zone' : 'detection_zone',

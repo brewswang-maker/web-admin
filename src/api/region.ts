@@ -24,7 +24,7 @@ import type { RegionDef, TripwireDef, CountingZoneDef, PassagewayDef } from '@/t
 
 export const regionApi = {
   // ----- Regions -----
-  listRegions(params: { channel_id: number; algo_id?: string } = { channel_id: 0 }) {
+  listRegions(params: { channel_id: number; algo_id?: string; channel_id_str?: string } = { channel_id: 0 }) {
     return http.get<{ regions: RegionDef[] }>('/algos/regions', { params })
   },
   createRegion(body: Omit<RegionDef, 'id' | 'created_at' | 'updated_at'>) {

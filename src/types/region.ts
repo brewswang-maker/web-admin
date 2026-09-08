@@ -11,6 +11,8 @@ export type TripwireDirection = 'both' | 'a_to_b' | 'b_to_a'
 export interface RegionDef {
   id: number
   channel_id: number
+  /** GB28181 完整 20 位编码 (后端主查询键; 同 TripwireDef) */
+  channel_id_str?: string
   algo_id: string
   name: string
   region_type: RegionType

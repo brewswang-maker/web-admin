@@ -39,7 +39,9 @@ export interface OverlayShape {
   source: 'rule' | 'region' | 'tripwire'
 }
 
-/** 形状区分色 (用户规格: 检测/排除区蓝、绊线橙、方向线绿、计数区紫) */
+/** 形状区分色 (用户规格: 检测/排除区蓝、绊线橙、方向线绿、计数区紫)
+ * 注: counting_zone 为预留元素 (后端无插件消费, 无判定语义, [B6 2026-09-07])
+ *   — 此处仅回显用户所画区域, 不代表计数检测生效 */
 export const SHAPE_STYLES: Record<OverlayShapeType, { stroke: string; fill: string; dashed: boolean }> = {
   detection_zone: { stroke: '#409EFF', fill: 'rgba(64,158,255,0.08)', dashed: false },
   exclusion_zone: { stroke: '#409EFF', fill: 'rgba(64,158,255,0.04)', dashed: true },
