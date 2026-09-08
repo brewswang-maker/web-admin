@@ -194,10 +194,13 @@ function draw() {
   for (const sp of props.saved ?? []) {
     const poly = (sp.transit_polygon ?? []) as [number, number][]
     if (poly.length < 3) continue
-    ctx.strokeStyle = 'rgba(103,194,58,0.9)'
-    ctx.fillStyle = 'rgba(103,194,58,0.15)'
+    // [FIX tw-toggle 2026-09-08] 停用通道半透明虚线回显 (同 RoiPolygonEditor
+    //   is_active 0.4 语义): 保留空间参照, 与生效通道 (实线 0.9) 一眼可辨。
+    const disabled = sp.enabled === false
+    ctx.strokeStyle = disabled ? 'rgba(103,194,58,0.35)' : 'rgba(103,194,58,0.9)'
+    ctx.fillStyle = disabled ? 'rgba(103,194,58,0.05)' : 'rgba(103,194,58,0.15)'
     ctx.lineWidth = 2
-    ctx.setLineDash([])
+    ctx.setLineDash(disabled ? [6, 4] : [])
     ctx.beginPath()
     ctx.moveTo(poly[0][0] * c.width, poly[0][1] * c.height)
     for (let i = 1; i < poly.length; i++) {

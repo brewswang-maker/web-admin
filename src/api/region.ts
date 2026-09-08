@@ -24,10 +24,13 @@ import type { RegionDef, TripwireDef, CountingZoneDef, PassagewayDef } from '@/t
 
 export const regionApi = {
   // ----- Regions -----
-  listRegions(params: { channel_id: number; algo_id?: string; channel_id_str?: string } = { channel_id: 0 }) {
+  // [FIX tw-toggle 2026-09-08] + include_disabled: 同绊线开关先例。
+  listRegions(params: { channel_id: number; algo_id?: string; channel_id_str?: string; include_disabled?: boolean } = { channel_id: 0 }) {
     return http.get<{ regions: RegionDef[] }>('/algos/regions', { params })
   },
-  createRegion(body: Omit<RegionDef, 'id' | 'created_at' | 'updated_at'>) {
+  // [ROI-SYNC 2026-09-08] id 可选: 事件规则区域镜像 upsert 更新分支 (后端
+  //   POST 读 req.value("id", 0), id>0 走 UPDATE) — 原 Omit<'id'> 无法传 id 更新。
+  createRegion(body: Omit<RegionDef, 'id' | 'created_at' | 'updated_at'> & { id?: number }) {
     return http.post<{ id: number; region: RegionDef }>('/algos/regions', body)
   },
   deleteRegion(id: number) {
@@ -35,7 +38,10 @@ export const regionApi = {
   },
 
   // ----- Tripwires -----
-  listTripwires(params: { channel_id: number; algo_id?: string } = { channel_id: 0 }) {
+  // [FIX 2026-09-08 通道×算法一对一] + channel_id_str: GB 20 位编码 str 主查
+  //   (后端已支持, 对齐 regions 演进), int32 仅老部署兼容。
+  // [FIX tw-toggle 2026-09-08] + include_disabled: 算法配置页拉含停用线全量。
+  listTripwires(params: { channel_id: number; algo_id?: string; channel_id_str?: string; include_disabled?: boolean } = { channel_id: 0 }) {
     return http.get<{ tripwires: TripwireDef[] }>('/algos/tripwires', { params })
   },
   createTripwire(body: Omit<TripwireDef, 'id' | 'created_at' | 'updated_at'>) {
@@ -61,15 +67,22 @@ export const regionApi = {
   deleteTripwire(id: number) {
     return http.delete<{ ok: boolean }>(`/algos/tripwires/${id}`)
   },
+  // [FIX tw-toggle 2026-09-08] 开关用 upsert 语义: POST 带 id 走后端 UPDATE
+  //   分支 (RegionStore.upsertTripwire id≠0 即更新), 只翻 enabled 不动几何。
+  upsertTripwire(body: TripwireDef) {
+    return http.post<{ data?: { id?: number } }>('/algos/tripwires', body)
+  },
 
   // ----- Counting zones -----
-  listCountingZones(params: { channel_id: number; algo_id?: string } = { channel_id: 0 }) {
+  // [FIX tw-toggle 2026-09-08] + include_disabled / id 可选 upsert 同绊线先例
+  //   (后端 POST 读 req.value("id", 0), id>0 走 UPDATE, 只翻 enabled 不动几何)。
+  listCountingZones(params: { channel_id: number; algo_id?: string; include_disabled?: boolean } = { channel_id: 0 }) {
     return http.get<{ counting_zones: CountingZoneDef[] }>(
       '/algos/counting-zones',
       { params }
     )
   },
-  createCountingZone(body: Omit<CountingZoneDef, 'id' | 'created_at'>) {
+  upsertCountingZone(body: Omit<CountingZoneDef, 'id' | 'created_at'> & { id?: number }) {
     return http.post<{ id: number; counting_zone: CountingZoneDef }>(
       '/algos/counting-zones',
       body
@@ -80,15 +93,16 @@ export const regionApi = {
   },
 
   // ----- 🆕 v5.0 [Tailgating 区域版]: Passageways (多边形通行区) -----
+  // [FIX tw-toggle 2026-09-08] + include_disabled / id 可选 upsert 同绊线先例。
   listPassageways(
-    params: { channel_id?: number; channel_id_str?: string; algo_id?: string } = {}
+    params: { channel_id?: number; channel_id_str?: string; algo_id?: string; include_disabled?: boolean } = {}
   ) {
     return http.get<{ passageways: PassagewayDef[] }>(
       '/algos/passageways',
       { params }
     )
   },
-  createPassageway(body: Omit<PassagewayDef, 'id' | 'created_at' | 'updated_at'>) {
+  upsertPassageway(body: Omit<PassagewayDef, 'id' | 'created_at' | 'updated_at'> & { id?: number }) {
     return http.post<PassagewayDef>('/algos/passageways', body)
   },
   deletePassageway(id: number) {

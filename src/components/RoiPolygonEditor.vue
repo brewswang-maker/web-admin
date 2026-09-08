@@ -17,7 +17,7 @@
              (points 草稿清零), 原条件 points<min 会让按钮在完成后回灰 — 用户无法区分「已加入」
              与「失败」, 外层保存链被误判为不可用。改为: 草稿不足且列表为空才灰; 列表已有形状
              (含刚自动加入的) 按钮可点, 点击无草稿时给 info 提示 (非 dead-click)。 -->
-        <el-button size="small" text @click="confirmAndAdd" :disabled="disabled || (points.length < minPoints && rois.length === 0)" type="primary">
+        <el-button size="small" text @click="confirmAndAdd" :disabled="disabled || (points.length < minPoints && visibleRois.length === 0)" type="primary">
           确认添加
         </el-button>
       </div>
@@ -26,7 +26,7 @@
       <div class="roi-toolbar__edit">
         <el-button size="small" text :disabled="disabled || !canUndo" title="撤销 (栈深 ≤50)" @click="undo">↶ 撤销</el-button>
         <el-button size="small" text :disabled="disabled || !canRedo" title="重做" @click="redo">↷ 重做</el-button>
-        <el-button size="small" text :disabled="disabled || rois.length === 0" title="清空全部 ROI (可撤销)" @click="clearAll">清空</el-button>
+        <el-button size="small" text :disabled="disabled || visibleRois.length === 0" title="清空当前类型形状 (可撤销; 其他类型形状不受影响)" @click="clearAll">清空</el-button>
         <el-button
           size="small" text :type="snapEnabled ? 'primary' : undefined"
           :disabled="disabled"
@@ -63,13 +63,17 @@
       </div>
     </div>
 
-    <!-- ROI列表 (多 ROI: 独立命名 / 启用开关 / 删除) -->
-    <div class="roi-list" v-if="rois.length > 0">
+    <!-- ROI列表 (多 ROI: 独立命名 / 启用开关 / 删除)
+         [FIX 2026-09-08] 按当前类型过滤显示 (orig=全量 index, 供选中/删除定位):
+         用户反馈切换类型后列表/画布仍显示旧类型形状 → 「还是显示多边形的配置」
+         感知上切换无效。现列表+画布仅显示当前类型, 其他类型数据保留 (切回可见,
+         保存/引擎判定仍全量), 隐藏数在状态栏提示。 -->
+    <div class="roi-list" v-if="visibleRois.length > 0">
       <div
-        v-for="(roi, index) in rois"
+        v-for="{ r: roi, orig } in visibleRois"
         :key="roi.roi_id"
-        :class="['roi-list__item', { 'roi-list__item--active': selectedRoiIndex === index }]"
-        @click="selectRoi(index)"
+        :class="['roi-list__item', { 'roi-list__item--active': selectedRoiIndex === orig }]"
+        @click="selectRoi(orig)"
       >
         <span class="roi-list__type-badge" :style="{ background: typeColor(roi.roi_type) }">
           {{ typeLabel(roi.roi_type) }}
@@ -86,7 +90,7 @@
         <el-select
           v-if="roi.roi_type === 'tripwire' || roi.roi_type === 'directional_line'"
           :model-value="roi.direction || 'both'"
-          @update:model-value="(v: any) => onRoiDirectionChange(index, v)"
+          @update:model-value="(v: any) => onRoiDirectionChange(orig, v)"
           size="small"
           class="roi-list__dir"
           :disabled="disabled"
@@ -106,7 +110,7 @@
           @change="emitRois"
           :disabled="disabled"
         />
-        <el-button size="small" text type="danger" @click.stop="removeRoi(index)" :disabled="disabled">
+        <el-button size="small" text type="danger" @click.stop="removeRoi(orig)" :disabled="disabled">
           删除
         </el-button>
       </div>
@@ -136,7 +140,7 @@
     <div class="roi-statusbar">
       <span class="roi-statusbar__hint">{{ drawing ? drawHint : idleHint }}</span>
       <span class="roi-statusbar__meta">
-        <template v-if="rois.length > 0">{{ rois.length }} 个区域</template>
+        <template v-if="rois.length > 0">{{ visibleRois.length }} 个{{ typeLabel(currentType) }}<template v-if="rois.length - visibleRois.length > 0">（已隐藏 {{ rois.length - visibleRois.length }} 个其他类型形状，切回对应类型可见）</template></template>
         <template v-if="selectedRoiIndex >= 0 && rois[selectedRoiIndex]">已选「{{ rois[selectedRoiIndex].roi_name }}」</template>
       </span>
     </div>
@@ -259,6 +263,25 @@ const availableTypes = computed<RoiType[]>(() => {
 watch(availableTypes, list => {
   if (list.length && !list.includes(currentType.value)) currentType.value = list[0]
 }, { immediate: true })
+// [FIX 2026-09-08] 形状切换清空未完成草稿: 原实现切类型后旧类型草稿残留,
+//   下一笔落点与残留混合 (画多边形 3 点切绊线 → 绊线两点接多边形残点乱序判定)。
+//   已确认添加的 rois 列表不受影响 (混合形状组合是合法场景, 仅清当前草稿)。
+watch(currentType, () => {
+  if (points.value.length || rectAnchor.value) {
+    points.value = []
+    rectAnchor.value = null
+  }
+  // [FIX 2026-09-08] 选中项随类型重置: 隐藏形状不可保持选中 (拖拽/顶点操作
+  //   只作用于可见形状)
+  selectedRoiIndex.value = -1
+  renderCanvas()
+})
+
+// [FIX 2026-09-08] 按当前类型过滤的可见列表 (orig=全量 index):
+//   列表/画布/清空仅作用当前类型, 切换即视觉切换 (数据全量保留)。
+const visibleRois = computed(() => rois.value
+  .map((r, orig) => ({ r, orig }))
+  .filter(x => x.r.roi_type === currentType.value))
 
 // 各类型所需最少点数 ([2026-09-02] point=1 / rectangle=2 拖拽完成)
 const minPoints = computed(() => {
@@ -449,10 +472,13 @@ function clearCurrentPoints() {
   renderCanvas()
 }
 
-/** [FIX 2026-09-02] 清空全部 ROI (快照入撤销栈, 可一键撤销) */
+/** [FIX 2026-09-02] 清空当前类型 ROI (快照入撤销栈, 可一键撤销) */
 function clearAll() {
-  if (rois.value.length === 0) return
-  rois.value = []
+  // [FIX 2026-09-08] 清空仅作用当前类型 (其他类型形状不受影响, 与列表/画布
+  //   过滤显示同口径; 快照入栈可撤销)
+  const keep = rois.value.filter(r => r.roi_type !== currentType.value)
+  if (keep.length === rois.value.length) return
+  rois.value = keep
   selectedRoiIndex.value = -1
   pushHistory()
   emitRois()
@@ -469,9 +495,10 @@ function confirmAndAdd() {
   }
 
   const roiId = `roi_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`
+  // [FIX 2026-09-08] 命名序号按同类型计数 (多边形 1/2/3…), 不再随全量总数跳号
   const newRoi: RoiData = {
     roi_id: roiId,
-    roi_name: `${typeLabel(currentType.value)} ${rois.value.length + 1}`,
+    roi_name: `${typeLabel(currentType.value)} ${visibleRois.value.length + 1}`,
     roi_type: currentType.value,
     polygon: pointsToArray(points.value),
     is_active: true,
@@ -488,7 +515,7 @@ function confirmAndAdd() {
   // [ROI-FEEDBACK 2026-09-03] 完成态显式反馈: 自动/手动加入列表后 toast + 选中新增项,
   //   消除「画完了但不知道存没存上」的歧义 (按钮灰 = 失败的错误解读)
   selectedRoiIndex.value = rois.value.length - 1
-  ElMessage.success(`已添加「${newRoi.roi_name}」 (${rois.value.length} 个区域)`)
+  ElMessage.success(`已添加「${newRoi.roi_name}」 (${visibleRois.value.length} 个${typeLabel(currentType.value)}形状)`)
 }
 
 function selectRoi(index: number) {
@@ -563,6 +590,8 @@ function hitVertex(px: number, py: number): { roiIdx: number; vIdx: number } | n
   if (!canvas) return null
   const R = 8
   for (let i = 0; i < rois.value.length; i++) {
+    // [FIX 2026-09-08] 隐藏类型不参与命中 (同渲染过滤, 防盲选中/盲拖拽)
+    if (rois.value[i].roi_type !== currentType.value) continue
     const poly = rois.value[i].polygon
     for (let v = 0; v * 2 + 1 < poly.length; v++) {
       const c = normalizedToCanvas(
@@ -792,9 +821,10 @@ function renderCanvas(previewPoint?: { x: number; y: number }) {
     }
   }
 
-  // 绘制已确认的 ROI 列表
+  // 绘制已确认的 ROI 列表 ([FIX 2026-09-08] 仅渲染当前类型, 同列表过滤)
   for (let i = 0; i < rois.value.length; i++) {
     const roi = rois.value[i]
+    if (roi.roi_type !== currentType.value) continue
     const isSelected = i === selectedRoiIndex.value
     renderRoi(ctx, roi, isSelected ? 1.0 : (roi.is_active ? 0.8 : 0.4))
     // [FIX 2026-09-02] 选中态叠加顶点控制点 (白心描边圆, 提示可拖动/右键删)

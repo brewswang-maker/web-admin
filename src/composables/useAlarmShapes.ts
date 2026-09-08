@@ -109,14 +109,21 @@ const CACHE_TTL = 30_000
  *    c. [真机实证] 多条带形状规则并存时 (如通配规则 le-video...-loiter 排序在前)
  *       原首命中即 return 会拿错形状 — 显式绑定本通道的规则优先, 通配规则
  *       (双池全空) 仅在无显式绑定命中时回退 (告警溯源: 显式绑定最相关)。 */
-async function loadFromRules(channelId: string): Promise<OverlayShape[]> {
+async function loadFromRules(channelId: string, algoId?: string): Promise<OverlayShape[]> {
   const res = await linkageApi.getAllRules()
   // http 封装 TS 类型层不反映运行时双层壳 (res.data={code,data:{...}}),
   // 对齐 AlgoConfigView 惯例 any 双形态解包
   const items: any[] = (res.data as any)?.data?.items ?? (res.data as any)?.items ?? []
   const chNorm = stripChSuffix(channelId)
   const chHash = safeChannelHash(chNorm)
-  let wildcardShapes: OverlayShape[] | null = null // 通候选补 (无显式绑定时回退)
+  // [FIX 2026-09-08] 算法/事件维度匹配 (用户语义: 不同算法的形状不能叠加):
+  //   规则 event_types 与告警 algoId 尾段比对 (algoMatch 复用, 设备实锚:
+  //   徘徊规则 ets=['loitering'] ↔ algoId=shield.algo.behavior.loitering ✓,
+  //   违停 ets=['illegal_parking',...] ↔ 攀爬告警 ✗)。三级优先:
+  //   通道+算法双命中 > 仅通道命中 > 真通配 — 同通道多算法规则并存时
+  //   (110105 越线/攀爬/违停) 攀爬告警不再取到违停绊线。
+  let chShapes: OverlayShape[] | null = null
+  let wildcardShapes: OverlayShape[] | null = null
   for (const r of items) {
     if (!r?.enabled) continue
     const sc = r.source_cond || {}
@@ -126,12 +133,23 @@ async function loadFromRules(channelId: string): Promise<OverlayShape[]> {
     if (typeof rawJson !== 'string' || !rawJson) continue
     const srcChs: number[] = ((sc.channel_ids as any[]) || []).map(Number)
     const bound: string[] = ((sp.bound_channel_ids as any[]) || []).map(String)
-    // 通道命中 (channel_ids hash 值 / bound GB 码双形态, 后缀双向归一);
-    // 双池全空 = 通配规则 (不限定通道)
-    const chHit = srcChs.some((c) => c === chHash)
+    // [FIX 2026-09-08] location_id 纳入通道命中: 模板导入规则 bound/src 双池空但
+    //   通道实际存 spatial_cond.location_id (GB 20 位, 设备实锚: 徘徊规则 loc=3402
+    //   /违停等 loc=110105) — 原三态判定把它当 wildcard, wildcardShapes 武断取
+    //   第一条通配规则 → 3402 徘徊告警画出 110105 违停规则的 2 条绊线
+    //   (「徘徊规则没画绊线弹窗却有 2 条」根因)。loc 非空即视为已绑定通道,
+    //   不匹配则不参与 wildcard 回退 (通道一对一, 宁缺勿串)。
+    const locId = typeof sp.location_id === 'string' ? sp.location_id : ''
+    const locHit = !!locId && (locId === chNorm || stripChSuffix(locId) === chNorm)
+    // 通道命中 (location_id / channel_ids hash / bound GB 码三形态, 后缀双向归一);
+    // 三池全空 = 通配规则 (不限定通道)
+    const chHit = locHit
+      || srcChs.some((c) => c === chHash)
       || bound.some((c) => Number(c) === chHash || stripChSuffix(c) === chNorm)
-    const isWildcard = srcChs.length + bound.length === 0
+    const isWildcard = !locId && srcChs.length + bound.length === 0
     if (!chHit && !isWildcard) continue
+    const ets: string[] = ((sc.event_types as any[]) || []).map(String)
+    const algoHit = !!algoId && ets.some((t) => algoMatch(t, algoId))
     try {
       // [ROI-GAP 2026-09-06] v2 形态兼容: {combine:'union'|'intersection', shapes:[...]}
       //   (引擎组合语义可配, LinkageRuleView combine 选择器写入; 渲染层只取
@@ -157,19 +175,31 @@ async function loadFromRules(channelId: string): Promise<OverlayShape[]> {
         }))
         .filter((s) => s.points.length >= (s.type === 'point' ? 1 : 2))
       if (!list.length) continue
-      if (chHit) return list // 显式绑定优先, 即取
-      if (!wildcardShapes) wildcardShapes = list
+      // [FIX 2026-09-08] 三级收集: 双命中即取 (最相关); 单通道/通配各留首份候补
+      if (chHit && algoHit) return list
+      if (chHit && !chShapes) chShapes = list
+      if (isWildcard && !wildcardShapes) wildcardShapes = list
     } catch { /* 非法 JSON 跳过该规则 */ }
   }
-  return wildcardShapes ?? []
+  return chShapes ?? wildcardShapes ?? []
 }
 
 /** ② 区域库回退: regions/counting-zones 按 algo 匹配; tripwires 按通道字符串匹配 */
 async function loadFromRegionStore(channelId: string, algoId: string): Promise<OverlayShape[]> {
   const chNorm = stripChSuffix(channelId)
   const [rRes, tRes, czRes] = await Promise.all([
-    regionApi.listRegions({ channel_id: 0 }).catch(() => null),
-    regionApi.listTripwires({ channel_id: 0 }).catch(() => null),
+    // [FIX 2026-09-08 通道一对一] regions 传 str 通道键: 原全量拉取+前端仅 algo
+    //   过滤, ch=0 孤儿区域 (通道键丢失) 被串到任意通道的告警标注; 后端已改
+    //   str 纯精确匹配 (不再回退合并), 区域绘制 per-channel 一对一。
+    // [FIX 2026-09-08 通道×算法一对一] REST 查询同步传 algo_id (收紧服务端
+    //   查询面, 双维度都在服务端过滤; 前端 algoMatch 仍保留双保险)。
+    regionApi.listRegions(chNorm ? { channel_id: 0, channel_id_str: chNorm, algo_id: algoId || undefined } : { channel_id: 0 }).catch(() => null),
+    // [FIX 2026-09-08 通道×算法一对一] 绊线原全库拉取 (channel_id:0, 仅前端
+    //   str 过滤) — 同通道多算法绊线/其他通道绊线全部进入标注候选。现传
+    //   str+algo 双维度 (后端已支持 str 主查), 前端再 algoMatch 过滤双保险:
+    //   告警算法尾段与绊线 algo (tripwire) 不匹配时不画 (徘徊告警不再串出
+    //   违停绊线, 与①链算法隔离同口径)。
+    regionApi.listTripwires(chNorm ? { channel_id: 0, channel_id_str: chNorm, algo_id: algoId || undefined } : { channel_id: 0 }).catch(() => null),
     regionApi.listCountingZones({ channel_id: 0 }).catch(() => null),
   ])
   const out: OverlayShape[] = []
@@ -194,15 +224,24 @@ async function loadFromRegionStore(channelId: string, algoId: string): Promise<O
     if (pts.length >= 3) out.push({ type: 'counting_zone', name: z.name || '', direction: '', points: pts, source: 'region' })
   }
   // 绊线 (channel_id_str 字符串主键本地过滤; GB 主/子码流镜像双条按几何去重)
+  // [FIX 2026-09-08 通道×算法一对一] + 算法维度: 空 algo 一律不画 (同 regions
+  //   口径), 告警算法与绊线 algo_id 尾段不匹配不画 — 绊线只归属跨线类告警。
   const tripwires: any[] = (tRes?.data as any)?.data?.tripwires ?? (tRes?.data as any)?.tripwires ?? []
+  if (!algoId) tripwires.length = 0
   const seen = new Set<string>()
   for (const t of tripwires) {
     if (t?.enabled === false) continue
+    if (!algoMatch(t.algo_id, algoId)) continue
     const tCh = stripChSuffix(t.channel_id_str || '')
     if (tCh !== chNorm) continue
     const pts = normPoints([t.point_a, t.point_b].filter(Boolean) as Array<[number, number]>)
     if (pts.length !== 2) continue
-    const key = `${t.name}|${pts.map((p) => p.map((v) => v.toFixed(4)).join(',')).join('|')}`
+    // [FIX 2026-09-08] 去重 key 去 name 纯几何: 设备实锤主/镜像 name 存在空格
+    //   差异 (不同批次保存交叉残留, 如「周界攀爬翻越_绊线」 vs 「周界攀爬翻越_ 绊线")
+    //   → name|几何 去重失效, 同一条绊线在标注图上画两遍 (徘徊告警标注
+    //   「看到两条」实锚)。几何 4 位小数容差足够区分真实双线 (改画后旧线
+    //   残留是脏数据治理范畴, 不在显示层硬合)。
+    const key = pts.map((p) => p.map((v) => v.toFixed(4)).join(',')).join('|')
     if (seen.has(key)) continue
     seen.add(key)
     out.push({ type: 'tripwire', name: t.name || '', direction: t.direction || '', points: pts, source: 'tripwire' })
@@ -246,7 +285,7 @@ export function useAlarmShapes() {
     loading.value = true
     try {
       let list: OverlayShape[] = []
-      if (ch) list = await loadFromRules(ch)
+      if (ch) list = await loadFromRules(ch, algo)
       if (!list.length && (ch || algo)) list = await loadFromRegionStore(ch, algo)
       shapeCache.set(key, { list, ts: Date.now() })
       shapes.value = list

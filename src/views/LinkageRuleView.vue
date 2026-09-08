@@ -2467,7 +2467,11 @@ function resetEditorState(rule: LinkageRule | null) {
       // [FIX 2026-08-27 P0-PERIMETER v3] tripwire + direction 从后端读出
       // [vp9 2026-09-01] bound_channel_ids 显式绑定通道回填 (字符串形态直存)
       // [FIX 2026-09-02] roiPolygon 从 roi_shapes_json 完整回显 (多形状/方向/角点)
-      config: { location: ui?.region?.location ?? (sc.location_id || ''), roi: sc.region_id || '', group: sc.device_group_id || '', roiPolygon: roiShapesEcho.list, channelId: ui?.region?.channelId || firstCameraChannel(boundResolved), tripwireId: sc.tripwire_id || '', direction: sc.direction || '', boundChannelIds: boundResolved, roiCombine: roiShapesEcho.combine },
+      // [ROI-SYNC 2026-09-08] channelId 三级兜底末位补 location_id (GB 20 位编码形态):
+      //   模板导入规则 bound_channel_ids/ui_state 双空, 通道实际存 location_id
+      //   (设备实锚: 徘徊规则 location_id=3402... 但画板关联通道空 → 保存时
+      //   区域/绊线镜像拿不到通道而跳过, 算法配置区永远看不到镜像)。
+      config: { location: ui?.region?.location ?? (sc.location_id || ''), roi: sc.region_id || '', group: sc.device_group_id || '', roiPolygon: roiShapesEcho.list, channelId: ui?.region?.channelId || firstCameraChannel(boundResolved) || (/^\d{20}$/.test(sc.location_id || '') ? sc.location_id : ''), tripwireId: sc.tripwire_id || '', direction: sc.direction || '', boundChannelIds: boundResolved, roiCombine: roiShapesEcho.combine },
     }
     form.conditions.location = {
       // [COND-PERSIST] enabled/point 优先 ui 态 (解决与 region.location 混写折叠)
@@ -2773,6 +2777,67 @@ async function handleSave(): Promise<boolean> {
             ElMessage.success('绊线已创建并关联到本规则 (插件最多 5 分钟自动加载)')
           } catch (e: any) {
             ElMessage.error(`绊线创建失败: ${e?.message ?? e} (规则仍会保存, 绊线条件未生效)`)
+          }
+        }
+      }
+    }
+    // [ROI-SYNC 2026-09-08] 画板区域形状 → 镜像到算法区域库 (RegionStore):
+    //   事件规则与算法配置此前双 SSOT 不互通 (规则画区域只存 roi_shapes_json,
+    //   算法配置画板/插件判定/弹窗②回退链均看不到), 对齐绊线镜像先例 (上块)。
+    //   detection/exclusion 直映射; rectangle 按 4 顶点多边形退化映射 detection
+    //   (同引擎判定语义); point 关注点不镜像 (无判定语义)。
+    //   防重: 按 name 匹配 — 命中且几何+类型一致跳过, 漂移则 upsert 更新
+    //   (保留原 id/algo 形态, 避免重复堆积)。
+    if (rc.enabled) {
+      const drawnAreas = rc.config.roiPolygon.filter(r => r.is_active &&
+        (r.roi_type === 'detection_zone' || r.roi_type === 'exclusion_zone' || r.roi_type === 'rectangle'))
+      if (drawnAreas.length > 0) {
+        const areaChStr = (rc.config.channelId || '').replace(/_ch\d+$/, '')
+        if (!areaChStr) {
+          ElMessage.warning('画了区域但未选"关联通道", 区域未同步到算法配置; 请选择通道后重新保存')
+        } else {
+          // algo_id 推导: 覆盖率矩阵优先, 兜底事件类型裸短 id (与区域库存量形态一致,
+          //   插件 getEffectiveRegions 兜底链两种形态均已兼容)
+          await loadEventCoverage()
+          let areaAlgoId = ''
+          for (const et of form.conditions.eventType.config.types) {
+            const c = eventCoverageMap.value[et]
+            if (c?.algo_id) { areaAlgoId = c.algo_id; break }
+          }
+          if (!areaAlgoId && form.conditions.eventType.config.types.length > 0) {
+            areaAlgoId = form.conditions.eventType.config.types[0]
+          }
+          try {
+            // 现有区域 (str 主查+ch 回退去重后端已做; 不按 algo 过滤防双形态分裂)
+            const exRes = await regionApi.listRegions({ channel_id: 0, channel_id_str: areaChStr })
+            const existing: any[] = ((exRes as any)?.data?.data?.regions ?? (exRes as any)?.data?.regions ?? [])
+            let synced = 0
+            for (const area of drawnAreas) {
+              const raw = area.polygon || []
+              const polygon: [number, number][] = []
+              for (let i = 0; i + 1 < raw.length; i += 2) polygon.push([raw[i], raw[i + 1]])
+              if (polygon.length < 3) continue
+              const regionType = area.roi_type === 'exclusion_zone' ? 'exclusion_zone' : 'detection_zone'
+              const hit = existing.find(e => e.name === area.roi_name)
+              const sameGeom = !!hit && Array.isArray(hit.polygon) && hit.polygon.length === polygon.length &&
+                hit.polygon.every((p: any, i2: number) =>
+                  Math.abs(Number(p[0]) - polygon[i2][0]) < 0.001 && Math.abs(Number(p[1]) - polygon[i2][1]) < 0.001)
+              if (sameGeom && hit.region_type === regionType) continue
+              await regionApi.createRegion({
+                id: hit?.id ?? 0,
+                channel_id: hit?.channel_id ?? 0,
+                channel_id_str: hit?.channel_id_str || areaChStr,
+                algo_id: hit?.algo_id || areaAlgoId,
+                name: area.roi_name,
+                region_type: regionType,
+                polygon,
+                enabled: true,
+              })
+              synced++
+            }
+            if (synced > 0) ElMessage.success(`区域已同步到算法配置 (${synced} 个, 插件判定同几何)`)
+          } catch (e: any) {
+            ElMessage.error(`区域同步失败: ${e?.message ?? e} (规则仍会保存, 算法配置区未更新)`)
           }
         }
       }

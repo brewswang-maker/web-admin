@@ -540,8 +540,14 @@ const alarmImageList = computed<GalleryImage[]>(() => {
     }
   }
   if (list.length === 0) {
+    // [FIX bbox-align 2026-09-08] 检测对齐帧优先: metadata.snapshot_url (单数) 是
+    //   推理同帧落盘 ([FIX F] 连续解码帧/快照推理帧), bbox 归一化基准与它严格
+    //   对齐; 落库主快照 (snapshotImageUrl) 是告警链后另行抓帧 (实测滞后 3~5s,
+    //   ZLM 主码流) — 走动目标上红框会漂移。对齐帧放首位, 落库帧次位供对比。
+    const aligned = typeof metaSrc.snapshot_url === 'string' ? metaSrc.snapshot_url : ''
     const primary = snapshotImageUrl.value
-    if (primary) list = [primary]
+    if (aligned && aligned !== primary) list = [aligned, primary].filter(Boolean)
+    else if (primary) list = [primary]
   }
   const mainUrls = scene ? [scene, ...list] : list
   // [POPUP-EV-MERGE] 取证帧 (语义顺序 pre→mid→post, 与 EvidenceFrames 组件口径一致)

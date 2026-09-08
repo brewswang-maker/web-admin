@@ -220,7 +220,7 @@
                   v-if="selected"
                   :key="`tw_${selected.channelId}_${currentAlgoId}`"
                   :image-url="roiBackgroundUrl"
-                  :saved="tripwires.filter(t => !(t.channel_id_str || '').endsWith('_ch0'))"
+                  :saved="tripwires.filter(t => !(t.channel_id_str || '').endsWith('_ch0') && t.enabled !== false)"
                   :editing="editingTripwire ? { point_a: editingTripwire.point_a, point_b: editingTripwire.point_b, direction: editingTripwire.direction, name: editingTripwire.name } : null"
                   @confirm="onTripwireConfirm"
                 />
@@ -231,11 +231,20 @@
                 <div v-if="tripwires.length" class="tripwire-list">
                   <div v-for="tw in tripwires" :key="tw.id" class="tripwire-list__item">
                     <span>
-                      <!-- [FIX 2026-09-04 生效状态标识] 用户诉求: 多条绊线/多边形共存时
-                           必须一眼分辦哪些真正起作用。后端 getTripwires 硬过滤 enabled=false
-                           (停用即隐身), 故列表内恒为生效中; 条件分支向后兼容后端
-                           将来支持停用可见。'不再使用'的遗留绊线已清理/停用出列表。 -->
-                      <el-tag :type="tw.enabled === false ? 'info' : 'success'" size="small" style="margin-right: 6px">
+                      <!-- [FIX tw-toggle 2026-09-08] 启用/停用开关 (替代状态 tag):
+                           后端 upsert 按 id 只翻 enabled, 主形态+_ch0 镜像同步 —
+                           插件按 _ch0 形态查询, 只切主形态检测不生效。镜像行不带
+                           开关 (随主行同步), 停用后 REST 默认查询即隐身, 检测/标注
+                           消费方语义不变。 -->
+                      <el-switch
+                        v-if="!(tw.channel_id_str || '').endsWith('_ch0')"
+                        :model-value="tw.enabled !== false"
+                        size="small"
+                        style="margin-right: 8px"
+                        :title="tw.enabled === false ? '已停用 (检测不生效)' : '生效中'"
+                        @change="(v: any) => toggleTripwireEnabled(tw, !!v)"
+                      />
+                      <el-tag v-else :type="tw.enabled === false ? 'info' : 'success'" size="small" style="margin-right: 6px">
                         {{ tw.enabled === false ? '已停用' : '生效中' }}
                       </el-tag>
                       {{ tw.name }}{{ (tw.channel_id_str || '').endsWith('_ch0') ? ' (镜像)' : '' }} ({{ tw.direction }})
@@ -266,6 +275,18 @@
                 <div v-if="passageways.length" class="tripwire-list">
                   <div v-for="pw in passageways" :key="pw.id" class="tripwire-list__item">
                     <span>
+                      <!-- [FIX tw-toggle 2026-09-08] 通道开关同绊线先例: 主形态带
+                           开关 (_ch0 镜像随主同步, 若存在); 停用后半透明虚线回显,
+                           tailgating 检测立即跳过 (getPassagewaysByChannelStr 默认
+                           只回启用)。 -->
+                      <el-switch
+                        v-if="!(pw.channel_id_str || '').endsWith('_ch0')"
+                        :model-value="pw.enabled !== false"
+                        size="small"
+                        style="margin-right: 8px"
+                        :title="pw.enabled === false ? '已停用 (检测不生效)' : '生效中'"
+                        @change="(v: any) => togglePassagewayEnabled(pw, !!v)"
+                      />
                       {{ pw.name }}
                       (sens={{ pw.sensitivity }}, {{ pw.direction_in ? '进入' : '离开' }}
                       {{ pw.suppress_mode }}
@@ -299,7 +320,19 @@
                 />
                 <div v-if="countingZoneList.length" class="tripwire-list">
                   <div v-for="cz in countingZoneList" :key="cz.id" class="tripwire-list__item">
-                    <span>{{ cz.name }} ({{ cz.target_class }})</span>
+                    <!-- [FIX tw-toggle 2026-09-08] 计数区开关同绊线先例 (无镜像/
+                         int32 通道维度, 单条翻转); 停用后 counting 插件
+                         getCountingZones 默认只回启用 → 计数立即停。 -->
+                    <span>
+                      <el-switch
+                        :model-value="cz.enabled !== false"
+                        size="small"
+                        style="margin-right: 8px"
+                        :title="cz.enabled === false ? '已停用 (计数不生效)' : '生效中'"
+                        @change="(v: any) => toggleCountingZoneEnabled(cz, !!v)"
+                      />
+                      {{ cz.name }} ({{ cz.target_class }})
+                    </span>
                     <el-button text size="small" type="danger" @click="deleteCountingZoneById(cz.id)">
                       {{ $t('delete', '删除') }}
                     </el-button>
@@ -1409,8 +1442,13 @@ async function loadRegions() {
     // 插件消费即按单 ID 精确查询): 未选中算法时载入空列表, 杜绝 "画一个区域所有算法都有" 观感
     const curAlgo = (editForm.algoId || '').split(',')[0].trim()
     const [rRes, tRes, pRes, czRes] = await Promise.all([
-      regionApi.listRegions(curAlgo ? { channel_id: chId, algo_id: curAlgo, channel_id_str: chStrNoSuffix } : { channel_id: chId, channel_id_str: chStrNoSuffix }),
-      regionApi.listTripwires({ channel_id: chId }),
+      regionApi.listRegions(curAlgo ? { channel_id: chId, algo_id: curAlgo, channel_id_str: chStrNoSuffix, include_disabled: true } : { channel_id: chId, channel_id_str: chStrNoSuffix, include_disabled: true }),
+      // [FIX 2026-09-08 通道×算法一对一] 绊线双维度查询: 原只传 int32 chId
+      //   (GB 20 位编码降级 0) → 后端 getTripwires(0) 返回全库 GB 绊线
+      //   (int32 全 0), 通道维度靠前端本地过滤或直接串显。现传 str 主查
+      //   (后端已支持, 对齐 regions B5 演进) + algo_id 固定绊线判定插件 id
+      //   (与创建侧 L1591 同口径 — 绊线归属固定, 与用户当前选中哪个算法无关)。
+      regionApi.listTripwires({ channel_id: chId, channel_id_str: chStrNoSuffix, algo_id: 'shield.algo.perimeter.tripwire', include_disabled: true }),
       // 🆕 v5.0: 通道主路径 channel_id_str (GB28181 完整编码)
       // [FIX 2026-09-03 问题2] algo_id 固定尾随插件 id: 创建侧 (onPassagewayConfirm)
       //   固定写 'shield.algo.perimeter.tailgating', 而旧查询用当前选中算法 id 过滤
@@ -1420,8 +1458,9 @@ async function loadRegions() {
       regionApi.listPassageways({
         channel_id_str: chStrNoSuffix,
         algo_id: 'shield.algo.perimeter.tailgating',
+        include_disabled: true,
       }),
-      regionApi.listCountingZones({ channel_id: chId })
+      regionApi.listCountingZones({ channel_id: chId, include_disabled: true })
     ])
     // [FIX 2026-09-01] http 封装不剥业务壳 (拦截器 return response):
     // res.data = {code, data:{...}, message} → 必须取 res.data.data.xxx
@@ -1467,6 +1506,24 @@ async function onCountingZonesChange(updated: any[]) {
   const chIdStr = selected.value.channelId
   const chIdNum = Number(chIdStr)
   const chId = Number.isFinite(chIdNum) && Number.isSafeInteger(chIdNum) ? chIdNum : 0
+  // [FIX tw-toggle 2026-09-08] 更新分支: 既有计数区 is_active 翻转 (编辑器列表
+  //   开关) 持久化 — 之前 cz_ 前缀直接 skip, 停用开关静默不保存。
+  let toggled = 0
+  for (const r of updated) {
+    const rid = String(r.roi_id || '')
+    if (!rid.startsWith('cz_')) continue
+    const czId = Number(rid.slice(3))
+    const prev = countingZoneList.value.find((c) => c.id === czId)
+    if (!prev || (prev.enabled !== false) === (r.is_active ?? true)) continue
+    try {
+      await regionApi.upsertCountingZone({ ...prev, id: czId, enabled: r.is_active ?? true })
+      toggled++
+    } catch (e: any) {
+      console.warn('[AlgoConfigView] upsertCountingZone failed', e)
+      ElMessage.error(`保存计数区状态失败: ${e?.message ?? e}`)
+    }
+  }
+  if (toggled > 0) ElMessage.success(toggled === 1 ? '计数区状态已更新' : `已更新 ${toggled} 处计数区状态`)
   for (const r of updated) {
     if (String(r.roi_id || '').startsWith('cz_')) continue  // 已有后端记录
     const pts = r.polygon ?? []
@@ -1474,7 +1531,7 @@ async function onCountingZonesChange(updated: any[]) {
     const polygon: [number, number][] = []
     for (let i = 0; i + 1 < pts.length; i += 2) polygon.push([pts[i], pts[i + 1]])
     try {
-      await regionApi.createCountingZone({
+      await regionApi.upsertCountingZone({
         channel_id: chId,
         algo_id: 'shield.algo.perimeter.counting',
         name: `${countingTargetClass.value}_${chIdStr.slice(-4)}`,
@@ -1536,10 +1593,39 @@ async function onRegionsChange(updated: any[]) {
       }
     }
   }
-  // ② 新建: roi_id 非 reg_ 前缀 (编辑器新生成 roi_<ts>) → createRegion
+  // ② 更新: [FIX tw-toggle 2026-09-08] 既有区域 is_active 翻转 (编辑器列表
+  //   开关) 持久化 — 之前只有删除/新建分支, 停用开关静默不保存。upsert 按
+  //   backend_id 走 UPDATE, 几何/名称不动, 只落 enabled; 同名 roi_id 快照
+  //   比对 is_active 变化才发请求。
   for (const r of updated) {
     const rid = String(r.roi_id || '')
-    if (rid.startsWith('reg_') || prevIds.has(rid)) continue
+    const prev = lastLoadedRegions.value.find((p) => p.roi_id === rid)
+    if (!prev || !prev.backend_id) continue
+    if ((r.is_active ?? true) === (prev.is_active ?? true)) continue
+    const pts = prev.polygon ?? []
+    const polygon: [number, number][] = []
+    for (let i = 0; i + 1 < pts.length; i += 2) polygon.push([pts[i], pts[i + 1]])
+    try {
+      await regionApi.createRegion({
+        id: prev.backend_id,
+        channel_id: chId,
+        channel_id_str: chStrNoSuffix,
+        algo_id: algoId,
+        name: prev.roi_name ?? '检测区域',
+        region_type: (prev as any).roi_type === 'exclusion_zone' ? 'exclusion_zone' : 'detection_zone',
+        polygon,
+        enabled: r.is_active ?? true,
+      })
+      changed++
+    } catch (e: any) {
+      console.warn('[AlgoConfigView] upsertRegion failed', e)
+      ElMessage.error(`保存区域状态失败: ${e?.message ?? e}`)
+    }
+  }
+  // ③ 新建: roi_id 非 reg_ 前缀 (编辑器新生成 roi_<ts>) → createRegion
+  for (const r of updated) {
+    const rid = String(r.roi_id || '')
+    if (rid.startsWith('reg_') || rid.startsWith('cz_') || prevIds.has(rid)) continue
     const pts = r.polygon ?? []
     if (pts.length < 6) continue // 至少 3 点 (一维 6 个数)
     const polygon: [number, number][] = []
@@ -1633,6 +1719,27 @@ async function deleteTripwire(id: number) {
   }
 }
 
+// [FIX tw-toggle 2026-09-08] 启用/停用开关: upsert 按 id 只翻 enabled, 几何/方向/
+//   名称不动; 主形态 + _ch0 镜像同步翻转 (插件按 _ch0 形态查询, 只切主形态
+//   检测不生效 — 同名级联删除的同源考量)。停用后画布回显消失、检测立即跳过。
+async function toggleTripwireEnabled(tw: TripwireDef, enabled: boolean) {
+  try {
+    const mirror = tripwires.value.find(
+      (t) => (t.channel_id_str || '') === `${tw.channel_id_str || ''}_ch0`
+    )
+    const bodies = [
+      { ...tw, enabled },
+      ...(mirror ? [{ ...mirror, enabled }] : []),
+    ]
+    await Promise.all(bodies.map((b) => regionApi.upsertTripwire(b as TripwireDef)))
+    ElMessage.success(enabled ? '绊线已启用' : '绊线已停用 (检测不再触发)')
+    await loadRegions()
+  } catch (e: any) {
+    ElMessage.error(`操作失败: ${e?.message ?? e}`)
+    await loadRegions()
+  }
+}
+
 // 🆕 v5.0: 通道 (多边形通行区) 添加/删除/老绊线迁移
 async function onPassagewayConfirm(payload: {
   transit_polygon: [number, number][]
@@ -1650,7 +1757,7 @@ async function onPassagewayConfirm(payload: {
   // 数据由插件端空 algo 查询兼容 (refreshPassageways [FIX 2026-08-28])。
   const algoId = 'shield.algo.perimeter.tailgating'
   try {
-    await regionApi.createPassageway({
+    await regionApi.upsertPassageway({
       channel_id: Number.isFinite(chIdNum) && Number.isSafeInteger(chIdNum) ? chIdNum : 0,
       // [FIX 2026-08-28] 剥 _ch0 后缀: 插件 getPassagewaysByChannelStr 精确匹配
       channel_id_str: stripChSuffix(chIdStr),
@@ -1677,6 +1784,39 @@ async function deletePassageway(id: number) {
     await loadRegions()
   } catch (e: any) {
     ElMessage.error(`删除失败: ${e?.message ?? e}`)
+  }
+}
+
+// [FIX tw-toggle 2026-09-08] 通道开关同绊线先例: upsert 按 id 只翻 enabled;
+//   _ch0 镜像 (若存在, 含老绊线迁移双写) 防御式同步 — tailgating 插件按
+//   子码流形态查询, 只切主形态检测不生效。
+async function togglePassagewayEnabled(pw: PassagewayDef, enabled: boolean) {
+  try {
+    const mirror = passageways.value.find(
+      (p) => (p.channel_id_str || '') === `${pw.channel_id_str || ''}_ch0`
+    )
+    const bodies = [
+      { ...pw, enabled },
+      ...(mirror ? [{ ...mirror, enabled }] : []),
+    ]
+    await Promise.all(bodies.map((b) => regionApi.upsertPassageway(b as PassagewayDef)))
+    ElMessage.success(enabled ? '通道已启用' : '通道已停用 (检测不再触发)')
+    await loadRegions()
+  } catch (e: any) {
+    ElMessage.error(`操作失败: ${e?.message ?? e}`)
+    await loadRegions()
+  }
+}
+
+// [FIX tw-toggle 2026-09-08] 计数区开关 (无镜像, int32 通道维度单条翻转)。
+async function toggleCountingZoneEnabled(cz: CountingZoneDef, enabled: boolean) {
+  try {
+    await regionApi.upsertCountingZone({ ...cz, id: cz.id, enabled })
+    ElMessage.success(enabled ? '计数区已启用' : '计数区已停用 (计数不再累计)')
+    await loadRegions()
+  } catch (e: any) {
+    ElMessage.error(`操作失败: ${e?.message ?? e}`)
+    await loadRegions()
   }
 }
 

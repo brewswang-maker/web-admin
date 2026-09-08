@@ -79,10 +79,22 @@ watch(() => props.imageUrl, (url) => {
 }, { immediate: true })
 watch(() => [props.imageWidth, props.imageHeight], draw)
 watch(() => props.saved, draw)
+// [FIX tw-coord-domain 2026-09-08] 值域探测归一: 库中绊线双形态混存 —
+//   本页保存链写归一化 [0,1] (画布点击即归一), 事件规则页保存链写像素
+//   (1920x1080 画布基准, 实锚 [573,377]→[1247,754])。渲染/交互全程假设
+//   归一化, 像素值 ×画布宽溢出 → 算法配置页看不到事件规则画的绊线
+//   (事件规则链有 normPoints 归一故可见)。同后端判定侧 tw-coord-domain
+//   模板: 任一坐标 >1.5 视为像素 → ÷1920/1080。读侧兼容双形态。
+function normPt(p: [number, number]): [number, number] {
+  if (p[0] > 1.5 || p[1] > 1.5) return [p[0] / 1920, p[1] / 1080]
+  return [p[0], p[1]]
+}
 // 载入编辑态: 沿用旧两点与方向, 用户可点击重画或微调后确认 (替换保存)
+//   [FIX tw-coord-domain] 像素形态旧线归一后载入 — 确认替换保存后自然
+//   统一为归一化形态 (写侧仅本页归一口径)
 watch(() => props.editing, (v) => {
   if (v) {
-    points.value = [[...v.point_a], [...v.point_b]]
+    points.value = [normPt([...v.point_a] as [number, number]), normPt([...v.point_b] as [number, number])]
     direction.value = v.direction
     draw()
   }
@@ -158,8 +170,9 @@ function draw() {
   // [FIX 2026-08-28] 已保存绊线常驻回显: 绿色细实线 + 小圆端点 + 名字标签
   // (正在绘制的仍是蓝色 A/B 大点 + 橙色箭头, 视觉区分明确)
   for (const st of props.saved ?? []) {
-    const ax = st.point_a[0] * c.width, ay = st.point_a[1] * c.height
-    const bx = st.point_b[0] * c.width, by = st.point_b[1] * c.height
+    const [na, nb] = [normPt(st.point_a), normPt(st.point_b)]
+    const ax = na[0] * c.width, ay = na[1] * c.height
+    const bx = nb[0] * c.width, by = nb[1] * c.height
     ctx.strokeStyle = 'rgba(103,194,58,0.9)'
     ctx.lineWidth = 2
     ctx.setLineDash([])
