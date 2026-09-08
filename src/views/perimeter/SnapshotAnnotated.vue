@@ -5,7 +5,7 @@
          标注可视化不再被无快照阻断 (src 由父组件判空传入) -->
     <!-- [fix 2026-09-02] 补 preview-teleported: 在 el-drawer 内点击放大时,
          预览层不 teleported 会被抽屉 z-index/裁剪遮挡 -->
-    <el-image v-if="src" :src="src" :preview-src-list="[src]" fit="fill" preview-teleported class="snap-img" @load="onImgLoad" />
+    <el-image v-if="src" :src="effSrc" :preview-src-list="[effSrc]" fit="fill" preview-teleported class="snap-img" @load="onImgLoad" />
     <div v-else class="snap-placeholder">{{ t('perimeter.events.annotPlaceholder') }}</div>
     <!-- 检测框叠加: bbox 为归一化 [x1,y1,x2,y2], SVG viewBox 0-100 + none 保真映射;
          object-fit:fill 拉伸图像与 SVG 同步形变 → 坐标恒对齐 (标注精确性优先,
@@ -100,6 +100,17 @@ const { t } = useI18n()
 // 真机 1920x1080 快照实证)
 const rootRef = ref<HTMLElement>()
 const imgNat = ref<{ w: number; h: number }>({ w: 0, h: 0 })
+// [FIX face_box 2026-09-08 R3] 人脸链快照基准切换: face_detector 的 face_box
+//   坐标基准是 scene_url 场景图 (全画面), 而列表传入 src 为人脸特写 crop —
+//   在特写图上画场景坐标必错位。face_box+scene_url 同时存在时展示层
+//   切场景图, 与坐标基准对齐 (实时弹窗 AlarmPopup 画廊已同款场景图首位)。
+const effSrc = computed(() => {
+  const m = (props.metadata || {}) as Record<string, unknown>
+  const fb = m.face_box
+  const scene = m.scene_url
+  return Array.isArray(fb) && fb.length >= 4 && typeof scene === 'string' && scene
+    ? scene : props.src
+})
 /** [FEAT 2026-09-02] 全屏预览开关 (el-image-viewer v-if 挂载) */
 const viewerVisible = ref(false)
 function onImgLoad() {
@@ -203,6 +214,13 @@ const box = computed<number[] | null>(() => {
   }
   if (!m || typeof m !== 'object') return null
   let b = m.bbox as unknown
+  // [FIX face_box 2026-09-08 R3] 人脸链字段兑底: face_detector metadata 用
+  //   face_box [x1,y1,x2,y2] 归一 (基准=scene_url 场景图, effSrc 已同步切换);
+  //   无此兑底人脸告警快照弹窗恒无框 (真机 #9958 face_box=[0.208,0.103,
+  //   0.301,0.415] 已落库但 svg 不渲染实锚)。
+  if (!Array.isArray(b) || b.length < 4) {
+    b = m.face_box as unknown
+  }
   if (!Array.isArray(b) || b.length < 4) {
     const det = Array.isArray(m.detections) ? m.detections[0] : null
     const cand = (det && typeof det === 'object' ? det : (typeof m.x1 === 'number' ? m : null)) as Record<string, unknown> | null
@@ -278,7 +296,7 @@ function downloadAnnotated() {
     }
     return canvas
   }
-  downloadPngWithFallback(() => build(true), () => build(false), props.src, 'event-annotated')
+  downloadPngWithFallback(() => build(true), () => build(false), effSrc.value, 'event-annotated')
 }
 </script>
 

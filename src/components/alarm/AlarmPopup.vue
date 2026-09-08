@@ -967,7 +967,13 @@ const popupBbox = computed<number[]>(() => {
   //   bbox=[0.53,0.51,0.66,0.99] 已落库但弹窗无框实锚)。数组形态取首元素,
   //   与 EventsView 兜底口径对齐。
   const src = ((m[0] && typeof m[0] === 'object') ? m[0] : m) as Record<string, unknown>
-  const b = src.bbox as number[] | undefined
+  let b = src.bbox as number[] | undefined
+  // [FIX face_box 2026-09-08 R3] 人脸链字段兑底: face_detector metadata 用
+  //   face_box [x1,y1,x2,y2] 归一 (基准=scene_url 场景图, 画廊已置首位);
+  //   无此兑底实时弹窗人脸告警恒无框。
+  if (!Array.isArray(b) || b.length < 4) {
+    b = src.face_box as number[] | undefined
+  }
   if (Array.isArray(b) && b.length >= 4) return b
   const det = (Array.isArray(src.detections) ? src.detections[0] : null) as Record<string, unknown> | null
   const cand = det ?? src
