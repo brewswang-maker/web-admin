@@ -19,7 +19,7 @@
     </div>
 
     <!-- 设备概览卡片 -->
-    <el-row :gutter="16" v-if="device">
+    <el-row :gutter="16" v-if="device" class="trend-row">
       <el-col :span="6">
         <el-card shadow="hover" class="info-card">
           <div class="info-row">
@@ -467,7 +467,7 @@ watch(() => route.params.id, loadData)
 </script>
 
 <style scoped>
-.device-detail-page { padding: 0 4px; }
+/*.device-detail-page { padding: 0 4px; }*/
 .page-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
 .header-actions { display: flex; gap: 8px; }
 .info-card .info-row { display: flex; justify-content: space-between; align-items: center; padding: 6px 0; border-bottom: 1px solid #f0f0f0; }
@@ -480,4 +480,7 @@ watch(() => route.params.id, loadData)
 .metric-label { font-size: 12px; color: #8c8c8c; margin: 4px 0; }
 .sync-status { text-align: center; padding: 12px 0; }
 .sync-detail { margin-top: 12px; }
+
+.trend-row { margin-bottom: 12px; }
+.trend-row .el-card { height: 100%; margin-bottom: 0; }
 </style>

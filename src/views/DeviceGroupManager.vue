@@ -1,5 +1,6 @@
 <template>
   <div class="dgm-root">
+    <el-card shadow="never">
     <!-- ── 顶部工具栏 ── -->
     <div class="dgm-toolbar">
       <div class="dgm-toolbar-left">
@@ -145,6 +146,7 @@
         <el-button type="primary" :loading="dlgSaving" @click="submitDlg">保存</el-button>
       </template>
     </el-dialog>
+      </el-card>
   </div>
 </template>
 
@@ -402,7 +404,7 @@ onMounted(async () => {
 
 <style scoped>
 .dgm-root { display: flex; flex-direction: column; gap: 12px; height: 100%; }
-.dgm-toolbar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
+.dgm-toolbar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin-bottom:14px;}
 .dgm-toolbar-left { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
 .dgm-title { font-size: 16px; font-weight: 600; }
 .dgm-sub { font-size: 12px; color: var(--el-text-color-secondary); }
