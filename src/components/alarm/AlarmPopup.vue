@@ -13,9 +13,7 @@
                  deviceIconMeta('camera') 同形状 (枪机+镜头, 视觉识别一致);
                  包 flex 容器防 header space-between 把标题挤到中间 -->
             <span class="alarm-popup__title-wrap">
-              <svg class="alarm-popup__title-icon" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
-                <path d="M8 9.5 16.5 7v7L8 12.5z M12 9.6a2.4 2.4 0 1 0 0 4.8 2.4 2.4 0 0 0 0-4.8z" fill="currentColor"/>
-              </svg>
+              <el-icon class="alarm-popup__title-icon" :size="22" aria-hidden="true"><BellFilled /></el-icon>
               <span class="alarm-popup__title">事件详情</span>
             </span>
             <div class="alarm-popup__header-right">
@@ -286,7 +284,10 @@
                 <el-scrollbar>
                   <!-- 详情 -->
                   <div v-show="activeSecondaryTab === 'detail'" class="alarm-popup__detail">
-                    <div class="alarm-popup__detail-ai">{{alarmTypeLabel}}告警</div>
+                    <div
+                      class="alarm-popup__detail-ai"
+                      :class="`alarm-popup__detail-ai--${currentAlarm.level}`"
+                    >{{ alarmTypeLabel }}告警</div>
                     <div class="alarm-popup__detail-row alarm-popup__detail-row--level">
                       <div>
                         <span class="alarm-popup__detail-key">报警等级:</span>
@@ -1622,6 +1623,10 @@ void jumpToPlayback; void openImageTab
   border-radius: 4px;
   margin-bottom: 8px;
 }
+.alarm-popup__detail-ai--critical { color: #FF3D71; }
+.alarm-popup__detail-ai--high { color: #FF6B35; }
+.alarm-popup__detail-ai--medium { color: #FFB800; }
+.alarm-popup__detail-ai--low { color: #00D4AA; }
 .alarm-popup__detail-row {
   display: flex; align-items: center;
   gap: 8px;
@@ -1795,7 +1800,7 @@ void jumpToPlayback; void openImageTab
 }
 .alarm-popup__level-badge--critical { background: #FF3D71; }
 .alarm-popup__level-badge--high     { background: #FF6B35; }
-.alarm-popup__level-badge--medium   { background: #FFB800; color: #1a1a1a; }
+.alarm-popup__level-badge--medium   { background: #FFB800;  }
 .alarm-popup__level-badge--low      { background: #00D4AA; }
 
 .alarm-popup__status {
@@ -1818,7 +1823,7 @@ void jumpToPlayback; void openImageTab
 
 .alarm-popup__detail-section { margin-top: 12px; }
 .alarm-popup__detail-section-title {
-  font-size: 12px; font-weight: 600;
+  font-size: 15px; font-weight: 600;
   margin-bottom: 6px;
 }
 .alarm-popup__ai-box {
