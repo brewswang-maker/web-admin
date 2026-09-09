@@ -286,7 +286,7 @@
                 <el-scrollbar>
                   <!-- 详情 -->
                   <div v-show="activeSecondaryTab === 'detail'" class="alarm-popup__detail">
-                    <div class="alarm-popup__detail-ai">AI视频告警</div>
+                    <div class="alarm-popup__detail-ai">{{alarmTypeLabel}}告警</div>
                     <div class="alarm-popup__detail-row alarm-popup__detail-row--level">
                       <div>
                         <span class="alarm-popup__detail-key">报警等级:</span>
@@ -329,7 +329,7 @@
                     <!-- 告警图片: 本次事件的快照, 多张可翻页, 点击跳转「图片」Tab -->
                     <div class="alarm-popup__detail-images">
                       <div class="alarm-popup__detail-images-header">
-                        <span class="alarm-popup__detail-key">告警图片</span>
+                        <span class="alarm-popup__detail-key alarm-popup__accent-title">告警图片</span>
                         <div class="alarm-popup__detail-images-nav">
                           <button :disabled="imageIndex <= 0" @click="prevImage" aria-label="上一张">‹</button>
                           <span>{{ imageIndex + 1 }} / {{ totalImageCount }}</span>
@@ -342,7 +342,7 @@
                     </div>
                     <!-- [P0-8 2026-09-04 人脸比对] 抓拍 vs 注册照并列对比 (大华式) -->
                     <div v-if="faceCompare" class="alarm-popup__detail-section">
-                      <div class="alarm-popup__detail-section-title" style="color:#00D4AA">人脸比对</div>
+                      <div class="alarm-popup__detail-section-title alarm-popup__accent-title">人脸比对</div>
                       <div class="alarm-popup__face-compare">
                         <div class="alarm-popup__face-compare-item">
                           <img :src="faceCompare.snapshot" alt="现场抓拍" />
@@ -418,7 +418,7 @@
                         <span class="alarm-popup__dispose-val">{{ formatTime(currentAlarm.handledAt || currentAlarm.createdAt) }}</span>
                       </div>
                     </template>
-                    <div class="alarm-popup__dispose-section">
+                    <!-- <div class="alarm-popup__dispose-section">
                       <div class="alarm-popup__dispose-section-title">追加信息</div>
                       <div class="alarm-popup__dispose-row">
                         <span class="alarm-popup__dispose-key">追加内容:</span>
@@ -428,7 +428,7 @@
                         <span class="alarm-popup__dispose-key">追加时间:</span>
                         <span class="alarm-popup__dispose-val">{{ formatTime(appendInfo.time || currentAlarm.createdAt) }}</span>
                       </div>
-                    </div>
+                    </div> -->
                     <div class="alarm-popup__dispose-actions">
                       <el-button
                         v-if="!isDisposed || appendEditing" type="primary"
@@ -440,7 +440,11 @@
                 </el-scrollbar>
               </div>
               <div class="alarm-popup__detail-footer">
-                <button class="alarm-popup__dispose-entry" @click="activeSecondaryTab = 'dispose'">处警</button>
+                <button
+                  class="alarm-popup__dispose-entry"
+                  :class="{ 'alarm-popup__dispose-entry--append': isDisposed }"
+                  @click="activeSecondaryTab = 'dispose'"
+                >{{ isDisposed ? '追加处警' : '处警' }}</button>
               </div>
             </div>
           </div>
@@ -1651,6 +1655,22 @@ void jumpToPlayback; void openImageTab
   font-weight: 600;
   color: #303133;
 }
+.alarm-popup__accent-title {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  color: #111111 !important;
+  font-size: 14px;
+  font-weight: bold;
+}
+.alarm-popup__accent-title::before {
+  content: '';
+  width: 2px;
+  height: 1em;
+  margin-right: 3px;
+  background: #0088C1;
+  flex: 0 0 2px;
+}
 .alarm-popup__detail-images-nav {
   display: flex; align-items: center; gap: 12px;
   font-size: 14px; color: #303133;
@@ -1672,7 +1692,8 @@ void jumpToPlayback; void openImageTab
 }
 .alarm-popup__detail-images-thumb {
   margin-top: 6px;
-  width: 100%; height: 120px;
+  width: 100%;
+  height: 185px;
   border: 1px solid #ebeef5;
   border-radius: 4px;
   background: #0a0e1c;
@@ -1733,7 +1754,8 @@ void jumpToPlayback; void openImageTab
   color: #909399;
 }
 .alarm-popup__face-compare-verdict.is-known {
-  color: #00d4aa;
+  /*color: #00d4aa;*/
+  color:#333;
   font-weight: 600;
 }
 
@@ -1756,6 +1778,12 @@ void jumpToPlayback; void openImageTab
   transition: background 0.15s;
 }
 .alarm-popup__dispose-entry:hover { background: #E12D48; }
+.alarm-popup__dispose-entry--append {
+  background: var(--el-color-primary, #409eff);
+}
+.alarm-popup__dispose-entry--append:hover {
+  background: var(--el-color-primary-light-3, #66b1ff);
+}
 
 /* 报警等级徽章 */
 .alarm-popup__level-badge {
