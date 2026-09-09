@@ -119,6 +119,13 @@
         </el-card>
 
         <template v-else>
+          <!-- [FIX tw-res-vis 2026-09-09] 拆双卡后三卡总高实测 2023px (编辑卡 446 +
+               检测区域 269 + 通道资源 1288), 「通道资源」卡 top=735 首屏仅露卡头 —
+               用户反馈「绊线/通道/计数区没有了」实为视口外不可见 (非渲染/数据故障)。
+               右栏改三视图 tab: 一屏一卡零滚动, 归属语义上移到视图名。组件在原
+               四合一 tab 时代即兼容 el-tab-pane 的 v-show 隐藏态切换, 嵌套无新风险。 -->
+          <el-tabs v-model="rightViewTab" class="right-view-tabs">
+            <el-tab-pane name="params" :label="$t('algoParams', '算法参数')">
           <!-- ② 算法参数编辑 (仅当前选中算法; 字段序: 算法→模式→间隔→置信度→NMS;
               校验: 置信度/NMS 0~1, 间隔 ≥100ms, 未通过字段下红提示且不触发保存) -->
           <el-card ref="editCardRef" shadow="never" class="edit-card">
@@ -189,29 +196,59 @@
               <el-button type="primary" :loading="saving" :disabled="!editForm.algoId" @click="saveConfig">{{ $t('save', '保存配置') }}</el-button>
             </div>
           </el-card>
+            </el-tab-pane>
+            <!-- [FIX algo-roi-effective 2026-09-09] 检测区域视图按算法能力门控:
+                 仅真正消费 getRegions 的 8 个算法显示 (REGION_ALGOS 实锚), 绊线类
+                 4 算法/尾随/人脸等非区域消费算法下不再出现「画了不起作用」的
+                 检测区域入口 — 对标华为/海康「每个智能事件只配自己消费的 ROI」。 -->
+            <el-tab-pane v-if="isRegionAlgo" name="roi" :label="$t('detectionZone', '检测区域') + ' · 本算法'">
+
+          <!-- [FIX tw-res-split 2026-09-09 方向2 / algo-bind-roi 演进] ROI 卡按归属
+               语义拆分后, 2026-09-09 用户拍板全部算法绑定: 检测区域与专属资源
+               (绊线/通道/计数区) 均跟随当前选中算法 (getRegions(ch, algo_id)
+               精确隔离 + ALGO_EXCLUSIVE_RES 动态显隐)。原四合一 tab 挂在算法
+               行下让用户误以为「徘徊检测也在用绊线」(设备实锚), 对标海康
+               Smart 事件「每个智能事件独立配置自己的 ROI」的行业惯例。 -->
+          <el-card shadow="never" class="roi-card">
+            <template #header>
+              <div class="config-header">
+                <span>ROI {{ $t('detectionZone', '检测区域') }}
+                  <el-tag size="small" type="success" effect="plain" style="margin-left: 8px">仅当前算法生效</el-tag>
+                </span>
+                <el-button type="primary" text size="small" @click="loadRegions">{{ $t('refresh', '刷新') }}</el-button>
+              </div>
+            </template>
+            <!-- [FIX 2026-09-03 问题1] :key 含通道+当前算法: 切算法/切通道时重挂载编辑器,
+                 画布草稿(顶点/绊线/撤消栈)随上下文重置清零, 再由 loadRegions 按新算法回填 -->
+            <RoiPolygonEditor
+              v-if="selected"
+              :key="`roi_${selected.channelId}_${currentAlgoId}`"
+              :model-value="regions"
+              :background-image-url="roiBackgroundUrl"
+              :canvas-width="720" :canvas-height="405"
+              :types="['detection_zone', 'exclusion_zone']"
+              @update:model-value="onRegionsChange"
+            />
+          </el-card>
+            </el-tab-pane>
+            <!-- [FIX algo-bind-roi 2026-09-09] ROI 绘制全部与算法绑定 (用户拍板,
+                 废除「通道级共享」概念): 绊线/通道/计数区在数据层本就各归属固定
+                 判定插件 (loadRegions 查询与创建同口径), UI 按当前选中算法动态
+                 显隐 — 徘徊等非判定算法下不再出现绊线, 「共享」歧义根除。 -->
+            <el-tab-pane v-if="exclusiveRes" name="channelRes"
+              :label="exclusiveRes ? ($t(exclusiveRes.key, exclusiveRes.fallback) + ' · 本算法') : ''">
 
           <el-card shadow="never" class="roi-card">
             <template #header>
               <div class="config-header">
-                <span>ROI {{ $t('detectionZone', '检测区域') }} / {{ $t('tripwire', '绊线') }} / {{ $t('passageway', '通道') }} / {{ $t('countingZone', '计数区') }}</span>
+                <span>{{ exclusiveRes ? $t(exclusiveRes.key, exclusiveRes.fallback) : '' }}
+                  <el-tag size="small" type="success" effect="plain" style="margin-left: 8px">仅当前算法生效</el-tag>
+                </span>
                 <el-button type="primary" text size="small" @click="loadRegions">{{ $t('refresh', '刷新') }}</el-button>
               </div>
             </template>
-            <el-tabs v-model="roiTab">
-              <el-tab-pane :label="$t('detectionZone', '检测区域')" name="region">
-                <!-- [FIX 2026-09-03 问题1] :key 含通道+当前算法: 切算法/切通道时重挂载编辑器,
-                     画布草稿(顶点/绊线/撤消栈)随上下文重置清零, 再由 loadRegions 按新算法回填 -->
-                <RoiPolygonEditor
-                  v-if="selected"
-                  :key="`roi_${selected.channelId}_${currentAlgoId}`"
-                  :model-value="regions"
-                  :background-image-url="roiBackgroundUrl"
-                  :canvas-width="720" :canvas-height="405"
-                  :types="['detection_zone', 'exclusion_zone']"
-                  @update:model-value="onRegionsChange"
-                />
-              </el-tab-pane>
-              <el-tab-pane :label="$t('tripwire', '绊线')" name="tripwire">
+            <template v-if="exclusiveRes?.tab === 'tripwire'">
+                <p class="pw-mig-hint" style="margin: 0 0 8px">{{ exclusiveRes?.desc }}</p>
                 <!-- [FIX 2026-09-03 问题1] :key 重挂载: TripwireEditor 草稿 points(A/B 两点)
                      为组件内部状态, 之前切算法行不清零 → 上一算法画的绊线残留在画布上;
                      配合 selectAlgoRow 重置 editingTripwire, 编辑会话与草稿一并归零,
@@ -259,8 +296,9 @@
                     </span>
                   </div>
                 </div>
-              </el-tab-pane>
-              <el-tab-pane :label="$t('passageway', '通道 (尾随 v5)')" name="passageway">
+            </template>
+            <template v-else-if="exclusiveRes?.tab === 'passageway'">
+                <p class="pw-mig-hint" style="margin: 0 0 8px">{{ exclusiveRes?.desc }}</p>
                 <div class="pw-toolbar-row">
                   <el-button size="small" @click="migrateTripwires">老绊线迁移</el-button>
                   <span class="pw-mig-hint">绊线→矩形通道 (幂等, detector 首帧自动执行)</span>
@@ -297,50 +335,17 @@
                     </el-button>
                   </div>
                 </div>
-              </el-tab-pane>
-              <el-tab-pane :label="$t('countingZone', '计数区')" name="counting">
-                <!-- [FIX 2026-08-28] 计数区实装: 矩形拖拽绘制 + target_class 配置
-                     (后端 CountingZoneDef: polygon + target_class; 通道维度按 int32
-                      channel_id, GB 场景统一 0, 列表为全部通道计数区) -->
-                <div class="counting-config-row">
-                  <span class="counting-label">目标类别</span>
-                  <el-select v-model="countingTargetClass" size="small" style="width: 140px">
-                    <el-option v-for="c in countingTargetOptions" :key="c.value" :label="c.label" :value="c.value" />
-                  </el-select>
-                  <span class="pw-mig-hint">在画面上拖拽对角两点绘制矩形，松手自动创建</span>
-                </div>
-                <RoiPolygonEditor
-                  v-if="selected"
-                  :key="`cz_${selected.channelId}_${currentAlgoId}`"
-                  :model-value="countingZoneRois"
-                  :background-image-url="roiBackgroundUrl"
-                  :canvas-width="720" :canvas-height="405"
-                  :types="['counting_zone']"
-                  @update:model-value="onCountingZonesChange"
-                />
-                <div v-if="countingZoneList.length" class="tripwire-list">
-                  <div v-for="cz in countingZoneList" :key="cz.id" class="tripwire-list__item">
-                    <!-- [FIX tw-toggle 2026-09-08] 计数区开关同绊线先例 (无镜像/
-                         int32 通道维度, 单条翻转); 停用后 counting 插件
-                         getCountingZones 默认只回启用 → 计数立即停。 -->
-                    <span>
-                      <el-switch
-                        :model-value="cz.enabled !== false"
-                        size="small"
-                        style="margin-right: 8px"
-                        :title="cz.enabled === false ? '已停用 (计数不生效)' : '生效中'"
-                        @change="(v: any) => toggleCountingZoneEnabled(cz, !!v)"
-                      />
-                      {{ cz.name }} ({{ cz.target_class }})
-                    </span>
-                    <el-button text size="small" type="danger" @click="deleteCountingZoneById(cz.id)">
-                      {{ $t('delete', '删除') }}
-                    </el-button>
-                  </div>
-                </div>
-              </el-tab-pane>
-            </el-tabs>
+            </template>
+            <!-- [FIX algo-roi-effective 2026-09-09] 计数区分支移除: RegionStore.h
+                 [B6 2026-09-07] 实锚「预留未消费 — 有 CRUD + 前端渲染, 但无任何
+                 插件调用 getCountingZones 做计数判定」; 设备算法目录 (90+ 项) 亦无
+                 shield.algo.perimeter.counting。按用户铁律「画了不起作用的入口
+                 必须移除」, ALGO_EXCLUSIVE_RES 删 counting 条目后本分支永不可达,
+                 连同编辑器/列表/开关/创建链路整体下线。存量计数区数据不删
+                 (RegionStore CRUD 保留), 计数插件落地后恢复本分支与映射即可。 -->
           </el-card>
+            </el-tab-pane>
+          </el-tabs>
         </template>
       </div>
     </div>
@@ -484,7 +489,7 @@
  * 2. 从 GET /inference/channels 加载已绑定算法的推理状态
  * 3. 保存时调用 POST /inference/schedule/start 或 /stop 控制后端推理调度
  */
-import { ref, reactive, computed, onMounted, nextTick } from 'vue'
+import { ref, reactive, computed, watch, onMounted, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh, Plus, Delete, Edit, Search, CaretBottom, WarningFilled } from '@element-plus/icons-vue'
@@ -501,7 +506,7 @@ import {
 } from '@/composables/useAlgoRuleSync'
 import { linkageApi, type LinkageRule } from '@/api/linkage'
 import { regionApi } from '@/api/region'
-import type { TripwireDef, PassagewayDef, SuppressMode, CountingZoneDef } from '@/types/region'
+import type { TripwireDef, PassagewayDef, SuppressMode } from '@/types/region'
 import RoiPolygonEditor from '@/components/RoiPolygonEditor.vue'
 // [SCENE-EDIT-INPLACE 2026-09-03] 就地编辑: 内嵌平台编辑器 (嵌入模式, 编辑器单一来源)
 import LinkageRuleView from '@/views/LinkageRuleView.vue'
@@ -1406,7 +1411,49 @@ const form = reactive({
 
 // 🆕 v7.1 (28 算法补齐 P0-A5): 区域/绊线/计数区持久化
 // 🆕 v5.0 (尾随区域版): + 通道 (passageway)
-const roiTab = ref<'region' | 'tripwire' | 'passageway' | 'counting'>('region')
+// [FIX tw-res-vis 2026-09-09] 右栏三视图 tab: 拆双卡后三卡总高 2023px 远超视口,
+// 「通道资源」卡首屏仅露卡头被用户判为「消失」— 改一屏一卡切换, 零滚动可达
+const rightViewTab = ref<'params' | 'roi' | 'channelRes'>('params')
+// [FIX algo-bind-roi 2026-09-09] ROI 绘制全部与算法绑定 (用户拍板, 废除
+// 「通道级共享」): 绊线/通道/计数区数据层本就各归属固定判定插件 (查询与创建
+// 同口径), UI 按当前选中算法动态显隐专属资源视图; 徘徊等非判定算法不再出现
+// 绊线, 根除「徘徊检测也在用绊线」歧义 (设备实锚)。
+const ALGO_EXCLUSIVE_RES: Record<string, { tab: 'tripwire' | 'passageway'; key: string; fallback: string; desc: string }> = {
+  // [FIX algo-bind-roi2 2026-09-09] 绊线判定消费方全仓 4 插件 (grep 实锚):
+  //   tripwire(按己 id 查+裸短名容差) / boundary(按己 id 查) /
+  //   people_count(绊线作计数线, 按己 id 查) / parking_violation(空 id 全量查)。
+  //   各开绊线视图 + 查询/创建 algo_id 跟随当前算法 — 一算法一份绊线库。
+  'shield.algo.perimeter.tripwire': { tab: 'tripwire', key: 'tripwire', fallback: '绊线', desc: '绊线由本算法判定生效；在事件规则页画的越线绊线也会自动同步到这里。' },
+  'shield.algo.perimeter.boundary': { tab: 'tripwire', key: 'tripwire', fallback: '绊线', desc: '绊线由本算法（边界判定）消费生效，独立于越线算法的绊线库。' },
+  'shield.algo.metric.people_count': { tab: 'tripwire', key: 'tripwire', fallback: '绊线', desc: '绊线作为本算法的计数线（目标穿越即计数）。' },
+  'shield.algo.traffic.parking_violation': { tab: 'tripwire', key: 'tripwire', fallback: '绊线', desc: '车辆停在通道内任意绊线附近即触发本算法；此处维护本算法的绊线。' },
+  'shield.algo.perimeter.tailgating': { tab: 'passageway', key: 'passageway', fallback: '通道 (尾随 v5)', desc: '矩形通道由本算法（尾随判定）消费生效。' },
+  // [FIX algo-roi-effective 2026-09-09] counting 条目删除: 零插件消费
+  //   (RegionStore.h [B6 2026-09-07] 预留未消费; 设备算法目录无该 id)。
+  //   计数插件落地后恢复: 映射条目 + channelRes 模板 counting 分支 +
+  //   loadRegions listCountingZones + onCountingZonesChange 等链路
+  //   (git 历史可整段找回)。
+}
+const exclusiveRes = computed(() => ALGO_EXCLUSIVE_RES[(editForm.algoId || '').split(',')[0].trim()] ?? null)
+// [FIX algo-roi-effective 2026-09-09] 检测区域视图同样按算法能力门控: 仅 8 个
+//   真正消费 getRegions 的算法显示 (绊线类 4 算法/尾随不消费区域 — 画了不起作用)。
+const REGION_ALGOS = new Set([
+  'shield.algo.perimeter.intrusion',         // getRegions + ByChannelStr
+  'shield.algo.behavior.loitering',          // getRegionsByChannelStr
+  'shield.algo.perimeter.climbing',          // getRegionsByChannelStr
+  'shield.algo.perimeter.abandoned_luggage', // getRegionsByChannelStr
+  'shield.algo.safety.sleep_on_duty',        // getRegions(int32)
+  'shield.algo.crowd.capacity_guard',        // getRegions(int32)
+  'shield.algo.fire.blocked_exit',           // getRegions(int32)
+  'shield.algo.object.personal_item',        // getRegionsByChannelStr
+])
+const isRegionAlgo = computed(() => REGION_ALGOS.has((editForm.algoId || '').split(',')[0].trim()))
+// 算法切换后视图合法性回落: 停在专属资源/检测区域视图而新算法无对应消费时,
+// 回落到仍合法的视图 (检测区域→专属资源→参数)
+watch([exclusiveRes, isRegionAlgo], ([v, regionOk]) => {
+  if (rightViewTab.value === 'channelRes' && !v) rightViewTab.value = regionOk ? 'roi' : 'params'
+  else if (rightViewTab.value === 'roi' && !regionOk) rightViewTab.value = v ? 'channelRes' : 'params'
+})
 // [FIX 2026-09-01] 存编辑器 RoiData 映射 (含 roi_id/backend_id), 非后端 RegionDef 原始结构
 const regions = ref<any[]>([])
 // [FIX 2026-09-01] 载入快照: 编辑器 emit 的是全量列表, 需与最近一次后端载入
@@ -1415,18 +1462,7 @@ const lastLoadedRegions = ref<any[]>([])
 const tripwires = ref<TripwireDef[]>([])
 const passageways = ref<PassagewayDef[]>([])
 
-// [FIX 2026-08-28] 计数区实装: 编辑器状态 (RoiData[]) + 后端列表
-const countingZoneRois = ref<any[]>([])
-const countingZoneList = ref<CountingZoneDef[]>([])
-const countingTargetClass = ref('person')
-const countingTargetOptions = [
-  { label: '行人', value: 'person' },
-  { label: '汽车', value: 'car' },
-  { label: '公车', value: 'bus' },
-  { label: '卡车', value: 'truck' },
-  { label: '摩托', value: 'motorbike' },
-  { label: '自行车', value: 'bicycle' },
-]
+// [FIX algo-roi-effective 2026-09-09] 计数区状态整体下线 (见 ALGO_EXCLUSIVE_RES 注释)
 
 async function loadRegions() {
   if (!selected.value) return
@@ -1441,14 +1477,15 @@ async function loadRegions() {
     // [FIX 2026-09-01] 检测区域按当前选中算法隔离 (后端 getRegions(ch, algo_id) 支持,
     // 插件消费即按单 ID 精确查询): 未选中算法时载入空列表, 杜绝 "画一个区域所有算法都有" 观感
     const curAlgo = (editForm.algoId || '').split(',')[0].trim()
-    const [rRes, tRes, pRes, czRes] = await Promise.all([
+    const [rRes, tRes, pRes] = await Promise.all([
       regionApi.listRegions(curAlgo ? { channel_id: chId, algo_id: curAlgo, channel_id_str: chStrNoSuffix, include_disabled: true } : { channel_id: chId, channel_id_str: chStrNoSuffix, include_disabled: true }),
-      // [FIX 2026-09-08 通道×算法一对一] 绊线双维度查询: 原只传 int32 chId
-      //   (GB 20 位编码降级 0) → 后端 getTripwires(0) 返回全库 GB 绊线
-      //   (int32 全 0), 通道维度靠前端本地过滤或直接串显。现传 str 主查
-      //   (后端已支持, 对齐 regions B5 演进) + algo_id 固定绊线判定插件 id
-      //   (与创建侧 L1591 同口径 — 绊线归属固定, 与用户当前选中哪个算法无关)。
-      regionApi.listTripwires({ channel_id: chId, channel_id_str: chStrNoSuffix, algo_id: 'shield.algo.perimeter.tripwire', include_disabled: true }),
+      // [FIX 2026-09-08 通道×算法一对一 / algo-bind-roi2 2026-09-09 跟随归属]
+      //   绊线双维度查询: 原只传 int32 chId (GB 20 位编码降级 0) → 后端
+      //   getTripwires(0) 返回全库 GB 绊线 (int32 全 0)。现传 str 主查 +
+      //   algo_id 跟随当前算法 (绊线视图仅在 4 消费方算法下出现, 见
+      //   ALGO_EXCLUSIVE_RES — 各插件 getAlgoId() 精确命中自己那份库);
+      //   curAlgo 空兑底固定越线 id 保持老行为。
+      regionApi.listTripwires({ channel_id: chId, channel_id_str: chStrNoSuffix, algo_id: curAlgo || 'shield.algo.perimeter.tripwire', include_disabled: true }),
       // 🆕 v5.0: 通道主路径 channel_id_str (GB28181 完整编码)
       // [FIX 2026-09-03 问题2] algo_id 固定尾随插件 id: 创建侧 (onPassagewayConfirm)
       //   固定写 'shield.algo.perimeter.tailgating', 而旧查询用当前选中算法 id 过滤
@@ -1460,7 +1497,8 @@ async function loadRegions() {
         algo_id: 'shield.algo.perimeter.tailgating',
         include_disabled: true,
       }),
-      regionApi.listCountingZones({ channel_id: chId, include_disabled: true })
+      // [FIX algo-roi-effective 2026-09-09] listCountingZones 请求移除 (零消费,
+      //   专属资源视图无 counting 分支后无任何渲染方; 省 1 次/加载无效请求)
     ])
     // [FIX 2026-09-01] http 封装不剥业务壳 (拦截器 return response):
     // res.data = {code, data:{...}, message} → 必须取 res.data.data.xxx
@@ -1486,74 +1524,8 @@ async function loadRegions() {
     passageways.value = ((pRes.data as any)?.data?.passageways ?? (pRes.data as any)?.passageways ?? []).filter(
       (p: any) => stripChSuffix(p.channel_id_str || '') === chStrNoSuffix
     )
-    // 计数区 (int32 维度, GB 场景全 0 → 列表为全部; 名称带通道尾 4 位便于区分)
-    countingZoneList.value = (czRes.data as any)?.data?.counting_zones ?? (czRes.data as any)?.counting_zones ?? []
-    countingZoneRois.value = countingZoneList.value.map((cz) => ({
-      roi_id: `cz_${cz.id}`,
-      roi_name: cz.name,
-      roi_type: 'counting_zone',
-      polygon: (cz.polygon ?? []).flat(),
-      is_active: cz.enabled,
-    }))
   } catch (e: any) {
     ElMessage.warning(`加载区域失败: ${e?.message ?? e}`)
-  }
-}
-
-/** 计数区: 编辑器确认新矩形后自动创建 (roi_id 不带 cz_ 前缀 = 本次新建) */
-async function onCountingZonesChange(updated: any[]) {
-  if (!selected.value) return
-  const chIdStr = selected.value.channelId
-  const chIdNum = Number(chIdStr)
-  const chId = Number.isFinite(chIdNum) && Number.isSafeInteger(chIdNum) ? chIdNum : 0
-  // [FIX tw-toggle 2026-09-08] 更新分支: 既有计数区 is_active 翻转 (编辑器列表
-  //   开关) 持久化 — 之前 cz_ 前缀直接 skip, 停用开关静默不保存。
-  let toggled = 0
-  for (const r of updated) {
-    const rid = String(r.roi_id || '')
-    if (!rid.startsWith('cz_')) continue
-    const czId = Number(rid.slice(3))
-    const prev = countingZoneList.value.find((c) => c.id === czId)
-    if (!prev || (prev.enabled !== false) === (r.is_active ?? true)) continue
-    try {
-      await regionApi.upsertCountingZone({ ...prev, id: czId, enabled: r.is_active ?? true })
-      toggled++
-    } catch (e: any) {
-      console.warn('[AlgoConfigView] upsertCountingZone failed', e)
-      ElMessage.error(`保存计数区状态失败: ${e?.message ?? e}`)
-    }
-  }
-  if (toggled > 0) ElMessage.success(toggled === 1 ? '计数区状态已更新' : `已更新 ${toggled} 处计数区状态`)
-  for (const r of updated) {
-    if (String(r.roi_id || '').startsWith('cz_')) continue  // 已有后端记录
-    const pts = r.polygon ?? []
-    if (pts.length < 4) continue
-    const polygon: [number, number][] = []
-    for (let i = 0; i + 1 < pts.length; i += 2) polygon.push([pts[i], pts[i + 1]])
-    try {
-      await regionApi.upsertCountingZone({
-        channel_id: chId,
-        algo_id: 'shield.algo.perimeter.counting',
-        name: `${countingTargetClass.value}_${chIdStr.slice(-4)}`,
-        polygon,
-        target_class: countingTargetClass.value,
-        enabled: true,
-      })
-      ElMessage.success('计数区已添加')
-    } catch (e: any) {
-      ElMessage.error(`计数区创建失败: ${e?.message ?? e}`)
-    }
-  }
-  await loadRegions()
-}
-
-async function deleteCountingZoneById(id: number) {
-  try {
-    await regionApi.deleteCountingZone(id)
-    ElMessage.success('已删除')
-    await loadRegions()
-  } catch (e: any) {
-    ElMessage.error(`删除失败: ${e?.message ?? e}`)
   }
 }
 
@@ -1670,11 +1642,13 @@ async function onTripwireConfirm(payload: {
   const chIdStr = selected.value.channelId
   const chIdNum = Number(chIdStr)
   const chId = Number.isFinite(chIdNum) && Number.isSafeInteger(chIdNum) ? chIdNum : 0
-  // [FIX 2026-08-28] algo_id 固定为绊线判定插件 id — 用户所选算法(form.algorithm)
-  // 存进去会与 tripwire_detector.getAlgoId() 不一致 → 插件按算法精确查库恒空
-  // → 判定退回内置默认线 (绊线加了不弹窗根因之一)。存量错 algo_id 数据由
-  // 插件端空 algo 查询兼容 (validateRegionStore [FIX 2026-08-28])。
-  const algoId = 'shield.algo.perimeter.tripwire'
+  // [FIX 2026-08-28 → algo-bind-roi2 2026-09-09] 创建归属跟随当前算法:
+  //   历史坑 — 任意算法名存库会与消费插件 getAlgoId() 不一致 → 查库恒空
+  //   → 判定退回内置默认线 (绊线加了不弹窗根因之一)。现绊线视图仅在
+  //   4 个绊线消费方算法下可达 (ALGO_EXCLUSIVE_RES), 此处取到的算法 id
+  //   必为消费方完整 id, 与插件查询全等闭环; 空值兑底固定越线 id 防御。
+  //   事件规则页(LinkageRuleView)创建仍固定越线 id (越线事件语义)。
+  const algoId = (editForm.algoId || '').split(',')[0].trim() || 'shield.algo.perimeter.tripwire'
   const isReplace = !!editingTripwire.value
   try {
     // 替换式编辑: 先删旧绊线 (主形态 + _ch0 镜像), 确保不残留旧线
@@ -1801,18 +1775,6 @@ async function togglePassagewayEnabled(pw: PassagewayDef, enabled: boolean) {
     ]
     await Promise.all(bodies.map((b) => regionApi.upsertPassageway(b as PassagewayDef)))
     ElMessage.success(enabled ? '通道已启用' : '通道已停用 (检测不再触发)')
-    await loadRegions()
-  } catch (e: any) {
-    ElMessage.error(`操作失败: ${e?.message ?? e}`)
-    await loadRegions()
-  }
-}
-
-// [FIX tw-toggle 2026-09-08] 计数区开关 (无镜像, int32 通道维度单条翻转)。
-async function toggleCountingZoneEnabled(cz: CountingZoneDef, enabled: boolean) {
-  try {
-    await regionApi.upsertCountingZone({ ...cz, id: cz.id, enabled })
-    ElMessage.success(enabled ? '计数区已启用' : '计数区已停用 (计数不再累计)')
     await loadRegions()
   } catch (e: any) {
     ElMessage.error(`操作失败: ${e?.message ?? e}`)
@@ -2072,6 +2034,10 @@ async function saveConfig() {
 .panel-title { font-weight: 600; font-size: 14px; display: flex; justify-content: space-between; align-items: center; }
 .text-muted { color: var(--text-secondary); font-size: 12px; }
 .panel-right { flex: 1; display: flex; flex-direction: column; gap: 10px; overflow-y: auto; }
+/* [FIX tw-res-vis 2026-09-09] 三视图 tab 撑满右栏 (一屏一卡), 内容区滚动兜底低分屏 */
+.right-view-tabs { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+.right-view-tabs :deep(> .el-tabs__header) { margin-bottom: 8px; }
+.right-view-tabs :deep(> .el-tabs__content) { flex: 1; overflow-y: auto; min-height: 0; }
 .empty-state { flex: 1; display: flex; align-items: center; justify-content: center; }
 .edit-card :deep(.el-card__body), .roi-card :deep(.el-card__body) { padding: 10px 20px; }
 .edit-card :deep(.el-card__header), .roi-card :deep(.el-card__header) { padding: 6px 20px; }

@@ -251,9 +251,16 @@ const vertexDrag = ref<{ roiIdx: number; vIdx: number } | null>(null)
 // 类型过滤: types prop 未传 = 默认 5 类 (旧调用方不变); 传入时取交集于
 // RoiType 全集 ([FIX 2026-09-02] 原实现从 ALL_TYPES 过滤导致 rectangle/point
 // 显式传入也永不可见 — 白名单应允许任何合法 RoiType)
+// [FIX algo-roi-effective 2026-09-09] 默认集删 DIRECTIONAL_LINE: 后端零消费
+//   (src/include/plugins 全 grep 无 directional_line) — 方向是绊线的参数而非
+//   独立形态 (对标 NVIDIA line-crossing 的 direction 参数/海康绊线 A→B 方向,
+//   厂商对标矩阵 docs/audit/algo_roi_vendor_benchmark_20260909.md), 默认工具栏
+//   不再出现「方向线」。唯一不传 types 的调用方 (PipelineEditorView 节点 ROI)
+//   自动收紧。VALID_TYPES 保留全集: 存量规则的方向线 ROI 仍随 modelValue
+//   全量渲染/保存 (visibleRois 仅按 currentType 过滤显示, 数据不丢)。 
 const ALL_TYPES: RoiType[] = [
   RoiType.DETECTION_ZONE, RoiType.EXCLUSION_ZONE, RoiType.TRIPWIRE,
-  RoiType.DIRECTIONAL_LINE, RoiType.COUNTING_ZONE,
+  RoiType.COUNTING_ZONE,
 ]
 const VALID_TYPES = Object.values(RoiType) as string[]
 const availableTypes = computed<RoiType[]>(() => {
@@ -316,9 +323,9 @@ const maxPoints = computed(() => {
 const drawHint = computed(() => {
   switch (currentType.value) {
     case RoiType.TRIPWIRE:
-      return '依次点击 A、B 两点完成绊线（右键回退）'
+      return '依次点击 A、B 两点，点「确认添加」保存绊线（右键回退）'
     case RoiType.DIRECTIONAL_LINE:
-      return '依次点击 A、B 两点绘制方向线'
+      return '依次点击 A、B 两点，点「确认添加」保存方向线'
     case RoiType.COUNTING_ZONE:
       return '点击拖拽绘制矩形区域，松手自动完成'
     case RoiType.RECTANGLE:
@@ -659,13 +666,12 @@ function onMouseDown(e: MouseEvent) {
     // [FIX 2026-09-03 问题3] 计数区旧点击式两点自动完成分支已删 (改锚点拖拽,
     //   见 onMouseDown; 两点对角落后端 ≥3 点校验必 400)
 
-    // 绊线/方向线两个点自动完成
-    if ((currentType.value === RoiType.TRIPWIRE || currentType.value === RoiType.DIRECTIONAL_LINE)
-        && points.value.length === 2) {
-      confirmAndAdd()
-      return
-    }
-
+    // [FIX tw-explicit-confirm 2026-09-09] 绊线/方向线两点画满不再自动入列表:
+    //   原自动 confirmAndAdd + 「已添加」toast 让用户误以为已保存 (实锚: 09-09
+    //   用户报「不用点确定保存就自动保存了」); 且与算法配置页 TripwireEditor
+    //   显式「确认添加」交互不一致。改草稿态驻留 — 两点画满后「确认添加」
+    //   按钮可点 (disabled 条件已兼容), 用户可先切方向再确认; 外层规则保存
+    //   才真正镜像入库。多边形双击闭合/点单击完成等既有自动路径不变。
     renderCanvas()
   }
 }

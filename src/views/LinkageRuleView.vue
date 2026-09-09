@@ -442,16 +442,20 @@
                   </el-select>
                 </el-form-item>
                 <el-form-item label="ROI绘制区域" label-position="top" class="cond-form-item">
-                  <!-- [FIX 2026-09-02] 形状四范式 (对标海康 iVMS/大华 DSS 联动规则编辑器):
-                       多边形/矩形/绊线/关注点; 绘制提示在画布下方状态栏 (画布内零提示文字)。
+                  <!-- [FIX 2026-09-02] 形状范式 (对标海康 iVMS/大华 DSS 联动规则编辑器);
+                       绘制提示在画布下方状态栏 (画布内零提示文字)。
                        多边形/矩形进 roi_polygon+roi_shapes_json 由后端 pointInPolygon 判定
                        (矩形按 4 顶点多边形退化); 绊线保存时自动镜像到算法绊线库并关联
-                       tripwire_id; 关注点仅随规则持久化回显。 -->
+                       tripwire_id。
+                       [FIX algo-roi-effective 2026-09-09] types 收紧 legalRoiTypes:
+                       面类恒合法 (规则自带空间过滤); 绊线仅越界事件规则可画 (镜像
+                       固定归属 tripwire 库, 其他事件画了不起作用); 关注点 (point)
+                       仅回显不参与判定 — 入口移除, 存量随 modelValue 全量保留不丢。 -->
                   <RoiPolygonEditor
                     v-model="form.conditions.region.config.roiPolygon"
                     :background-image-url="roiBackgroundUrl"
                     :canvas-width="440" :canvas-height="248"
-                    :types="['detection_zone', 'exclusion_zone', 'rectangle', 'tripwire', 'point']"
+                    :types="legalRoiTypes"
                   />
                   <!-- [ROI-GAP 2026-09-06] 多区域组合语义 (引擎 matchRoiShapes v2):
                        并集=任一检测区命中即通过 / 交集=全部命中才通过;
@@ -464,17 +468,20 @@
                     </el-radio-group>
                   </div>
                 </el-form-item>
-                <!-- [FIX 2026-08-27 P0-PERIMETER v3] 越界 (Tripwire) 联动 -->
-                <el-form-item label="越界绊线" label-position="top" class="cond-form-item">
+                <!-- [FIX 2026-08-27 P0-PERIMETER v3] 越界 (Tripwire) 联动
+                     [FIX algo-roi-effective 2026-09-09] 同契约 gate: 越界绊线/方向
+                     仅 tripwire 事件规则显示 — 其他事件选绊线 id 不参与判定
+                     (Browser 验证发现非 tripwire 规则表单仍泄漏此二字段)。 -->
+                <el-form-item v-if="isTripwireRule" label="越界绊线" label-position="top" class="cond-form-item">
                   <el-select v-model="form.conditions.region.config.tripwireId" placeholder="选择越界绊线 (不选=不限)" clearable style="width: 100%" @focus="loadTripwireOptions" v-loading="tripwireLoading">
                     <template v-if="tripwireOptions.length > 0">
                       <el-option v-for="t in tripwireOptions" :key="t.id" :label="t.label" :value="t.id" />
                     </template>
                     <template #empty><span class="text-secondary">{{ tripwireEmptyHint }}</span></template>
                   </el-select>
-                  <p class="cond-hint">可在上方画板直接画绊线（选"绊线"类型，点击两点，保存时自动创建并关联）；或选择已有绊线（AI智能→算法配置页绘制）</p>
+                  <p class="cond-hint">可在上方画板直接画绊线（选"绊线"类型，点击两点后点「确认添加」，保存规则时自动同步到算法配置并关联）；或选择已有绊线（AI智能→算法配置页绘制）</p>
                 </el-form-item>
-                <el-form-item label="越界方向" label-position="top" class="cond-form-item">
+                <el-form-item v-if="isTripwireRule" label="越界方向" label-position="top" class="cond-form-item">
                   <el-radio-group v-model="form.conditions.region.config.direction">
                     <el-radio value="">不限</el-radio>
                     <el-radio value="A_TO_B">A → B</el-radio>
@@ -1480,6 +1487,20 @@ const roiBackgroundUrl = ref('')
 //   空间判定 (契约文档化, 对标海康检测区+排除区组合 / DeepStream ROI-Filter)。
 //   提为组件级常量: combine 选择器显隐 + handleSave 兼容字段同源引用。
 const AREA_ROI_TYPES = ['detection_zone', 'exclusion_zone', 'rectangle']
+// [FIX algo-roi-effective 2026-09-09] ROI 形态按规则事件类型收紧 (用户铁律:
+//   只显示真正被消费、绘制后实际起作用的形态 — 禁止「画了不起作用」入口):
+//   面类 (检测/排除/矩形) 进规则 roi_polygon 由 AlarmCheckPlugin pointInPolygon
+//   判定 (L232/L262 实锚) — 任何事件合法; 绊线仅越界 (tripwire) 事件规则可画:
+//   保存镜像固定归属 tripwire 库 (L2791/L2835), boundary/客流/违停事件规则画
+//   绊线会进 tripwire 库而本算法查不到 = 伪入口; point (关注点) 仅回显不判定
+//   — 移除。事件类型存短名 (id 末段, L2113) 或全 id, 两种都匹配。
+const legalRoiTypes = computed<string[]>(() => {
+  const evTypes = (form.conditions.eventType?.config?.types ?? []).map(t => String(t).trim())
+  const hasTw = evTypes.some(t => t === 'tripwire' || t.endsWith('.perimeter.tripwire'))
+  return hasTw ? [...AREA_ROI_TYPES, 'tripwire'] : [...AREA_ROI_TYPES]
+})
+// 同判定复用: 越界绊线/方向两个表单字段也仅在 tripwire 事件规则下显示
+const isTripwireRule = computed(() => legalRoiTypes.value.includes('tripwire'))
 // 激活区域类形状数 ≥2 时展示「并集/交集」组合选择器 (单形状无组合语义)
 const activeAreaRoiCount = computed(() =>
   form.conditions.region.config.roiPolygon
@@ -1516,11 +1537,23 @@ async function loadTripwireOptions() {
   if (tripwireOptions.value.length > 0) return  // 缓存
   tripwireLoading.value = true
   try {
-    const res = await fetch('/api/v1/algos/tripwires', { credentials: 'include' })
-    if (!res.ok) throw new Error(`HTTP ${res.status}`)
-    const data = await res.json()
-    // 兼容 makeOkResponse 包装: 直接读 data.tripwires 或 data.data.tripwires
-    const list = data?.tripwires ?? data?.data?.tripwires ?? []
+    // [FIX tw-options-empty 2026-09-09] GB 通道下拉恒空修复: REST 09-08 收紧后
+    //   无参查询 (不传 channel_id_str) 会滤掉所有 channel_id_str 非空记录 —
+    //   GB 20 位编码场景绊线全带 str → 无参恒空 → 下拉永远「暂无越界绊线」,
+    //   用户无法显式关联已有绊线。改逐通道 str 聚合 (页面通道选项为源, 剥
+    //   _ch0 后缀去重; 通道数少, focus 一次性开销)。后端无参=全量语义收紧
+    //   已入库待下次二进制部署, 部署后可回退为单次无参查询。
+    const chValues = new Set<string>()
+    for (const c of [...cameraChannelOptions.value, ...channelOptionsDynamic.value]) {
+      const v = String(c?.value ?? '').replace(/_ch\d+$/, '')
+      if (v) chValues.add(v)
+    }
+    const chList = [...chValues]
+    const results = await Promise.allSettled(chList.map(ch =>
+      fetch(`/api/v1/algos/tripwires?channel_id_str=${encodeURIComponent(ch)}&include_disabled=true`, { credentials: 'include' })
+        .then(r => (r.ok ? r.json() : null)).catch(() => null)))
+    const list = results.flatMap((x: any) =>
+      x?.status === 'fulfilled' && x?.value ? (x.value?.tripwires ?? x.value?.data?.tripwires ?? []) : [])
     // [FIX 2026-08-28 双镜像过滤] 双流实例适配会在 DB 存同一绊线的主形态 +
     //   _ch0 镜像两条记录; 下拉只列主形态, 避免用户选到镜像。
     const seenBase = new Set<string>()
@@ -2743,42 +2776,109 @@ async function handleSave(): Promise<boolean> {
     const rc = form.conditions.region
     const lc = form.conditions.location
     // [FIX 2026-09-02] 绊线方向统一源 (大写形态): 条件卡"越界方向"显式选择优先,
-    //   未选时回退画板绊线形状自身方向 (ROI 列表可独立切换), 均无则不限。
-    //   供绊线镜像创建 + spatial_cond.direction 两处复用, 避免两处漂移。
-    const activeTwRoi = rc.config.roiPolygon.find(r => r.is_active && r.roi_type === 'tripwire' && r.direction)
+    //   未选且画板恰一条绊线时回退其自身方向; 多条绊线不回退 (各线方向独立,
+    //   统一回退首条会误伤其他方向的事件 — [FIX tw-mirror-sync 2026-09-09])。
+    //   供 spatial_cond.direction 两处复用, 避免漂移。
+    const activeTwRois = rc.config.roiPolygon.filter(r => r.is_active && r.roi_type === 'tripwire')
+    const activeTwRoi = activeTwRois.length === 1 ? activeTwRois[0] : undefined
     const dirUpper = rc.config.direction
       || (activeTwRoi?.direction ? String(activeTwRoi.direction).toUpperCase() : '')
-    // [FIX 2026-08-28] 画板绊线 → 自动创建到算法绊线库 (双镜像) 并关联本规则;
-    //   仅当未通过下拉显式选择绊线时才创建 (显式选择优先)。
+    // [FIX tw-mirror-sync 2026-09-09] 画板绊线 → 算法绊线库全量同步重写 — 修三缺陷:
+    //   ① 原只镜像 drawnTripwires[0] 第一条: 画 2 条只入库 1 条 (实锚 09-09
+    //      夜间周界入侵规则: 画板 2 条, 库只有 id=161 一条, 第 2 条告警无绊线可触发);
+    //   ② effectiveTripwireId 已设后画板改动永不同步: 二次保存 PUT 无 POST
+    //      (日志实锚 09:06:57), 算法配置页位置永久停留首次保存值 — 用户报
+    //      「算法配置中线的位置和事件规则中不同」的直接机制;
+    //   ③ 坐标原样写 0-1920 像素域, 与算法配置页 TripwireEditor 0-1 归一化
+    //      口径分裂 (库内双形态混存实锚: [414,620] vs [0.63,0.69])。
+    //   同步策略: 查本通道已有绊线按 name 防重 — 命中且几何+方向一致跳过,
+    //   漂移 upsert 主+镜像同步, 未命中 createTripwireWithMirror 新建;
+    //   坐标统一写归一化 (写侧 SSOT 收口, 读侧 normPt/后端 >1.5 兼容仍在)。
+    //   tripwire_id 关联: 下拉显式选择优先; 画板恰 1 条关联该条; 多条留空
+    //   (引擎单值匹配下多线任一触发=不限绊线, 防第 2 条告警静默)。
+    //   存量兼容: 回显的 tripwireId (上次保存残留) 不再阻断同步 — 画板有绊线
+    //   即同步 (否则老规则永久失同步, 实锚夜间周界入侵 tw=161); 同步后按
+    //   新几何重新决策关联。仅画板无绊线时才保留显式选择不动。
     let effectiveTripwireId = rc.config.tripwireId || ''
-    const drawnTripwires = rc.config.roiPolygon.filter(r => r.roi_type === 'tripwire')
-    if (drawnTripwires.length > 0 && !effectiveTripwireId) {
+    const drawnTripwires = activeTwRois
+    if (drawnTripwires.length > 0) {
       const chStr = (rc.config.channelId || '').replace(/_ch\d+$/, '')
       if (!chStr) {
-        ElMessage.warning('画了绊线但未选"关联通道", 绊线未创建; 请选择通道后重新保存')
+        ElMessage.warning('画了绊线但未选"关联通道", 绊线未同步到算法配置; 请选择通道后重新保存')
       } else {
-        const p = drawnTripwires[0].polygon || []
-        if (p.length >= 4) {
-          try {
-            const newId = await regionApi.createTripwireWithMirror({
-              channel_id: 0,
-              channel_id_str: chStr,
-              algo_id: 'shield.algo.perimeter.tripwire',
-              name: `${form.name || '规则'}_绊线`,
-              point_a: [p[0], p[1]],
-              point_b: [p[2], p[3]],
-              // [FIX 2026-09-02] 方向随统一方向源 dirUpper 映射 (算法绊线库小写形态);
-              //   原先写死 'both' 导致 A→B/B→A 单向绊线被镜像成双向
-              direction: dirUpper === 'A_TO_B' ? 'a_to_b' : dirUpper === 'B_TO_A' ? 'b_to_a' : 'both',
-              enabled: true,
-            })
-            effectiveTripwireId = String(newId)
-            tripwireOptions.value = []  // 失效缓存, 下次 focus 重新加载
-            ElMessage.success('绊线已创建并关联到本规则 (插件最多 5 分钟自动加载)')
-          } catch (e: any) {
-            ElMessage.error(`绊线创建失败: ${e?.message ?? e} (规则仍会保存, 绊线条件未生效)`)
+        // 防重查询: 本通道全部绊线 (含镜像/停用), 主镜像按 base 分组
+        let allTw: any[] = []
+        try {
+          const res = await regionApi.listTripwires({ channel_id: 0, channel_id_str: chStr, algo_id: 'shield.algo.perimeter.tripwire', include_disabled: true })
+          allTw = ((res.data as any)?.data?.tripwires ?? (res.data as any)?.tripwires ?? [])
+            .filter((t: any) => String(t.channel_id_str || '').replace(/_ch\d+$/, '') === chStr)
+        } catch { /* 查询失败按全新建 */ }
+        const mirrorOf = (mainId: any) => allTw.find((t: any) =>
+          String(t.channel_id_str || '').endsWith('_ch0') && String(t.name) === String(allTw.find((m: any) => String(m.id) === String(mainId))?.name ?? '###'))
+        const normPt1920 = (arr: number[]): [number, number] =>
+          [arr[0] > 1.5 ? arr[0] / 1920 : arr[0], arr[1] > 1.5 ? arr[1] / 1080 : arr[1]]
+        const namePrefix = `${form.name || '规则'}_绊线`
+        let synced = 0, skipped = 0
+        const idByIndex: string[] = []
+        for (let i = 0; i < drawnTripwires.length; i++) {
+          const r = drawnTripwires[i]
+          const p = r.polygon || []
+          if (p.length < 4) continue
+          // 0-1920 画布域 → 0-1 归一化 (写侧统一口径)
+          const pa: [number, number] = [p[0] / 1920, p[1] / 1080]
+          const pb: [number, number] = [p[2] / 1920, p[3] / 1080]
+          const dirLower = String(r.direction || '').toLowerCase()
+          const direction = dirLower === 'a_to_b' ? 'a_to_b' : dirLower === 'b_to_a' ? 'b_to_a' : 'both'
+          // name 防重: 老形态首条无序号, 新形态带序号 (画板列表顺序稳定)
+          const cand = allTw.find((t: any) => !String(t.channel_id_str || '').endsWith('_ch0')
+            && (t.name === (i === 0 ? namePrefix : `${namePrefix}_${i + 1}`) || t.name === `${namePrefix}_${i + 1}`))
+          if (cand) {
+            const oldA = normPt1920(Array.isArray(cand.point_a) ? cand.point_a : [0, 0])
+            const oldB = normPt1920(Array.isArray(cand.point_b) ? cand.point_b : [0, 0])
+            const drift = Math.abs(oldA[0] - pa[0]) > 0.002 || Math.abs(oldA[1] - pa[1]) > 0.002
+              || Math.abs(oldB[0] - pb[0]) > 0.002 || Math.abs(oldB[1] - pb[1]) > 0.002
+            const dirChanged = String(cand.direction || 'both') !== direction
+            if (!drift && !dirChanged && cand.enabled !== false) { skipped++; idByIndex[i] = String(cand.id); continue }
+            // 漂移更新: 主形态 + 镜像同步 (插件按 _ch0 查询, 只改主不生效)
+            try {
+              await regionApi.upsertTripwire({ ...cand, point_a: pa, point_b: pb, direction, enabled: r.is_active !== false } as any)
+              const mir = mirrorOf(cand.id)
+              if (mir) await regionApi.upsertTripwire({ ...mir, point_a: pa, point_b: pb, direction, enabled: r.is_active !== false } as any)
+              synced++; idByIndex[i] = String(cand.id)
+            } catch (e: any) {
+              ElMessage.error(`绊线「${r.roi_name || i + 1}」同步失败: ${e?.message ?? e}`)
+            }
+          } else {
+            try {
+              const newId = await regionApi.createTripwireWithMirror({
+                channel_id: 0,
+                channel_id_str: chStr,
+                algo_id: 'shield.algo.perimeter.tripwire',
+                name: drawnTripwires.length === 1 ? namePrefix : `${namePrefix}_${i + 1}`,
+                point_a: pa,
+                point_b: pb,
+                direction,
+                enabled: true,
+              })
+              synced++; idByIndex[i] = String(newId)
+            } catch (e: any) {
+              ElMessage.error(`绊线创建失败: ${e?.message ?? e} (规则仍会保存)`)
+            }
           }
         }
+        // tripwire_id 关联: 恰 1 条关联该条; 多条留空 (不限绊线, 任一触发)
+        if (drawnTripwires.length === 1 && idByIndex[0]) {
+          effectiveTripwireId = idByIndex[0]
+        } else if (drawnTripwires.length > 1) {
+          effectiveTripwireId = ''
+          ElMessage.info(`已同步 ${synced} 条绊线到算法配置 (共 ${drawnTripwires.length} 条, 规则不限具体绊线, 任一触发)`)
+        } else if (synced > 0) {
+          ElMessage.success('绊线已同步到算法配置 (插件最多 5 分钟自动加载)')
+        }
+        if (skipped > 0 && synced === 0 && drawnTripwires.length > 1) {
+          ElMessage.info(`${skipped} 条绊线无变化, 未重复同步`)
+        }
+        tripwireOptions.value = []  // 失效缓存, 下次 focus 重新加载
       }
     }
     // [ROI-SYNC 2026-09-08] 画板区域形状 → 镜像到算法区域库 (RegionStore):

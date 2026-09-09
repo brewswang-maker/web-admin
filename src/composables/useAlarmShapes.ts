@@ -149,7 +149,15 @@ async function loadFromRules(channelId: string, algoId?: string): Promise<Overla
     const isWildcard = !locId && srcChs.length + bound.length === 0
     if (!chHit && !isWildcard) continue
     const ets: string[] = ((sc.event_types as any[]) || []).map(String)
-    const algoHit = !!algoId && ets.some((t) => algoMatch(t, algoId))
+    // [FIX loiter-tw-overlay 2026-09-09] 算法维度候补收紧 (设备实锚: 徘徊告警
+    //   快照画出「周界禁区闯入」规则的 2 条绊线 — 110105 通道 ets=[intrusion]
+    //   vs 告警 loitering, 原 L180「仅通道命中」候补把算法不匹配的形状当回退
+    //   喂出; 09-08 三级优先只保证双命中更优先, 候补桶仍在串)。收紧口径:
+    //   ① ets 空 = 规则不限事件类型 → 视为算法通配命中; ② algoId 非空时,
+    //   算法不匹配的规则形状一律不收集 (不同算法的形状不能叠加, 同 ② 链
+    //   algoMatch 双保险口径); ③ algoId 空 (告警无算法信息) 保持通道/
+    //   通配候补 — 通道是唯一线索。
+    const algoHit = !algoId || ets.length === 0 || ets.some((t) => algoMatch(t, algoId))
     try {
       // [ROI-GAP 2026-09-06] v2 形态兼容: {combine:'union'|'intersection', shapes:[...]}
       //   (引擎组合语义可配, LinkageRuleView combine 选择器写入; 渲染层只取
@@ -175,10 +183,13 @@ async function loadFromRules(channelId: string, algoId?: string): Promise<Overla
         }))
         .filter((s) => s.points.length >= (s.type === 'point' ? 1 : 2))
       if (!list.length) continue
-      // [FIX 2026-09-08] 三级收集: 双命中即取 (最相关); 单通道/通配各留首份候补
+      // [FIX 2026-09-08] 三级收集: 双命中即取 (最相关)
+      // [FIX loiter-tw-overlay 2026-09-09] 候补收紧: 算法不匹配不入候补 (见上
+      //   algoHit 注释) — 原仅通道命中候补是徘徊/攀爬告警串出周界绊线的根因;
+      //   通配候补同样过算法关。仅 algoId 空时保留通道候补 (告警无算法信息)。
       if (chHit && algoHit) return list
-      if (chHit && !chShapes) chShapes = list
-      if (isWildcard && !wildcardShapes) wildcardShapes = list
+      if (!algoId && chHit && !chShapes) chShapes = list
+      if (isWildcard && !wildcardShapes && algoHit) wildcardShapes = list
     } catch { /* 非法 JSON 跳过该规则 */ }
   }
   return chShapes ?? wildcardShapes ?? []
