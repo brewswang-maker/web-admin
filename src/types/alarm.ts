@@ -62,6 +62,10 @@ export type AlarmType =
   // ── 周界行为 (GA/T 2000.273 06/07/08) ──
   | 'intrusion' | 'tripwire' | 'climbing' | 'crowd' | 'loitering'
   | 'fall' | 'running' | 'wrong_direction' | 'illegal_parking' | 'abandoned'
+  // [P0-C 2026-09-09] 缺 SSOT 5 项补登记 (与 EventTypeAliases.h meta_table 同步)
+  | 'boundary' | 'enter_region' | 'leave_region' | 'fast_move' | 'non_motor_vehicle'
+  // [P0-D 2026-09-10] 多模态融合周界告警 (与 meta_table 同步, D-S 交叉验证产出)
+  | 'fusion_perimeter'
   // ── 烟火环境 (海康 10005/10006) ──
   | 'fire' | 'smoke'
   // ── 安全合规 ──
@@ -131,6 +135,11 @@ export interface AlarmEvent {
   handledBy?: string
   handledAt?: string
   handleNote?: string
+  /** [接警单号 2026-09-09] 后端 handle 时自动生成落库 ticket_id 列, 列表 SELECT 经 metadata 治理回填 */
+  ticketId?: string
+  /** [追加信息 2026-09-09] 已处置告警的追加记录列表 (后端独立表 alarm_append_logs
+   *  按时间序回填 gov.append_logs, normalizeAlarmCore 解析透出; 弹窗只读区展示) */
+  appendLogs?: AlarmAppendLog[]
 }
 
 /** 告警统计 */
@@ -148,12 +157,30 @@ export interface AlarmStats {
   todayUnhandled: number
 }
 
+/** [追加信息 2026-09-09] 处警追加记录 (独立表 alarm_append_logs 结构化行) */
+export interface AlarmAppendLog {
+  content: string
+  /** 追加人 (后端 appended_by) */
+  by?: string
+  /** 后端拼接格式展示时间 "yyyy-MM-dd HH:mm:ss" (追加响应回传时有) */
+  time?: string
+  /** 追加时间毫秒 (列表回填 time_ms, 前端按需格式化) */
+  timeMs?: number
+}
+
 /** 告警处理表单 */
 // [P0-3] 扩展工单流转动作
 export interface AlarmHandleForm {
   status: 'acknowledged' | 'disposed' | 'closed' | 'escalated' | 'reassigned'
         | 'confirmed' | 'false_alarm' | 'forwarded' | 'ignored'
+        // [接警单号 2026-09-09] 弹窗研判判定值 (后端 handleAlarm else 兕底直写 status)
+        | 'unsure' | 'known'
+        // [追加信息 2026-09-09] 已处置告警追加信息专用语义 (后端分流在状态机前,
+        //   不改主状态, 原子合并 disposition + 写独立追加表) — 见 alarmApi.appendNote
+        | 'append'
   note?: string
+  /** [接警单号 2026-09-09] 处理人 (后端写 handled_by 列, 缺省 'admin'); 弹窗处置传当前登录用户 */
+  handler?: string
   forwardTo?: string
   assignee?: string        // [P0-3] 指派/转派目标人
   ticketId?: string        // [P0-3] 关联工单号
@@ -268,6 +295,8 @@ export const ALARM_TYPE_CN: Record<string, string> = {
   face_visitor: '访客通行',
   // ── 周界行为 (GA/T 2000.273) ──
   intrusion: '周界入侵',
+  // [P0-D 2026-09-10] 多模态融合周界告警 (与 meta_table 同步)
+  fusion_perimeter: '多模态融合告警',
 
   tripwire: '越界检测',
 
@@ -445,11 +474,21 @@ export const ALARM_TYPE_CN: Record<string, string> = {
   water_level_warning: '水位预警',
   dust_warning: '扬尘预警',
   noise_warning: '噪声预警',
+  // [P0-C 2026-09-09] audio_anomaly 镜像补齐: 后端 [P1-1 2026-09-08] 补登记
+  //    meta_table 时前端漏同步 (ssot_consistency CI 抓到的存量漂移)
+  audio_anomaly: '音频异常检测',
   eating_detection: '进食检测',
   drinking_detection: '饮水检测',
   density_abnormal: '密度异常',
   conveyor_belt_abnormal: '传送带异常',
   pressure_abnormal: '压力异常',
+  // ── [P0-C 2026-09-09] 缺 SSOT 5 项镜像 (中文名 = meta_table display_name_cn,
+  //    与 EventTypeAliases.h P0-C 补登记同步, 双注册铁律) ──
+  boundary: '电子围栏越界',
+  enter_region: '进入区域检测',
+  leave_region: '离开区域检测',
+  fast_move: '快速移动检测',
+  non_motor_vehicle: '非机动车检测',
 }
 
 /**
@@ -465,6 +504,11 @@ export const ALARM_CATEGORY: Record<string, AlarmCategory> = {
   intrusion: 'alarm', tripwire: 'alarm', climbing: 'alarm', crowd: 'alarm',
   loitering: 'alarm', fall: 'alarm', running: 'alarm', wrong_direction: 'alarm',
   illegal_parking: 'alarm', abandoned: 'alarm', fighting: 'alarm',
+  // [P0-C 2026-09-09] 缺 SSOT 5 项 (均 ALARM 类, 与 meta_table 同步)
+  boundary: 'alarm', enter_region: 'alarm', leave_region: 'alarm',
+  fast_move: 'alarm', non_motor_vehicle: 'alarm',
+  // [P0-D 2026-09-10] 多模态融合周界告警 (ALARM 类, 与 meta_table 同步)
+  fusion_perimeter: 'alarm',
   fire: 'alarm', smoke: 'alarm',
   helmet_violation: 'alarm', uniform_violation: 'alarm', mask_violation: 'alarm',
   guard_absence: 'alarm', ppe_violation: 'alarm', phone_call: 'alarm', smoking: 'alarm',
@@ -556,6 +600,22 @@ function toAbsoluteUrl(url: string | undefined): string {
   return url.startsWith('/') ? base + url : base + '/' + url
 }
 
+/** [追加信息 2026-09-09] gov.append_logs 解析: 数组直用 / JSON 字符串 parse / 其余空 */
+function parseAppendLogs(v: unknown): AlarmAppendLog[] {
+  if (typeof v === 'string') {
+    try { v = JSON.parse(v) } catch { return [] }
+  }
+  if (!Array.isArray(v)) return []
+  return v
+    .filter((x): x is Record<string, unknown> => !!x && typeof x === 'object')
+    .map((x) => ({
+      content: String(x.content ?? ''),
+      by: String(x.by ?? '') || undefined,
+      time: String(x.time ?? '') || undefined,
+      timeMs: Number(x.time_ms ?? 0) || undefined,
+    }))
+}
+
 /**
  * 统一归一化: 后端 snake_case (或部分 camelCase) → 前端 AlarmEvent
  * 所有模块 (WS / REST / 缓存) 必须走这一个函数, 避免字段漂移.
@@ -611,7 +671,13 @@ export function normalizeAlarmCore(raw: any): AlarmEvent {
     description: raw.description || raw.title || ALARM_TYPE_CN[alarmType] || alarmType,
     channelId,
     channelName: raw.channel_name || raw.channelName || (channelId ? `通道${channelId}` : ''),
+    // [FIX device-fields 2026-09-10] 设备编号 = 父设备 20 位国标码
+    //   (device_admin_id, REST enrich / WS 两推送点已补) 优先; 告警库
+    //   device_id 是通道码形态 ("父码_chN"), 不再作为设备编号展示。
     deviceId:
+      String(raw.device_admin_id ?? '') ||
+      (md && typeof md === 'object' ? String(md.device_admin_id ?? '') : '') ||
+      (Array.isArray(md) && md[0] && typeof md[0] === 'object' ? String(md[0].device_admin_id ?? '') : '') ||
       (md && typeof md === 'object' ? String(md.device_id ?? '') : '') ||
       (Array.isArray(md) && md[0] && typeof md[0] === 'object' ? String(md[0].device_id ?? '') : '') ||
       raw.device_id || raw.deviceId || raw.channel_id || '',
@@ -688,5 +754,11 @@ export function normalizeAlarmCore(raw: any): AlarmEvent {
       || (typeof gov.acked_at === 'number' ? new Date(gov.acked_at).toISOString() : '')
       || (typeof gov.resolved_at === 'number' ? new Date(gov.resolved_at).toISOString() : ''),
     handleNote: String(raw.handle_note || gov.handle_note || raw.handleNote || ''),
+    // [接警单号 2026-09-09] handle 端点自动生成落库 ticket_id, 列表/详情 SELECT 经
+    //   metadata 治理回填 gov; HTTP 响应拦截器可能已 snake→camel, 四源兜底
+    ticketId: String(raw.ticket_id || raw.ticketId || gov.ticket_id || gov.ticketId || ''),
+    // [追加信息 2026-09-09] 独立追加表回填 gov.append_logs (数组; 兼容字符串
+    //   JSON 形态), 弹窗只读区按时间序展示全部追加记录
+    appendLogs: parseAppendLogs(gov.append_logs ?? raw.append_logs),
   }
 }
