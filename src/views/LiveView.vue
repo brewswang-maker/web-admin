@@ -3170,6 +3170,7 @@ onUnmounted(() => {
   background: #fff;
   border-color: #ebeef5;
   color: #303133;
+  padding:10px;
 }
 .live-page > .el-row > .el-col:nth-child(2) :deep(.el-card__body) {
   color: #303133;

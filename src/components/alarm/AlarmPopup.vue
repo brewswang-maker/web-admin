@@ -86,11 +86,11 @@
                     <span class="alarm-popup__location-tag">{{ locationNote }}</span>
                   </div>
 
-                  <div class="alarm-popup__preview-underlay">
+                  <!-- <div class="alarm-popup__preview-underlay">
                     <div class="alarm-popup__snapshot-thumb" @click="takePreviewSnapshot" title="截取当前画面 (Alt + A)">
                       <span class="alarm-popup__snapshot-label">截图(Alt + A)</span>
                     </div>
-                  </div>
+                  </div> -->
                 </div>
               </div>
 

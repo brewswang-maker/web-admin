@@ -24,8 +24,8 @@
     </div>
     <!-- Controls -->
     <div v-if="showControls && playing" class="mini-player__controls">
-      <el-button size="small" text @click="takeSnapshot">📸 截图</el-button>
-      <el-button size="small" text @click="toggleMute">{{ muted ? '🔊 开声' : '🔇 静音' }}</el-button>
+      <el-button size="small" text style="cursor: pointer" @click="takeSnapshot">📸 截图</el-button>
+      <el-button size="small" text style="cursor: pointer" @click="toggleMute">{{ muted ? '🔊 开声' : '🔇 静音' }}</el-button>
     </div>
   </div>
 </template>
