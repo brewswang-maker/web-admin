@@ -139,6 +139,10 @@
               <button class="scene-edit-btn" :class="{active: videoLayout === 1}" @click="setVideoLayout(1)">1分屏</button>
               <button class="scene-edit-btn" :class="{active: videoLayout === 4}" @click="setVideoLayout(4)">4分屏</button>
               <button class="scene-edit-btn" :class="{active: videoPollingActive}" @click="toggleVideoPolling">{{ videoPollingActive ? '停止轮巡' : '开始轮巡' }}</button>
+              <template v-if="!videoPollingActive">
+                <button class="scene-edit-btn" :disabled="videoCurrentBatchStart === 0" @click="shiftVideoBatch(-1)">上一个</button>
+                <button class="scene-edit-btn" :disabled="videoCurrentBatchStart + videoLayout >= videoDeviceList.length" @click="shiftVideoBatch(1)">下一个</button>
+              </template>
               <span v-if="videoPollingActive" class="video-poll-countdown">下次轮巡：{{ videoPollRemainingSec }}秒</span>
               <span style="font-size:11px;color:#236db7;">{{ videoDeviceList.length }}个通道</span>
             </div>
@@ -297,7 +301,7 @@
                   <span class="alarm-type" :title="alarmTypeText(alarm)">{{ alarmTypeText(alarm) }}</span>
                   <!-- [DEV-NAME-COL 2026-09-07] 设备名称列: 后端 deviceName 已经三级兜底
                        (设备列表页口径), location 即设备名; 空时 '-' -->
-                  <span class="alarm-device" :title="alarm.location">{{ alarm.location || '-' }}</span>
+                  <span class="alarm-device" :title="alarmDeviceText(alarm)">{{ alarmDeviceText(alarm) }}</span>
                   <span class="alarm-time">{{ alarm.time }}</span>
                   <span class="alarm-status">
                     <el-tag :type="alarm.status === '已处置' ? 'success' : 'warning'" size="small" effect="dark">
@@ -400,6 +404,10 @@
                 <button class="scene-edit-btn" :class="{active: videoLayout === 1}" @click="setVideoLayout(1)">1分屏</button>
                 <button class="scene-edit-btn" :class="{active: videoLayout === 4}" @click="setVideoLayout(4)">4分屏</button>
                 <button class="scene-edit-btn" :class="{active: videoPollingActive}" @click="toggleVideoPolling">{{ videoPollingActive ? '停止轮巡' : '开始轮巡' }}</button>
+                <template v-if="!videoPollingActive">
+                  <button class="scene-edit-btn" :disabled="videoCurrentBatchStart === 0" @click="shiftVideoBatch(-1)">上一个</button>
+                  <button class="scene-edit-btn" :disabled="videoCurrentBatchStart + videoLayout >= videoDeviceList.length" @click="shiftVideoBatch(1)">下一个</button>
+                </template>
                 <span v-if="videoPollingActive" class="video-poll-countdown">下次轮巡：{{ videoPollRemainingSec }}秒</span>
                 <span style="font-size:12px;color:#236db7;margin-left:auto">{{ videoDeviceList.length }}个通道</span>
               </div>
@@ -589,6 +597,13 @@ function alarmStatusText(status: string): string {
   if (status === '已处置') return t('situationScreen.handled')
   if (status === '未处理') return t('situationScreen.unhandled')
   return status
+}
+
+/** 设备列展示名称和设备编号；编号缺失时不显示空括号。 */
+function alarmDeviceText(alarm: Alarm): string {
+  const name = alarm.location || '-'
+  const deviceId = String(alarm.deviceId || '').trim()
+  return deviceId ? `${name}（${deviceId}）` : name
 }
 
 const todayStats = ref<Array<{ label: string; value: string; suffix: string; icon: string; iconColor: string }>>([])
@@ -949,6 +964,7 @@ let videoPollTimer: ReturnType<typeof setInterval> | null = null
 let videoPollCountdownTimer: ReturnType<typeof setInterval> | null = null
 const videoDeviceList = ref<Array<{ channelId: string; deviceName: string }>>([])
 const videoPollOffset = ref(0)
+const videoCurrentBatchStart = ref(0)
 // GB28181 设备需要 BYE 冷却(~5s) + SIP INVITE + RTP 建立(~5s) = ~10s 开销
 // 30s 间隔确保至少 20s 实际观看时间，避免设备频繁断连
 const videoPollIntervalSec = ref(30)
@@ -1376,8 +1392,9 @@ function pollVideoBatch() {
   if (!videoDeviceList.value.length) return
   const step = videoLayout.value
   const total = videoDeviceList.value.length
+  videoCurrentBatchStart.value = Math.min(videoPollOffset.value, Math.max(0, total - step))
   for (let i = 0; i < step; i++) {
-    const idx = (videoPollOffset.value + i) % total
+    const idx = (videoCurrentBatchStart.value + i) % total
     const dev = videoDeviceList.value[idx]
     const slot = videoSlots[i]
     // 跳过: 正在加载中（上一次拉流还在进行，防止重叠 SIP INVITE）
@@ -1426,6 +1443,17 @@ function stopVideoPolling() {
   stopAllVideoSlots()
 }
 
+function shiftVideoBatch(direction: -1 | 1) {
+  if (videoPollingActive.value || !videoDeviceList.value.length) return
+  const total = videoDeviceList.value.length
+  const step = videoLayout.value
+  const maxStart = Math.max(0, total - step)
+  const nextStart = Math.max(0, Math.min(maxStart, videoCurrentBatchStart.value + direction * step))
+  videoPollOffset.value = nextStart
+  stopAllVideoSlots()
+  pollVideoBatch()
+}
+
 /** [v8.7] 仅停轮巡定时器（不动 slot 画面与注册），供页面卸载软关闭路径复用 */
 function stopVideoPollingTimer() {
   videoPollingActive.value = false
@@ -1435,7 +1463,7 @@ function stopVideoPollingTimer() {
 }
 
 function toggleVideoPolling() {
-  if (videoPollingActive.value) stopVideoPolling()
+  if (videoPollingActive.value) stopVideoPollingTimer()
   else startVideoPolling()
 }
 
@@ -2278,11 +2306,41 @@ function handleResize() {
 }
 
 /** 将 SituationAlarmStream 转为模板使用的 Alarm 格式 */
+function formatAlarmTime(value: unknown): string {
+  if (value == null || String(value).trim() === '') return ''
+  const raw = String(value).trim()
+  const numeric = Number(raw)
+  const date = Number.isFinite(numeric)
+    ? new Date(Math.abs(numeric) < 1e12 ? numeric * 1000 : numeric)
+    : new Date(raw)
+  if (Number.isNaN(date.getTime())) return raw
+  return date.toLocaleString('zh-CN', {
+    hour12: false,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  })
+}
+
 function toAlarm(s: SituationAlarmStream): Alarm {
+  const raw = s as SituationAlarmStream & {
+    device_name?: string
+    device?: string
+    timestamp_ms?: number | string
+    timestampMs?: number | string
+    timestamp?: number | string
+  }
+  const timestamp = [raw.timestamp_ms, raw.timestampMs, raw.timestamp]
+    .find(value => value != null && String(value).trim() !== '')
+  const time = formatAlarmTime(timestamp)
+    || formatAlarmTime(s.time)
   return {
     id: s.id,
-    time: s.time,
-    location: s.deviceName,
+    time: time || s.time || '-',
+    location: s.deviceName || raw.device_name || raw.device || '',
     type: s.description,
     level: s.level,
     status: '未处理',
@@ -2293,7 +2351,8 @@ function toAlarm(s: SituationAlarmStream): Alarm {
     channelId: (s as { channelId?: string; channel_id?: string }).channelId
       || (s as { channel_id?: string }).channel_id || '',
     // [DEV-GROUP 2026-09-07] 设备 ID 透传 (分组反查 device_ids 用)
-    deviceId: (s as { device_id?: string }).device_id || '',
+    deviceId: (s as { device_id?: string; deviceId?: string }).device_id
+      || (s as { deviceId?: string }).deviceId || '',
   }
 }
 
@@ -2545,12 +2604,16 @@ function onAlarmPush(data: unknown) {
     level,
     description: raw.description || raw.alarm_type || '未知告警',
     deviceName: raw.deviceName || raw.device_name || raw.channel_id || '',
-    time,
+    time: raw.time || time,
+    timestamp_ms: raw.timestamp_ms,
+    timestampMs: raw.timestampMs,
+    timestamp: raw.timestamp,
     snapshotUrl: raw.snapshotUrl || raw.snapshot_url,
     snapshot_url: raw.snapshot_url,
     metadata: raw.metadata,
     channel_id: raw.channel_id ?? raw.channelId ?? '',
     device_id: raw.device_id ?? raw.deviceId ?? '',
+    deviceId: raw.deviceId ?? raw.device_id ?? '',
   }
   latestAlarms.value.unshift(toAlarm(s))
   if (latestAlarms.value.length > 20) latestAlarms.value.length = 20
@@ -2890,6 +2953,13 @@ onUnmounted(() => {
   white-space: nowrap;
 }
 .scene-edit-btn:hover { background: rgba(0, 180, 255, 0.25); }
+.scene-edit-btn:disabled,
+.scene-edit-btn:disabled:hover {
+  cursor: not-allowed;
+  opacity: 0.45;
+  background: rgba(120, 140, 160, 0.08);
+  border-color: rgba(120, 140, 160, 0.2);
+}
 .scene-edit-btn.active {
   background: rgba(0, 180, 255, 0.25);
   color: #00E4FF;
@@ -2935,12 +3005,13 @@ onUnmounted(() => {
 .alarm-table-row {
   display: grid;
   /* [DEV-NAME-COL 2026-09-07] 7→8 列: 类型后新增设备名称; 分组收窄让位 */
-  grid-template-columns: 54px 100px minmax(90px, 0.8fr) minmax(90px, 0.9fr) minmax(140px, 1.2fr) 140px 88px 70px;
+  grid-template-columns: 54px 84px minmax(0, 0.8fr) minmax(0, 0.9fr) minmax(0, 1.2fr) 150px 70px 60px;
   align-items: center;
 }
 
 .alarm-table-row > span,
 .alarm-table-row > button {
+  min-width: 0;
   display: flex;
   align-self: stretch;
   align-items: center;
@@ -3014,8 +3085,8 @@ onUnmounted(() => {
 .alarm-snapshot :deep(.el-image),
 .alarm-snapshot-empty {
   display: block;
-  width: 56px;
-  height: 36px;
+  width: 70px;
+  height: 44px;
 }
 
 .alarm-snapshot :deep(.el-image) {
@@ -3024,6 +3095,17 @@ onUnmounted(() => {
 
 .alarm-time {
   font-variant-numeric: tabular-nums;
+}
+
+.alarm-device {
+  min-width: 0;
+  display: block !important;
+  align-self: center !important;
+  width: 100%;
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .alarm-status :deep(.el-tag) {

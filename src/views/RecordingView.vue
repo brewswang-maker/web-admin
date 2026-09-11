@@ -24,6 +24,7 @@ interface Device {
   id: string
   name: string
   channels: Channel[]
+  status?: string
 }
 interface Channel {
   id: string
@@ -172,6 +173,11 @@ const recDevLabel = (devId: string) => deviceById.value.get(devId)?.name || devI
 const recChLabel = (c: Channel) => c.name || c.id
 const recDevChannelCount = (data: { deviceId?: string }) =>
   (recChannelsByDevice.value.get(String(data.deviceId)) ?? []).length
+const recNodeStatus = (data: { type?: string; deviceId?: string }) => {
+  if (data.type !== 'device') return ''
+  const status = String(deviceById.value.get(String(data.deviceId))?.status || '').toLowerCase()
+  return status === 'online' || status === 'active' ? 'online' : status ? 'offline' : ''
+}
 
 // 安保区域树与设备主链解耦: 失败降级空 roots (全部设备进「未分组」)
 async function loadRecAreaTree() {
@@ -272,6 +278,7 @@ async function fetchDevices() {
     devices.value = list.map((d: any) => ({
       id: d.device_id || d.id,
       name: d.device_name || d.name || d.id,
+      status: d.status || d.state || d.online_status,
       channels: (d.channels || [{ id: d.device_id || d.id, name: '通道1', deviceId: d.device_id || d.id }]).map((c: any) => ({
         id: c.channel_id || c.id,
         name: c.channel_name || c.name || `通道${c.id}`,
@@ -1553,7 +1560,6 @@ onUnmounted(() => {
           <el-input
             v-model="recTreeFilter"
             placeholder="筛选设备/通道..."
-            size="small"
             clearable
             style="margin-bottom:8px"
           >
@@ -1575,6 +1581,8 @@ onUnmounted(() => {
             >
               <template #default="{ data }">
                 <div class="rt-node" :class="['rt-' + data.type]">
+                  <i v-if="data.type === 'area'" class="iconfont1 icon1-gongsi_-copy rt-node-icon rt-area-icon" aria-hidden="true"></i>
+                  <i v-else-if="data.type === 'device'" class="iconfont1 icon1-monitor-camera-full rt-node-icon" :class="recNodeStatus(data)" aria-hidden="true"></i>
                   <span class="rt-label" :title="data.label">{{ data.label }}</span>
                   <span v-if="data.type === 'device'" class="rt-badge">{{ recDevChannelCount(data) }}</span>
                 </div>
@@ -1587,20 +1595,20 @@ onUnmounted(() => {
         <el-card shadow="never" class="rec-query-card">
           <template #header>录像查询</template>
           <div class="qp-selected">
-            <div class="qp-label">已选择</div>
+            <!-- <div class="qp-label">已选择</div> -->
             <div class="qp-value" :title="qpDeviceLabel">{{ qpDeviceLabel }}</div>
             <div class="qp-sub" :title="qpChannelLabel">{{ qpChannelLabel }}</div>
           </div>
-          <el-radio-group v-model="recordingSource" size="small" class="qp-block">
+          <el-radio-group v-model="recordingSource"  class="qp-block">
             <el-radio-button value="device">设备录像</el-radio-button>
             <el-radio-button value="local">本地录像</el-radio-button>
           </el-radio-group>
-          <el-select v-model="recordTypeFilter" size="small" class="qp-block">
+          <el-select v-model="recordTypeFilter"  class="qp-block">
             <el-option label="全部录像" value="all" />
             <el-option label="中心储存" value="zlm" />
             <el-option label="设备存储" value="gb28181" />
           </el-select>
-          <el-date-picker v-model="selectedDate" type="date" value-format="YYYY-MM-DD" placeholder="选择日期" size="small" class="qp-block" />
+          <el-date-picker v-model="selectedDate" type="date" value-format="YYYY-MM-DD" placeholder="选择日期" class="qp-block date-block" />
           <el-button type="primary" class="qp-block-btn" :loading="loading || localLoading" @click="onQueryClick">查询</el-button>
           <el-button class="qp-block-btn" :disabled="recordingSource !== 'device' || !filteredRecordings.length" @click="batchDownload">录像下载</el-button>
           <div class="qp-links">
@@ -1614,7 +1622,7 @@ onUnmounted(() => {
       </div>
 
       <!-- 主区: 回放播放器 + 时间轴 + 控制条 + 片段列表 (设计图中部/底部布局) -->
-      <div style="flex:1;display:flex;flex-direction:column;gap:12px;min-width:0">
+      <div class="recording-main-content">
         <!-- 播放器 (常驻: 未播放时显示空态提示) -->
         <el-card shadow="never" class="player-card">
           <template #header>
@@ -1647,7 +1655,7 @@ onUnmounted(() => {
               <div style="font-size:12px;margin-top:4px">点击片段列表或时间轴上的蓝色录像块开始回放</div>
             </div>
             <!-- 进度条 + 时间显示 -->
-            <div class="player-progress-row">
+            <div class="player-progress-row" v-if="isPlaying">
               <span class="player-time">{{ formatHMS(currentTime) }}</span>
               <el-slider
                 class="player-progress-slider"
@@ -1665,11 +1673,11 @@ onUnmounted(() => {
             <!-- 24小时时间轴 (设计图: 播放器底部; 蓝色块=录像段, 可点击选段) -->
             <canvas v-if="recordingSource === 'device'" ref="canvasRef" class="player-timeline" @click="handleTimelineClick" />
             <!-- 控制条 (设计图: 上一段/播放暂停/下一段 + 回放钟 + 倍速 + 停止/全屏) -->
-            <div class="player-controls">
+            <div v-if="isPlaying" class="player-controls">
               <div class="pc-group">
-                <el-button size="small" :icon="DArrowLeft" text :disabled="!filteredRecordings.length" title="上一段" @click="playPrevSegment" />
-                <el-button size="small" :icon="isPaused ? VideoPlay : VideoPause" type="primary" circle :disabled="!isPlaying" title="暂停/恢复" @click="togglePause" />
-                <el-button size="small" :icon="DArrowRight" text :disabled="!filteredRecordings.length" title="下一段" @click="playNextSegment" />
+                <el-button size="small" :icon="DArrowLeft" text title="上一段" @click="playPrevSegment" />
+                <el-button size="small" :icon="isPaused ? VideoPlay : VideoPause" type="primary" circle title="暂停/恢复" @click="togglePause" />
+                <el-button size="small" :icon="DArrowRight" text title="下一段" @click="playNextSegment" />
               </div>
               <div class="pc-clock" title="回放钟 (段起点+进度)">{{ playbackClockLabel }}</div>
               <div class="pc-group">
@@ -1682,7 +1690,7 @@ onUnmounted(() => {
                 </el-button-group>
               </div>
               <div class="pc-group">
-                <el-button size="small" :disabled="!isPlaying" @click="stopPlay">停止</el-button>
+                <el-button size="small" @click="stopPlay">停止</el-button>
                 <el-button size="small" :icon="FullScreen" @click="toggleFullscreen">{{ isFullscreen ? '退出全屏' : '全屏' }}</el-button>
               </div>
             </div>
@@ -1728,25 +1736,25 @@ onUnmounted(() => {
         <el-card v-if="recordingSource === 'local'" shadow="never" style="flex:1;overflow:auto">
           <template #header>本地录像 ({{ localRecordings.length }})</template>
           <el-table :data="localRecordings" v-loading="localLoading" stripe size="small">
-            <el-table-column label="通道" width="120">
+            <el-table-column label="通道" min-width="120">
               <template #default="{ row }">{{ row.channel_id }}</template>
             </el-table-column>
-            <el-table-column label="开始时间" width="160">
+            <el-table-column label="开始时间" min-width="160">
               <template #default="{ row }">{{ row.start_time?.replace('T', ' ')?.substring(0, 19) || row.start_time }}</template>
             </el-table-column>
-            <el-table-column label="时长" width="100">
+            <el-table-column label="时长" min-width="100">
               <template #default="{ row }">{{ formatDuration(row.duration_seconds) }}</template>
             </el-table-column>
-            <el-table-column label="大小" width="100">
+            <el-table-column label="大小" min-width="100">
               <template #default="{ row }">{{ formatSize(row.file_size_bytes) }}</template>
             </el-table-column>
-            <el-table-column label="编码" width="80">
+            <el-table-column label="编码" min-width="80">
               <template #default="{ row }">{{ row.codec }}</template>
             </el-table-column>
-            <el-table-column label="分辨率" width="100">
+            <el-table-column label="分辨率" min-width="100">
               <template #default="{ row }">{{ row.width }}x{{ row.height }}</template>
             </el-table-column>
-            <el-table-column label="操作" width="160">
+            <el-table-column label="操作" min-width="160">
               <template #default="{ row }">
                 <el-button type="primary" size="small" @click="playLocalRecording(row)">播放</el-button>
                 <el-button type="danger" size="small" @click="deleteLocalRecording(row)">删除</el-button>
@@ -1893,32 +1901,32 @@ onUnmounted(() => {
         <el-card shadow="never" class="smart-result-card">
           <template #header>检索结果 ({{ smartTotal }})</template>
           <el-table :data="smartResults" v-loading="smartLoading" stripe size="small" empty-text="暂无检索结果，请设置条件后点击「开始检索」">
-            <el-table-column label="检测时间" width="160">
+            <el-table-column label="检测时间" min-width="160">
               <template #default="{ row }">{{ fmtSmartTs(row.timestamp) }}</template>
             </el-table-column>
-            <el-table-column label="通道" width="160" show-overflow-tooltip>
+            <el-table-column label="通道" min-width="160" show-overflow-tooltip>
               <template #default="{ row }">{{ fmtSmartChannel(row) }}</template>
             </el-table-column>
-            <el-table-column label="告警类型" width="110">
+            <el-table-column label="告警类型" min-width="110">
               <template #default="{ row }">
                 <el-tag type="danger" size="small">{{ row.alarm_type }}</el-tag>
               </template>
             </el-table-column>
-            <el-table-column label="目标类型" width="90">
+            <el-table-column label="目标类型" min-width="90">
               <template #default="{ row }">{{ row.target_type }}</template>
             </el-table-column>
-            <el-table-column label="置信度" width="80">
+            <el-table-column label="置信度" min-width="80">
               <template #default="{ row }">
                 <el-progress :percentage="Math.round(row.confidence * 100)" :status="row.confidence >= 0.8 ? 'success' : row.confidence >= 0.6 ? 'warning' : 'exception'" :stroke-width="8" />
               </template>
             </el-table-column>
-            <el-table-column label="缩略图" width="70">
+            <el-table-column label="缩略图" min-width="70">
               <template #default="{ row }">
                 <el-image v-if="row.snapshot_path" :src="row.snapshot_path" style="width:56px;height:36px;object-fit:cover;border-radius:3px" :preview-src-list="[row.snapshot_path]" />
                 <span v-else style="color:#666;font-size:11px">无截图</span>
               </template>
             </el-table-column>
-            <el-table-column label="操作" width="130" fixed="right">
+            <el-table-column label="操作" min-width="130" fixed="right">
               <template #default="{ row }">
                 <el-button type="primary" size="small" @click="playSmartResult(row)">跳转到该时刻回放</el-button>
               </template>
@@ -1942,7 +1950,10 @@ onUnmounted(() => {
 <style scoped>
 /* .recording-view { padding: 20px; } */
 .speed-btn-group .el-button { padding-left: 10px; padding-right: 10px; }
-
+ :deep(.el-card__header) { padding: 10px; }
+ :deep(.el-card__header) { padding: 10px; }
+ :deep(.el-card__body) { padding: 10px; }
+ .seg-list-card :deep(.el-card__body) { padding: 0; }
 /* AI 智能检索表单 */
 .smart-search-form { display: flex; flex-direction: column; gap: 12px; }
 .smart-form-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
@@ -2027,32 +2038,51 @@ onUnmounted(() => {
 .qp-block :deep(.el-radio-button__inner) { width: 100%; }
 .qp-block-btn { display: flex; width: 100%; margin-left: 0 !important; margin-bottom: 10px; }
 .qp-links { display: flex; flex-wrap: wrap; gap: 6px 14px; }
+:deep(.date-block.el-date-editor.el-input),
+:deep(.date-block.el-date-editor.el-input__wrapper),
+:deep(.date-block .el-input__wrapper) {
+  width: 100% !important;
+  margin-bottom: 10px;
+  box-sizing: border-box;
+  height:32px;
+}
 
 /* 播放器卡 (设计图中部) */
-.video-container { position: relative; }
-.player-video { width: 100%; min-height: 220px; max-height: 360px; background: #000; display: block; }
+.video-container { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.player-video { width: 100%; height: auto; min-height: 0; flex: 1; background: #000; display: block; object-fit: contain; }
 .player-empty {
   position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
-  color: #999; font-size: 14px; background: rgba(0, 0, 0, 0.9); pointer-events: none; text-align: center;
+  color: #fff; font-size: 14px; background: rgba(0, 0, 0, 0.9); pointer-events: none; text-align: center;
 }
 .player-timeline { width: 100%; height: 40px; display: block; cursor: pointer; margin-top: 8px; }
-.player-controls { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 12px; background: rgba(0, 0, 0, 0.85); }
+.recording-main-content { flex: 1; display: flex; flex-direction: row; gap: 12px; min-width: 0; min-height: 0; height: 100%; }
+.player-card { flex: 1 1 auto; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.player-card :deep(.el-card__body) { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.player-controls { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 12px; background: #111827; }
+.player-controls .el-button { height: 28px; padding: 4px 10px; color: #d1d5db; background: transparent; border-color: transparent; }
+.player-controls .el-button:hover { color: #fff; background: rgba(255,255,255,.12); }
+.player-controls .el-button.is-circle { width: 28px; padding: 0; }
 .pc-group { display: flex; align-items: center; gap: 6px; }
 .pc-clock { color: #00D4AA; font-family: monospace; font-size: 14px; user-select: none; white-space: nowrap; }
+.speed-btn-group .el-button { min-width: 34px; padding: 3px 7px; color: #cbd5e1; background: #1f2937; border-color: #374151; }
+.speed-btn-group .el-button:hover,
+.speed-btn-group .el-button.is-plain:hover { color: #fff; background: #374151; }
+.speed-btn-group .el-button.is-primary { color: #fff; background: #2563eb; border-color: #2563eb; }
 
 /* 片段列表 (设计图时间轴录像块明细紧凑行) */
-.seg-list-card { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+.seg-list-card { flex: 0 0 320px; width: 320px; min-width: 320px; display: flex; flex-direction: column; overflow: hidden; }
 .seg-list-card :deep(.el-card__body) { flex: 1; display: flex; flex-direction: column; overflow: hidden; padding: 0; }
 .seg-scroll { flex: 1; min-height: 120px; }
-.seg-row { display: flex; align-items: center; gap: 12px; padding: 7px 12px; border-bottom: 1px solid var(--el-border-color-lighter); cursor: pointer; font-size: 12px; }
+.seg-row { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; padding: 8px 12px; border-bottom: 1px solid var(--el-border-color-lighter); cursor: pointer; font-size: 12px; }
 .seg-row:hover { background: var(--el-fill-color-light); }
 .seg-row.active { background: var(--el-color-primary-light-9); box-shadow: inset 3px 0 0 var(--el-color-primary); }
-.seg-range { flex: 1; font-family: monospace; color: var(--el-text-color-primary); }
-.seg-meta { color: var(--el-text-color-secondary); width: 64px; text-align: right; }
+.seg-range { min-width: 0;   white-space: normal; overflow-wrap: anywhere; line-height: 1.4; }
+.seg-meta { color: var(--el-text-color-secondary); width: auto; min-width: 54px; text-align: right; }
 .seg-tag { font-size: 11px; padding: 0 6px; border-radius: 3px; flex-shrink: 0; }
 .seg-tag-center { color: #67c23a; background: rgba(103, 194, 58, 0.12); }
 .seg-tag-device { color: #409eff; background: rgba(64, 158, 255, 0.12); }
-.seg-actions { display: flex; gap: 6px; flex-shrink: 0; }
+.seg-actions { display: flex; gap: 6px; flex-shrink: 0; margin-left: auto; }
+.seg-actions :deep(.el-button) { padding: 4px 8px; }
 
 /* AI 智能检索抽屉 */
 .smart-drawer-body { display: flex; flex-direction: column; gap: 12px; }
@@ -2060,6 +2090,10 @@ onUnmounted(() => {
 
 /* ── [UI 2026-09-11] 通道目录树节点 (同 LiveView lt-node 视觉) ── */
 .rt-node { display: flex; align-items: center; gap: 6px; min-width: 0; flex: 1; padding-right: 4px; }
+.rt-node-icon { flex: 0 0 16px; width: 16px; height: 16px; display: inline-flex; align-items: center; justify-content: center; font-size: 14px; line-height: 1; color: var(--el-text-color-secondary); text-align: center; }
+.rt-area-icon { font-size: 16px; }
+.rt-node-icon.online { color: var(--el-color-success); }
+.rt-node-icon.offline { color: var(--el-color-danger); opacity: 0.75; }
 .rt-node.rt-ungrouped > .rt-label { color: var(--el-text-color-secondary); }
 .rt-label {
   font-size: 12px; color: var(--el-text-color-primary);
