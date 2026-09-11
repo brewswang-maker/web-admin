@@ -5,6 +5,7 @@
         <div
           class="alarm-popup"
           :class="{ 'alarm-flash': popupVisible }"
+          :style="{ '--alarm-header-color': alarmHeaderColor, '--alarm-header-rgb': levelRgb  }"
         >
 
           <!-- ═══ 顶栏: 红色短标题 + 倒计时 + ✕ ═══ -->
@@ -485,7 +486,7 @@
                   </div>
                 </el-scrollbar>
               </div>
-              <div class="alarm-popup__detail-footer">
+              <div v-if="activeSecondaryTab === 'detail'" class="alarm-popup__detail-footer">
                 <button
                   class="alarm-popup__dispose-entry"
                   :class="{ 'alarm-popup__dispose-entry--append': isDisposed }"
@@ -1078,6 +1079,14 @@ const levelLabel = computed(() => {
     case 'medium': return '中'; default: return '低'
   }
 })
+const alarmHeaderColor = computed(() => {
+  switch (currentAlarm.value?.level) {
+    case 'critical': return '#FF3D71'
+    case 'high': return '#FF6B35'
+    case 'medium': return '#FFB800'
+    default: return '#00D4AA'
+  }
+})
 
 const popupBbox = computed<number[]>(() => {
   const m = (currentAlarm.value?.metadata || {}) as Record<string, unknown>
@@ -1204,7 +1213,7 @@ void jumpToPlayback; void openImageTab
   width: min(1280px, 92vw);
   height: min(760px, 88vh);
   background: #050E30;
-  border: 1px solid #F93A55;
+  border: 1px solid var(--alarm-header-color, #F93A55);
   border-radius: 8px;
   box-shadow: 0 24px 64px rgba(0, 0, 0, 0.55);
   display: flex; flex-direction: column;
@@ -1216,9 +1225,9 @@ void jumpToPlayback; void openImageTab
   animation: alarm-flash-anim 1.2s ease-out 1;
 }
 @keyframes alarm-flash-anim {
-  0%   { box-shadow: 0 0 0 0 rgba(249, 58, 85, 0.6); }
-  60%  { box-shadow: 0 0 0 24px rgba(249, 58, 85, 0); }
-  100% { box-shadow: 0 0 0 0 rgba(249, 58, 85, 0); }
+    0%   { box-shadow: 0 0 0 0 rgba(var(--alarm-header-rgb, 249, 58, 85), 0.6); }
+    60%  { box-shadow: 0 0 0 24px rgba(var(--alarm-header-rgb, 249, 58, 85), 0); }
+    100% { box-shadow: 0 0 0 0 rgba(var(--alarm-header-rgb, 249, 58, 85), 0); }
 }
 
 /* ── 顶栏: 红色短标题 + 倒计时 + ✕ ── */
@@ -1228,7 +1237,7 @@ void jumpToPlayback; void openImageTab
   color: #fff;
   display: flex; align-items: center; justify-content: space-between;
   padding: 0 10px;
-  background: linear-gradient(90deg, #F93A55 0%, #050E30 100%);
+  background: linear-gradient(90deg, var(--alarm-header-color, #F93A55) 0%, #050E30 100%);
 }
 .alarm-popup__title {
   font-size: 18px; font-weight: 400;

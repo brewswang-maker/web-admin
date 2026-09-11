@@ -14,7 +14,7 @@
     <div class="alarm-card__body">
       <div class="alarm-card__row alarm-card__row--main">
         <span class="alarm-card__type" :title="alarm.type">{{ typeZh }}</span>
-        <el-tag size="small" :type="statusTone as any" effect="plain">{{ statusLabel }}</el-tag>
+        <el-tag class="alarm-card__status" size="small" :type="statusTone as any" effect="plain">{{ statusLabel }}</el-tag>
       </div>
       <div class="alarm-card__row alarm-card__row--meta">
         <span class="alarm-card__group" :title="groupName || '-'">{{ groupName || '未分组' }}</span>
@@ -176,6 +176,7 @@ const timeText = computed(() => {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.alarm-card__status { font-size: 14px; }
 .alarm-card__row--meta {
   margin-top: 6px;
   font-size: 12px;

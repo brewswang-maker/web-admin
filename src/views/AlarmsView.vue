@@ -101,7 +101,7 @@
 
         <div class="toolbar-right">
           <!-- [P3-VP2] 视图切换 ([P2 2026-09-10] +card 卡片栅格, 选择持久化 localStorage) -->
-          <el-radio-group v-model="viewMode" size="small" style="margin-right:8px">
+          <el-radio-group v-model="viewMode"  style="margin-right:8px">
             <el-radio-button label="card">卡片</el-radio-button>
             <el-radio-button label="table">列表</el-radio-button>
             <el-radio-button label="gallery">证据库</el-radio-button>
@@ -285,7 +285,7 @@
         <el-table-column type="selection" width="48" />
 
         <!-- 告警级别 -->
-        <el-table-column prop="severity" label="级别" width="80" sortable>
+        <el-table-column prop="severity" label="级别" min-width="80" sortable>
           <template #default="{ row }">
             <div class="level-cell">
               <span class="level-dot" :class="row.severity"></span>
@@ -319,7 +319,7 @@
         </el-table-column>
 
         <!-- 设备 [P0-7/13 2026-09-04] channel_name 友好名优先 (禁纯数字国标码裸奔) -->
-        <el-table-column prop="deviceName" label="设备" width="160">
+        <el-table-column prop="deviceName" label="设备" min-width="200">
           <template #default="{ row }">
             <div class="device-cell">
               <span class="device-status-dot" :class="row.deviceStatus || 'online'"></span>
@@ -329,9 +329,16 @@
         </el-table-column>
 
         <!-- [P0-6 2026-09-04] 所属分组 (channel→device_groups 反查; 未分组显示 '-') -->
-        <el-table-column label="所属分组" width="120">
+        <el-table-column label="所属分组" min-width="120">
           <template #default="{ row }">
             <span>{{ groupNameOf(row) }}</span>
+          </template>
+        </el-table-column>
+
+        <!-- 时间 -->
+        <el-table-column prop="createdAt" label="时间" width="170" sortable>
+          <template #default="{ row }">
+            <span class="time-text">{{ formatTime(row.createdAt) }}</span>
           </template>
         </el-table-column>
 
@@ -344,6 +351,21 @@
           </template>
         </el-table-column>
 
+
+        <!-- 状态 -->
+         <el-table-column prop="status" label="状态" width="90" align="center">
+          <template #default="{ row }">
+            <el-tag
+              :type="statusTagType(row.status)"
+              size="small"
+              effect="plain"
+              :class="{ 'status-pending': row.status === 'unhandled' }"
+            >
+              {{ statusLabel(row.status) }}
+            </el-tag>
+          </template>
+        </el-table-column>
+
         <!-- 置信度 -->
         <el-table-column prop="aiConfidence" label="置信度" width="100" sortable align="center">
           <template #default="{ row }">
@@ -353,7 +375,7 @@
               :stroke-width="6"
               :show-text="true"
             >
-              <span style="font-size: 11px; color: var(--app-text-secondary)">
+              <span style="font-size: 14px; color: var(--app-text-secondary)">
                 {{ confPct(row) }}%
               </span>
             </el-progress>
@@ -369,26 +391,7 @@
           </template>
         </el-table-column>
 
-        <!-- 时间 -->
-        <el-table-column prop="createdAt" label="时间" width="170" sortable>
-          <template #default="{ row }">
-            <span class="time-text">{{ formatTime(row.createdAt) }}</span>
-          </template>
-        </el-table-column>
 
-        <!-- 状态 -->
-        <el-table-column prop="status" label="状态" width="90" align="center">
-          <template #default="{ row }">
-            <el-tag
-              :type="statusTagType(row.status)"
-              size="small"
-              effect="plain"
-              :class="{ 'status-pending': row.status === 'unhandled' }"
-            >
-              {{ statusLabel(row.status) }}
-            </el-tag>
-          </template>
-        </el-table-column>
 
         <!-- [STAGE1 P0-1 2026-09-10] 复核状态 (独立维度, 与业务状态并存) -->
         <el-table-column prop="reviewStatus" label="复核状态" width="110" align="center">
@@ -411,7 +414,7 @@
         </el-table-column>
 
         <!-- [STAGE1 P0-1 2026-09-10] 剩余 SLA (与 /alarms/review-sla 同口径: timestamp+8000ms 期限) -->
-        <el-table-column prop="reviewSlaRemainingMin" label="SLA 剩余" width="100" align="center" sortable>
+        <el-table-column prop="reviewSlaRemainingMin" label="SLA 剩余" min-width="110" align="center" sortable>
           <template #default="{ row }">
             <span :class="['sla-remaining', slaRemainingClass(row.reviewSlaRemainingMin)]">
               {{ slaRemainingText(row) }}
@@ -424,8 +427,7 @@
         <el-table-column label="操作" width="190" fixed="right">
           <template #default="{ row }">
             <div class="action-btns">
-              <el-button
-                size="small"
+               <el-button
                 type="primary"
                 link
                 @click="openDisposeDialog(row)"
@@ -435,8 +437,7 @@
               </el-button>
               <!-- [FIX 2026-09-05 docx#10/13] 详情打开处置记录对话框 (只读回显当时处置 + 追加入口);
                    告警全景 (快照/视频/位置) 保留在「更多 → 详情」的 AlarmPopup -->
-              <el-button
-                size="small"
+               <el-button
                 type="info"
                 link
                 @click="openDisposeDialog(row)"
@@ -445,7 +446,7 @@
                 详情
               </el-button>
               <el-dropdown @command="(cmd: string) => handleLifecycleCommand(cmd, row)" trigger="click">
-                <el-button size="small" type="info" link>更多<el-icon class="el-icon--right"><ArrowDown /></el-icon></el-button>
+                <el-button  type="info" link>更多<el-icon class="el-icon--right"><ArrowDown /></el-icon></el-button>
                 <template #dropdown>
                   <el-dropdown-menu>
                     <el-dropdown-item command="close" v-if="row.status === 'acknowledged' || row.status === 'disposed' || row.status === 'escalated' || row.status === 'reassigned'">关闭告警</el-dropdown-item>
@@ -872,19 +873,20 @@ function openSnapshotPreview(row: any) {
   previewMeta.value = m && typeof m === 'object' ? m : null
   previewVisible.value = true
 }
-// [P3-VP2] 视图切换 + 证据库
-const viewMode = ref<'table' | 'gallery' | 'card'>(
-  // [P2 2026-09-10] 选择持久化 (key 与 AlarmViewToggle 同规范)
-  ((): 'table' | 'gallery' | 'card' => {
-    try {
-      const v = localStorage.getItem('alarm_view_mode_alarms')
-      return v === 'card' || v === 'gallery' ? v : 'table'
-    } catch { return 'table' }
-  })()
-)
-watch(viewMode, (v) => {
-  try { localStorage.setItem('alarm_view_mode_alarms', v) } catch { /* 静默 */ }
-})
+// const viewMode = ref<'table' | 'gallery' | 'card'>(
+//   // [P2 2026-09-10] 选择持久化 (key 与 AlarmViewToggle 同规范)
+//   ((): 'table' | 'gallery' | 'card' => {
+//     try {
+//       const v = localStorage.getItem('alarm_view_mode_alarms')
+//       return v === 'card' || v === 'gallery' ? v : 'table'
+//     } catch { return 'table' }
+//   })()
+// )
+// watch(viewMode, (v) => {
+//   try { localStorage.setItem('alarm_view_mode_alarms', v) } catch { /* 静默 */ }
+// })
+// [P3-VP2] 视图切换 + 证据库: 每次进入告警中心默认显示卡片视图
+const viewMode = ref<'table' | 'gallery' | 'card'>('card')
 const galleryItems = computed(() => {
   return paginatedAlarms.value.map(a => ({
     id: a.id,
@@ -2120,8 +2122,9 @@ onUnmounted(() => {
 
 /* ── 类型徽章 ── */
 .type-badge {
-  font-size: var(--text-sm, 13px);
-  color: var(--app-text-secondary);
+    font-weight: bold;
+  /*font-size: var(--text-sm, 13px);*/
+  /*color: var(--app-text-secondary);*/
 }
 
 /* ── 设备单元格 ── */
@@ -2154,7 +2157,7 @@ onUnmounted(() => {
 
 /* ── AI解释文本 ── */
 .xai-text {
-  font-size: var(--text-xs, 12px);
+  /*font-size: var(--text-xs, 12px);*/
   color: var(--color-ai-500);
   cursor: default;
   font-style: italic;
@@ -2163,8 +2166,8 @@ onUnmounted(() => {
 /* ── 时间文本 ── */
 .time-text {
   font-family: var(--font-mono);
-  font-size: var(--text-sm, 13px);
-  color: var(--app-text-secondary);
+  /*font-size: var(--text-sm, 13px);*/
+  /*color: var(--app-text-secondary);*/
 }
 
 /* ── 待处理状态动画 ──

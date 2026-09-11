@@ -3,13 +3,13 @@
     <div class="alarm-tree-panel__head">
       <span class="alarm-tree-panel__title">设备列表</span>
       <div class="alarm-tree-panel__ops">
-        <el-button link size="small" @click="toggleExpand">{{ expanded ? '折叠' : '展开' }}</el-button>
-        <el-button link size="small" type="primary" @click="collapse">收起</el-button>
+        <el-button link size="small" type="primary" :title="expanded ? '折叠' : '展开'" @click="toggleExpand"><el-icon><Sort /></el-icon></el-button>
+        <el-button link size="small" type="primary" title="收起" @click="collapse"><el-icon><DArrowRight /></el-icon></el-button>
       </div>
     </div>
 
     <!-- 已选条件 chips (节点名可单个移除) -->
-    <div v-if="chips.length" class="alarm-tree-panel__chips">
+    <!-- <div v-if="chips.length" class="alarm-tree-panel__chips">
       <el-tag
         v-for="c in chips"
         :key="c.key"
@@ -19,9 +19,10 @@
         @close="removeChip(c.key)"
       >{{ c.name }}</el-tag>
       <el-button link size="small" type="danger" @click="clearAll">一键清除</el-button>
-    </div>
+    </div> -->
 
     <!-- 安保区域→子区域→设备 多选树 (show-checkbox 级联) -->
+    <div class="alarm-tree-panel__body">
     <el-tree
       ref="treeRef"
       :key="treeKey"
@@ -29,12 +30,13 @@
       node-key="key"
       :props="{ label: 'label', children: 'children' }"
       show-checkbox
-      default-expand-all
+      :default-expanded-keys="expanded ? undefined : []"
       :expand-on-click-node="false"
       :default-checked-keys="checkedKeys"
       empty-text="暂无安保区域, 请到「安保区域管理」创建"
       @check="emitSelection"
     />
+    </div>
   </aside>
 
   <!-- 折叠态: 细竖条 (点击展开) -->
@@ -65,7 +67,7 @@ import {
   collectAreaIdsFromRoots,
   expandAreaChannels,
 } from '@/utils/areaTree'
-import { DArrowLeft } from '@element-plus/icons-vue'
+import { DArrowLeft, DArrowRight, Sort } from '@element-plus/icons-vue'
 
 /** 已选条件 chip (勾选节点粒度, 可单个移除) */
 interface TreeChip { key: string; name: string }
@@ -169,7 +171,8 @@ function clearAll() {
 
 function toggleExpand() {
   expanded.value = !expanded.value
-  treeKey.value++
+  const nodes = treeRef.value?.store?.nodesMap ?? {}
+  Object.values(nodes).forEach((node: any) => { node.expanded = expanded.value })
 }
 
 function collapse() { collapsed.value = true }
@@ -185,7 +188,15 @@ onMounted(loadTree)
   background: var(--el-bg-color);
   border-radius: 8px;
   padding: 12px;
+  height: calc(100vh - 110px);
+  /*max-height: calc(100vh - 32px);*/
+  min-height: 0;
+  box-sizing: border-box;
   align-self: flex-start;
+  position: sticky;
+  top: 0;
+  display: flex;
+  flex-direction: column;
 }
 .alarm-tree-panel__head {
   display: flex;
@@ -207,6 +218,7 @@ onMounted(loadTree)
   border-bottom: 1px dashed var(--el-border-color-lighter);
 }
 .alarm-tree-panel :deep(.el-tree-node__content) { height: 28px; }
+.alarm-tree-panel__body { flex: 1; min-height: 0; overflow: auto; }
 
 /* 折叠态细竖条 */
 .alarm-tree-panel--collapsed {
