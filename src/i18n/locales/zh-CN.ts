@@ -256,6 +256,10 @@ const zhCN = {
     connectResult: '连接成功 ({ms}ms)',
     // alarm policy
     alarmRule: '告警规则',
+    dedupByTrack: '按目标去重',
+    dedupByTrackTip: '按目标身份(track)区分告警：同一目标在窗口内只报一次，不同目标独立告警；关闭则仅按时间窗去重(兼容旧行为)。修改后需重启生效',
+    dedupWindowSeconds: '告警冷却窗口(秒)',
+    dedupWindowSecondsTip: '同一通道同类型告警的最小重复间隔(alarm.dedup.window_seconds)。修改后需重启生效',
     dedupWindow: '告警去重窗口(秒)',
     minConfidence: '最低置信度阈值',
     criticalMaxLatency: '严重告警延迟(ms)',

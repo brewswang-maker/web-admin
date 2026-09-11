@@ -1,20 +1,24 @@
 <script setup lang="ts">
 import { ref, onMounted, computed, watch, nextTick, onUnmounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { deviceHttp, recordingHttp } from '@/api/http'
 import { alarmApi } from '@/api/alarm'  // [P3-VP1] 时间轴告警标记
-import { getRecordings, playRecording, stopPlayback as stopRecordingPlayback, controlPlayback, type RecordingSegment as ApiRecordingSeg } from '@/api/recording'
+import { getRecordings, playRecording, stopPlayback as stopRecordingPlayback, controlPlayback, downloadRecording, recordUrlCandidates, toLocalISOString, type RecordingSegment as ApiRecordingSeg } from '@/api/recording'
 import {
-  getRecordingSchedules, createRecordingSchedule, updateRecordingSchedule, deleteRecordingSchedule,
   getWatermark, updateWatermark,
   downloadSegment as downloadSegmentApi,
-  getStorageEstimate,
-  type RecordingSchedule, type WatermarkConfig, type StorageEstimate,
+  type WatermarkConfig,
 } from '@/api/recording'
 import Hls from 'hls.js'
 import flvjs from 'flv.js'
 import axios from 'axios'
+// [REC-UI 2026-09-11] 设计图回放页控制条图标 (上一段/播放暂停/下一段/全屏)
+import { Search, VideoPlay, VideoPause, DArrowLeft, DArrowRight, FullScreen } from '@element-plus/icons-vue'
+import { getDeviceChannels } from '@/api/devices'
+// [UI 2026-09-11] 通道目录树 (区域→设备→通道) — 与 LiveView/ChannelView 同源工具
+import { securityAreaApi } from '@/api/securityAreas'
+import { buildAreaTree, areaTreeToElTreeData } from '@/utils/areaTree'
 
 interface Device {
   id: string
@@ -28,6 +32,10 @@ interface Channel {
 }
 interface RecordingSegment extends ApiRecordingSeg {
   filePath?: string
+  /** [REC-PLAY 2026-09-11] ZLM 来源条目自带的 /record/ 静态直链 (MP4, HTTP Range 可精准 seek) */
+  url?: string
+  /** 数据源: zlm=本地告警联动 MP4 (直链播放) / gb28181=设备端录像 (回放流) */
+  source?: string
 }
 
 interface LocalRecording {
@@ -55,9 +63,22 @@ const isPlaying = ref(false)
 const isPaused = ref(false)
 const playbackSpeed = ref(1)
 const currentSessionId = ref('')
+// [REC-PLAY 2026-09-11] 当前播放段起点 ms: jumpToTime 原按「当天 0 点秒数」设 currentTime,
+//   对分段文件 (段 14:00 开始) 必越界 → 定位失效。playSegment 成功后记录段起点,
+//   jumpToTime 换算为「段内 offset 秒」, stopPlay 清零。
+const currentSegmentStartMs = ref(0)
+// [REC-UI 2026-09-11] 当前播放段 id (控制条「上一段/下一段」导航 + 片段列表高亮)
+const currentRecId = ref('')
+// [REC-TSEEK 2026-09-11] 按时间点观看弹窗
+const timeSeekVisible = ref(false)
+const timeSeekDate = ref('')
+const timeSeekTime = ref('14:30:25')
+const timeSeekLoading = ref(false)
 const videoRef = ref<HTMLVideoElement>()
 const videoContainerRef = ref<HTMLElement>()  // [V4-X4 2026-07-08] 全屏容器
 const canvasRef = ref<HTMLCanvasElement>()
+// [REC-FUSE 2026-09-11] 智能检索抽屉内时间分布画布 (独立 ref, 避免与回放时间轴 canvasRef 冲突)
+const smartCanvasRef = ref<HTMLCanvasElement>()
 let playerInstance: Hls | flvjs.Player | null = null
 
 // [V4-X4 2026-07-08] 进度条与全屏状态
@@ -77,7 +98,11 @@ function formatHMS(sec: number): string {
 }
 
 // Task #23: 本地录像 / 离线回放
-const recordingSource = ref<'device' | 'local' | 'smart' | 'schedule' | 'storage'>('device')
+// [REC-FUSE 2026-09-11] 源切换仅保留 设备录像/本地录像; 智能检索融合为抽屉, 计划/存储已迁出平台设置
+const recordingSource = ref<'device' | 'local'>('device')
+// [REC-FUSE 2026-09-11] AI 智能检索抽屉 + 存储位置过滤 (设计图「全部录像/中心储存」下拉)
+const smartDrawerVisible = ref(false)
+const recordTypeFilter = ref<'all' | 'zlm' | 'gb28181'>('all')
 const localRecordings = ref<LocalRecording[]>([])
 const localLoading = ref(false)
 const isOffline = ref(false)
@@ -97,27 +122,7 @@ const FORMAT_OPTIONS: { value: PlaybackFormat; label: string }[] = [
 ]
 const playbackFormat = ref<PlaybackFormat>('flv')
 
-// [P0-1] 录像计划状态
-const schedules = ref<RecordingSchedule[]>([])
-const scheduleLoading = ref(false)
-const scheduleDialogVisible = ref(false)
-const editingSchedule = ref<RecordingSchedule | null>(null)
-const defaultSchedule = (): RecordingSchedule => ({
-  channel_id: '',
-  schedule_name: '',
-  schedule_type: 'time_segment',
-  time_segments: [{ day: 7, start: '08:00', end: '18:00' }],
-  stream_type: 'main',
-  pre_record_seconds: 10,
-  post_record_seconds: 60,
-  enabled: true,
-  // [P2-3] 节假日排除策略
-  holiday_exclusion: {
-    enabled: false,
-    holiday_dates: [] as string[],  // ['2026-01-01', '2026-02-10', ...]
-    holiday_name: '',               // 节假日名称
-  },
-})
+// [REC-SCHEDULE 2026-09-11] 录像计划管理已整体迁出 → SettingsView「录像计划」Tab (复用既有 4 个 CRUD API)
 
 // [P0-2] 水印配置状态
 const watermarkDialogVisible = ref(false)
@@ -129,9 +134,7 @@ const segmentDownloadVisible = ref(false)
 const segStartTime = ref('')
 const segEndTime = ref('')
 
-// [P2-1] 存储预估状态
-const storageEstimate = ref<StorageEstimate | null>(null)
-const estParams = ref({ channel_count: 8, hours_per_day: 24, bitrate_kbps: 2048, retention_days: 30 })
+// [REC-STORAGE 2026-09-11] 存储预估已迁出 → SettingsView「存储预估」Tab
 
 const channels = computed(() => {
   const dev = devices.value.find(d => d.id === selectedDeviceId.value)
@@ -144,6 +147,117 @@ watch(selectedDeviceId, () => {
 })
 
 watch(selectedDate, () => { recordings.value = [] })
+
+// ── [UI 2026-09-11] 左侧通道目录树 (替代设备/通道双下拉, 与视频预览页同款) ──
+const recTreeRef = ref()
+const recTreeFilter = ref('')
+const recAreaRoots = ref<ReturnType<typeof buildAreaTree>>([])
+
+const deviceById = computed(() => new Map(devices.value.map(d => [String(d.id), d] as const)))
+
+/** 通道按设备分组 (树二级→三级挂接源; 内嵌 channels 已带 deviceId) */
+const recChannelsByDevice = computed(() => {
+  const m = new Map<string, Channel[]>()
+  for (const d of devices.value) {
+    for (const c of d.channels || []) {
+      const k = String(c.deviceId || d.id)
+      if (!m.has(k)) m.set(k, [])
+      m.get(k)!.push(c)
+    }
+  }
+  return m
+})
+
+const recDevLabel = (devId: string) => deviceById.value.get(devId)?.name || devId
+const recChLabel = (c: Channel) => c.name || c.id
+const recDevChannelCount = (data: { deviceId?: string }) =>
+  (recChannelsByDevice.value.get(String(data.deviceId)) ?? []).length
+
+// 安保区域树与设备主链解耦: 失败降级空 roots (全部设备进「未分组」)
+async function loadRecAreaTree() {
+  try {
+    const res = await securityAreaApi.listAreas() as any
+    const raw = res?.data?.data?.areas ?? res?.data?.data?.items ?? res?.data?.data ?? res?.data ?? []
+    recAreaRoots.value = buildAreaTree(Array.isArray(raw) ? raw : [])
+  } catch {
+    recAreaRoots.value = []
+  }
+}
+
+/** 三级树数据: 区域→设备→通道 + 「未分组」兜底 — 同 LiveView claimed 去重范式
+ *  (node-key 全局唯一: 同设备/通道只挂首个管辖区域, 跨区域重复破坏选中态) */
+const recTreeData = computed(() => {
+  const claimed = new Set<string>()
+  const areaNodes = areaTreeToElTreeData(recAreaRoots.value, (n) => {
+    const out: Array<{ key: string; label: string; type: string; deviceId?: string; isLeaf?: boolean; children?: unknown[] }> = []
+    for (const devId of n.area.device_ids ?? []) {
+      if (claimed.has(`dev:${devId}`)) continue
+      const chs = recChannelsByDevice.value.get(devId) ?? []
+      if (!chs.length) continue
+      claimed.add(`dev:${devId}`)
+      out.push({
+        key: `dev:${devId}`,
+        label: recDevLabel(devId),
+        type: 'device',
+        deviceId: devId,
+        children: chs
+          .filter(c => !claimed.has(String(c.id)))
+          .map(c => { claimed.add(String(c.id)); return { key: String(c.id), label: recChLabel(c), type: 'channel', deviceId: devId, isLeaf: true } }),
+      })
+    }
+    for (const cid of n.area.channel_ids ?? []) {
+      const hit = [...recChannelsByDevice.value.values()].flat().find(c => String(c.id) === String(cid))
+      if (hit && !claimed.has(String(hit.id))) {
+        const devId = String(hit.deviceId || '')
+        claimed.add(String(hit.id))
+        out.push({ key: String(hit.id), label: recChLabel(hit), type: 'channel', deviceId: devId, isLeaf: true })
+      }
+    }
+    return out
+  })
+  // 未分组兜底: 未被任何区域领取的设备 (整设备) 与孤立通道
+  const orphanNodes: Array<{ key: string; label: string; type: string; deviceId?: string; isLeaf?: boolean; children?: unknown[] }> = []
+  for (const [devId, chs] of recChannelsByDevice.value) {
+    const free = chs.filter(c => !claimed.has(String(c.id)))
+    if (!free.length) continue
+    if (devId !== '_' && deviceById.value.has(devId)) {
+      claimed.add(`dev:${devId}`)
+      orphanNodes.push({
+        key: `dev:${devId}`,
+        label: recDevLabel(devId),
+        type: 'device',
+        deviceId: devId,
+        children: free.map(c => { claimed.add(String(c.id)); return { key: String(c.id), label: recChLabel(c), type: 'channel', deviceId: devId, isLeaf: true } }),
+      })
+    } else {
+      for (const c of free) { claimed.add(String(c.id)); orphanNodes.push({ key: String(c.id), label: recChLabel(c), type: 'channel', deviceId: String(c.deviceId || ''), isLeaf: true }) }
+    }
+  }
+  if (!orphanNodes.length) return areaNodes
+  const ungrouped = { key: '__ungrouped__', label: '未分组', type: 'ungrouped', children: orphanNodes as unknown[] }
+  return areaNodes.length ? [...areaNodes, ungrouped] : [ungrouped]
+})
+
+watch(recTreeFilter, (v) => recTreeRef.value?.filter(v))
+
+function filterRecTreeNode(value: string, data: { label?: string }) {
+  if (!value) return true
+  return String(data?.label ?? '').toLowerCase().includes(value.toLowerCase())
+}
+
+/** 点击通道叶子: 设备变化先切设备 (watch 清空效果由 nextTick 覆盖, 同 URL 定位范式), 再设通道 */
+function onRecNodeClick(data: { type?: string; key?: unknown; deviceId?: string }) {
+  if (data?.type !== 'channel') return
+  const chId = String(data.key)
+  if (data.deviceId && data.deviceId !== selectedDeviceId.value) selectedDeviceId.value = data.deviceId
+  nextTick(() => { selectedChannelId.value = chId })
+}
+
+// 树高亮同步当前通道 (URL 定位/程序赋值同生效)
+watch(selectedChannelId, (id) => {
+  if (!id) return
+  nextTick(() => recTreeRef.value?.setCurrentKey(id))
+})
 
 async function fetchDevices() {
   try {
@@ -164,7 +278,74 @@ async function fetchDevices() {
         deviceId: d.device_id || d.id
       }))
     }))
+    // [FIX rec-ch-name 2026-09-11] 设备列表接口不内嵌通道详情 → 旧兑底给每设备
+    //   造假「通道1」且只有 1 路: 名称错 + 数量缺双 BUG 同源。
+    //   与 LiveView.loadData 同款: 逐设备拉通道主数据 (/devices/{id}/channels),
+    //   真实名称 + 完整通道数; 失败保留内嵌兑底保可用。
+    await Promise.allSettled(devices.value.map(async (dev) => {
+      try {
+        const res = await getDeviceChannels(dev.id) as any
+        const chs: any[] = res?.data?.data ?? res?.data ?? res ?? []
+        if (!Array.isArray(chs) || !chs.length) return
+        dev.channels = chs.map((c: any) => ({
+          id: String(c.channel_id || c.id),
+          name: c.channel_name || c.name || (c.channel_no != null ? `通道${c.channel_no}` : String(c.channel_id || c.id)),
+          deviceId: dev.id,
+        }))
+      } catch { /* 保留内嵌兑底 */ }
+    }))
+    // 选中校正: 已选 id 不在补齐后的真实通道集 (内嵌兑底假 id) → 清空, 避免拿假 id 查空
+    //   (GB28181 单通道设备真实通道 id 常等于 device_id, 此时命中集合不清空)
+    const validIds = new Set(devices.value.flatMap(d => (d.channels || []).map(c => c.id)))
+    if (selectedChannelId.value && !validIds.has(selectedChannelId.value)) {
+      selectedChannelId.value = ''
+    }
+    // 通道补齐为深层变更 (watch(devices) 浅层不感知) → 手动消费挂起的
+    //   告警跳转 channelId 反查 (旧逻辑反查失败仅赋值 pendingChannelId, 无重试)
+    if (pendingChannelId.value) {
+      const chId = pendingChannelId.value
+      pendingChannelId.value = ''
+      const hit = devices.value
+        .flatMap(d => (d.channels || []).map(c => ({ dev: d, c })))
+        .find(({ c }) => c.id === chId)
+      if (hit) {
+        selectedDeviceId.value = hit.dev.id
+        nextTick(() => { selectedChannelId.value = chId })
+      }
+    }
   } catch { /* 静默 */ }
+}
+
+/**
+ * [FIX rec-snake 2026-09-11] 后端 POST /recordings/query 返回 snake_case 原始条目:
+ *   ZLM 来源   { id: 磁盘绝对路径, start_time, end_time, file_size, url: /record/... , source: 'zlm' }
+ *   GB28181 来源 { id: device_starttime, start_time, end_time, file_size, source: 'gb28181' }
+ * 旧代码直接赋值 → 表格 startTime/endTime/fileSize 与 playSegment 入参全 undefined,
+ *   播放/下载/时间轴三链齐断 (时长列恒 0 另有后端 end_time=start_iso bug, 已同修)。
+ * 统一在此映射为 camelCase RecordingSegment, 并保留 url/source 供播放分流。
+ */
+function normalizeDeviceRecording(raw: Record<string, unknown>): RecordingSegment {
+  const startTime = String(raw.start_time ?? raw.startTime ?? '')
+  const endTime = String(raw.end_time ?? raw.endTime ?? '')
+  const startMs = startTime ? Date.parse(startTime) : NaN
+  const endMs = endTime ? Date.parse(endTime) : NaN
+  let duration = Number(raw.duration ?? 0)
+  if ((!duration || duration <= 0) && !isNaN(startMs) && !isNaN(endMs) && endMs > startMs) {
+    duration = Math.round((endMs - startMs) / 1000)
+  }
+  return {
+    id: String(raw.id ?? ''),
+    deviceId: String(raw.device_id ?? raw.deviceId ?? ''),
+    channelNo: Number(raw.channel_no ?? raw.channelNo ?? 0),
+    startTime,
+    endTime,
+    duration,
+    fileSize: Number(raw.file_size ?? raw.fileSize ?? 0),
+    type: (raw.type as RecordingSegment['type']) ?? 'event',
+    status: 'available',
+    url: raw.url ? String(raw.url) : undefined,
+    source: raw.source ? String(raw.source) : undefined,
+  }
 }
 
 async function fetchRecordings() {
@@ -181,7 +362,9 @@ async function fetchRecordings() {
       start_time: selectedDate.value + 'T00:00:00',
       end_time: selectedDate.value + 'T23:59:59',
     })
-    recordings.value = data?.data?.recordings || data?.data || []
+    // [FIX rec-snake 2026-09-11] 见 normalizeDeviceRecording 注释: 先映射再入 store
+    const rawList: Array<Record<string, unknown>> = data?.data?.recordings || data?.data || []
+    recordings.value = rawList.map(normalizeDeviceRecording)
     await nextTick()
     drawTimeline()
   } catch (e: any) {
@@ -266,12 +449,56 @@ function timeToPercent(timeStr: string): number {
   return (parseInt(parts[1]) + parseInt(parts[2]) / 60 + parseInt(parts[3]) / 3600) / 24
 }
 
-async function playSegment(rec: RecordingSegment) {
+async function playSegment(rec: RecordingSegment, opts?: { startAtMs?: number }) {
   try {
-    const { data } = await recordingHttp.post(`/${rec.id}/play`, {
+    // [FIX rec-play 2026-09-11] 三处断点修复:
+    //   ① rec.id 为 ZLM 磁盘绝对路径 (含 '/'), 拼进 /${id}/play 路由必 404
+    //      → 改占位段 '0' (后端处理器仅回显 id, 真实参数全从 body 取);
+    //   ② ZLM 条目自带 url (/record/ MP4 直链, Range 可 seek) → 直链优先,
+    //      无需起 GB28181 回放流, 且「按时间点」可直接 currentTime 精准定位;
+    //   ③ 播放成功后补写 playingUrl (原缺, jumpToTime 的守卫恒触发) 与
+    //      currentSegmentStartMs (jumpToTime 段内 offset 换算基准)。
+    if (rec.url) {
+      if (playerInstance) {
+        if ('destroy' in playerInstance) playerInstance.destroy()
+        playerInstance = null
+      }
+      currentSegmentStartMs.value = Date.parse(rec.startTime) || 0
+      currentRecId.value = rec.id
+      currentSessionId.value = ''
+      isPlaying.value = true
+      isPaused.value = false
+      await nextTick()
+      const video = videoRef.value
+      if (!video) return
+      // [FIX rec-url 2026-09-11] 相对路径 /record/... 在 nginx 未配路由时 404 →
+      //   候选链: 同源双层优先, 失败 (video error) 回退 8088 双层 (LAN 兜底)
+      const cands = recordUrlCandidates(rec.url)
+      let candIdx = 0
+      video.onerror = () => {
+        if (candIdx + 1 < cands.length) {
+          candIdx += 1
+          playingUrl.value = cands[candIdx]
+          video.src = cands[candIdx]
+          video.play().catch(() => {})
+        }
+      }
+      playingUrl.value = cands[candIdx]
+      video.src = cands[candIdx]
+      video.play().catch(() => {})
+      if (opts?.startAtMs) await jumpToTime(opts.startAtMs)
+      return
+    }
+
+    // GB28181 设备录像: 回放流从 start_time 起推; startAtMs 传入时设备直接
+    //   从目标时刻开播 (GB28181 Playback 原生支持任意起点), 无需本地 seek 未来缓冲。
+    const startIso = opts?.startAtMs ? toLocalISOString(new Date(opts.startAtMs)) : rec.startTime
+    if (opts?.startAtMs) currentSegmentStartMs.value = opts.startAtMs
+    const { data } = await recordingHttp.post(`/0/play`, {
+      id: rec.id,
       device_id: selectedDeviceId.value,
       channel_id: selectedChannelId.value,
-      start_time: rec.startTime,
+      start_time: startIso,
       end_time: rec.endTime,
     })
     const result = data?.data || data
@@ -281,6 +508,7 @@ async function playSegment(rec: RecordingSegment) {
     }
     const urls = result.urls
     currentSessionId.value = result.call_id || ''
+    currentRecId.value = rec.id
 
     // 清理旧播放器
     if (playerInstance) {
@@ -311,6 +539,12 @@ async function playSegment(rec: RecordingSegment) {
       }
     }
     if (!playUrl) { ElMessage.warning('无可用的播放格式'); return }
+
+    // [FIX rec-play 2026-09-11] 原缺: 不写 playingUrl 则 jumpToTime 守卫恒警告返回
+    playingUrl.value = playUrl
+    if (!currentSegmentStartMs.value) {
+      currentSegmentStartMs.value = Date.parse(rec.startTime) || 0
+    }
 
     // RTSP 浏览器不支持，强制降级
     if (playUrl.startsWith('rtsp://') || playUrl.startsWith('rtmp://')) {
@@ -366,18 +600,116 @@ function attachHls(hlsUrl: string) {
   }
 }
 
-function downloadSegment(rec: RecordingSegment) {
-  window.open(`/api/v1/recordings/${rec.id}/download`, '_blank')
+// [FIX rec-dl 2026-09-11] 原 window.open('/recordings/${id}/download'):
+//   ① id 为磁盘路径含 '/' → URL 撕裂; ② 该路由后端不存在 → 恒 404。
+//   改走已治本的 download-file?path= 链 (nginx /record/ 静态直链, Range 206 实测)。
+async function downloadSegment(rec: RecordingSegment) {
+  try {
+    await downloadRecording(rec.id)
+    ElMessage.success('下载已开始')
+  } catch (e: any) {
+    ElMessage.error('下载失败: ' + (e?.message || ''))
+  }
+}
+
+// ── [REC-UI 2026-09-11] 设计图回放页交互增强 ──
+
+/** 查询面板「已选择」展示 (设计图左侧栏) */
+const qpDeviceLabel = computed(() => {
+  const dev = devices.value.find(d => String(d.id) === String(selectedDeviceId.value))
+  return dev?.name || '未选择设备'
+})
+const qpChannelLabel = computed(() => {
+  const dev = devices.value.find(d => String(d.id) === String(selectedDeviceId.value))
+  const ch = (dev?.channels || []).find(c => String(c.id) === String(selectedChannelId.value))
+  return ch ? (ch.name || ch.id) : '未选择通道'
+})
+
+/** 存储位置过滤 (设计图「全部录像 / 中心储存」下拉): zlm=中心存储 MP4 / gb28181=设备端录像 */
+const filteredRecordings = computed(() => {
+  if (recordTypeFilter.value === 'zlm') return recordings.value.filter(r => r.source === 'zlm')
+  if (recordTypeFilter.value === 'gb28181') return recordings.value.filter(r => r.source !== 'zlm')
+  return recordings.value
+})
+
+/** 回放钟 (设计图控制条时间框): 段起点 + 播放进度 → 绝对时刻 */
+const playbackClockLabel = computed(() => {
+  if (!isPlaying.value || !currentSegmentStartMs.value) return '--'
+  const d = new Date(currentSegmentStartMs.value + currentTime.value * 1000)
+  const p = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
+})
+
+function timeOnly(s: string): string {
+  return s?.split('T')[1]?.substring(0, 8) || s || '--'
+}
+function segRangeLabel(rec: RecordingSegment): string {
+  return `${timeOnly(rec.startTime)} - ${timeOnly(rec.endTime)}`
+}
+
+/** 控制条「上一段/下一段」 (设计图控制条导航) */
+function navSegment(dir: -1 | 1) {
+  const list = filteredRecordings.value
+  if (!list.length) return
+  let idx = list.findIndex(r => r.id === currentRecId.value)
+  if (idx < 0) idx = dir > 0 ? -1 : 0
+  const next = list[idx + dir]
+  if (next) playSegment(next)
+  else ElMessage.info(dir > 0 ? '已是最后一段' : '已是第一段')
+}
+function playPrevSegment() { navSegment(-1) }
+function playNextSegment() { navSegment(1) }
+
+/** 批量下载 (设计图「录像下载」入口): 逐段 fetch→blob→objectURL 强制落盘 */
+async function batchDownload() {
+  const list = filteredRecordings.value
+  if (!list.length) {
+    ElMessage.warning('暂无可下载的录像段')
+    return
+  }
+  try {
+    await ElMessageBox.confirm(`将逐段下载 ${list.length} 个录像文件，是否继续？`, '提示', { type: 'warning' })
+  } catch { return }
+  let ok = 0
+  let fail = 0
+  for (const rec of list) {
+    try {
+      await downloadRecording(rec.id)
+      ok++
+    } catch { fail++ }
+    await new Promise(r => setTimeout(r, 300))  // 间隔触发, 避免浏览器并发下载拦截
+  }
+  if (fail) ElMessage.warning(`下载完成: 成功 ${ok} 段, 失败 ${fail} 段`)
+  else ElMessage.success(`已触发 ${ok} 段录像下载`)
+}
+
+/** 设计图查询按钮: 按当前源分流 (设备录像 / 本地录像) */
+async function onQueryClick() {
+  if (recordingSource.value === 'local') await fetchLocalRecordings()
+  else await fetchRecordings()
 }
 
 async function togglePause() {
-  if (!currentSessionId.value) return
-  try {
-    const action = isPaused.value ? 'resume' : 'pause'
-    await recordingHttp.post(`/${currentSessionId.value}/control`, { action })
-    isPaused.value = !isPaused.value
-  } catch (e: any) {
-    ElMessage.error('控制失败: ' + (e.message || ''))
+  // [REC-UI 2026-09-11] 设计图控制条「暂停/恢复」: GB28181 回放会话走后端控制;
+  //   ZLM/本地 MP4 直链无会话 → 直接操作 video 元素 (原实现无会话直接 return, 按钮形同虚设)
+  if (currentSessionId.value) {
+    try {
+      const action = isPaused.value ? 'resume' : 'pause'
+      await recordingHttp.post(`/${currentSessionId.value}/control`, { action })
+      isPaused.value = !isPaused.value
+    } catch (e: any) {
+      ElMessage.error('控制失败: ' + (e.message || ''))
+    }
+    return
+  }
+  const video = videoRef.value
+  if (!video) return
+  if (video.paused) {
+    video.play().catch(() => {})
+    isPaused.value = false
+  } else {
+    video.pause()
+    isPaused.value = true
   }
 }
 
@@ -411,6 +743,8 @@ async function stopPlay() {
   isPaused.value = false
   playingUrl.value = ''
   currentSessionId.value = ''
+  currentSegmentStartMs.value = 0  // [REC-PLAY 2026-09-11] 同步清段起点基准
+  currentRecId.value = ''          // [REC-UI 2026-09-11] 清段导航游标
   // [V4-X4 2026-07-08] 重置进度条状态
   currentTime.value = 0
   duration.value = 0
@@ -500,7 +834,7 @@ function onFullscreenChange() {
   isFullscreen.value = !!(document.fullscreenElement || (document as any).webkitFullscreenElement)
 }
 
-function handleTimelineClick(e: MouseEvent) {
+async function handleTimelineClick(e: MouseEvent) {
   const canvas = canvasRef.value
   if (!canvas) return
   const rect = canvas.getBoundingClientRect()
@@ -512,14 +846,10 @@ function handleTimelineClick(e: MouseEvent) {
   for (const a of timelineAlarms.value) {
     if (Math.abs(alarmToPercent(a.timestamp) - pct) < tolerance) {
       const ts = a.timestamp
-      // 跳转到告警时刻
       const d = new Date(ts)
-      const dayStart = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0).getTime()
-      const secondsFromStart = (ts - dayStart) / 1000
-      const video = videoRef.value
-      if (video && playingUrl.value) {
-        video.currentTime = Math.max(0, secondsFromStart)
-        video.play().catch(() => {})
+      // [FIX rec-jump 2026-09-11] 与 jumpToTime 同源换算 (原「当天 0 点秒数」对分段文件越界)
+      if (playingUrl.value && videoRef.value) {
+        await jumpToTime(ts)
         ElMessage.success(`已跳转到告警: ${a.alarm_type} @ ${d.toLocaleTimeString('zh-CN')}`)
       } else {
         pendingJumpMs.value = ts
@@ -527,6 +857,20 @@ function handleTimelineClick(e: MouseEvent) {
       }
       return
     }
+  }
+
+  // [REC-UI 2026-09-11] 设计图: 点击时间轴蓝色录像块 → 从点击时刻开始回放
+  const dayStartMs = new Date(`${selectedDate.value}T00:00:00`).getTime()
+  const clickedMs = dayStartMs + pct * 24 * 3600 * 1000
+  const segs = recordings.value
+    .map(x => ({ r: x, s: Date.parse(x.startTime || ''), e: Date.parse(x.endTime || '') }))
+    .filter(x => !isNaN(x.s))
+    .sort((a, b) => a.s - b.s)
+  const hit = segs.find(x => x.s <= clickedMs && clickedMs <= x.e + 5000)
+  if (hit) {
+    await playSegment(hit.r, { startAtMs: clickedMs })
+    ElMessage.success(`已从 ${new Date(clickedMs).toLocaleTimeString('zh-CN')} 开始播放`)
+    return
   }
 
   const hours = pct * 24
@@ -605,9 +949,15 @@ async function fetchLocalRecordings() {
 
 // ---- Task #23: 本地录像播放 ----
 async function playLocalRecording(rec: LocalRecording) {
+  await playLocalRecordingById(rec.id, Date.parse(rec.start_time) || 0)
+}
+
+/** [REC-FUSE 2026-09-11] recording_id→/local/{id}/play 独立播放 (智能检索兜底链路, 原播放逻辑抽出)
+ *  startMs: 磁盘录像起点 → 回放钟基准 (段起点 + 进度 = 绝对时刻) */
+async function playLocalRecordingById(id: number, startMs = 0) {
   try {
     // 获取播放 URL
-    const { data } = await recordingHttp.get(`/local/${rec.id}/play`)
+    const { data } = await recordingHttp.get(`/local/${id}/play`)
     const playUrl = data?.data?.play_url
     if (!playUrl) {
       ElMessage.warning('未获取到本地录像播放地址')
@@ -622,7 +972,9 @@ async function playLocalRecording(rec: LocalRecording) {
 
     isPlaying.value = true
     isPaused.value = false
-    currentSessionId.value = '' // 本地播放无后端 session
+    currentSessionId.value = ''
+    currentRecId.value = ''
+    currentSegmentStartMs.value = startMs
     await nextTick()
 
     const video = videoRef.value
@@ -648,18 +1000,21 @@ async function deleteLocalRecording(rec: LocalRecording) {
 }
 
 // ---- Task #26: AI 智能检索 ----
+// [FIX rec-fuse2 2026-09-11] 后端实际返回: timestamp 为 int 毫秒, channel_id 为告警库
+//   hash 整型字符串, 无 device_id/recording_id (老库表结构); 类型放宽以保证渲染与
+//   跳转逻辑不再对数字调用字符串方法。
 interface SmartSearchResult {
-  id: number
+  id: number | string
   alarm_type: string
   target_type: string
   confidence: number
-  timestamp: string
+  timestamp: number | string
   channel_id: string
-  device_id: string
+  device_id?: string
   snapshot_path: string
-  recording_id: number
-  recording_start: string
-  recording_end: string
+  recording_id?: number
+  recording_start?: string
+  recording_end?: string
 }
 
 const smartAlarmTypes = ref<string[]>([])
@@ -708,7 +1063,7 @@ async function doSmartSearch() {
 }
 
 function drawTimelineWithDetections() {
-  const canvas = canvasRef.value
+  const canvas = smartCanvasRef.value
   if (!canvas) return
   const ctx = canvas.getContext('2d')
   if (!ctx) return
@@ -732,8 +1087,10 @@ function drawTimelineWithDetections() {
 
   // 用红色标记 AI 检测时间点
   for (const r of smartResults.value) {
-    if (!r.timestamp) continue
-    const t = new Date(r.timestamp)
+    // [FIX rec-fuse2 2026-09-11] ts 经 smartTsMs 归一 (后端为 int 毫秒, 旧 new Date(字符串数字) 恒 Invalid)
+    const ms = smartTsMs(r.timestamp)
+    if (isNaN(ms)) continue
+    const t = new Date(ms)
     const pct = (t.getHours() + t.getMinutes() / 60 + t.getSeconds() / 3600) / 24
     const x = pct * W
     ctx.fillStyle = 'rgba(239,68,68,0.7)'
@@ -741,36 +1098,121 @@ function drawTimelineWithDetections() {
   }
 }
 
+/**
+ * [REC-FUSE 2026-09-11] 智能检索「跳转到该时刻回放」融入设备录像链路:
+ *   ① 关闭抽屉 → 切设备录像 Tab → 反查/选中结果所属通道;
+ *   ② 同步日期并查询设备录像 → 覆盖段匹配 → playSegment(startAtMs) 精准跳转
+ *      (ZLM: MP4 Range seek / GB28181: 设备从目标时刻起推流);
+ *   ③ 无覆盖段时保留原 recording_id→/local/{id}/play 独立播放链路兜底。
+ * [FIX rec-fuse2 2026-09-11] 两处线上缺陷:
+ *   a) timestamp 为 int 毫秒, 旧 Date.parse(String()) 恒 NaN → 统一经 smartTsMs 归一;
+ *   b) channel_id 为告警库 hash 整型 (如 -705635631), 反查树必 miss 且旧逻辑会把
+ *      hash 写入 selectedChannelId 投毒后续查询。现从 snapshot_path
+ *      (/snapshots/rtp/gb_<真实通道>/) 或 id (det_<真实通道>_...) 提取真实 20 位
+ *      国标码, 树内三级反查 (精确/剥 _chN/尾 10 位); 树外也直接用真实通道
+ *      (后端 queryRecordings 已兼容裸码), 不再写入 hash。
+ */
+
+/** [FIX rec-fuse2] 统一解析 smart-search 时间戳为毫秒: number / 纯数字字符串 / ISO 均可, 失败 NaN */
+function smartTsMs(ts: unknown): number {
+  if (ts === null || ts === undefined || ts === '') return NaN
+  if (typeof ts === 'number') return ts
+  const s = String(ts)
+  return /^\d+$/.test(s) ? Number(s) : Date.parse(s)
+}
+
+/** [FIX rec-fuse2] 从检索结果提取真实 20 位国标通道码: snapshot_path 优先, id 兜底, 无则 '' */
+function extractRealChannel(r: SmartSearchResult): string {
+  const mSnap = String(r.snapshot_path || '').match(/\/snapshots\/rtp\/gb_([^/]+)\//)
+  if (mSnap) return mSnap[1]
+  const mId = String(r.id || '').match(/^det_([^_]+)_/)
+  return mId ? mId[1] : ''
+}
+
 async function playSmartResult(r: SmartSearchResult) {
-  if (!r.recording_id) {
-    ElMessage.warning('此检测结果无关联录像')
+  smartDrawerVisible.value = false
+  // [FIX rec-fuse2 a] ts 兼容 int 毫秒 / 数字字符串 / ISO
+  const ts = smartTsMs(r.timestamp)
+  // ① 切源 + 反查通道: 真实通道优先 (hash channel_id 不可用于录像查询)
+  recordingSource.value = 'device'
+  let changed = false
+  const realCh = extractRealChannel(r)
+  const target = realCh || String(r.channel_id || '')
+  if (target && target !== selectedChannelId.value) {
+    const allCh = devices.value.flatMap(d => (d.channels || []).map(c => ({ d, c })))
+    const tail = target.length >= 10 ? target.slice(-10) : target
+    const hitCh = allCh.find(({ c }) => String(c.id) === target)
+      || allCh.find(({ c }) => String(c.id).replace(/_ch\d+$/, '') === target)
+      || allCh.find(({ c }) => String(c.id).replace(/_ch\d+$/, '').slice(-10) === tail)
+    if (hitCh) {
+      if (hitCh.d.id !== selectedDeviceId.value) {
+        selectedDeviceId.value = hitCh.d.id
+        await nextTick()
+      }
+      if (selectedChannelId.value !== hitCh.c.id) {
+        selectedChannelId.value = hitCh.c.id
+        changed = true
+      }
+    } else if (realCh) {
+      // 树内未命中但提取到真实通道 → 直接使用 (后端已兼容裸码), 不投毒 hash
+      selectedChannelId.value = realCh
+      changed = true
+    }
+    // 既无真实通道又未命中树 → 保留当前选择, 仅走时间跳转 + recording_id 兜底
+  }
+  if (!isNaN(ts)) {
+    // ② 日期同步 (toLocalISOString 本地时区, 与录像条目标签同基准)
+    const wantDate = toLocalISOString(new Date(ts)).split('T')[0]
+    if (selectedDate.value !== wantDate) {
+      selectedDate.value = wantDate
+      changed = true
+    }
+    // 通道/设备/日期任一变化都需强制重查, 避免用旧通道的残留列表做覆盖段匹配
+    if (changed || !recordings.value.length) {
+      await fetchRecordings()
+    }
+    // 覆盖段匹配 (含 +5s 容差, 同 doTimeSeek 口径)
+    const segs = recordings.value
+      .map(x => ({ r: x, s: Date.parse(x.startTime || ''), e: Date.parse(x.endTime || '') }))
+      .filter(x => !isNaN(x.s))
+      .sort((a, b) => a.s - b.s)
+    const hitSeg = segs.find(x => x.s <= ts && ts <= x.e + 5000)
+    if (hitSeg) {
+      await playSegment(hitSeg.r, { startAtMs: ts })
+      ElMessage.success(`已跳转到检测时刻 ${new Date(ts).toLocaleTimeString('zh-CN')}`)
+      return
+    }
+  }
+  // ③ 兜底: 原 recording_id→/local/{id}/play 链路 (无设备录像覆盖时独立播放)
+  if (r.recording_id) {
+    await playLocalRecordingById(r.recording_id)
     return
   }
-  try {
-    const { data } = await recordingHttp.get(`/local/${r.recording_id}/play`)
-    const playUrl = data?.data?.play_url
-    if (!playUrl) { ElMessage.warning('未获取到播放地址'); return }
-
-    if (playerInstance) {
-      if ('destroy' in playerInstance) playerInstance.destroy()
-      playerInstance = null
-    }
-    isPlaying.value = true
-    isPaused.value = false
-    currentSessionId.value = ''
-    await nextTick()
-
-    const video = videoRef.value
-    if (!video) return
-    video.src = playUrl
-    video.play().catch(() => {})
-  } catch (e: any) {
-    ElMessage.error('智能检索录像播放失败: ' + (e.message || ''))
-  }
+  ElMessage.warning('该时刻附近无录像记录')
 }
 
 function formatConfidence(v: number): string {
   return (v * 100).toFixed(1) + '%'
+}
+
+/** [FIX rec-fuse2] 「检测时间」列: 后端 timestamp 为 int 毫秒, 旧模板 .replace 对数字崩溃致列恒空 */
+function fmtSmartTs(ts: unknown): string {
+  const ms = smartTsMs(ts)
+  if (isNaN(ms)) return ts === null || ts === undefined || ts === '' ? '-' : String(ts)
+  const d = new Date(ms)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+}
+
+/** [FIX rec-fuse2] 「通道」列: 树内反查显示 设备/通道 名, 未命中显示真实国标码 (旧版显示告警库 hash) */
+function fmtSmartChannel(r: SmartSearchResult): string {
+  const ch = extractRealChannel(r) || String(r.channel_id || '')
+  if (!ch) return '-'
+  const hit = devices.value
+    .flatMap(d => (d.channels || []).map(c => ({ d, c })))
+    .find(({ c }) => String(c.id) === ch || String(c.id).replace(/_ch\d+$/, '') === ch)
+  if (hit) return `${hit.d.name || hit.d.id} / ${hit.c.name || hit.c.id}`
+  return ch
 }
 
 const router = useRouter()
@@ -868,7 +1310,11 @@ async function autoFetchRecordingsIfNeeded() {
 const pendingChannelId = ref('')
 const pendingJumpMs = ref(0)
 
-// 跳转到指定时刻: 修改播放 URL 后调用 video.currentTime
+// 跳转到指定时刻: [FIX rec-jump 2026-09-11] 原按「当天 0 点秒数」设 currentTime,
+//   对分段文件 (段 14:00 开始, 时长 1h) 必越界 → 定位失效。改为:
+//   ① 有 currentSegmentStartMs 基准时换算「段内 offset 秒」并 clamp 到时长内;
+//   ② MP4 src 刚设置时元数据未就绪, 直接设 currentTime 会丢 → 等 loadedmetadata
+//     (2.5s 超时兜底), 保障「按时间点观看」5 秒内生效。
 async function jumpToTime(ms: number) {
   if (!ms) return
   // 等待录像加载完成
@@ -878,14 +1324,27 @@ async function jumpToTime(ms: number) {
   }
   const video = videoRef.value
   if (!video) return
-  // 计算相对当天 0 点的秒数
   const d = new Date(ms)
-  const dayStart = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0).getTime()
-  const secondsFromStart = (ms - dayStart) / 1000
-  // 加载当天对应时间段的录像
-  // 简化: 如果播放已开始，直接设置 currentTime
+  let seconds: number
+  if (currentSegmentStartMs.value > 0) {
+    seconds = (ms - currentSegmentStartMs.value) / 1000
+    if (seconds < 0) seconds = 0
+    if (duration.value > 0 && seconds > duration.value) seconds = Math.max(0, duration.value - 1)
+  } else {
+    // 兜底: 无段起点基准 (历史链路), 保持当天秒数
+    const dayStart = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0).getTime()
+    seconds = (ms - dayStart) / 1000
+  }
+  // 元数据就绪等待 (MP4 Range seek 依赖 duration 已知)
+  if (video.readyState < 1) {
+    await new Promise<void>((resolve) => {
+      const onReady = () => { video.removeEventListener('loadedmetadata', onReady); resolve() }
+      video.addEventListener('loadedmetadata', onReady)
+      setTimeout(onReady, 2500)
+    })
+  }
   try {
-    video.currentTime = Math.max(0, secondsFromStart)
+    video.currentTime = Math.max(0, seconds)
     video.play().catch(() => {})
     ElMessage.success(`已跳转到 ${d.toLocaleTimeString('zh-CN')}`)
   } catch (e: any) {
@@ -922,83 +1381,7 @@ function stopOfflineCheck() {
   }
 }
 
-// ---- [P0-1] 录像计划管理 ----
-async function fetchSchedules() {
-  scheduleLoading.value = true
-  try {
-    schedules.value = await getRecordingSchedules(selectedChannelId.value || undefined)
-  } catch (e: any) {
-    ElMessage.error('加载录像计划失败: ' + (e.message || ''))
-  } finally {
-    scheduleLoading.value = false
-  }
-}
-
-function openScheduleDialog(schedule?: RecordingSchedule) {
-  editingSchedule.value = schedule ? { ...schedule, time_segments: [...(schedule.time_segments || [])] } : defaultSchedule()
-  if (!editingSchedule.value.channel_id && selectedChannelId.value) {
-    editingSchedule.value.channel_id = selectedChannelId.value
-  }
-  if (!editingSchedule.value.device_id && selectedDeviceId.value) {
-    editingSchedule.value.device_id = selectedDeviceId.value
-  }
-  scheduleDialogVisible.value = true
-}
-
-function addTimeSegment() {
-  if (!editingSchedule.value) return
-  editingSchedule.value.time_segments.push({ day: 7, start: '08:00', end: '18:00' })
-}
-
-function removeTimeSegment(idx: number) {
-  if (!editingSchedule.value) return
-  editingSchedule.value.time_segments.splice(idx, 1)
-}
-
-async function saveSchedule() {
-  if (!editingSchedule.value) return
-  if (!editingSchedule.value.channel_id) {
-    ElMessage.warning('请选择通道')
-    return
-  }
-  try {
-    if (editingSchedule.value.id) {
-      await updateRecordingSchedule(editingSchedule.value.id, editingSchedule.value)
-      ElMessage.success('录像计划已更新')
-    } else {
-      await createRecordingSchedule(editingSchedule.value)
-      ElMessage.success('录像计划已创建')
-    }
-    scheduleDialogVisible.value = false
-    await fetchSchedules()
-  } catch (e: any) {
-    ElMessage.error('保存失败: ' + (e.message || ''))
-  }
-}
-
-async function toggleScheduleEnabled(schedule: RecordingSchedule) {
-  if (!schedule.id) return
-  try {
-    await updateRecordingSchedule(schedule.id, { enabled: !schedule.enabled })
-    schedule.enabled = !schedule.enabled
-    ElMessage.success(`计划已${schedule.enabled ? '启用' : '禁用'}`)
-  } catch (e: any) {
-    ElMessage.error('操作失败: ' + (e.message || ''))
-  }
-}
-
-async function removeSchedule(schedule: RecordingSchedule) {
-  if (!schedule.id) return
-  try {
-    await deleteRecordingSchedule(schedule.id)
-    ElMessage.success('删除成功')
-    await fetchSchedules()
-  } catch (e: any) {
-    ElMessage.error('删除失败: ' + (e.message || ''))
-  }
-}
-
-const DAY_LABELS = ['周日', '周一', '周二', '周三', '周四', '周五', '周六', '每天']
+// [REC-SCHEDULE 2026-09-11] 计划管理函数已迁出 → SettingsView (fetchSchedules/openScheduleDialog/saveSchedule/toggleScheduleEnabled/removeSchedule)
 
 // ---- [P0-2] 水印配置 ----
 async function openWatermarkDialog() {
@@ -1058,19 +1441,75 @@ async function doSegmentDownload() {
   }
 }
 
-// ---- [P2-1] 存储预估 ----
-async function calculateStorage() {
+// ---- [REC-TSEEK 2026-09-11] 按时间点观看 ----
+// 行业通用回放交互: 选日期 + HH:mm:ss → 定位到该时刻播放。
+// 链路: 同步日期 → queryRecordings (fetchRecordings) → 覆盖段匹配 →
+//   playSegment(seg, {startAtMs}) → ZLM: MP4 Range seek / GB28181: 设备从目标时刻起推流。
+function openTimeSeek() {
+  if (!selectedDeviceId.value || !selectedChannelId.value) {
+    ElMessage.warning('请先选择设备和通道')
+    return
+  }
+  timeSeekDate.value = selectedDate.value
+  timeSeekVisible.value = true
+}
+
+async function doTimeSeek() {
+  if (!selectedDeviceId.value || !selectedChannelId.value) {
+    ElMessage.warning('请先选择设备和通道')
+    return
+  }
+  if (!timeSeekDate.value || !timeSeekTime.value) {
+    ElMessage.warning('请选择日期和时间点')
+    return
+  }
+  timeSeekLoading.value = true
   try {
-    storageEstimate.value = await getStorageEstimate(estParams.value)
+    // 1. 目标日期与列表日期不同步时先刷新录像列表 (fetchRecordings 按 selectedDate 查询)
+    if (selectedDate.value !== timeSeekDate.value) {
+      selectedDate.value = timeSeekDate.value
+      await fetchRecordings()
+    } else if (!recordings.value.length) {
+      await fetchRecordings()
+    }
+    // 2. 目标时刻 ms (本地时区, 与录像条目 ISO 同基准)
+    const targetMs = new Date(`${timeSeekDate.value}T${timeSeekTime.value}`).getTime()
+    if (isNaN(targetMs)) {
+      ElMessage.error('时间格式无效')
+      return
+    }
+    // 3. 找覆盖段 (end 容差 +5s); 无覆盖取目标前最近段 (MP4 可任意 Range seek, 仍能精准定位)
+    const segs = recordings.value
+      .map(r => ({ r, s: Date.parse(r.startTime || ''), e: Date.parse(r.endTime || '') }))
+      .filter(x => !isNaN(x.s))
+      .sort((a, b) => a.s - b.s)
+    let hit = segs.find(x => x.s <= targetMs && targetMs <= x.e + 5000)
+    if (!hit && segs.length) {
+      const before = segs.filter(x => x.s <= targetMs)
+      hit = before.length ? before[before.length - 1] : segs[0]
+      ElMessage.info('无精确覆盖段，已定位到最近录像段')
+    }
+    if (!hit) {
+      ElMessage.warning('该时间段无录像记录')
+      return
+    }
+    // 4. 播放 + 精确定位 (ZLM: loadedmetadata 后 Range seek; GB28181: 设备从目标时刻开播)
+    await playSegment(hit.r, { startAtMs: targetMs })
+    timeSeekVisible.value = false
   } catch (e: any) {
-    ElMessage.error('预估失败: ' + (e.message || ''))
+    ElMessage.error('时间点定位失败: ' + (e?.message || ''))
+  } finally {
+    timeSeekLoading.value = false
   }
 }
+
+// [REC-STORAGE 2026-09-11] 存储预估已迁出 → SettingsView「存储预估」Tab (calculateStorage/estParams)
 
 onMounted(() => {
   fetchDevices()
   fetchSmartFilterOptions()
   startOfflineCheck()
+  loadRecAreaTree()  // [UI 2026-09-11] 区域树与设备主链解耦加载
   // [V4-X4 2026-07-08] 注册全局快捷键 + 全屏状态监听
   window.addEventListener('keydown', handleKeydown)
   document.addEventListener('fullscreenchange', onFullscreenChange)
@@ -1106,71 +1545,183 @@ onUnmounted(() => {
 <template>
   <div class="recording-view">
     <div style="display:flex;gap:16px;height:calc(100vh - 120px)">
-      <!-- 左侧: 设备通道树 -->
-      <el-card shadow="never" style="width:260px;flex-shrink:0">
-        <template #header>设备通道</template>
-        <el-select v-model="selectedDeviceId" placeholder="选择设备" style="width:100%;margin-bottom:12px">
-          <el-option v-for="d in devices" :key="d.id" :label="d.name" :value="d.id" />
-        </el-select>
-        <el-select v-model="selectedChannelId" placeholder="选择通道" style="width:100%">
-          <el-option v-for="ch in channels" :key="ch.id" :label="ch.name" :value="ch.id" />
-        </el-select>
-      </el-card>
+      <!-- 左侧: 设备通道树 + 录像查询面板 (设计图左侧栏布局) -->
+      <div class="rec-left-col">
+        <el-card shadow="never" class="rec-tree-card">
+          <template #header>设备通道</template>
+          <!-- [UI 2026-09-11] 通道目录树 (区域→设备→通道, 与视频预览 LiveView 同款) -->
+          <el-input
+            v-model="recTreeFilter"
+            placeholder="筛选设备/通道..."
+            size="small"
+            clearable
+            style="margin-bottom:8px"
+          >
+            <template #prefix><el-icon><Search /></el-icon></template>
+          </el-input>
+          <el-scrollbar class="rec-tree-scroll">
+            <el-tree
+              ref="recTreeRef"
+              :data="recTreeData"
+              node-key="key"
+              :props="{ label: 'label', children: 'children' }"
+              default-expand-all
+              :expand-on-click-node="false"
+              :filter-node-method="filterRecTreeNode"
+              highlight-current
+              empty-text="暂无区域/设备/通道"
+              class="rec-tree"
+              @node-click="onRecNodeClick"
+            >
+              <template #default="{ data }">
+                <div class="rt-node" :class="['rt-' + data.type]">
+                  <span class="rt-label" :title="data.label">{{ data.label }}</span>
+                  <span v-if="data.type === 'device'" class="rt-badge">{{ recDevChannelCount(data) }}</span>
+                </div>
+              </template>
+            </el-tree>
+          </el-scrollbar>
+        </el-card>
 
-      <!-- 右侧 -->
-      <div style="flex:1;display:flex;flex-direction:column;gap:16px">
-        <!-- 录像源切换 + 日期选择 + 查询 -->
-        <el-card shadow="never">
-          <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
-            <el-radio-group v-model="recordingSource" size="small" style="margin-bottom:0">
-              <el-radio-button value="device">设备录像</el-radio-button>
-              <el-radio-button value="local">本地录像</el-radio-button>
-              <el-radio-button value="smart">智能检索</el-radio-button>
-              <el-radio-button value="schedule">录像计划</el-radio-button>
-              <el-radio-button value="storage">存储预估</el-radio-button>
-            </el-radio-group>
-            <el-tag v-if="isOffline" type="warning" size="small" style="margin-left:4px">离线模式</el-tag>
-            <span>日期:</span>
-            <el-date-picker v-model="selectedDate" type="date" value-format="YYYY-MM-DD" placeholder="选择日期" />
-            <el-button v-if="recordingSource === 'device'" type="primary" @click="fetchRecordings" :loading="loading">查询设备录像</el-button>
-            <el-button v-if="recordingSource === 'device'" size="small" @click="openWatermarkDialog">水印设置</el-button>
-            <el-button v-if="recordingSource === 'device'" size="small" @click="segmentDownloadVisible = true">片段下载</el-button>
-            <el-button v-if="recordingSource === 'schedule'" type="primary" @click="fetchSchedules" :loading="scheduleLoading">加载计划</el-button>
-            <el-button v-if="recordingSource === 'schedule'" type="success" size="small" @click="openScheduleDialog()">+ 新增计划</el-button>
-            <el-button v-if="recordingSource === 'storage'" type="primary" @click="calculateStorage">计算预估</el-button>
-            <el-button v-if="recordingSource === 'local'" type="primary" @click="fetchLocalRecordings" :loading="localLoading">查询本地录像</el-button>
+        <!-- 查询面板 (设计图: 已选择/全部录像/中心储存/起止时间/查询/录像下载) -->
+        <el-card shadow="never" class="rec-query-card">
+          <template #header>录像查询</template>
+          <div class="qp-selected">
+            <div class="qp-label">已选择</div>
+            <div class="qp-value" :title="qpDeviceLabel">{{ qpDeviceLabel }}</div>
+            <div class="qp-sub" :title="qpChannelLabel">{{ qpChannelLabel }}</div>
+          </div>
+          <el-radio-group v-model="recordingSource" size="small" class="qp-block">
+            <el-radio-button value="device">设备录像</el-radio-button>
+            <el-radio-button value="local">本地录像</el-radio-button>
+          </el-radio-group>
+          <el-select v-model="recordTypeFilter" size="small" class="qp-block">
+            <el-option label="全部录像" value="all" />
+            <el-option label="中心储存" value="zlm" />
+            <el-option label="设备存储" value="gb28181" />
+          </el-select>
+          <el-date-picker v-model="selectedDate" type="date" value-format="YYYY-MM-DD" placeholder="选择日期" size="small" class="qp-block" />
+          <el-button type="primary" class="qp-block-btn" :loading="loading || localLoading" @click="onQueryClick">查询</el-button>
+          <el-button class="qp-block-btn" :disabled="recordingSource !== 'device' || !filteredRecordings.length" @click="batchDownload">录像下载</el-button>
+          <div class="qp-links">
+            <el-link type="primary" :underline="false" @click="openTimeSeek">按时间点观看</el-link>
+            <el-link type="primary" :underline="false" @click="segmentDownloadVisible = true">片段下载</el-link>
+            <el-link type="primary" :underline="false" @click="openWatermarkDialog">水印设置</el-link>
+            <el-link type="primary" :underline="false" @click="smartDrawerVisible = true">AI 智能检索</el-link>
+          </div>
+          <el-tag v-if="isOffline" type="warning" size="small" style="margin-top:8px">离线模式</el-tag>
+        </el-card>
+      </div>
+
+      <!-- 主区: 回放播放器 + 时间轴 + 控制条 + 片段列表 (设计图中部/底部布局) -->
+      <div style="flex:1;display:flex;flex-direction:column;gap:12px;min-width:0">
+        <!-- 播放器 (常驻: 未播放时显示空态提示) -->
+        <el-card shadow="never" class="player-card">
+          <template #header>
+            <div style="display:flex;justify-content:space-between;align-items:center">
+              <div style="display:flex;align-items:center;gap:8px">
+                <span>{{ recordingSource === 'local' ? '本地回放' : '设备回放' }}</span>
+                <el-tag v-if="recordingSource === 'device' && recordTypeFilter === 'zlm'" size="small" type="success">中心储存</el-tag>
+                <el-tag v-else-if="recordingSource === 'device' && recordTypeFilter === 'gb28181'" size="small">设备存储</el-tag>
+              </div>
+              <div style="display:flex;gap:8px;align-items:center">
+                <el-select v-if="recordingSource === 'device'" v-model="playbackFormat" size="small" style="width:110px">
+                  <el-option v-for="f in FORMAT_OPTIONS" :key="f.value" :label="f.label" :value="f.value" />
+                </el-select>
+                <el-button size="small" :icon="Search" @click="smartDrawerVisible = true">AI 智能检索</el-button>
+              </div>
+            </div>
+          </template>
+          <!-- [V4-X4] 全屏容器 + 进度条 + 时间轴 + 控制条 -->
+          <div ref="videoContainerRef" class="video-container">
+            <video
+              ref="videoRef"
+              autoplay muted playsinline
+              class="player-video"
+              @loadedmetadata="onLoadedMetadata"
+              @timeupdate="onTimeUpdate"
+              @ended="stopPlay"
+            />
+            <div v-if="!isPlaying" class="player-empty">
+              <div>请选择左侧通道并点击「查询」</div>
+              <div style="font-size:12px;margin-top:4px">点击片段列表或时间轴上的蓝色录像块开始回放</div>
+            </div>
+            <!-- 进度条 + 时间显示 -->
+            <div class="player-progress-row">
+              <span class="player-time">{{ formatHMS(currentTime) }}</span>
+              <el-slider
+                class="player-progress-slider"
+                :model-value="isSeeking ? seekValue : currentTime"
+                :max="duration || 0"
+                :step="1"
+                :show-tooltip="false"
+                @change="onSeekChange"
+                @input="onSeekChange"
+                @start="onSeekStart"
+                @end="onSeekEnd"
+              />
+              <span class="player-time">{{ formatHMS(duration) }}</span>
+            </div>
+            <!-- 24小时时间轴 (设计图: 播放器底部; 蓝色块=录像段, 可点击选段) -->
+            <canvas v-if="recordingSource === 'device'" ref="canvasRef" class="player-timeline" @click="handleTimelineClick" />
+            <!-- 控制条 (设计图: 上一段/播放暂停/下一段 + 回放钟 + 倍速 + 停止/全屏) -->
+            <div class="player-controls">
+              <div class="pc-group">
+                <el-button size="small" :icon="DArrowLeft" text :disabled="!filteredRecordings.length" title="上一段" @click="playPrevSegment" />
+                <el-button size="small" :icon="isPaused ? VideoPlay : VideoPause" type="primary" circle :disabled="!isPlaying" title="暂停/恢复" @click="togglePause" />
+                <el-button size="small" :icon="DArrowRight" text :disabled="!filteredRecordings.length" title="下一段" @click="playNextSegment" />
+              </div>
+              <div class="pc-clock" title="回放钟 (段起点+进度)">{{ playbackClockLabel }}</div>
+              <div class="pc-group">
+                <el-button-group size="small" class="speed-btn-group">
+                  <el-button v-for="spd in [0.5, 1, 2, 4, 8, 16]" :key="spd"
+                    :type="playbackSpeed === spd ? 'primary' : 'default'"
+                    @click="changeSpeed(spd)">
+                    {{ spd }}x
+                  </el-button>
+                </el-button-group>
+              </div>
+              <div class="pc-group">
+                <el-button size="small" :disabled="!isPlaying" @click="stopPlay">停止</el-button>
+                <el-button size="small" :icon="FullScreen" @click="toggleFullscreen">{{ isFullscreen ? '退出全屏' : '全屏' }}</el-button>
+              </div>
+            </div>
+          </div>
+          <!-- 快捷键提示 -->
+          <div class="player-hint">
+            💡 快捷键: <kbd>空格</kbd> 暂停/播放 · <kbd>←/→</kbd> 快退/快进 5s · <kbd>Shift+←/→</kbd> 30s
           </div>
         </el-card>
 
-        <!-- 时间轴（仅设备录像模式） -->
-        <el-card v-if="recordingSource === 'device'" shadow="never">
-          <template #header>24小时时间轴</template>
-          <canvas ref="canvasRef" style="width:100%;height:40px;cursor:pointer" @click="handleTimelineClick" />
-        </el-card>
-
-        <!-- 设备录像片段列表 -->
-        <el-card v-if="recordingSource === 'device'" shadow="never" style="flex:1;overflow:auto">
-          <template #header>录像片段 ({{ recordings.length }})</template>
-          <el-table :data="recordings" v-loading="loading" stripe size="small">
-            <el-table-column label="开始时间" width="100">
-              <template #default="{ row }">{{ row.startTime?.split('T')[1]?.substring(0, 8) || row.startTime }}</template>
-            </el-table-column>
-            <el-table-column label="结束时间" width="100">
-              <template #default="{ row }">{{ row.endTime?.split('T')[1]?.substring(0, 8) || row.endTime }}</template>
-            </el-table-column>
-            <el-table-column label="时长" width="120">
-              <template #default="{ row }">{{ formatDuration(row.duration) }}</template>
-            </el-table-column>
-            <el-table-column label="大小" width="100">
-              <template #default="{ row }">{{ formatSize(row.fileSize) }}</template>
-            </el-table-column>
-            <el-table-column label="操作" width="160">
-              <template #default="{ row }">
-                <el-button type="primary" size="small" @click="playSegment(row)">播放</el-button>
-                <el-button size="small" @click="downloadSegment(row)">下载</el-button>
-              </template>
-            </el-table-column>
-          </el-table>
+        <!-- 片段列表 (设计图时间轴录像块明细; 紧凑行卡片替代 6 列表格) -->
+        <el-card v-if="recordingSource === 'device'" shadow="never" class="seg-list-card">
+          <template #header>
+            <div style="display:flex;justify-content:space-between;align-items:center">
+              <span>录像片段 ({{ filteredRecordings.length }})</span>
+              <el-button size="small" type="primary" plain :disabled="!filteredRecordings.length" @click="batchDownload">批量下载</el-button>
+            </div>
+          </template>
+          <el-scrollbar class="seg-scroll">
+            <div
+              v-for="rec in filteredRecordings"
+              :key="rec.id"
+              class="seg-row"
+              :class="{ active: rec.id === currentRecId }"
+              @click="playSegment(rec)"
+            >
+              <span class="seg-range">{{ segRangeLabel(rec) }}</span>
+              <span class="seg-meta">{{ formatDuration(rec.duration) }}</span>
+              <span class="seg-meta">{{ formatSize(rec.fileSize) }}</span>
+              <span class="seg-tag" :class="rec.source === 'zlm' ? 'seg-tag-center' : 'seg-tag-device'">
+                {{ rec.source === 'zlm' ? '中心储存' : '设备存储' }}
+              </span>
+              <span class="seg-actions" @click.stop>
+                <el-button size="small" type="primary" @click="playSegment(rec)">播放</el-button>
+                <el-button size="small" @click="downloadSegment(rec)">下载</el-button>
+              </span>
+            </div>
+            <el-empty v-if="!filteredRecordings.length && !loading" description="暂无录像片段" :image-size="60" />
+          </el-scrollbar>
         </el-card>
 
         <!-- 本地录像片段列表 -->
@@ -1204,329 +1755,15 @@ onUnmounted(() => {
           </el-table>
         </el-card>
 
-        <!-- AI 智能检索面板 -->
-        <el-card v-if="recordingSource === 'smart'" shadow="never">
-          <template #header>🧠 AI 智能检索条件</template>
-          <div class="smart-search-form">
-            <div class="smart-form-row">
-              <span class="smart-label">告警类型:</span>
-              <el-select v-model="smartQuery.alarm_type" placeholder="全部" clearable style="width:160px">
-                <el-option v-for="t in smartAlarmTypes" :key="t" :label="t" :value="t" />
-              </el-select>
-              <span class="smart-label">目标类型:</span>
-              <el-select v-model="smartQuery.target_type" placeholder="全部" clearable style="width:160px">
-                <el-option v-for="t in smartTargetTypes" :key="t" :label="t" :value="t" />
-              </el-select>
-              <span class="smart-label">通道:</span>
-              <el-select v-model="smartQuery.channel_id" placeholder="全部" clearable style="width:160px">
-                <el-option v-for="ch in channels" :key="ch.id" :label="ch.name" :value="ch.id" />
-              </el-select>
-            </div>
-            <div class="smart-form-row">
-              <span class="smart-label">开始时间:</span>
-              <el-date-picker v-model="smartQuery.start_time" type="datetime" value-format="YYYY-MM-DDTHH:mm:ss"
-                placeholder="开始时间" style="width:200px" />
-              <span class="smart-label">结束时间:</span>
-              <el-date-picker v-model="smartQuery.end_time" type="datetime" value-format="YYYY-MM-DDTHH:mm:ss"
-                placeholder="结束时间" style="width:200px" />
-            </div>
-            <div class="smart-form-row">
-              <span class="smart-label">最低置信度: {{ Math.round(smartQuery.min_confidence * 100) }}%</span>
-              <el-slider v-model="smartQuery.min_confidence" :min="0" :max="1" :step="0.01"
-                style="width:240px;margin:0 16px" :format-tooltip="(v: number) => Math.round(v*100)+'%'" />
-              <el-button type="primary" @click="doSmartSearch" :loading="smartLoading">🔍开始检索</el-button>
-            </div>
-          </div>
-        </el-card>
+        <!-- [REC-FUSE 2026-09-11] 智能检索面板已迁入右侧抽屉 (左栏/播放器卡头部「AI 智能检索」按钮打开);
+             录像计划与存储预估已整体迁出 → SettingsView 对应 Tab (计划 CRUD 复用 api/recording.ts 既有 4 个 API) -->
 
-        <!-- AI 检索时间轴 -->
-        <el-card v-if="recordingSource === 'smart' && smartResults.length" shadow="never">
-          <template #header>AI 检测时间分布 (24小时)——红色为检测时间点</template>
-          <canvas ref="canvasRef" style="width:100%;height:40px" />
-        </el-card>
-
-        <!-- AI 检索结果列表 -->
-        <el-card v-if="recordingSource === 'smart'" shadow="never" style="flex:1;overflow:auto">
-          <template #header>检索结果 ({{ smartTotal }})</template>
-          <el-table :data="smartResults" v-loading="smartLoading" stripe size="small" empty-text="暂无检索结果，请设置条件后点击「开始检索」">
-            <el-table-column label="检测时间" width="160">
-              <template #default="{ row }">{{ row.timestamp?.replace('T', ' ')?.substring(0, 19) || row.timestamp }}</template>
-            </el-table-column>
-            <el-table-column label="通道" width="120">
-              <template #default="{ row }">{{ row.channel_id }}</template>
-            </el-table-column>
-            <el-table-column label="告警类型" width="120">
-              <template #default="{ row }">
-                <el-tag type="danger" size="small">{{ row.alarm_type }}</el-tag>
-              </template>
-            </el-table-column>
-            <el-table-column label="目标类型" width="100">
-              <template #default="{ row }">{{ row.target_type }}</template>
-            </el-table-column>
-            <el-table-column label="置信度" width="90">
-              <template #default="{ row }">
-                <el-progress :percentage="Math.round(row.confidence * 100)" :status="row.confidence >= 0.8 ? 'success' : row.confidence >= 0.6 ? 'warning' : 'exception'" :stroke-width="8" />
-              </template>
-            </el-table-column>
-            <el-table-column label="缩略图" width="80">
-              <template #default="{ row }">
-                <el-image v-if="row.snapshot_path" :src="row.snapshot_path" style="width:60px;height:40px;object-fit:cover;border-radius:3px" :preview-src-list="[row.snapshot_path]" />
-                <span v-else style="color:#666;font-size:11px">无截图</span>
-              </template>
-            </el-table-column>
-            <el-table-column label="操作" width="160">
-              <template #default="{ row }">
-                <el-button type="primary" size="small" @click="playSmartResult(row)" :disabled="!row.recording_id">播放关联录像</el-button>
-              </template>
-            </el-table-column>
-          </el-table>
-          <!-- 分页 -->
-          <div v-if="smartTotal > smartQuery.page_size" style="margin-top:12px;text-align:right">
-            <el-pagination
-              v-model:current-page="smartQuery.page"
-              :page-size="smartQuery.page_size"
-              :total="smartTotal"
-              layout="prev, pager, next"
-              @current-change="doSmartSearch"
-            />
-          </div>
-        </el-card>
-
-        <!-- [P0-1] 录像计划列表 -->
-        <el-card v-if="recordingSource === 'schedule'" shadow="never" style="flex:1;overflow:auto">
-          <template #header>录像计划 ({{ schedules.length }})
-            <span style="font-size:12px;color:#909399;margin-left:8px">按通道/时段/事件触发自动启停录像</span>
-          </template>
-          <el-table :data="schedules" v-loading="scheduleLoading" stripe size="small" empty-text="暂无计划，点击「+ 新增计划」创建">
-            <el-table-column label="计划名称" width="140">
-              <template #default="{ row }">{{ row.schedule_name || `#${row.id}` }}</template>
-            </el-table-column>
-            <el-table-column label="通道" width="120">
-              <template #default="{ row }">{{ row.channel_id }}</template>
-            </el-table-column>
-            <el-table-column label="类型" width="100">
-              <template #default="{ row }">
-                <el-tag size="small" :type="row.schedule_type === 'continuous' ? 'success' : row.schedule_type === 'event' ? 'danger' : 'primary'">
-                  {{ row.schedule_type === 'continuous' ? '连续录像' : row.schedule_type === 'event' ? '事件触发' : '分时段' }}
-                </el-tag>
-              </template>
-            </el-table-column>
-            <el-table-column label="时间段" min-width="200">
-              <template #default="{ row }">
-                <span v-if="row.schedule_type === 'continuous'">24小时不间断</span>
-                <span v-else-if="row.schedule_type === 'event'">触发类型: {{ row.event_types || '(未设置)' }}</span>
-                <div v-else>
-                  <el-tag v-for="(seg, i) in (row.time_segments || [])" :key="i" size="small" style="margin:2px">
-                    {{ DAY_LABELS[seg.day] || `D${seg.day}` }} {{ seg.start }}-{{ seg.end }}
-                  </el-tag>
-                </div>
-              </template>
-            </el-table-column>
-            <el-table-column label="预录/延录" width="100">
-              <template #default="{ row }">{{ row.pre_record_seconds }}s / {{ row.post_record_seconds }}s</template>
-            </el-table-column>
-            <el-table-column label="状态" width="80">
-              <template #default="{ row }">
-                <el-switch :model-value="row.enabled" @change="toggleScheduleEnabled(row)" />
-              </template>
-            </el-table-column>
-            <el-table-column label="操作" width="130">
-              <template #default="{ row }">
-                <el-button size="small" @click="openScheduleDialog(row)">编辑</el-button>
-                <el-button type="danger" size="small" @click="removeSchedule(row)">删除</el-button>
-              </template>
-            </el-table-column>
-          </el-table>
-        </el-card>
-
-        <!-- [P2-1] 存储容量预估 -->
-        <el-card v-if="recordingSource === 'storage'" shadow="never">
-          <template #header>存储容量预估计算器</template>
-          <div style="display:flex;gap:32px;flex-wrap:wrap;align-items:flex-start">
-            <div style="display:flex;flex-direction:column;gap:16px">
-              <div style="display:flex;align-items:center;gap:12px">
-                <span style="width:100px">通道数量:</span>
-                <el-input-number v-model="estParams.channel_count" :min="1" :max="256" />
-              </div>
-              <div style="display:flex;align-items:center;gap:12px">
-                <span style="width:100px">每日录像时长:</span>
-                <el-input-number v-model="estParams.hours_per_day" :min="1" :max="24" /> 小时
-              </div>
-              <div style="display:flex;align-items:center;gap:12px">
-                <span style="width:100px">码率:</span>
-                <el-input-number v-model="estParams.bitrate_kbps" :min="256" :max="16384" :step="512" /> kbps
-              </div>
-              <div style="display:flex;align-items:center;gap:12px">
-                <span style="width:100px">保留天数:</span>
-                <el-input-number v-model="estParams.retention_days" :min="1" :max="365" /> 天
-              </div>
-            </div>
-            <div v-if="storageEstimate" class="storage-result">
-              <div class="storage-row">
-                <span class="storage-label">单通道/天</span>
-                <span class="storage-value">{{ storageEstimate.gb_per_channel_per_day }} GB</span>
-              </div>
-              <div class="storage-row highlight">
-                <span class="storage-label">总容量需求</span>
-                <span class="storage-value">{{ storageEstimate.total_tb }} TB</span>
-              </div>
-              <div class="storage-row">
-                <span class="storage-label">含20%冗余</span>
-                <span class="storage-value">{{ storageEstimate.recommended_disk_tb }} TB</span>
-              </div>
-              <div class="storage-formula">
-                公式: 码率 ÷ 8 × 3600 × 小时/天 × 通道数 × 天数
-              </div>
-            </div>
-          </div>
-        </el-card>
-
-        <!-- 播放器 -->
-        <el-card v-if="isPlaying" shadow="never">
-          <template #header>
-            <div style="display:flex;justify-content:space-between;align-items:center">
-              <div style="display:flex;align-items:center;gap:8px">
-                <span>{{ recordingSource === 'local' ? '本地回放' : '回放播放' }}</span>
-                <el-select v-if="recordingSource === 'device'" v-model="playbackFormat" size="small" style="width:110px">
-                  <el-option v-for="f in FORMAT_OPTIONS" :key="f.value" :label="f.label" :value="f.value" />
-                </el-select>
-              </div>
-              <div style="display:flex;gap:8px;align-items:center">
-                <el-button v-if="recordingSource === 'device'" size="small" @click="togglePause">
-                  {{ isPaused ? '恢复' : '暂停' }}
-                </el-button>
-                <el-button-group size="small" class="speed-btn-group">
-                  <el-button v-for="spd in [0.5, 1, 2, 4, 8, 16]" :key="spd"
-                    :type="playbackSpeed === spd ? 'primary' : 'default'"
-                    @click="changeSpeed(spd)">
-                    {{ spd }}x
-                  </el-button>
-                </el-button-group>
-                <el-button size="small" @click="stopPlay">停止</el-button>
-                <!-- [V4-X4 2026-07-08] 全屏按钮 -->
-                <el-button size="small" @click="toggleFullscreen">
-                  {{ isFullscreen ? '退出全屏' : '全屏' }}
-                </el-button>
-              </div>
-            </div>
-          </template>
-          <!-- [V4-X4 2026-07-08] 全屏容器 + 进度条 + 时间显示 -->
-          <div ref="videoContainerRef" class="video-container">
-            <video
-              ref="videoRef"
-              autoplay muted playsinline
-              style="width:100%;max-height:360px;background:#000;display:block"
-              @loadedmetadata="onLoadedMetadata"
-              @timeupdate="onTimeUpdate"
-              @ended="stopPlay"
-            />
-            <!-- 进度条 + 时间显示 -->
-            <div class="player-progress-row">
-              <span class="player-time">{{ formatHMS(currentTime) }}</span>
-              <el-slider
-                class="player-progress-slider"
-                :model-value="isSeeking ? seekValue : currentTime"
-                :max="duration || 0"
-                :step="1"
-                :show-tooltip="false"
-                @change="onSeekChange"
-                @input="onSeekChange"
-                @start="onSeekStart"
-                @end="onSeekEnd"
-              />
-              <span class="player-time">{{ formatHMS(duration) }}</span>
-            </div>
-          </div>
-          <!-- [V4-X4 2026-07-08] 快捷键提示 -->
-          <div class="player-hint">
-            💡 快捷键: <kbd>空格</kbd> 暂停/播放 · <kbd>←/→</kbd> 快退/快进 5s · <kbd>Shift+←/→</kbd> 30s
-          </div>
-        </el-card>
+        <!-- [REC-STORAGE 2026-09-11] 存储预估已迁出 → SettingsView「存储预估」Tab -->
+        <!-- [REC-UI 2026-09-11] 旧版独立播放器卡已移除: 播放器改为上方常驻卡片 (v-if="isPlaying" 不再需要) -->
       </div>
     </div>
 
-    <!-- [P0-1] 录像计划编辑弹窗 -->
-    <el-dialog v-model="scheduleDialogVisible" :title="editingSchedule?.id ? '编辑录像计划' : '新增录像计划'" width="640px">
-      <el-form v-if="editingSchedule" label-width="100px" size="default">
-        <el-form-item label="计划名称">
-          <el-input v-model="editingSchedule.schedule_name" placeholder="如: 工作日白天录像" />
-        </el-form-item>
-        <el-form-item label="通道">
-          <el-input v-model="editingSchedule.channel_id" placeholder="通道ID" :disabled="!!editingSchedule.id" />
-        </el-form-item>
-        <el-form-item label="录像类型">
-          <el-radio-group v-model="editingSchedule.schedule_type">
-            <el-radio value="continuous">24小时连续</el-radio>
-            <el-radio value="time_segment">分时段</el-radio>
-            <el-radio value="event">事件触发</el-radio>
-          </el-radio-group>
-        </el-form-item>
-        <el-form-item v-if="editingSchedule.schedule_type === 'event'" label="触发类型">
-          <el-input v-model="editingSchedule.event_types" placeholder="如: fire_smoke,perimeter_intrusion" />
-        </el-form-item>
-        <el-form-item v-if="editingSchedule.schedule_type === 'time_segment'" label="时间段">
-          <div v-for="(seg, i) in editingSchedule.time_segments" :key="i" style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
-            <el-select v-model="seg.day" style="width:80px">
-              <el-option v-for="(label, di) in DAY_LABELS" :key="di" :label="label" :value="di" />
-            </el-select>
-            <el-time-picker v-model="seg.start" value-format="HH:mm" format="HH:mm" placeholder="开始" style="width:120px" />
-            <span>—</span>
-            <el-time-picker v-model="seg.end" value-format="HH:mm" format="HH:mm" placeholder="结束" style="width:120px" />
-            <el-button type="danger" size="small" circle @click="removeTimeSegment(i)">−</el-button>
-          </div>
-          <el-button size="small" @click="addTimeSegment">+ 添加时段</el-button>
-        </el-form-item>
-        <el-form-item label="码流类型">
-          <el-radio-group v-model="editingSchedule.stream_type">
-            <el-radio value="main">主码流</el-radio>
-            <el-radio value="sub">子码流</el-radio>
-          </el-radio-group>
-        </el-form-item>
-        <el-form-item label="预录时间">
-          <el-input-number v-model="editingSchedule.pre_record_seconds" :min="0" :max="300" /> 秒
-        </el-form-item>
-        <el-form-item label="延录时间">
-          <el-input-number v-model="editingSchedule.post_record_seconds" :min="0" :max="600" /> 秒
-        </el-form-item>
-        <el-form-item label="启用">
-          <el-switch v-model="editingSchedule.enabled" />
-        </el-form-item>
-        <!-- [P2-3] 节假日排除策略 -->
-        <el-form-item label="节假日排除">
-          <el-switch v-model="editingSchedule.holiday_exclusion!.enabled" />
-          <span style="margin-left:8px;color:#909399;font-size:12px">启用后指定日期不录像</span>
-        </el-form-item>
-        <el-form-item v-if="editingSchedule.holiday_exclusion?.enabled" label="排除日期">
-          <el-input
-            v-model="editingSchedule.holiday_exclusion.holiday_name"
-            placeholder="节假日名称（如：春节）"
-            style="margin-bottom:8px"
-          />
-          <el-select
-            v-model="editingSchedule.holiday_exclusion.holiday_dates"
-            multiple
-            filterable
-            allow-create
-            default-first-option
-            placeholder="选择或输入日期 (YYYY-MM-DD)"
-            style="width:100%"
-          >
-            <el-option label="元旦 01-01" value="2026-01-01" />
-            <el-option label="春节 除夕" value="2026-02-09" />
-            <el-option label="春节 初一" value="2026-02-10" />
-            <el-option label="清明节" value="2026-04-04" />
-            <el-option label="劳动节" value="2026-05-01" />
-            <el-option label="端午节" value="2026-06-10" />
-            <el-option label="中秋节" value="2026-09-17" />
-            <el-option label="国庆节" value="2026-10-01" />
-          </el-select>
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="scheduleDialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="saveSchedule">保存</el-button>
-      </template>
-    </el-dialog>
+    <!-- [REC-SCHEDULE 2026-09-11] 录像计划编辑弹窗已迁出 → SettingsView「录像计划」Tab -->
 
     <!-- [P0-2] 水印配置弹窗 -->
     <el-dialog v-model="watermarkDialogVisible" title="录像水印配置" width="480px">
@@ -1587,6 +1824,118 @@ onUnmounted(() => {
         <el-button type="primary" @click="doSegmentDownload">下载片段</el-button>
       </template>
     </el-dialog>
+
+    <!-- [REC-TSEEK 2026-09-11] 按时间点观看弹窗 (与片段下载同级) -->
+    <el-dialog v-model="timeSeekVisible" title="按时间点观看" width="420px">
+      <el-form label-width="90px">
+        <el-form-item label="设备">
+          <el-input :model-value="selectedDeviceId" disabled />
+        </el-form-item>
+        <el-form-item label="通道">
+          <el-input :model-value="selectedChannelId" disabled />
+        </el-form-item>
+        <el-form-item label="日期">
+          <el-date-picker v-model="timeSeekDate" type="date" value-format="YYYY-MM-DD"
+            placeholder="选择日期" style="width:100%" />
+        </el-form-item>
+        <el-form-item label="时间点">
+          <el-time-picker v-model="timeSeekTime" value-format="HH:mm:ss" format="HH:mm:ss"
+            placeholder="HH:mm:ss" style="width:100%" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="timeSeekVisible = false">取消</el-button>
+        <el-button type="primary" :loading="timeSeekLoading" @click="doTimeSeek">定位播放</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- [REC-FUSE 2026-09-11] AI 智能检索常驻抽屉 (原 Tab 面板迁入; 结果一键「跳转到该时刻回放」复用 playSmartResult 融合链路) -->
+    <el-drawer v-model="smartDrawerVisible" title="AI 智能检索" :size="720" direction="rtl">
+      <div class="smart-drawer-body">
+        <div class="smart-search-form">
+          <div class="smart-form-row">
+            <span class="smart-label">告警类型:</span>
+            <el-select v-model="smartQuery.alarm_type" placeholder="全部" clearable style="width:150px">
+              <el-option v-for="t in smartAlarmTypes" :key="t" :label="t" :value="t" />
+            </el-select>
+            <span class="smart-label">目标类型:</span>
+            <el-select v-model="smartQuery.target_type" placeholder="全部" clearable style="width:150px">
+              <el-option v-for="t in smartTargetTypes" :key="t" :label="t" :value="t" />
+            </el-select>
+            <span class="smart-label">通道:</span>
+            <el-select v-model="smartQuery.channel_id" placeholder="全部" clearable style="width:150px">
+              <el-option v-for="ch in channels" :key="ch.id" :label="ch.name" :value="ch.id" />
+            </el-select>
+          </div>
+          <div class="smart-form-row">
+            <span class="smart-label">开始时间:</span>
+            <el-date-picker v-model="smartQuery.start_time" type="datetime" value-format="YYYY-MM-DDTHH:mm:ss"
+              placeholder="开始时间" style="width:190px" />
+            <span class="smart-label">结束时间:</span>
+            <el-date-picker v-model="smartQuery.end_time" type="datetime" value-format="YYYY-MM-DDTHH:mm:ss"
+              placeholder="结束时间" style="width:190px" />
+          </div>
+          <div class="smart-form-row">
+            <span class="smart-label">最低置信度: {{ Math.round(smartQuery.min_confidence * 100) }}%</span>
+            <el-slider v-model="smartQuery.min_confidence" :min="0" :max="1" :step="0.01"
+              style="width:200px;margin:0 16px" :format-tooltip="(v: number) => Math.round(v*100)+'%'" />
+            <el-button type="primary" @click="doSmartSearch" :loading="smartLoading">开始检索</el-button>
+          </div>
+        </div>
+
+        <!-- AI 检测时间分布 (24小时) -->
+        <el-card v-if="smartResults.length" shadow="never" class="smart-dist-card">
+          <template #header>AI 检测时间分布 (24小时)——红色为检测时间点</template>
+          <canvas ref="smartCanvasRef" class="smart-dist-canvas" />
+        </el-card>
+
+        <!-- 检索结果 (一键跳转到该时刻回放) -->
+        <el-card shadow="never" class="smart-result-card">
+          <template #header>检索结果 ({{ smartTotal }})</template>
+          <el-table :data="smartResults" v-loading="smartLoading" stripe size="small" empty-text="暂无检索结果，请设置条件后点击「开始检索」">
+            <el-table-column label="检测时间" width="160">
+              <template #default="{ row }">{{ fmtSmartTs(row.timestamp) }}</template>
+            </el-table-column>
+            <el-table-column label="通道" width="160" show-overflow-tooltip>
+              <template #default="{ row }">{{ fmtSmartChannel(row) }}</template>
+            </el-table-column>
+            <el-table-column label="告警类型" width="110">
+              <template #default="{ row }">
+                <el-tag type="danger" size="small">{{ row.alarm_type }}</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="目标类型" width="90">
+              <template #default="{ row }">{{ row.target_type }}</template>
+            </el-table-column>
+            <el-table-column label="置信度" width="80">
+              <template #default="{ row }">
+                <el-progress :percentage="Math.round(row.confidence * 100)" :status="row.confidence >= 0.8 ? 'success' : row.confidence >= 0.6 ? 'warning' : 'exception'" :stroke-width="8" />
+              </template>
+            </el-table-column>
+            <el-table-column label="缩略图" width="70">
+              <template #default="{ row }">
+                <el-image v-if="row.snapshot_path" :src="row.snapshot_path" style="width:56px;height:36px;object-fit:cover;border-radius:3px" :preview-src-list="[row.snapshot_path]" />
+                <span v-else style="color:#666;font-size:11px">无截图</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="操作" width="130" fixed="right">
+              <template #default="{ row }">
+                <el-button type="primary" size="small" @click="playSmartResult(row)">跳转到该时刻回放</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+          <div v-if="smartTotal > smartQuery.page_size" style="margin-top:12px;text-align:right">
+            <el-pagination
+              v-model:current-page="smartQuery.page"
+              :page-size="smartQuery.page_size"
+              :total="smartTotal"
+              layout="prev, pager, next"
+              @current-change="doSmartSearch"
+            />
+          </div>
+        </el-card>
+      </div>
+    </el-drawer>
   </div>
 </template>
 
@@ -1661,35 +2010,64 @@ onUnmounted(() => {
   margin: 0 2px;
 }
 
-/* [P2-1] 存储预估结果 */
-.storage-result {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  padding: 20px;
-  background: linear-gradient(135deg, #e8f5e9, #f3e5f5);
-  border-radius: 8px;
-  min-width: 280px;
+/* ── [REC-UI 2026-09-11] 设计图回放页: 左栏 / 查询面板 / 播放器卡 / 片段列表 / 检索抽屉 ── */
+.rec-left-col { width: 270px; min-width: 250px; display: flex; flex-direction: column; gap: 12px; }
+.rec-tree-card { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+.rec-tree-card :deep(.el-card__body) { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+.rec-tree-scroll { flex: 1; }
+
+/* 查询面板 (设计图: 已选择/全部录像/中心储存/日期/查询/录像下载) */
+.rec-query-card { flex-shrink: 0; }
+.qp-selected { background: var(--el-fill-color-light); border-radius: 4px; padding: 8px 10px; margin-bottom: 10px; }
+.qp-label { font-size: 12px; color: var(--el-text-color-secondary); }
+.qp-value { font-size: 13px; font-weight: 600; color: var(--el-text-color-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.qp-sub { font-size: 12px; color: var(--el-text-color-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.qp-block { width: 100%; margin-bottom: 10px; }
+.qp-block :deep(.el-radio-button) { flex: 1; }
+.qp-block :deep(.el-radio-button__inner) { width: 100%; }
+.qp-block-btn { display: flex; width: 100%; margin-left: 0 !important; margin-bottom: 10px; }
+.qp-links { display: flex; flex-wrap: wrap; gap: 6px 14px; }
+
+/* 播放器卡 (设计图中部) */
+.video-container { position: relative; }
+.player-video { width: 100%; min-height: 220px; max-height: 360px; background: #000; display: block; }
+.player-empty {
+  position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  color: #999; font-size: 14px; background: rgba(0, 0, 0, 0.9); pointer-events: none; text-align: center;
 }
-.storage-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 8px 0;
+.player-timeline { width: 100%; height: 40px; display: block; cursor: pointer; margin-top: 8px; }
+.player-controls { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 12px; background: rgba(0, 0, 0, 0.85); }
+.pc-group { display: flex; align-items: center; gap: 6px; }
+.pc-clock { color: #00D4AA; font-family: monospace; font-size: 14px; user-select: none; white-space: nowrap; }
+
+/* 片段列表 (设计图时间轴录像块明细紧凑行) */
+.seg-list-card { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+.seg-list-card :deep(.el-card__body) { flex: 1; display: flex; flex-direction: column; overflow: hidden; padding: 0; }
+.seg-scroll { flex: 1; min-height: 120px; }
+.seg-row { display: flex; align-items: center; gap: 12px; padding: 7px 12px; border-bottom: 1px solid var(--el-border-color-lighter); cursor: pointer; font-size: 12px; }
+.seg-row:hover { background: var(--el-fill-color-light); }
+.seg-row.active { background: var(--el-color-primary-light-9); box-shadow: inset 3px 0 0 var(--el-color-primary); }
+.seg-range { flex: 1; font-family: monospace; color: var(--el-text-color-primary); }
+.seg-meta { color: var(--el-text-color-secondary); width: 64px; text-align: right; }
+.seg-tag { font-size: 11px; padding: 0 6px; border-radius: 3px; flex-shrink: 0; }
+.seg-tag-center { color: #67c23a; background: rgba(103, 194, 58, 0.12); }
+.seg-tag-device { color: #409eff; background: rgba(64, 158, 255, 0.12); }
+.seg-actions { display: flex; gap: 6px; flex-shrink: 0; }
+
+/* AI 智能检索抽屉 */
+.smart-drawer-body { display: flex; flex-direction: column; gap: 12px; }
+.smart-dist-canvas { width: 100%; height: 40px; display: block; }
+
+/* ── [UI 2026-09-11] 通道目录树节点 (同 LiveView lt-node 视觉) ── */
+.rt-node { display: flex; align-items: center; gap: 6px; min-width: 0; flex: 1; padding-right: 4px; }
+.rt-node.rt-ungrouped > .rt-label { color: var(--el-text-color-secondary); }
+.rt-label {
+  font-size: 12px; color: var(--el-text-color-primary);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.storage-row.highlight {
-  font-size: 18px;
-  font-weight: bold;
-  color: #0066cc;
-  border-top: 1px solid #ddd;
-  border-bottom: 1px solid #ddd;
-  padding: 12px 0;
+.rt-badge {
+  font-size: 10px; color: var(--el-text-color-secondary); background: var(--el-fill-color);
+  padding: 0 6px; border-radius: 8px; flex-shrink: 0; line-height: 16px;
 }
-.storage-label { color: #606266; }
-.storage-value { font-weight: bold; }
-.storage-formula {
-  font-size: 11px;
-  color: #909399;
-  margin-top: 4px;
-}
+.rec-tree :deep(.el-tree-node__content) { height: 26px; }
 </style>

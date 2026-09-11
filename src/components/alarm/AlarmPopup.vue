@@ -101,6 +101,7 @@
                     v-if="currentAlarm.videoClipUrl"
                     :key="`pb-${currentAlarm?.id || 'none'}-${currentAlarm.videoClipUrl}`"
                     :src="currentAlarm.videoClipUrl" :channel-id="currentAlarm.channelId"
+                    :src-fallbacks="playbackFallbackUrls"
                     autoplay :show-controls="true"
                   />
                   <div v-else-if="isRecordingInProgress" class="alarm-popup__recording-state">
@@ -525,7 +526,7 @@ import {
 import { ACTION_TYPE_REVERSE_MAP } from '@/api/linkage'
 import { alarmApi } from '@/api/alarm'
 import { useAuthStore } from '@/stores/auth'  // [接警单号 2026-09-09] 处置提交带当前登录用户 (handled_by)
-import { queryRecordings, toLocalISOString, type DeviceRecording } from '@/api/recording'
+import { queryRecordings, toLocalISOString, recordUrlCandidates, type DeviceRecording } from '@/api/recording'
 import { recordingHttp } from '@/api/http'
 import { checkStreamAlive, stopStream } from '@/api/stream'
 import { useObjectLabel, type ObjectLabelMeta } from '@/composables/useObjectLabel'
@@ -704,7 +705,23 @@ function camDeviceLabel(b: CameraMapBinding): string {
 function camLabelOf(b: CameraMapBinding): string {
   return b.label || ''
 }
-watch(currentAlarm, () => clearPreviewOverride())
+watch(currentAlarm, (a) => {
+  clearPreviewOverride()
+  playbackFallbackUrls.value = []
+  // [FIX rec-direct-layer 2026-09-11] 直显路径立即补层: 告警自带 video_clip_url 常为
+  //   单层 /record/rtp/... (nginx 实测恒 404); 原逻辑要等 loadPlayback 证据接口返回
+  //   才修成双层 → MiniPlayer 先用死链播 3~4s (404 请求 + :key 变化重建闪烁,
+  //   run5 场景 b 实证 src 前 3 采样单层)。现弹窗一打开 (watch pre-flush, 早于首次
+  //   渲染) 即补双层, MiniPlayer 首帧即双层直链; loadPlayback 后续赋同值幂等。
+  const u = a?.videoClipUrl
+  if (u) {
+    const cands = recordUrlCandidates(u)
+    if (cands.length && cands[0] !== u) {
+      playbackFallbackUrls.value = cands.slice(1)
+      a.videoClipUrl = cands[0]
+    }
+  }
+})
 
 watch(currentAlarm, async (a) => {
   activeMapIdx.value = 0
@@ -818,12 +835,20 @@ async function confirmAppend() {
 const deviceRecordings = ref<DeviceRecording[]>([])
 const recordingsLoading = ref(false)
 const selectedRecording = ref<DeviceRecording | null>(null)
+// [POPUP-PLAYBACK 2026-09-11] 回放候选链的尾部回退 (MiniPlayer src 逐个尝试)
+const playbackFallbackUrls = ref<string[]>([])
 function loadPlayback() {
   if (!currentAlarm.value?.id) return
   recordingsLoading.value = true
   deviceRecordings.value = []
   alarmApi.getEvidence(currentAlarm.value.id).then((ev: any) => {
-    if (ev?.videoClipUrl) currentAlarm.value!.videoClipUrl = ev.videoClipUrl
+    if (ev?.videoClipUrl) {
+      // [FIX rec-layer 2026-09-11] 证据接口 video_clip.url 是单层 /record/rtp/... (实测
+      //   播放恒 404）；经 recordUrlCandidates 补齐双层同源作首选，失败链兜底。
+      const cands = recordUrlCandidates(ev.videoClipUrl)
+      playbackFallbackUrls.value = cands.slice(1)
+      currentAlarm.value!.videoClipUrl = cands[0]
+    }
     if (ev?.snapshotUrl && !currentAlarm.value!.snapshotUrl) currentAlarm.value!.snapshotUrl = ev.snapshotUrl
   }).catch(() => {}).finally(() => { recordingsLoading.value = false })
   if (currentAlarm.value.deviceId) {
@@ -838,8 +863,37 @@ function loadPlayback() {
     }).then((recs) => { deviceRecordings.value = recs }).catch(() => {})
   }
 }
+// [POPUP-PLAYBACK 2026-09-11] GB28181 设备录像 id 即磁盘绝对路径
+//   (/data/shield/record/record/rtp/...mp4); nginx ^~ /record/ alias
+//   /data/shield/record/ 静态直发 (206 Range + video/mp4 真机实测)
+//   → 可作浏览器直链兜底 (设备回放流失败时仍能播本地录像文件)
+function recordingMp4DirectUrl(rec: DeviceRecording): string {
+  const id = String(rec?.id || '')
+  if (!id.startsWith('/data/shield/record/') || !/\.mp4$/i.test(id)) return ''
+  return '/record/' + id.slice('/data/shield/record/'.length)
+}
+
+// [POPUP-PLAYBACK 2026-09-11] 黑屏修复: 原实现直取 result.urls.flv 原文
+//   (后端 ZLM 绝对地址 http://127.0.0.1:9080 = 设备本机 → 浏览器中指向用户
+//   自己的电脑, 死链) 且固定 flv 优先 (flv.js 不支持 H265), 全链无容错。
+//   现候选链委交 MiniPlayer src 模式: 统一归一化 + 逐候选回退:
+//   flv → hls → wsFlv → 录像文件直链 (mp4, 任何浏览器可走原生媒体栈);
+//   设备离线/回放流启动失败 (5002) 直接落直链, 无直链才明确报错。
 async function playSelectedRecording(rec: DeviceRecording) {
   selectedRecording.value = rec
+  playbackFallbackUrls.value = []
+  const mp4Direct = recordingMp4DirectUrl(rec)
+  // [FIX rec-play-url 2026-09-11] 磁盘路径 id (/data/shield/...) 无法拼 /play:
+  //   `/${id}/play` → `//data/shield/...` 被浏览器按 protocol-relative URL 解析
+  //   (host="data") → ERR_NAME_NOT_RESOLVED + "网络连接异常" 噪音 (探针实证)。
+  //   本地 zlm 录像 → 跳过 /play 直接走直链候选链 (双层同源 nginx 206)。
+  if (mp4Direct) {
+    const cands = recordUrlCandidates(mp4Direct)
+    playbackFallbackUrls.value = cands.slice(1)
+    currentAlarm.value!.videoClipUrl = cands[0]
+    ElMessage.info('已切换到录像文件直链播放')
+    return
+  }
   try {
     const { data } = await recordingHttp.post(`/${rec.id}/play`, {
       device_id: rec.device_id, channel_id: rec.channel_id,
@@ -847,11 +901,33 @@ async function playSelectedRecording(rec: DeviceRecording) {
     })
     const result = data?.data || data
     if (result?.urls) {
-      const url = result.urls.flv || result.urls.hls || result.urls.wsFlv || ''
-      if (url) currentAlarm.value!.videoClipUrl = url
-      else ElMessage.warning('无可用播放地址')
+      // [FIX rec-layer 2026-09-11] mp4 兜底直链同样经候选链展开 (双层同源优先)
+      const mp4Cands = mp4Direct ? recordUrlCandidates(mp4Direct) : []
+      const cands = [result.urls.flv, result.urls.hls, result.urls.wsFlv, ...mp4Cands]
+        .filter((u): u is string => !!u)
+      if (cands.length) {
+        playbackFallbackUrls.value = cands.slice(1)
+        currentAlarm.value!.videoClipUrl = cands[0]
+      } else ElMessage.warning('无可用播放地址')
+    } else if (mp4Direct) {
+      currentAlarm.value!.videoClipUrl = mp4Direct
+      ElMessage.info('设备不支持回放流，已切换录像文件直链')
     } else ElMessage.warning('设备不支持回放')
-  } catch (e: any) { ElMessage.error('回放失败: ' + (e.message || '')) }
+  } catch (e: any) {
+    const body = e?.response?.data
+    const msg: string = body?.message || body?.error || e?.message || ''
+    if (mp4Direct) {
+      // 设备离线 / 回放流启动失败 → 磁盘录像直链兜底 (不再黑屏)
+      // [FIX rec-layer 2026-09-11] 直链经候选链展开: 同源双层首选 + 8088 双层兜底
+      const cands = recordUrlCandidates(mp4Direct)
+      playbackFallbackUrls.value = cands.slice(1)
+      currentAlarm.value!.videoClipUrl = cands[0]
+      ElMessage.info('设备回放流不可用，已切换录像文件直链播放')
+      console.warn('[AlarmPopup] /play 失败落直链:', msg)
+    } else {
+      ElMessage.error('回放失败: ' + (msg || '设备可能离线'))
+    }
+  }
 }
 const isRecordingInProgress = computed(() => {
   if (!currentAlarm.value) return false
@@ -868,7 +944,11 @@ function startRecordingPoll() {
     if (!isRecordingInProgress.value || !currentAlarm.value?.id) { stopRecordingPoll(); return }
     try {
       const ev = await alarmApi.getEvidence(currentAlarm.value.id)
-      if (ev?.videoClipUrl) { currentAlarm.value.videoClipUrl = ev.videoClipUrl; stopRecordingPoll() }
+      if (ev?.videoClipUrl) {
+        playbackFallbackUrls.value = []
+        currentAlarm.value.videoClipUrl = ev.videoClipUrl
+        stopRecordingPoll()
+      }
     } catch {}
   }, 8000)
 }

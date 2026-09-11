@@ -103,12 +103,18 @@ export const videoPerimeterApi = {
   // [ALARMS-FILTER 2026-09-06] level 服务端过滤下沉: 后端 /alarms 新增 level/severity
   //   参数 (数字/名称/逗号集合均可) — 传名称 (critical/high/medium/low/info),
   //   undefined=不过滤 (兼容无参调用点)
-  listAlarms(level?: string) {
+  listAlarms(level?: string, channelId?: string) {
     // [SSOT 2026-09-07] 数据源场景过滤: scene=video_perimeter 后端按 scene_tags
     //   (isEventInScene → SQL IN) 过滤 — 后端补 tag 前端自动跟随, 告别静态键集漂移;
     //   页内 isPerimeterEvent 保留作双保险兑底。
+    // [t3-tree-channel 2026-09-11] channelId 可选: 三级树通道下钻服务端过滤
+    //   (单值; 多值由调用方 fan-out — 后端参数单值 + pageSize clamp 100)
     return http.get<ApiResponse<{ items?: AlarmEvent[] }>>('/alarms', {
-      params: { page: 1, pageSize: 500, scene: PERIMETER_SCENE_TAG, ...(level ? { level } : {}) },
+      params: {
+        page: 1, pageSize: 500, scene: PERIMETER_SCENE_TAG,
+        ...(level ? { level } : {}),
+        ...(channelId ? { channel_id: channelId } : {}),
+      },
     })
   },
 

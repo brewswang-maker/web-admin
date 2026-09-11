@@ -236,6 +236,8 @@ export interface AlarmQuery {
   status?: AlarmStatus
   deviceId?: string
   channelId?: string
+  channel_id?: string      // [t3-tree-channel 2026-09-11] 后端原生参数名 (服务端精确过滤:
+                           //   通道码/设备码 hash+device_id 归一; 详见 useAlarmTreeDrill 头注)
   startTime?: string
   endTime?: string
   start_ms?: number      // 后端时间戳参数

@@ -33,6 +33,10 @@ export interface AlarmPolicySettings {
   minConfidence: number
   criticalMaxLatency: number
   linkageActions: string[]
+  /** [P3-2 2026-09-11] 按目标身份 (track) 去重总开关 → box_config alarm.dedup.dedup_by_track_enabled (默认 true) */
+  dedupByTrackEnabled: boolean
+  /** [P3-2 2026-09-11] 告警冷却时间窗 (秒) → box_config alarm.dedup.window_seconds (默认 30) */
+  dedupWindowSeconds: number
 }
 
 /** 系统信息 */

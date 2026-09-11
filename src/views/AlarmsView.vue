@@ -70,7 +70,7 @@
           </el-select>
 
           <!-- [P0-12 2026-09-04] 设备分组筛选 (海康式分组过滤; 分组表为空时下拉自然为空) -->
-          <el-select v-model="groupFilter" placeholder="所属分组" style="width: 150px" clearable @change="handleFilterChange">
+          <el-select v-model="groupFilter" placeholder="所属区域" style="width: 150px" clearable @change="handleFilterChange">
             <el-option label="全部分组" value="" />
             <el-option v-for="g in deviceGroups" :key="g.id" :label="g.name" :value="g.id" />
           </el-select>
@@ -233,11 +233,11 @@
       </el-row>
 
       <!-- 证据库分页 -->
-      <div class="pagination-wrap" v-if="totalAlarms > pageSize">
+      <div class="pagination-wrap" v-if="pageTotal > pageSize">
         <el-pagination
           v-model:current-page="currentPage"
           v-model:page-size="pageSize"
-          :total="totalAlarms"
+          :total="pageTotal"
           :page-sizes="[10, 20, 50, 100]"
           layout="total, sizes, prev, pager, next, jumper"
           background
@@ -255,11 +255,11 @@
         </el-col>
       </el-row>
       <!-- 分页 (服务端分页, 与表格模式同参) -->
-      <div class="pagination-wrap" v-if="totalAlarms > pageSize">
+      <div class="pagination-wrap" v-if="pageTotal > pageSize">
         <el-pagination
           v-model:current-page="currentPage"
           v-model:page-size="pageSize"
-          :total="totalAlarms"
+          :total="pageTotal"
           :page-sizes="[10, 20, 50, 100]"
           layout="total, sizes, prev, pager, next, jumper"
           background
@@ -284,8 +284,8 @@
         <!-- 选择 -->
         <el-table-column type="selection" width="48" />
 
-        <!-- 告警级别 -->
-        <el-table-column prop="severity" label="级别" min-width="80" sortable>
+        <!-- 告警级别 (宽度与 AlarmEventsPanel 同参 80, 七页零分叉) -->
+        <el-table-column prop="severity" label="级别" width="80" sortable>
           <template #default="{ row }">
             <div class="level-cell">
               <span class="level-dot" :class="row.severity"></span>
@@ -318,8 +318,16 @@
           </template>
         </el-table-column>
 
-        <!-- 设备 [P0-7/13 2026-09-04] channel_name 友好名优先 (禁纯数字国标码裸奔) -->
-        <el-table-column prop="deviceName" label="设备" min-width="200">
+        <!-- [chan-col 2026-09-11] 所属区域 (安保区域反查; 列头口径由「所属分组」正名,
+             数据源同为 securityAreaApi, 与 AlarmEventsPanel 列序/宽度逐列同构) -->
+        <el-table-column label="所属区域" width="120" show-overflow-tooltip>
+          <template #default="{ row }">
+            <span>{{ groupNameOf(row) }}</span>
+          </template>
+        </el-table-column>
+
+        <!-- 设备 [P0-7/13 2026-09-04] 设备友好名优先 (禁纯数字国标码裸奔) -->
+        <el-table-column prop="deviceName" label="设备" min-width="160" show-overflow-tooltip>
           <template #default="{ row }">
             <div class="device-cell">
               <span class="device-status-dot" :class="row.deviceStatus || 'online'"></span>
@@ -328,17 +336,11 @@
           </template>
         </el-table-column>
 
-        <!-- [P0-6 2026-09-04] 所属分组 (channel→device_groups 反查; 未分组显示 '-') -->
-        <el-table-column label="所属分组" min-width="120">
+        <!-- 通道 [chan-col 2026-09-11] 通道名口径 (channelName 可读优先; 空名/纯数字反查,
+             反查不中「通道{channelId}」占位) — 与 useAlarmTableHelpers.alarmChLabel SSOT 同源 -->
+        <el-table-column label="通道" min-width="150" show-overflow-tooltip>
           <template #default="{ row }">
-            <span>{{ groupNameOf(row) }}</span>
-          </template>
-        </el-table-column>
-
-        <!-- 时间 -->
-        <el-table-column prop="createdAt" label="时间" width="170" sortable>
-          <template #default="{ row }">
-            <span class="time-text">{{ formatTime(row.createdAt) }}</span>
+            <span>{{ alarmChLabel(row) }}</span>
           </template>
         </el-table-column>
 
@@ -351,20 +353,6 @@
           </template>
         </el-table-column>
 
-
-        <!-- 状态 -->
-         <el-table-column prop="status" label="状态" width="90" align="center">
-          <template #default="{ row }">
-            <el-tag
-              :type="statusTagType(row.status)"
-              size="small"
-              effect="plain"
-              :class="{ 'status-pending': row.status === 'unhandled' }"
-            >
-              {{ statusLabel(row.status) }}
-            </el-tag>
-          </template>
-        </el-table-column>
 
         <!-- 置信度 -->
         <el-table-column prop="aiConfidence" label="置信度" width="100" sortable align="center">
@@ -391,7 +379,28 @@
           </template>
         </el-table-column>
 
+        <!-- 时间 [chan-col 2026-09-11] 移位至 AI解释后 (与 AlarmEventsPanel 列序同构:
+             级别/快照/类型/所属区域/设备/通道/描述/置信度/AI解释/时间/状态/复核/SLA/操作) -->
+        <el-table-column prop="createdAt" label="时间" width="170" sortable>
+          <template #default="{ row }">
+            <span class="time-text">{{ formatTime(row.createdAt) }}</span>
+          </template>
+        </el-table-column>
 
+        <!-- 状态 [chan-col 2026-09-11] 移位至时间后 (任务书列序:
+             .../描述/置信度/AI解释/时间/状态/复核/SLA/操作, 与 AlarmEventsPanel 同构) -->
+        <el-table-column prop="status" label="状态" width="90" align="center">
+          <template #default="{ row }">
+            <el-tag
+              :type="statusTagType(row.status)"
+              size="small"
+              effect="plain"
+              :class="{ 'status-pending': row.status === 'unhandled' }"
+            >
+              {{ statusLabel(row.status) }}
+            </el-tag>
+          </template>
+        </el-table-column>
 
         <!-- [STAGE1 P0-1 2026-09-10] 复核状态 (独立维度, 与业务状态并存) -->
         <el-table-column prop="reviewStatus" label="复核状态" width="110" align="center">
@@ -413,8 +422,8 @@
           </template>
         </el-table-column>
 
-        <!-- [STAGE1 P0-1 2026-09-10] 剩余 SLA (与 /alarms/review-sla 同口径: timestamp+8000ms 期限) -->
-        <el-table-column prop="reviewSlaRemainingMin" label="SLA 剩余" min-width="110" align="center" sortable>
+        <!-- [STAGE1 P0-1 2026-09-10] 剩余 SLA (与 /alarms/review-sla 同口径; 宽度同参 110) -->
+        <el-table-column prop="reviewSlaRemainingMin" label="SLA 剩余" width="110" align="center" sortable>
           <template #default="{ row }">
             <span :class="['sla-remaining', slaRemainingClass(row.reviewSlaRemainingMin)]">
               {{ slaRemainingText(row) }}
@@ -469,11 +478,11 @@
       </el-table>
 
       <!-- 分页 -->
-      <div class="pagination-wrap" v-if="totalAlarms > pageSize">
+      <div class="pagination-wrap" v-if="pageTotal > pageSize">
         <el-pagination
           v-model:current-page="currentPage"
           v-model:page-size="pageSize"
-          :total="totalAlarms"
+          :total="pageTotal"
           :page-sizes="[10, 20, 50, 100]"
           layout="total, sizes, prev, pager, next, jumper"
           background
@@ -721,7 +730,7 @@ import {
 import { alarmApi } from '@/api/alarm'
 import { screeningApi, type AlarmFeedbackItem } from '@/api/screening'
 import { exportApi } from '@/api/export'
-import { queryRecordings, toLocalISOString, type DeviceRecording } from '@/api/recording'
+import { queryRecordings, toLocalISOString, recordUrlCandidates, type DeviceRecording } from '@/api/recording'
 import { securityAreaApi } from '@/api/securityAreas'
 import { recordingHttp } from '@/api/http'
 import type { AlarmHandleForm, AlarmEvidence, AlarmEvent } from '@/types/alarm'
@@ -731,11 +740,13 @@ import { useWebSocket } from '@/composables/useWebSocket'
 // [P0-9/6/10 2026-09-04] canonical zh SSOT + 规范处警对话框
 import { useEventTypeZh } from '@/composables/useEventTypeZh'
 // [FIX dev-name-num 2026-09-11] 设备名称数字形态治理 (共享目录反查)
-import { resolveAlarmDeviceName, isNumericId } from '@/composables/useAlarmDeviceLabel'
+import { alarmDevLabel, alarmChLabel } from '@/composables/useAlarmTableHelpers'  // [chan-col 2026-09-11] 展示口径 SSOT 单一源 (替代内联同款)
 import DisposeDialog from '@/components/alarm/DisposeDialog.vue'
 // [P3 2026-09-10] 右侧设备树筛选面板 (安保区域→子区域→设备 多选)
 import AlarmDeviceTreePanel from '@/components/alarm/AlarmDeviceTreePanel.vue'
 import type { AlarmTreeSelection } from '@/components/alarm/AlarmDeviceTreePanel.vue'
+// [t3-tree-channel 2026-09-11] 三级树服务端下钻 (多值 fan-out 合并; 见 composable 头注)
+import { fetchAlarmDrillFanout } from '@/composables/useAlarmTreeDrill'
 // [P2 2026-09-10] 卡片视图 (上部 16:9 快照 + 级别/类型/状态/分组/设备/时间)
 import AlarmCard from '@/components/alarm/AlarmCard.vue'
 // [UX 2026-08-31] 1b: 列表行点击 → 全局告警详情弹窗 (与首页同套 AlarmPopup)
@@ -805,12 +816,19 @@ function groupHasAlarm(g: DeviceGroupItem, a: any): boolean {
 const alarmTreeSel = ref<AlarmTreeSelection | null>(null)
 const treeChannelSet = computed(() => new Set(alarmTreeSel.value?.channelIds ?? []))
 const treeDeviceSet = computed(() => new Set(alarmTreeSel.value?.deviceIds ?? []))
+// [t3-tree-channel 2026-09-11] 多值下钻 = fan-out 合并集本地窗口 (服务端 channel_id
+//   参数为单值无法表达多值选择; 本地窗口分页切片见 paginatedAlarms/pageTotal)
+const treeDrillLocal = ref(false)
 function onTreeSelection(sel: AlarmTreeSelection) {
   alarmTreeSel.value = sel.chips.length ? sel : null
   // 树勾选时清空分组下拉 (二者口径都是"区域→通道/设备", 并存易误读)
   if (alarmTreeSel.value && groupFilter.value) {
     groupFilter.value = ''
   }
+  // [t3-tree-channel 2026-09-11] 勾选变化 → 下钻重拉 (修复: 原只改过滤状态不重拉,
+  //   服务端分页下数据面不变 → 勾选无效果); currentPage 重置防窗外页
+  currentPage.value = 1
+  fetchAlarms()
 }
 /** 树命中判定: 通道命中展开集合 或 设备 (剥 _chN) 命中设备集合; 空集合不筛 */
 function alarmHitTree(a: any): boolean {
@@ -924,7 +942,8 @@ async function openInlineVideo(item: any) {
 
   // 1. 如果已有 videoClip URL，直接用
   if (item.videoClip) {
-    inlineVideoUrl.value = item.videoClip
+    // [FIX rec-layer2 2026-09-11] 单层 /record/rtp 恒 404 → 同源双层候选首选
+    inlineVideoUrl.value = recordUrlCandidates(item.videoClip)[0] || item.videoClip
     inlineVideoMode.value = 'clip'
     inlineVideoLoading.value = false
     return
@@ -934,7 +953,7 @@ async function openInlineVideo(item: any) {
   try {
     const ev = await alarmApi.getEvidence(item.id)
     if (ev?.videoClipUrl) {
-      inlineVideoUrl.value = ev.videoClipUrl
+      inlineVideoUrl.value = recordUrlCandidates(ev.videoClipUrl)[0] || ev.videoClipUrl
       inlineVideoMode.value = 'clip'
       inlineVideoLoading.value = false
       return
@@ -1169,6 +1188,27 @@ async function fetchAlarms() {
       params.end_ms = dateRange.value[1].getTime()
     }
 
+    // [t3-tree-channel 2026-09-11] 三级树服务端下钻 (见 useAlarmTreeDrill 头注):
+    //   勾选激活时按 drillValues 走既有 channel_id 参数 — 修复"页本地过滤"根因
+    //   (服务端分页下树筛选只作用当前页 20 条 → 勾选结果恒空)。
+    //   单值 → 服务端过滤+分页 (total 收敛, 翻页正常); 多值 → fan-out 合并本地窗口。
+    const drill = alarmTreeSel.value?.drillValues ?? []
+    if (drill.length > 1) {
+      const rows = await fetchAlarmDrillFanout(drill, async (v) => {
+        const r = await alarmApi.getList({ ...params, page: 1, pageSize: 100, channel_id: v })
+        const d: any = r.data?.data ?? r.data
+        const list: any[] = Array.isArray(d?.alarms) ? d.alarms
+          : (Array.isArray(d?.items) ? d.items : [])
+        return list.map(normalizeAlarm)
+      })
+      alarms.value = rows
+      totalAlarms.value = rows.length
+      treeDrillLocal.value = true
+      return
+    }
+    treeDrillLocal.value = false
+    if (drill.length === 1) params.channel_id = drill[0]
+
     const response = await alarmApi.getList(params)
     const respData: any = response.data?.data ?? response.data
 
@@ -1336,7 +1376,23 @@ const { alarmStatCards, filteredAlarms } = (() => {
 //   原: filteredAlarms.value.slice((page-1)*pageSize, page*pageSize)
 //   后端已按 page/pageSize 返回正确切片, 前端再 slice 导致 page>=2 时取到空数组 (第二页空白)
 //   修: 服务端分页模式下, 直接使用后端返回的当前页数据, 不再二次切片
-const paginatedAlarms = computed(() => filteredAlarms.value)
+// [t3-tree-channel 2026-09-11] 多值下钻 = fan-out 合并集 (本地窗口, 同场景页模式):
+//   服务端单值参数无法表达多值选择 → 合并后本地切片分页; 单值下钻/未激活仍走服务端切片。
+const paginatedAlarms = computed(() => {
+  if (treeDrillLocal.value) {
+    const start = (currentPage.value - 1) * pageSize.value
+    return filteredAlarms.value.slice(start, start + pageSize.value)
+  }
+  return filteredAlarms.value
+})
+
+// [t3-tree-channel 2026-09-11] 分页 total 三态:
+//   多值下钻本地窗口 → 过滤后计数 (本地切片); 单值下钻/未激活 → 服务端 total
+//   (下钻后服务端已收敛, 翻页=服务端翻页)。替代原「树勾选恒用当前页过滤计数」
+//   实现 (服务端分页下该口径 total 恒 ≤20, 翻页直接空页)。
+const pageTotal = computed(() =>
+  treeDrillLocal.value ? filteredAlarms.value.length : totalAlarms.value
+)
 
 // ── 工具函数 ──
 function severityLabel(severity: string) {
@@ -1451,20 +1507,11 @@ function confPct(row: any): number {
 }
 
 
-const _timeCache = new Map<string, string>()
-// [FIX dev-name-num 2026-09-11] 设备标签: 空名/纯数字形态 (face 插件截断 hash 等历史数据)
-//   → 目录反查设备/通道名, 反查不中兜底 '-' (不裸显 deviceId 数字串)
-function alarmDevLabel(a: Pick<AlarmEvent, 'deviceName' | 'deviceId' | 'channelId'> & { channelName?: string }): string {
-  // deviceName 可读直接用; 数字形态/空 → channelName 兜底传入 (resolve 内部同形态拦截)
-  return resolveAlarmDeviceName(a.deviceName || a.channelName || '', a.deviceId, a.channelId) || '-'
-}
-// 通道标签: channelName 兜底「通道+20位」也是数字形态 → 同口径拦截反查
-function alarmChLabel(a: Pick<AlarmEvent, 'channelId'> & { channelName?: string }): string {
-  const cn = String(a.channelName ?? '').trim()
-  if (cn && !isNumericId(cn)) return cn
-  return resolveAlarmDeviceName('', '', a.channelId) || '-'
-}
+// [chan-col 2026-09-11] 原内联 alarmDevLabel/alarmChLabel (与 useAlarmTableHelpers 逐字同款)
+//   删除, 改消费 SSOT 共享实现 — 设备/通道列口径单一定义, 七页零分叉。
+//   通道列占位口径: 反查不中回落「通道{channelId}」(任务书口径, 不再 '-')。
 
+const _timeCache = new Map<string, string>()
 function formatTime(isoString: string | undefined) {
   if (!isoString) return '-'
   let v = _timeCache.get(isoString)
@@ -1486,6 +1533,9 @@ function handleFilterChange() {
 }
 
 function handlePageChange() {
+  // [t3-tree-channel 2026-09-11] 多值下钻 = 本地窗口分页 (切片随 currentPage 重算,
+  //   无需重拉); 单值下钻/未激活 = 服务端翻页
+  if (treeDrillLocal.value) return
   // 分页变化后重新获取数据
   fetchAlarms()
 }
@@ -1723,12 +1773,16 @@ async function showEvidence(row: any) {
   try {
     const ev = await alarmApi.getEvidence(row.id)
     if (ev) {
+      // [FIX rec-layer2 2026-09-11] 证据 videoClipUrl 是绝对单层 → 补双层同源 (视频 404 黑屏)
+      if (ev.videoClipUrl) ev.videoClipUrl = recordUrlCandidates(ev.videoClipUrl)[0] || ev.videoClipUrl
       evidenceData.value = ev
     } else {
-      evidenceData.value = { snapshotUrl: getSnapshotUrl(row), videoClipUrl: row.videoClipUrl }
+      const clip = row.videoClipUrl ? recordUrlCandidates(row.videoClipUrl)[0] || row.videoClipUrl : row.videoClipUrl
+      evidenceData.value = { snapshotUrl: getSnapshotUrl(row), videoClipUrl: clip }
     }
   } catch {
-    evidenceData.value = { snapshotUrl: getSnapshotUrl(row), videoClipUrl: row.videoClipUrl }
+    const clip = row.videoClipUrl ? recordUrlCandidates(row.videoClipUrl)[0] || row.videoClipUrl : row.videoClipUrl
+    evidenceData.value = { snapshotUrl: getSnapshotUrl(row), videoClipUrl: clip }
   } finally {
     evidenceLoading.value = false
   }
@@ -1737,7 +1791,8 @@ async function showEvidence(row: any) {
   // [FIX evidence-AI 2026-08-18] 从证据 video_clip URL 提取 ZLM 流名 (gb_131...) 传入,
   // 避免 channel_id (国标 340 开头) 与实际流名 (设备注册 131 开头) 不匹配导致查不到录像
   const clipUrl = evidenceData.value?.videoClipUrl || row.videoClipUrl || ''
-  const streamMatch = clipUrl.match(/^\/record\/rtp\/([^/]+)\//)
+  // [FIX rec-layer2 2026-09-11] 绝对 URL / 双层形态宽容匹配 (原 ^/record/rtp/ 永不命中)
+  const streamMatch = clipUrl.match(/\/record\/(?:record\/)?rtp\/([^/]+)\//)
   if (row.deviceId) {
     try {
       const alarmTime = new Date(row.createdAt)
@@ -2254,3 +2309,5 @@ onUnmounted(() => {
 }
 .text-secondary { color: var(--app-text-secondary); }
 </style>
+
+<!-- [chan-col 2026-09-11 完成锚点] 同构列升级+状态列移位+pageTotal 收敛批次 · 部署产物 entry=index-wS8-Hc--kp.js tgz md5=57e4f6f0d728c29eeca8f2a8f6dd629b -->

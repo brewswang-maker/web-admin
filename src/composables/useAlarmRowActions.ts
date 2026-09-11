@@ -15,9 +15,10 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 export type AlarmRowHandleStatus = 'confirmed' | 'false_alarm' | 'ignored'
 
 export function useAlarmRowActions() {
-  /** 详情: 打开全局报警弹窗 (row 需含 id, 内部自行 normalize) */
+  /** 详情: 打开全局报警弹窗 (row 需含 id, 内部自行 normalize);
+   *  [SOUND-ORIGIN 2026-09-11] 手动入口显式 origin:'manual' → 不播报警音 */
   function openAlarmPopup(row: any) {
-    return showAlarmPopup(row)
+    return showAlarmPopup(row, { origin: 'manual' })
   }
 
   /** 处理单条告警: status 语义 confirmed=确认告警 / false_alarm=标记误报 / ignored=忽略 */

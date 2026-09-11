@@ -39,6 +39,9 @@ import en from 'element-plus/es/locale/lang/en'
 import SkeletonLoader from '@/components/SkeletonLoader.vue'
 import { usePreferenceStore } from '@/stores/preference'
 import { startGlobalAlarm, stopGlobalAlarm } from '@/composables/useGlobalAlarm'
+// [SOUND-ORIGIN 2026-09-11] 解锁用静音 wav (替代 alarm.wav 0.001 音量播放):
+//   首次手势解锁动作零告警音, 手动入口 (列表/规则页/弹窗) 点击不再有声
+import { AUDIO_UNLOCK_SILENT_WAV } from '@/composables/useAlarmPopup'
 import AlarmPopup from '@/components/alarm/AlarmPopup.vue'
 import FloatingPreview from '@/components/video/FloatingPreview.vue'
 import type { RouteLocationNormalized } from 'vue-router'
@@ -58,9 +61,10 @@ function unlockMediaOnFirstGesture() {
   mediaUnlocked = true
 
   // 1) 解锁 audio: 创建一个 <audio> 元素, play 一下再 pause.
+  //    [SOUND-ORIGIN] 用静音 wav: 授权来自手势上下文, 解锁动作本身零声音
   try {
-    const a = new Audio('/audio/alarm.wav')
-    a.volume = 0.001 // 极小音量, 避免吓到用户
+    const a = new Audio(AUDIO_UNLOCK_SILENT_WAV)
+    a.volume = 0.001
     a.play().then(() => { a.pause(); a.currentTime = 0 }).catch(() => { /* still ok */ })
   } catch { /* noop */ }
 

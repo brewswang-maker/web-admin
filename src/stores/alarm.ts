@@ -189,6 +189,33 @@ export const useAlarmStore = defineStore('alarm', () => {
     // 防御性兜底: 如果调用方忘了 normalize, 内部补一次.
     // 否则 store 里的 status 为 undefined, 依赖 status==='unhandled' 的过滤全部失败.
     const norm = (alarm as any)?.status ? alarm : normalizeAlarmCore(alarm)
+    // [FIX prevnext-shape 2026-09-11] 同告警双帧去重富化 — 后端双推送
+    //   (alarm.new 全量 metadata 含 alarm_shapes / BoxService WEB_POPUP executor
+    //   平铺精简字段无 metadata) 原各自 unshift → 队列同 id 两条, 弹窗
+    //   「上一条/下一条」在两帧间跳动: 精简帧无 alarm_shapes 走区域库回退
+    //   渲染「区域」, 富帧渲染「绊线」— 同一告警两形态 (入口分裂根因一)。
+    //   与 useAlarmPopup.showAlarmPopup 同 id 富化合并同语义: 同 id 后到帧
+    //   不重复入队/不重复计数, 只补稀疏字段 (metadata 深合并/快照/视频 URL)。
+    const existIdx = realtimeAlarms.value.findIndex((a) => a.id === norm.id)
+    if (existIdx >= 0) {
+      const cur = realtimeAlarms.value[existIdx] as any
+      const mergedMeta = { ...(cur.metadata || {}), ...(norm.metadata || {}) } as any
+      // detections/bbox/face_box/alarm_shapes: 后到帧非空才覆盖
+      //   (富帧在前被清空的风险隔离, 同 showAlarmPopup 口径)
+      for (const k of ['detections', 'bbox', 'face_box', 'alarm_shapes'] as const) {
+        const nv = (norm.metadata as any)?.[k]
+        const ov = (cur.metadata as any)?.[k]
+        if ((Array.isArray(nv) && nv.length === 0) || nv === undefined) {
+          if (ov !== undefined) mergedMeta[k] = ov
+        }
+      }
+      cur.metadata = mergedMeta
+      cur.snapshotUrl = norm.snapshotUrl || cur.snapshotUrl
+      cur.videoClipUrl = norm.videoClipUrl || cur.videoClipUrl
+      cur.channelName = norm.channelName || cur.channelName
+      cur.deviceName = norm.deviceName || cur.deviceName
+      return
+    }
     realtimeAlarms.value.unshift(norm)
     // 保持最近50条
     if (realtimeAlarms.value.length > 50) {

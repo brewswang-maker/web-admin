@@ -45,7 +45,7 @@ import { streamHttp } from '@/api/http'
 import { normalizeStreamUrl, normalizeWsFlvUrl } from '@/utils/streamUrl'
 import { useChannelStore } from '@/stores/channel'
 
-type PlayerFormat = 'flv' | 'ws-flv' | 'hls' | 'webrtc'
+type PlayerFormat = 'flv' | 'ws-flv' | 'hls' | 'webrtc' | 'mp4'
 
 const DEGRADATION_CHAINS: Record<string, PlayerFormat[]> = {
   h264: ['flv', 'ws-flv', 'webrtc', 'hls'],
@@ -56,6 +56,9 @@ const props = withDefaults(defineProps<{
   channelId: string
   /** 直接 URL 播放（证据回放 / 已知流地址），跳过 fetchStreamUrls */
   src?: string
+  /** [POPUP-PLAYBACK 2026-09-11] src 播放的候选回退列表：按序尝试，前一候选失敗
+   *  (flv ERROR / hls fatal / video error / 8s 无首帧) 自动切下一个 */
+  srcFallbacks?: string[]
   autoPlay?: boolean
   muted?: boolean
   aspectRatio?: string
@@ -74,6 +77,7 @@ const props = withDefaults(defineProps<{
   skipStartApi: false,
   streamType: 'main',
   visible: true,
+  srcFallbacks: () => [],
 })
 
 const emit = defineEmits<{
@@ -150,16 +154,25 @@ function markPlaying() {
   }
 }
 
-/** attach 后启动首帧超时监视: 8s 无真实首帧 → 退避重试 */
+/** attach 后启动首帧超时监视: 无真实首帧 → 退避重试 (src 模式 → 下一候选) */
 function watchFirstFrame() {
   clearFirstFrameTimer()
+  // [FIX rec-mp4-timeout 2026-09-11] ZLM 录制 mp4 的 moov 在文件尾部 (非 faststart),
+  //   浏览器需两次 Range (头 1KB + 尾 1KB) 才能解析出音视频参数; 慢网/拥塞下尾包实测
+  //   15.8s 才到 (探针) → 原 8s 上限会在数据仍在正常下载时误切候选/误报全败。
+  //   流媒体格式 (flv/hls) 保持 8s 快速降级不变。
+  const timeoutMs = currentFormat === 'mp4' ? 20000 : 8000
   firstFrameTimer = setTimeout(() => {
     if (!playing.value) {
-      console.warn('[MiniPlayer] 8s 无真实首帧 (format=' + currentFormat + ')')
-      destroyPlayer()
-      scheduleAutoRetry('首帧超时')
+      console.warn(`[MiniPlayer] ${timeoutMs / 1000}s 无真实首帧 (format=` + currentFormat + ')')
+      if (srcMode) {
+        tryNextSrcCandidate()  // 内含 destroyPlayer; 防 hls 挂起不报错死等
+      } else {
+        destroyPlayer()
+        scheduleAutoRetry('首帧超时')
+      }
     }
-  }, 8000)
+  }, timeoutMs)
 }
 
 // [P0-E 2026-08-24] fetchStreamUrls 与 startPlay 间传递"确定性失败"标记
@@ -169,14 +182,19 @@ let lastStartFatal = false
 function destroyPlayer() {
   destroyWebRtc()  // P0-1.2: 清理 WebRTC 连接
   clearFirstFrameTimer()  // [P0-C] 首帧监视随播放器销毁而取消
-  videoRef.value?.removeEventListener('playing', markPlaying)
+  const video = videoRef.value
+  video?.removeEventListener('playing', markPlaying)
+  // [POPUP-PLAYBACK 2026-09-11] src 模式的 video 级错误监听随销毁移除 (防切换候选后残留)
+  if (video && srcVideoErrorHandler) {
+    video.removeEventListener('error', srcVideoErrorHandler)
+    srcVideoErrorHandler = null
+  }
   if (playerInstance) {
     try {
       if ('destroy' in playerInstance) playerInstance.destroy()
     } catch { /* ignore */ }
     playerInstance = null
   }
-  const video = videoRef.value
   if (video) {
     video.pause()
     video.removeAttribute('src')
@@ -470,58 +488,114 @@ async function attachWebRtcMini(video: HTMLVideoElement) {
   }
 }
 
-// ── 直接 URL 播放（证据回放） ──
+// ── 直接 URL 播放（证据回放 / 设备回放流）: 候选链 + 归一化 + 真实首帧 + 失败回退 ──
+// [POPUP-PLAYBACK 2026-09-11] src 模式重构 (告警弹窗点击录像黑屏修复):
+//   原实现裸挂 video/flv/hls 三路都不归一化 — 后端 /recordings/:id/play 返回的
+//   ZLM 绝对地址 (http://127.0.0.1:9080/...; apiHost 非远程模式恒为 127.0.0.1)
+//   在用户浏览器里指向“用户自己的电脑” → 死链; 且全链无错误监听 (静默黑屏)、
+//   立即置假首帧 (黑屏上挂 LIVE 徽章)。现改为候选链: 归一化 (http→同源相对
+//   路径 / ws→同源 ws) → 按 [src, ...srcFallbacks] 逐一尝试 (flv ERROR /
+//   hls fatal / video error / 8s 无首帧 → 下一候选) → 全败 emit error 显示
+//   重试。候选组装责任在调用方 (AlarmPopup: flv→hls→wsFlv→录像文件直链)。
+let srcCandidates: string[] = []
+let srcIndex = 0
+let srcMode = false
+let srcVideoErrorHandler: (() => void) | null = null
+
 function playSrc(url: string) {
+  srcMode = true
+  srcCandidates = [url, ...(props.srcFallbacks || [])].filter(Boolean)
+  srcIndex = 0
+  tryNextSrcCandidate()
+}
+
+function tryNextSrcCandidate() {
   const video = videoRef.value
   if (!video) return
   destroyPlayer()
-
-  if (url.endsWith('.mp4') || url.startsWith('blob:') || url.startsWith('data:')) {
-    video.src = url
-    video.play().catch(() => {})
-    playing.value = true
-    emit('playing')
+  if (srcIndex >= srcCandidates.length) {
+    loading.value = false
+    errorMsg.value = '回放地址不可用 · 已尝试全部格式'
+    emit('error', errorMsg.value)
     return
   }
-  if (url.includes('.m3u8')) {
+  loading.value = true
+  errorMsg.value = ''
+  attachSrcPlayer(video, srcCandidates[srcIndex++])
+}
+
+/** 挂载单个 src 候选; 任一失败路径统一走 tryNextSrcCandidate */
+function attachSrcPlayer(video: HTMLVideoElement, raw: string) {
+  const isWs = /^wss?:\/\//i.test(raw)
+  const url = isWs ? normalizeWsFlvUrl(raw) : normalizeStreamUrl(raw)
+  const lower = url.toLowerCase()
+  const failNext = (why: string) => {
+    if (!srcMode) return
+    console.warn(`[MiniPlayer src] ${why} (候选 ${srcIndex}/${srcCandidates.length}), url=${url}`)
+    tryNextSrcCandidate()
+  }
+
+  if (lower.includes('.m3u8')) {
     if (Hls.isSupported()) {
-      const hls = new Hls()
+      const hls = new Hls({
+        enableWorker: true,
+        lowLatencyMode: true,
+        liveSyncDurationCount: 1,
+        liveMaxLatencyDurationCount: 2,
+      })
+      hls.on(Hls.Events.ERROR, (_evt: any, data: any) => {
+        if (data?.fatal) failNext(`HLS ${data.type}/${data.details}`)
+      })
       hls.loadSource(url)
       hls.attachMedia(video)
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
-        video.play().catch(() => {})
-        playing.value = true
-        emit('playing')
+        const p = video.play()
+        if (p && typeof p.catch === 'function') p.catch(() => {})
       })
       playerInstance = hls
       currentFormat = 'hls'
     } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
       video.src = url
       video.play().catch(() => {})
-      playing.value = true
-      emit('playing')
+      currentFormat = 'hls'
+    } else {
+      failNext('HLS 不受支持')
+      return
     }
-    return
-  }
-  if (flvjs.isSupported() && (url.includes('.flv') || url.includes('ws-flv') || url.includes('ws://'))) {
-    const isWs = url.startsWith('ws')
+  } else if (isWs || lower.includes('.flv')) {
+    if (!flvjs.isSupported()) { failNext('flv.js 不受支持'); return }
     const player = flvjs.createPlayer({
-      type: 'flv', url,
-      isLive: !url.endsWith('.flv'),
-    }, { enableStashBuffer: false })
+      type: 'flv', url, isLive: true, hasAudio: false, hasVideo: true,
+    }, {
+      enableStashBuffer: false,
+      stashInitialSize: 128,
+      lazyLoad: false,
+      liveBufferLatencyChasing: true,
+    } as any)
+    player.on(flvjs.Events.ERROR, (errorType: string, errorDetail: string) => {
+      failNext(`FLV ${errorType}/${errorDetail}`)
+    })
     player.attachMediaElement(video)
     player.load()
-    player.play()
+    const p = player.play()
+    if (p && typeof p.catch === 'function') p.catch(() => {})
     playerInstance = player
     currentFormat = isWs ? 'ws-flv' : 'flv'
-    playing.value = true
-    emit('playing')
-    return
+  } else {
+    // mp4 / blob / data / 其他原生可播地址 (录像文件直链走此路)
+    video.src = url
+    video.play().catch(() => {})
+    currentFormat = 'mp4'
   }
-  video.src = url
-  video.play().catch(() => {})
-  playing.value = true
-  emit('playing')
+
+  // 真实首帧 (取代原“立即 playing”假首帧) + video 级错误监听 (flv.js 走自身 ERROR)
+  video.addEventListener('playing', markPlaying)
+  srcVideoErrorHandler = () => {
+    if (!srcMode || currentFormat === 'flv' || currentFormat === 'ws-flv') return
+    failNext('video error')
+  }
+  video.addEventListener('error', srcVideoErrorHandler)
+  watchFirstFrame()
 }
 
 // ── 监听 src prop ──
@@ -584,6 +658,12 @@ function retryPlay() {
   // [P0-4] 手动重试 → 清除自动退避状态, 重新获得 3 次机会
   clearAutoRetry()
   autoRetryCount = 0
+  // [POPUP-PLAYBACK 2026-09-11] src 模式: 从头重跑候选链 (/start 防抖对 src 无意义)
+  if (srcMode) {
+    srcIndex = 0
+    nextTick(() => tryNextSrcCandidate())
+    return
+  }
   // 清除全局防抖记录，允许重新调用 /start
   channelStore.clearStartDebounce(props.channelId)
   // 直接重试

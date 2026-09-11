@@ -258,6 +258,10 @@ const enUS: MessageSchema = {
     connectResult: 'Connected ({ms}ms)',
     // alarm policy
     alarmRule: 'Alarm Rules',
+    dedupByTrack: 'Dedup by Target',
+    dedupByTrackTip: 'Distinguish alarms by target identity (track): the same target alerts once per window while different targets alert independently; off = time-window dedup only (legacy). Restart to apply',
+    dedupWindowSeconds: 'Alarm Cooldown Window (s)',
+    dedupWindowSecondsTip: 'Minimum repeat interval for the same channel and alarm type (alarm.dedup.window_seconds). Restart to apply',
     dedupWindow: 'Deduplication Window (s)',
     minConfidence: 'Min Confidence Threshold',
     criticalMaxLatency: 'Critical Alarm Latency (ms)',

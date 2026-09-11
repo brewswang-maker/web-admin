@@ -49,174 +49,60 @@
       <el-skeleton :rows="8" animated />
     </el-card>
 
-    <!-- ===== 事件表 ===== -->
-    <el-card v-else shadow="never">
+    <!-- ===== [场景页对齐 2026-09-11] 事件列表统一 AlarmEventsPanel
+         (表格/卡片/分页/处警·详情入口 与 AlarmsView 零分叉) ===== -->
+    <AlarmEventsPanel
+      v-else
+      :rows="pagedFinal" :total="finalEvents.length"
+      v-model:page="page" v-model:page-size="pageSize"
+      :loading="loading" :view-mode="viewMode"
+      :empty-text="selectedType ? t('hotel.events.emptyType') : t('hotel.events.emptyAll')">
       <template #header>
         <div class="card-header">
           <span>{{ t('hotel.events.tableTitle', { n: finalEvents.length }) }}</span>
-          <span style="display:flex;align-items:center;gap:8px">
-            <span class="hint">{{ t('hotel.events.tableHint') }}</span>
-            <!-- [P2 2026-09-10] 卡片/列表切换 -->
-            <AlarmViewToggle v-model="viewMode" page-key="corridor" />
-          </span>
+          <AlarmViewToggle v-model="viewMode" page-key="corridor" />
         </div>
       </template>
-      <!-- [P2 2026-09-10] 卡片视图 (AlarmCard 栅格; 筛选/分页逻辑零改动) -->
-      <div v-if="viewMode === 'card'" class="events-card-grid">
-        <AlarmCard v-for="e in pagedFinal" :key="e.id" :alarm="e" @click="openDetail(e)" />
-      </div>
-      <el-table v-else :data="pagedFinal" v-loading="loading" size="small" @row-click="openDetail"
-                :empty-text="selectedType ? t('hotel.events.emptyType') : t('hotel.events.emptyAll')"
-                class="events-table">
-        <el-table-column :label="t('hotel.events.colType')" min-width="150">
-          <template #default="{ row }">
-            <div class="type-cell">
-              <span class="mono evt-key">{{ row.type }}</span>
-              <span class="evt-name">{{ typeName(row.type) }}</span>
-            </div>
-          </template>
-        </el-table-column>
-        <el-table-column :label="t('hotel.events.colLevel')" width="90">
-          <template #default="{ row }">
-            <el-tag :type="levelTagType(row.level)" size="small" effect="dark">{{ row.level || '-' }}</el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column :label="t('hotel.events.colConfidence')" width="90" align="center">
-          <template #default="{ row }">
-            <span v-if="row.confidence != null">{{ (Number(row.confidence) * 100).toFixed(0) }}%</span>
-            <span v-else>-</span>
-          </template>
-        </el-table-column>
-        <el-table-column :label="t('hotel.person.colGroup')" width="84">
-          <template #default="{ row }">
-            <el-tag :type="groupTagOf(eventGroup(row)).type" size="small" effect="light">
-              {{ groupTagOf(eventGroup(row)).label }}
-            </el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column prop="channelId" :label="t('hotel.events.colChannel')" width="70" align="center" />
-        <el-table-column prop="description" :label="t('hotel.events.colDesc')" min-width="200" show-overflow-tooltip />
-        <el-table-column :label="t('hotel.events.colSnapshot')" width="70" align="center">
-          <template #default="{ row }">
-            <!-- [fix 2026-09-02] 缩略图点击只开图片全屏预览: @click.stop 阻断冒泡,
-              否则 row-click=openDetail 同帧弹出详情抽屉盖住预览层 (与安检/态势同款) -->
-            <el-image v-if="row.snapshotUrl" :src="row.snapshotUrl"
-                      :preview-src-list="[row.snapshotUrl]" fit="cover"
-                      preview-teleported class="snap-thumb" @click.stop />
-            <span v-else>-</span>
-          </template>
-        </el-table-column>
-        <el-table-column :label="t('hotel.events.colTime')" width="150">
-          <template #default="{ row }">{{ fmtTime(row.createdAt) }}</template>
-        </el-table-column>
-        <!-- [行操作 2026-09-01] 详情=全局报警弹窗 + 处理下拉 (与周界/安检事件列表同款,
-          useAlarmRowActions 共享); 行点击仍开 metadata 抽屉 -->
-        <el-table-column :label="t('hotel.events.colActions')" width="150" align="center">
-          <template #default="{ row }">
-            <el-button size="small" type="primary" link @click.stop="openAlarmPopup(row)">{{ t('common.detail') }}</el-button>
-            <el-dropdown trigger="click" @command="(c: string) => handleAlarmRow(row, c as any, onHandled)">
-              <el-button size="small" type="warning" link class="act-handle">
-                {{ t('hotel.events.actHandle') }}<el-icon class="el-icon--right"><ArrowDown /></el-icon>
-              </el-button>
-              <template #dropdown>
-                <el-dropdown-menu>
-                  <el-dropdown-item command="confirmed">{{ t('common.confirm') }}</el-dropdown-item>
-                  <el-dropdown-item command="false_alarm">{{ t('hotel.events.actFalseAlarm') }}</el-dropdown-item>
-                  <el-dropdown-item command="ignored">{{ t('hotel.events.actIgnore') }}</el-dropdown-item>
-                </el-dropdown-menu>
-              </template>
-            </el-dropdown>
-          </template>
-        </el-table-column>
-      </el-table>
-      <div class="pager">
-        <el-pagination v-model:current-page="page" :page-size="pageSize" :total="finalEvents.length"
-                       layout="total, prev, pager, next" background size="small" />
-      </div>
-    </el-card>
-
-    <!-- ===== metadata 明细 drawer (员工通道 fusion 拦截证据链) ===== -->
-    <el-drawer v-model="drawerVisible" :title="t('hotel.events.drawerTitle')" size="480px">
-      <template v-if="activeEvent">
-        <div class="detail-head">
-          <el-tag :type="levelTagType(activeEvent.level)" size="small" effect="dark">{{ activeEvent.level || '-' }}</el-tag>
-          <span class="mono detail-type">{{ activeEvent.type }}</span>
-          <span class="detail-time">{{ fmtTime(activeEvent.createdAt) }}</span>
-        </div>
-        <p class="detail-desc">{{ activeEvent.description }}</p>
-
-        <!-- [FEAT 2026-09-02] 快照标注展示 (与周界 EventsView 详情同构):
-          有快照或有 bbox 均渲染 (bbox 时不检出框, fusion 拦截证据链);
-          内部含全屏/下载按钮 (上轮 FEAT), 无图时占位提示 -->
-        <SnapshotAnnotated v-if="activeEvent.snapshotUrl || hasBox(activeEvent.metadata)"
-                           :src="activeEvent.snapshotUrl ?? ''" :metadata="activeEvent.metadata" />
-        <el-empty v-else :description="t('hotel.events.noSnapshot', '无快照')" :image-size="80" />
-
-        <h4 class="sec-title">{{ t('hotel.events.metaSection') }}</h4>
-        <el-table :data="metadataRows" size="small" max-height="420" class="meta-table">
-          <el-table-column prop="key" label="key" min-width="150">
-            <template #default="{ row }"><span class="mono">{{ row.key }}</span></template>
-          </el-table-column>
-          <el-table-column :label="t('hotel.events.metaValue')" min-width="180">
-            <template #default="{ row }">
-              <span class="mono meta-val">{{ row.value }}</span>
-            </template>
-          </el-table-column>
-        </el-table>
-        <div v-if="metadataRows.length === 0" class="meta-empty">
-          {{ t('hotel.events.metaEmpty') }}
-        </div>
-        <div class="meta-hint">{{ t('hotel.events.metaHint') }}</div>
-      </template>
-    </el-drawer>
+    </AlarmEventsPanel>
    </div>
   </div>
 </template>
 
 <script setup lang="ts">
 /**
- * 通道事件列表 — 酒店无人值守 t8f D3 (方案 §5.7 视图 2)
+ * 通道事件列表 — 酒店无人值守 t8f D3 (方案 §5.7 视图 2) [场景页对齐 2026-09-11]
  *
  * 员工通道拦截事件 (tailgate/intrusion, fusion 插件 canonical 归一) + hotel 场景
- * 16 键事件流。事件类型 chips 从 /event-types/metadata?scene=hotel_unattended
- * 动态拉取 (SSOT, EventTypeAliases.h scene_tags); 数据源 alarmApi 同源
- * /alarms 前端按场景键并集过滤 (对齐 large-event EventListView 范式)。
- * 行点击 → metadata 明细 drawer (fusion 插件拦截证据: person_ge2_ratio /
- * spoof_confidence / has_backpack / replay_attack 等, AlarmEvent.metadata 透传)。
- * 人员分类列/筛选: group_type 六分类 (黑名单/白名单/访客/VIP/员工/自定义,
- * hotel.person SSOT)。
- * 三态防御: 骨架屏 / 错误态可恢复 / 空态。
+ * 事件流。事件类型 chips 从 /event-types/metadata?scene=hotel_unattended
+ * 动态拉取 (SSOT); 数据源 alarmApi 同源 /alarms 前端按场景键并集过滤。
+ * 列表主体统一 AlarmEventsPanel (表格 14 列/卡片栅格/分页/处警·详情入口,
+ * 与平台告警中心 AlarmsView 逐列同构 — 展示口径零分叉)。
+ * 人员分类筛选: group_type 六分类 (黑名单/白名单/访客/VIP/员工/自定义,
+ * hotel.person SSOT), Overview 构成卡联动 ?group= 初始化。
  */
 import { computed, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { Refresh } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { useI18n } from 'vue-i18n'
-import { hotelUnattendedApi, isHotelEvent, CORRIDOR_INTERCEPT_TYPES, CORRIDOR_METADATA_KEYS,
+import { hotelUnattendedApi, isHotelEvent, CORRIDOR_INTERCEPT_TYPES,
          PERSON_GROUPS } from '@/api/hotelUnattended'
-import { normalizeAlarmCore, type AlarmEvent, type AlarmStatus } from '@/types/alarm'
-import { useAlarmRowActions } from '@/composables/useAlarmRowActions'
-import { ArrowDown } from '@element-plus/icons-vue'
-// [FEAT 2026-09-02] 详情抽屉快照展示: 复用周界标注组件 (上轮已带全屏/下载按钮)
-import SnapshotAnnotated from '../perimeter/SnapshotAnnotated.vue'
+import { type AlarmEvent, type AlarmStatus } from '@/types/alarm'
 import { useRealtimeAlarmEvents } from '@/composables/useRealtimeAlarmEvents'
+import { normalizeAlarmCompat } from '@/composables/useAlarmTableHelpers'
 // [P3 2026-09-10] 右侧设备树筛选面板 (安保区域→子区域→设备 多选)
 import AlarmDeviceTreePanel from '@/components/alarm/AlarmDeviceTreePanel.vue'
 import type { AlarmTreeSelection } from '@/components/alarm/AlarmDeviceTreePanel.vue'
-// [P2 2026-09-10] 卡片/列表切换 + 告警卡片
+// [t3-tree-channel 2026-09-11] 三级树服务端下钻 (多值 fan-out 合并; 见 composable 头注)
+import { fetchAlarmDrillFanout } from '@/composables/useAlarmTreeDrill'
+// [P2 2026-09-10] 卡片/列表切换 (持久化 key alarm_view_mode_corridor)
 import AlarmViewToggle from '@/components/alarm/AlarmViewToggle.vue'
-import AlarmCard from '@/components/alarm/AlarmCard.vue'
+// [场景页对齐 2026-09-11] 列表主体统一共享面板 (不复制 AlarmsView 表格)
+import AlarmEventsPanel from '@/components/alarm/AlarmEventsPanel.vue'
 // [FIX realtime-push 2026-09-06] 场景页实时刷新: WS 告警到达去抖重拉 (零新增连接)
 useRealtimeAlarmEvents(() => fetchEvents())
 
 const { t } = useI18n()
-const { openAlarmPopup, handleAlarmRow } = useAlarmRowActions()
-
-/** 处理成功后行内回写状态 (与周界/安检/告警中心同范式) */
-function onHandled(id: string, status: string) {
-  const row = events.value.find(e => e.id === id)
-  if (row) row.status = status as AlarmStatus
-}
 const route = useRoute()
 
 const loading = ref(false)
@@ -227,22 +113,18 @@ const selectedType = ref('')
 const interceptOnly = ref(false)
 const selectedGroup = ref('')
 const page = ref(1)
-const pageSize = 20
+const pageSize = ref(20)
 
 // [P2 2026-09-10] 卡片/列表视图 (持久化 key alarm_view_mode_corridor, 与 AlarmViewToggle 同规范)
 const viewMode = ref<'card' | 'table'>(
   localStorage.getItem('alarm_view_mode_corridor') === 'card' ? 'card' : 'table'
 )
 
-const drawerVisible = ref(false)
-const activeEvent = ref<AlarmEvent | null>(null)
-
 const activeTypeKeys = computed(() => new Set(typeItems.value.map(i => i.alarm_type)))
 const typeChips = computed(() => typeItems.value)
 
 const filteredEvents = computed(() =>
-  // [FIX scene-empty 2026-09-07] isHotelEvent 收到的是整行对象 (String → "[object Object]")
-  //   恒 false → 通道事件恒 0 条; 改传归一化后的 a.type 字段。
+  // [FIX scene-empty 2026-09-07] isHotelEvent 收到的是归一化后的 a.type 字段
   events.value.filter(a => isHotelEvent(a.type)).filter(a =>
     (interceptOnly.value
       ? (CORRIDOR_INTERCEPT_TYPES as readonly string[]).includes(String(a.type))
@@ -258,6 +140,9 @@ const treeDeviceSet = computed(() => new Set(treeSel.value?.deviceIds ?? []))
 function onTreeSelection(sel: AlarmTreeSelection) {
   treeSel.value = sel.chips.length ? sel : null
   page.value = 1
+  // [t3-tree-channel 2026-09-11] 勾选变化 → 下钻重拉 (修复: 原只改过滤状态不重拉,
+  //   服务端数据面不变 → 勾选无效果); 单值服务端过滤 / 多值 fan-out 合并
+  fetchEvents()
 }
 function hitTree(a: AlarmEvent): boolean {
   const ch = String(a.channelId || '')
@@ -282,12 +167,9 @@ function groupOf(groupType: unknown): string {
   return PERSON_GROUPS.some(p => p.key === g) ? g : 'unknown'
 }
 
-/** group_type → 分类 tag (unknown → '未知' 灰 tag, 不参与六分类) */
-function groupTagOf(groupType: unknown) {
-  const def = PERSON_GROUPS.find(g => g.key === groupOf(groupType))
-  return def
-    ? { label: t(def.i18nKey), type: def.tagType }
-    : { label: t('hotel.person.unknown'), type: 'info' as const }
+function onSelectType(alarmType: string) {
+  selectedType.value = selectedType.value === alarmType ? '' : alarmType
+  page.value = 1
 }
 
 const finalEvents = computed(() =>
@@ -295,72 +177,15 @@ const finalEvents = computed(() =>
     ? filteredEvents.value.filter(a => String(a.type) === selectedType.value)
     : filteredEvents.value)
 const pagedFinal = computed(() => {
-  const start = (page.value - 1) * pageSize
-  return finalEvents.value.slice(start, start + pageSize)
+  const start = (page.value - 1) * pageSize.value
+  return finalEvents.value.slice(start, start + pageSize.value)
 })
-
-/** metadata drawer 行 (CORRIDOR_METADATA_KEYS 优先 + 其余键兜底, 全防御式) */
-const metadataRows = computed(() => {
-  const meta = (activeEvent.value?.metadata ?? {}) as Record<string, unknown>
-  const rows: Array<{ key: string; value: string }> = []
-  const seen = new Set<string>()
-  const fmt = (v: unknown): string => {
-    if (v == null) return '-'
-    if (typeof v === 'object') return JSON.stringify(v)
-    return String(v)
-  }
-  for (const k of CORRIDOR_METADATA_KEYS) {
-    if (meta[k] !== undefined) { rows.push({ key: k, value: fmt(meta[k]) }); seen.add(k) }
-  }
-  for (const [k, v] of Object.entries(meta)) {
-    if (!seen.has(k)) rows.push({ key: k, value: fmt(v) })
-  }
-  return rows
-})
-
-function typeName(alarmType: string) {
-  return typeItems.value.find(i => i.alarm_type === alarmType)?.display_name ?? ''
-}
-
-function onSelectType(alarmType: string) {
-  selectedType.value = selectedType.value === alarmType ? '' : alarmType
-  page.value = 1
-}
-
-/** [FEAT 2026-09-02] 合法 bbox 判定 (与 SnapshotAnnotated 内部校验同口径: 数组≥4,
-  同周界 EventsView.hasBox); fusion 拦截证据链无快照时可凭 bbox 渲染占位底+检测框 */
-function hasBox(md?: Record<string, unknown>): boolean {
-  return Array.isArray(md?.bbox) && (md.bbox as unknown[]).length >= 4
-}
-
-function levelTagType(level: unknown) {
-  const lv = String(level ?? '').toLowerCase()
-  if (lv === 'critical' || lv === 'high') return 'danger'
-  if (lv === 'medium') return 'warning'
-  return 'info'
-}
-
-function fmtTime(iso: string) {
-  if (!iso) return '-'
-  const d = new Date(iso)
-  if (Number.isNaN(d.getTime())) return iso
-  const p = (n: number) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
-}
-
-function openDetail(row: AlarmEvent) {
-  activeEvent.value = row
-  drawerVisible.value = true
-}
 
 // ── 数据拉取 ──
 /** [FIX scene-empty 2026-09-07] 单行归一化: normalizeAlarmCore (SSOT) + 原始
- *  metadata 展开 (三形态: 字符串/对象/数组, 与周界 EventsView normalizeRow 同口径)。
- *  原裸赋值 events.value = list: 后端 /alarms 返回 alarm_type/alarm_id/
- *  snapshot_url/timestamp (无 type/id/snapshotUrl/createdAt), 页面模板与
- *  isHotelEvent 全部读 undefined → 恒 0 条 (后端同参数实返 100 条)。 */
+ *  metadata 展开 (三形态: 字符串/对象/数组, 与周界 EventsView normalizeRow 同口径) */
 function normalizeRow(e: unknown): AlarmEvent {
-  const n = normalizeAlarmCore(e)
+  const n = normalizeAlarmCompat(e)
   let rawMeta = (e as { metadata?: unknown })?.metadata
   if (typeof rawMeta === 'string') {
     try { rawMeta = JSON.parse(rawMeta) } catch { rawMeta = undefined }
@@ -393,10 +218,21 @@ async function fetchEvents() {
   loading.value = true
   loadError.value = ''
   try {
-    const res = await hotelUnattendedApi.listAlarms()
-    const list = res.data?.data?.items ?? []
-    if (list.length === 0 && !res.data) throw new Error(t('hotel.common.emptyResp'))
-    events.value = list.map(e => normalizeRow(e))
+    // [t3-tree-channel 2026-09-11] 三级树服务端下钻 (见 useAlarmTreeDrill 头注):
+    //   勾选激活时 channel_id 服务端过滤 — 单值直传 / 多值 fan-out 合并
+    //   (后端参数单值 + pageSize clamp 100; API 层 listAlarms(channelId?) 透传)
+    const drill = treeSel.value?.drillValues ?? []
+    if (drill.length > 1) {
+      events.value = await fetchAlarmDrillFanout(drill, async (v) => {
+        const r = await hotelUnattendedApi.listAlarms(v)
+        return (r.data?.data?.items ?? []).map(e => normalizeRow(e))
+      })
+    } else {
+      const res = await hotelUnattendedApi.listAlarms(drill[0])
+      const list = res.data?.data?.items ?? []
+      if (list.length === 0 && !res.data) throw new Error(t('hotel.common.emptyResp'))
+      events.value = list.map(e => normalizeRow(e))
+    }
   } catch (e: unknown) {
     const msg = (e as Error)?.message ?? String(e)
     loadError.value = msg.includes('404')
@@ -425,17 +261,9 @@ onMounted(() => {
 </script>
 
 <style scoped>
-/*.hu-events-page { padding: 4px 0; }*/
 /* [P3 2026-09-10] 右侧设备树面板 → flex 双栏 */
 .hu-events-page { display: flex; gap: 12px; align-items: flex-start; }
 .hu-events-main { flex: 1; min-width: 0; }
-/* [P2 2026-09-10] 卡片栅格 */
-.events-card-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-  gap: 12px;
-}
-.act-handle { margin-left: 8px; }  /* [行操作 2026-09-01] dropdown 包裹后相邻按钮间距失效 */
 .filter-card { margin-bottom: 16px; }
 .scene-bar { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
 .bar-label { font-size: 13px; color: var(--el-text-color-secondary); }
@@ -447,21 +275,4 @@ onMounted(() => {
 .group-select { width: 116px; align-self: center; }
 .err-hint { margin-top: 10px; font-size: 12px; color: var(--el-text-color-secondary); }
 .card-header { display: flex; justify-content: space-between; align-items: center; }
-.hint { font-size: 12px; color: var(--el-text-color-secondary); font-weight: normal; }
-.events-table :deep(tbody tr) { cursor: pointer; }
-.type-cell { display: flex; flex-direction: column; line-height: 1.4; }
-.mono { font-family: 'JetBrains Mono', Consolas, monospace; }
-.evt-key { font-size: 12px; color: var(--el-text-color-secondary); }
-.evt-name { font-size: 12px; }
-.snap-thumb { width: 48px; height: 36px; border-radius: 3px; cursor: pointer; }
-.pager { display: flex; justify-content: flex-end; margin-top: 12px; }
-.detail-head { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
-.detail-type { font-size: 14px; font-weight: 500; }
-.detail-time { font-size: 12px; color: var(--el-text-color-secondary); margin-left: auto; }
-.detail-desc { font-size: 13px; color: var(--el-text-color-regular); line-height: 1.5; }
-.sec-title { margin: 16px 0 8px; font-size: 14px; }
-.meta-table { margin-bottom: 8px; }
-.meta-val { font-size: 12px; word-break: break-all; }
-.meta-empty { font-size: 12px; color: var(--el-text-color-secondary); padding: 8px 0; }
-.meta-hint { font-size: 11px; color: var(--el-text-color-secondary); }
 </style>

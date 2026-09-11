@@ -9,6 +9,13 @@
  *   4. 追踪联动执行状态（WS linkage_action 消息）
  *   5. 报警音效播放
  *
+ * [SOUND-ORIGIN 2026-09-11] 音效来源治理:
+ *   showAlarmPopup(alarm, { origin }) 区分入口来源 —
+ *   - 'manual' (默认): 手动入口 (列表点行/卡片/详情按钮/路由进入/规则页) 静音
+ *   - 'auto': WS alarm.new 推送自动弹窗 (useGlobalAlarm) → 播音
+ *   - 'linkage': 联动规则 CLIENT_PLAY_TONE 触发 → 播音
+ *   旧调用点不传 origin 即默认 manual → 自动静音, 行为兼容 (自动链已显式传 auto)。
+ *
  * [POPUP-AUTOCLOSE 2026-09-03] 弹窗自动关闭字段透传:
  *   - showAlarmPopup(options?: { autoCloseSeconds?: number })
  *   - 详情入口 (openAlarmDetailById): 不传 options, 默认永不自关
@@ -287,11 +294,27 @@ export const queueInfo = computed(() => ({
   total: alarmQueue.value.length,
 }))
 
+// [FIX prevnext-shape 2026-09-11] prev/next 与列表入口同一归一化入口:
+//   原直取队列对象赋 currentAlarm, 绕过 normalizeAlarmPayload 的 metadata
+//   字符串/数组形态解包兜底 (unpackRawMetadata) → 部分队列条目 (如
+//   useAlarm.ts/useAlarmStreamSSE.ts 原始 WS 帧直入队) metadata 形态漂移
+//   → popupAlarmShapes 取空 → 叠加层 fallback 区域库渲染「区域」,
+//   与列表入口 (normalizeAlarmPayload → 冻结快照「绊线」) 视觉分裂。
+//   条件归一化: 已带 status 的队列条目是 useGlobalAlarm normalizeAlarmPayload
+//   产物 (形态已正确), 直接用 — 避免二次 normalize 时白名单重建把顶层无
+//   平铺的 bbox 重置为空数组后覆盖合并源 (幂等缺口); 无 status 的原始帧
+//   走完整 normalizeAlarmPayload (normalize + 解包合并)。
+function loadQueueAlarm(idx: number) {
+  const q = alarmQueue.value[idx] as AlarmEvent | undefined
+  if (!q) return
+  currentAlarm.value = (q as any)?.status ? q : normalizeAlarmPayload(q)
+  linkageLogs.value = []
+}
+
 export function nextAlarm() {
   if (queueIndex.value < alarmQueue.value.length - 1) {
     queueIndex.value++
-    currentAlarm.value = alarmQueue.value[queueIndex.value]
-    linkageLogs.value = []
+    loadQueueAlarm(queueIndex.value)
     // 不重新查询规则（同一批告警通常匹配同一规则）
   }
 }
@@ -299,8 +322,7 @@ export function nextAlarm() {
 export function prevAlarm() {
   if (queueIndex.value > 0) {
     queueIndex.value--
-    currentAlarm.value = alarmQueue.value[queueIndex.value]
-    linkageLogs.value = []
+    loadQueueAlarm(queueIndex.value)
   }
 }
 
@@ -379,6 +401,12 @@ export async function appendAlarmNote(content: string): Promise<boolean> {
 }
 
 // ── 音效（修复：解锁失败时不设置 audioUnlocked） ──
+// [SOUND-ORIGIN 2026-09-11] 解锁专用静音 wav (8kHz/16bit/50ms data URI):
+//   autoplay 授权来自「手势上下文内调用 play」, 不需要真的出声 —
+//   两处首次手势解锁 (App.vue / 本文件 ensureAudioUnlock) 均用它替代 alarm.wav,
+//   手动入口点击/按键零告警音, auto 播音链路不受影响。
+export const AUDIO_UNLOCK_SILENT_WAV =
+  'data:audio/wav;base64,UklGRkQDAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YSADAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'
 let audioUnlocked = false
 function ensureAudioUnlock() {
   if (audioUnlocked) return
@@ -391,14 +419,16 @@ function ensureAudioUnlock() {
     alarmAudio.load()
   }
   const unlock = () => {
-    if (!alarmAudio) return
-    alarmAudio.play().then(() => {
-      alarmAudio!.pause()
-      alarmAudio!.currentTime = 0
-      audioUnlocked = true
-    }).catch((e) => {
-      console.warn('[useAlarmPopup] 音频解锁失败（需要用户交互）:', e)
+    // [SOUND-ORIGIN] 解锁动作用静音 wav (独立临时元素, 正式播音元素 alarmAudio
+    //   保持 alarm.wav) — autoplay 授权来自手势上下文内调用 play, 不需要出声:
+    //   手动入口的首次点击不再播放任何告警音
+    if (audioUnlocked) return
+    const un = new Audio(AUDIO_UNLOCK_SILENT_WAV)
+    un.volume = 0.001
+    un.play().then(() => { un.pause() }).catch(() => {
+      console.warn('[useAlarmPopup] 音频解锁失败（需要用户交互）')
     }).finally(() => {
+      audioUnlocked = true
       // 确保无论成功失败都清理监听器
       audioUnlockCleanup?.()
     })
@@ -457,7 +487,13 @@ export function pushLinkageLog(log: { action: string; status: string; icon?: str
 // [POPUP-AUTOCLOSE 2026-09-03] options.autoCloseSeconds:
 //   - 详情入口 (openAlarmDetailById) 不传 → 0 → 永不自动关闭
 //   - WS 推送 (useGlobalAlarm) 透传 rule.popup_auto_close_s → 0=不启用, >0=N 秒后关闭
-export async function showAlarmPopup(rawAlarm: any, options?: { autoCloseSeconds?: number }) {
+// [SOUND-ORIGIN 2026-09-11] options.origin: 'manual' | 'auto' | 'linkage' (默认 manual)
+//   仅 auto/linkage 播放报警音; 手动打开一律静音 (旧调用点不传即静音, 自动链已显式传)
+export type AlarmPopupOrigin = 'manual' | 'auto' | 'linkage'
+export async function showAlarmPopup(
+  rawAlarm: any,
+  options?: { autoCloseSeconds?: number; origin?: AlarmPopupOrigin },
+) {
   if (!rawAlarm) return
 
   // 取消待执行的关闭定时器，防止新告警被旧 300ms 定时器清除
@@ -524,7 +560,12 @@ export async function showAlarmPopup(rawAlarm: any, options?: { autoCloseSeconds
 
   currentAlarm.value = alarm
   linkageLogs.value = []
-  queueIndex.value = 0
+  // [FIX prevnext-shape 2026-09-11] 队列索引对齐: 弹窗告警若在队列内 (WS
+  //   推送链先 pushRealtimeAlarm 再 showAlarmPopup), queueIndex 对齐其真实
+  //   位置 — 原恒置 0, 点「下一条」从 0→1 跳号 (队列[0] 即当前告警时被
+  //   重显/非当前时被跳过); 队列外条目 (详情/列表入口历史告警) 保持 0。
+  const qIdx = alarmQueue.value.findIndex((a) => a.id === alarm.id)
+  queueIndex.value = qIdx >= 0 ? qIdx : 0
   // [POPUP-AUTOCLOSE 2026-09-03] 写入当前弹窗的自动关闭秒数 (独立 ref, 不污染 AlarmEvent)
   currentPopupAutoCloseS.value = Math.max(0, Number(options?.autoCloseSeconds ?? 0)) || 0
   if (!popupVisible.value) {
@@ -536,8 +577,11 @@ export async function showAlarmPopup(rawAlarm: any, options?: { autoCloseSeconds
       'autoCloseSeconds:', currentPopupAutoCloseS.value)
   }
 
-  // 3. 音效 —— 传入告警类型, 仅 ALARM 类播放报警音
-  playAlarmSound(alarm.type)
+  // 3. 音效 —— [SOUND-ORIGIN 2026-09-11] 仅自动弹窗 (WS 推送) / 联动触发播音,
+  //    手动入口 (列表点行/卡片/详情按钮) 一律静音; 仍按告警类型过滤 (仅 ALARM 类)
+  if (options?.origin === 'auto' || options?.origin === 'linkage') {
+    playAlarmSound(alarm.type)
+  }
 
   // 4. 异步查询联动规则（弹窗已开，匹配结果后续填入；失败不阻塞弹窗）
   try {

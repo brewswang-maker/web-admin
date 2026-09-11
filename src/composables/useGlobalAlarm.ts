@@ -336,7 +336,9 @@ async function handleAlarm(alarm: any) {
       const matchedRule = await findMatchingRule(normalized)
       if (matchedRule) {
         lastPopupTime.set(debounceKey, now)
-        showAlarmPopup(normalized, { autoCloseSeconds: Number(matchedRule.popup_auto_close_s) || 0 })
+        // [SOUND-ORIGIN 2026-09-11] WS 推送自动弹窗 → origin:'auto' 播放报警音
+        //   (手动入口默认 manual 静音, 见 useAlarmPopup.showAlarmPopup)
+        showAlarmPopup(normalized, { autoCloseSeconds: Number(matchedRule.popup_auto_close_s) || 0, origin: 'auto' })
       } else {
         console.log('[useGlobalAlarm] popup suppressed (no matching linkage rule), type:',
           normalized.type, 'ch:', normalized.channelId)

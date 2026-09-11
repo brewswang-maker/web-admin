@@ -20,15 +20,20 @@
       <el-empty v-if="!typeTiles.length" :image-size="40" description="无事件类型" class="tile-empty" />
     </div>
 
-    <!-- 事件表 -->
-    <el-card shadow="never" class="block-card">
+    <!-- [场景页对齐 2026-09-11] 事件列表统一 AlarmEventsPanel
+         (表格 14 列/卡片栅格/分页/处警·详情入口 与 AlarmsView 零分叉;
+          原「加载更多」换标准分页, 原 详情抽屉/轨迹/回放 收敛至 AlarmPopup/证据链) -->
+    <AlarmEventsPanel
+      :rows="pagedEvents" :total="filteredEvents.length"
+      v-model:page="page" v-model:page-size="pageSize"
+      :loading="loading" :view-mode="viewMode" table-height="auto"
+      :empty-text="`暂无${title}相关事件`">
       <template #header>
         <div class="card-header">
           <span class="card-title">{{ title }}事件
-            <span class="card-title-sub">共 {{ events.length }} 条 (最近 {{ listLimit }} 条显示)</span>
+            <span class="card-title-sub">共 {{ filteredEvents.length }} 条</span>
           </span>
-          <span style="display:flex;align-items:center;gap:8px">
-            <!-- [P2 2026-09-10] 卡片/列表切换 -->
+          <span class="header-right">
             <AlarmViewToggle v-model="viewMode" page-key="gas" />
             <el-button size="small" :loading="loading" @click="load(true)">
               <el-icon><Refresh /></el-icon>刷新
@@ -36,75 +41,7 @@
           </span>
         </div>
       </template>
-      <!-- [P2 2026-09-10] 卡片视图 (AlarmCard 栅格; 筛选/分页逻辑零改动) -->
-      <div v-if="viewMode === 'card'" class="events-card-grid">
-        <AlarmCard v-for="e in pagedEvents" :key="e.id" :alarm="e" @click="openDetail(e)">
-          <template #actions="{ alarm }">
-            <el-button size="small" type="primary" link @click.stop="openDetail(alarm)">详情</el-button>
-            <el-button size="small" type="success" link @click.stop="goTrajectory(alarm)">轨迹</el-button>
-            <el-button size="small" type="warning" link @click.stop="jumpToPlayback(alarm)">回放</el-button>
-          </template>
-        </AlarmCard>
-      </div>
-      <el-table v-else :data="pagedEvents" v-loading="loading" size="small"
-                :empty-text="loading ? '加载中…' : '暂无事件'" @row-click="openDetail">
-        <el-table-column label="类型" min-width="170">
-          <template #default="{ row }">
-            <div class="type-cell">
-              <span class="evt-name">{{ typeName(row.type) }}</span>
-              <span class="evt-key">{{ row.type }}</span>
-            </div>
-          </template>
-        </el-table-column>
-        <el-table-column label="级别" width="92">
-          <template #default="{ row }">
-            <span class="level-tag" :class="levelClass(row.level)">{{ levelText(row.level) }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column prop="channelId" label="通道" width="92" show-overflow-tooltip />
-        <el-table-column prop="description" label="描述" min-width="220" show-overflow-tooltip />
-        <el-table-column label="快照" width="80" align="center">
-          <template #default="{ row }">
-            <el-image v-if="row.snapshotUrl" :src="row.snapshotUrl"
-                      :preview-src-list="[row.snapshotUrl]" fit="cover"
-                      preview-teleported class="snap-thumb" @click.stop />
-            <div v-else class="snap-none">—</div>
-          </template>
-        </el-table-column>
-        <el-table-column label="时间" width="150">
-          <template #default="{ row }">{{ shortTime(row.createdAt) }}</template>
-        </el-table-column>
-        <el-table-column label="" width="152" align="center">
-          <template #default="{ row }">
-            <el-button size="small" type="primary" link @click.stop="openDetail(row)">详情</el-button>
-            <el-button size="small" type="success" link @click.stop="goTrajectory(row)">轨迹</el-button>
-            <!-- [加油站三期 2026-08-30 §11.1C] 视频证据链: 跳转事件时刻录像回放 -->
-            <el-button size="small" type="warning" link @click.stop="jumpToPlayback(row)">回放</el-button>
-          </template>
-        </el-table-column>
-      </el-table>
-      <div class="pager" v-if="filteredEvents.length > listLimit">
-        <el-button size="small" :disabled="listLimit >= filteredEvents.length" @click="listLimit += 20">
-          加载更多 ({{ filteredEvents.length - listLimit }})
-        </el-button>
-      </div>
-    </el-card>
-
-    <!-- 详情抽屉 -->
-    <el-drawer v-model="detailVisible" :title="detailTitle" size="520px" direction="rtl">
-      <div v-if="current" class="detail-body">
-        <div class="kv-row"><span class="k">类型</span><span>{{ current.type }} · {{ typeName(current.type) }}</span></div>
-        <div class="kv-row"><span class="k">级别</span><span :class="levelClass(current.level)">{{ levelText(current.level) }}</span></div>
-        <div class="kv-row"><span class="k">通道</span><span>{{ current.channelId }}</span></div>
-        <div class="kv-row"><span class="k">置信度</span><span>{{ current.confidence != null ? (current.confidence * 100).toFixed(0) + '%' : '-' }}</span></div>
-        <div class="kv-row"><span class="k">描述</span><span>{{ current.description || '-' }}</span></div>
-        <div class="kv-row"><span class="k">时间</span><span>{{ formatTime(current.createdAt) }}</span></div>
-        <el-image v-if="current.snapshotUrl" :src="current.snapshotUrl"
-                  :preview-src-list="[current.snapshotUrl]" fit="contain"
-                  preview-teleported class="detail-snap" />
-        <div v-else class="snap-error">快照已清理</div>
-      </div>
-    </el-drawer>
+    </AlarmEventsPanel>
    </div>
 
    <!-- [P3 2026-09-10] 设备树筛选 (区块内嵌; 默认折叠竖条不挤占卡内空间) -->
@@ -114,33 +51,31 @@
 
 <script setup lang="ts">
 /**
- * 加油站事件分段视图 (共享组件) — [加油站方案 2026-08-30]
+ * 加油站事件分段视图 (共享组件) — [加油站方案 2026-08-30] [场景页对齐 2026-09-11]
  * 加油区/卸油区/周界/油罐区/便利店 五个子页复用: 按 GAS_EVENT_SECTIONS 分组过滤真实事件流,
- * 类型计数 tiles + 事件表 + 详情抽屉, 三态完整 + 30s 自动刷新 (禁 mock)
+ * 类型计数 tiles + AlarmEventsPanel 列表, 三态完整 + 30s 自动刷新 (禁 mock)
  *
  * 工程红线:
  *   - 加油区 T6 顶部告警条 (showT6Banner=true)
- *   - 卸油区核心圈: 视频证据链入口 (close=manual, 需值守人员复核)
+ *   - 卸油区核心圈: 视频证据链入口 (close=manual, 需值守人员复核) — 收敛至行「更多→证据链」
  */
 import { computed, onMounted, onUnmounted, ref } from 'vue'
-import { useRouter } from 'vue-router'
 import { Refresh } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { alarmApi } from '@/api/alarm'
 import eventTypesApi from '@/api/eventTypes'
 import { GAS_EVENT_SECTIONS, type GasSectionKey } from '@/api/gasStation'
-import type { AlarmEvent, AlarmLevel } from '@/types/alarm'
-import { normalizeAlarmCore } from '@/types/alarm'
-// [FIX dev-name-num 2026-09-11] nl 拼接数字形态治理 (共享目录反查)
-import { resolveAlarmDeviceName } from '@/composables/useAlarmDeviceLabel'
+import type { AlarmEvent } from '@/types/alarm'
 import type { EventTypeMetadataItem } from '@/api/eventTypes'
 import { useRealtimeAlarmEvents } from '@/composables/useRealtimeAlarmEvents'
+import { normalizeAlarmCompat } from '@/composables/useAlarmTableHelpers'
 // [P3 2026-09-10] 设备树筛选面板 (安保区域→子区域→设备 多选; 区块内嵌默认折叠)
 import AlarmDeviceTreePanel from '@/components/alarm/AlarmDeviceTreePanel.vue'
 import type { AlarmTreeSelection } from '@/components/alarm/AlarmDeviceTreePanel.vue'
-// [P2 2026-09-10] 卡片/列表切换 + 告警卡片
+// [P2 2026-09-10] 卡片/列表切换 (持久化 key alarm_view_mode_gas)
 import AlarmViewToggle from '@/components/alarm/AlarmViewToggle.vue'
-import AlarmCard from '@/components/alarm/AlarmCard.vue'
+// [场景页对齐 2026-09-11] 列表主体统一共享面板 (不复制 AlarmsView 表格)
+import AlarmEventsPanel from '@/components/alarm/AlarmEventsPanel.vue'
 // [FIX realtime-push 2026-09-06] 场景页实时刷新: WS 告警到达去抖静默重拉 (无 loading 遮罩闪烁)
 useRealtimeAlarmEvents(() => load(true))
 
@@ -153,7 +88,8 @@ const props = defineProps<{
 
 const loading = ref(false)
 const events = ref<AlarmEvent[]>([])
-const listLimit = ref(20)
+const page = ref(1)
+const pageSize = ref(20)
 const eventTypes = ref<EventTypeMetadataItem[]>([])
 let refreshTimer: ReturnType<typeof setInterval> | null = null
 
@@ -192,14 +128,16 @@ const typeTiles = computed(() => {
   }))
 })
 
-const pagedEvents = computed(() => filteredEvents.value.slice(0, listLimit.value))
-
 // [P3 2026-09-10] 设备树筛选 (右侧面板勾选集合命中判定; 空集不筛)
 const treeSel = ref<AlarmTreeSelection | null>(null)
 const treeChannelSet = computed(() => new Set(treeSel.value?.channelIds ?? []))
 const treeDeviceSet = computed(() => new Set(treeSel.value?.deviceIds ?? []))
 function onTreeSelection(sel: AlarmTreeSelection) {
   treeSel.value = sel.chips.length ? sel : null
+  page.value = 1
+  // [t3-tree-channel 2026-09-11] 勾选变化 → 下钻重拉 (单值通道服务端过滤下沉;
+  //   多值保持 hitTree 前端收敛 — 本区块按 alarm_type 分路, fan-out 会放大请求数)
+  load(true)
 }
 function hitTree(a: AlarmEvent): boolean {
   const ch = String(a.channelId || '')
@@ -210,70 +148,32 @@ function hitTree(a: AlarmEvent): boolean {
 const filteredEvents = computed(() =>
   treeSel.value ? events.value.filter(hitTree) : events.value)
 
-const detailVisible = ref(false)
-const current = ref<AlarmEvent | null>(null)
-const detailTitle = computed(() => current.value ? `事件详情 · ${typeName(current.value.type)}` : '事件详情')
-function openDetail(row: AlarmEvent) {
-  current.value = row
-  detailVisible.value = true
-}
-
-const router = useRouter()
-// [加油站三期 2026-08-30 §11.1C] 视频证据链回放跳转
-//   范式复用 AlarmPopup.jumpToPlayback: Recording 页带 channelId/时间参数
-//   (回放页定位该时刻); 卸油事件 close=manual 需值守人员复核录像证据链
-function jumpToPlayback(row: AlarmEvent) {
-  const t = row.createdAt ? new Date(row.createdAt).getTime() : Date.now()
-  router.push({
-    name: 'Recording',
-    query: {
-      channelId: row.channelId || '',
-      deviceId: row.deviceId || '',
-      time: String(t),
-      alarmId: row.id || '',
-    },
-  })
-  ElMessage.success('正在跳转到录像回放…')
-}
-function goTrajectory(row: AlarmEvent) {
-  const meta = (row.metadata ?? {}) as Record<string, unknown>
-  const trackId = Number(meta.track_id) || 0
-  const camId = Number(meta.channel_id)
-    || Number(String(row.channelId).replace(/\D/g, '')) || 0
-  if (trackId && camId) {
-    router.push({
-      path: '/retrieval',
-      query: { tab: 'trajectory', camera_id: String(camId), track_id: String(trackId) },
-    })
-    return
-  }
-  const ts = new Date(row.createdAt).getTime()
-  const query: Record<string, string> = {
-    // [FIX dev-name-num 2026-09-11] 空名/纯数字 → 目录反查 (不裸显「通道+20位」兜底)
-    nl: `${typeName(row.type)} ${resolveAlarmDeviceName(row.channelName || row.deviceName, row.deviceId, row.channelId) || row.channelId}`,
-    from: 'gas-event',
-  }
-  if (ts) {
-    query.start = String(ts - 30 * 60_000)
-    query.end = String(ts + 30 * 60_000)
-  }
-  router.push({ path: '/retrieval', query })
-}
+// 标准分页切片 (原「加载更多」listLimit → 与 AlarmsView 同参 el-pagination)
+const pagedEvents = computed(() => {
+  const start = (page.value - 1) * pageSize.value
+  return filteredEvents.value.slice(start, start + pageSize.value)
+})
 
 async function load(silent = false) {
   if (!silent) loading.value = true
   try {
     const keys = [...sectionKeys.value]
+    // [t3-tree-channel 2026-09-11] 三级树单值下钻: 勾选单个通道/设备叶时
+    //   channel_id 服务端过滤 (多值不放大 — 本区块按 alarm_type 分路, 宽谓词集
+    //   仍由 hitTree 前端收敛; 详见 useAlarmTreeDrill 头注)
+    const drill = treeSel.value?.drillValues ?? []
+    const drillOne = drill.length === 1 ? drill[0] : undefined
     // 加油站事件流: scene=gas_station 过滤 (与后端 ScenePackDefs scene_tag 对齐)
     const lists = await Promise.all(
       keys.map(key =>
-        alarmApi.getList({ page: 1, pageSize: 30, alarm_type: key }).catch(() => null))
+        alarmApi.getList({ page: 1, pageSize: 30, alarm_type: key,
+          ...(drillOne ? { channel_id: drillOne } : {}) }).catch(() => null))
     )
     const merged: AlarmEvent[] = []
     for (const r of lists) {
       if (!r) continue
       const items = (r.data?.data as any)?.items
-      if (Array.isArray(items)) merged.push(...items.map((x: any) => normalizeAlarmCore(x)))
+      if (Array.isArray(items)) merged.push(...items.map((x: any) => normalizeAlarmCompat(x)))
     }
     merged.sort((a, b) => (new Date(b.createdAt).getTime() || 0) - (new Date(a.createdAt).getTime() || 0))
     events.value = merged
@@ -302,33 +202,6 @@ async function load(silent = false) {
     if (!silent) ElMessage.error('事件加载失败, 请检查设备连接')
   }
   if (!silent) loading.value = false
-}
-
-function levelClass(level: AlarmLevel): string {
-  switch (level) {
-    case 'critical': return 'lv-crit'
-    case 'high': return 'lv-high'
-    case 'medium': return 'lv-med'
-    case 'low': return 'lv-low'
-    default: return 'lv-info'
-  }
-}
-function levelText(level: AlarmLevel): string {
-  return level.toUpperCase()
-}
-function formatTime(ts?: string): string {
-  if (!ts) return '-'
-  const d = new Date(ts)
-  if (isNaN(d.getTime())) return ts
-  const pad = (n: number) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
-}
-function shortTime(ts?: string): string {
-  if (!ts) return '-'
-  const d = new Date(ts)
-  if (isNaN(d.getTime())) return ts
-  const pad = (n: number) => String(n).padStart(2, '0')
-  return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
 
 onMounted(async () => {
@@ -368,36 +241,12 @@ onUnmounted(() => {
 .tile-label { color: #606266; font-size: 12px; }
 .tile-sub { color: #c0c4cc; font-size: 10px; margin-top: 1px; }
 .tile-empty { grid-column: 1 / -1; }
-.block-card { border-radius: 10px; }
-.block-card :deep(.el-card__header) { padding: 12px 16px; border-bottom: 1px solid #f0f2f5; }
-.card-header { display: flex; justify-content: space-between; align-items: center; }
-.card-title { font-weight: 600; color: #303133; font-size: 14px; }
-.card-title-sub { color: #909399; font-weight: 400; font-size: 12px; margin-left: 8px; }
 /* [P3 2026-09-10] 区块内嵌设备树 → flex 双栏 (面板默认折叠竖条) */
 .gas-section { display: flex; gap: 12px; align-items: flex-start; }
 .gas-section-main { flex: 1; min-width: 0; }
-/* [P2 2026-09-10] 卡片栅格 */
-.events-card-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-  gap: 12px;
-  margin-bottom: 12px;
-}
-.type-cell { display: flex; flex-direction: column; }
-.evt-name { color: #303133; }
-.evt-key { color: #909399; font-family: monospace; font-size: 11px; }
-.level-tag { padding: 2px 8px; border-radius: 10px; font-size: 12px; }
-.lv-crit { background: #fef0f0; color: #f56c6c; }
-.lv-high { background: #fdf6ec; color: #e6a23c; }
-.lv-med { background: #ecf5ff; color: #409eff; }
-.lv-low { background: #f0f9eb; color: #67c23a; }
-.lv-info { background: #f4f4f5; color: #909399; }
-.snap-thumb { width: 50px; height: 32px; border-radius: 4px; }
-.snap-none { color: #c0c4cc; }
-.snap-error { color: #c0c4cc; font-size: 12px; padding: 4px 8px; background: #f5f7fa; border-radius: 4px; }
-.pager { text-align: center; padding: 12px 0 0; }
-.detail-body { padding: 0 16px; }
-.kv-row { display: flex; padding: 8px 0; border-bottom: 1px dashed #ebeef5; }
-.kv-row .k { width: 80px; color: #909399; }
-.detail-snap { width: 100%; margin-top: 12px; border-radius: 4px; }
+/* Panel header slot (标题 + 视图切换 + 刷新) */
+.card-header { display: flex; justify-content: space-between; align-items: center; }
+.card-title { font-weight: 600; color: #303133; font-size: 14px; }
+.card-title-sub { color: #909399; font-weight: 400; font-size: 12px; margin-left: 8px; }
+.header-right { display: flex; align-items: center; gap: 12px; }
 </style>

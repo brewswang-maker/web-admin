@@ -15,6 +15,10 @@ import { ref } from 'vue'
 import { channelApi } from '@/api/channel'
 import { deviceApi } from '@/api/device'
 
+/** [chan-tree 2026-09-11] 通道条目 (三级树叶子 + 通道列展示共用)
+ *  raw=通道 id 原值 (含 _chN 子码流形态) / base=剥后缀互认键 / name=可读名 (空由显示层占位) */
+export interface ChannelBrief { raw: string; base: string; name: string }
+
 /** 纯数字 ID 形态 (GB28181 20 位 / int32 截断 hash / _chN 子码流后缀 / 「通道+数字」兜底产物 —
  *  二次 normalize 时 channelName 兜底会经 raw.channelName 回流进 deviceName, 同口径拦截;
  *  自定义名如「通道01」仅 2 位数字不受影响) */
@@ -28,6 +32,10 @@ export const baseChannelId = (v: unknown): string =>
 const devNameById = ref<Map<string, string>>(new Map())   // 设备 id → 设备名
 const chNameById = ref<Map<string, string>>(new Map())    // 通道 id → 通道名 (原值 + 剥 _chN 双形态)
 const chDevById = ref<Map<string, string>>(new Map())     // 通道父码 → 父设备 id
+// [chan-tree 2026-09-11] 设备 id → 其通道列表 (AlarmDeviceTreePanel 三级树叶子数据源)
+const devChsById = ref<Map<string, ChannelBrief[]>>(new Map())
+/** 目录就绪信号 (异步加载完成; 树面板响应式重建用) */
+const dirReady = ref(false)
 let dirStarted = false
 
 export function loadAlarmNameDirectory(): void {
@@ -52,17 +60,28 @@ export function loadAlarmNameDirectory(): void {
       }
       const cMap = new Map<string, string>()
       const pMap = new Map<string, string>()
+      // [chan-tree 2026-09-11] 设备→通道分组 (同名归并: rawId 与剥后缀 base 同属一组)
+      const devChs = new Map<string, ChannelBrief[]>()
       for (const c of channels) {
         const id = String(c?.channel_id ?? c?.id ?? '')
         if (!id) continue
         const nm = String(c?.name ?? '')
         if (nm) { cMap.set(id, nm); cMap.set(baseChannelId(id), nm) }
         const pid = String(c?.device_id ?? c?.deviceId ?? '')
-        if (pid) pMap.set(baseChannelId(id), pid)
+        if (pid) {
+          pMap.set(baseChannelId(id), pid)
+          const arr = devChs.get(pid) ?? []
+          if (!arr.some(x => x.base === baseChannelId(id))) {
+            arr.push({ raw: id, base: baseChannelId(id), name: nm })
+          }
+          devChs.set(pid, arr)
+        }
       }
       devNameById.value = dMap
       chNameById.value = cMap
       chDevById.value = pMap
+      devChsById.value = devChs
+      dirReady.value = true
     } catch { /* 目录服务不可用 → 反查恒空, 显示层走 '-' 兜底 */ }
   })()
 }
@@ -94,3 +113,31 @@ export function resolveAlarmDeviceName(
   }
   return ''
 }
+
+// ── [chan-tree 2026-09-11] 同步读取 API (三级树/列展示共用; 懒加载触发) ──
+export function devNameOf(id: unknown): string {
+  loadAlarmNameDirectory()
+  return devNameById.value.get(baseChannelId(id)) ?? ''
+}
+export function chNameOf(id: unknown): string {
+  loadAlarmNameDirectory()
+  return chNameById.value.get(String(id ?? '').trim())
+    ?? chNameById.value.get(baseChannelId(id)) ?? ''
+}
+export function devChannelsOf(id: unknown): ChannelBrief[] {
+  loadAlarmNameDirectory()
+  return devChsById.value.get(baseChannelId(id)) ?? []
+}
+/** [t3-tree-channel 2026-09-11] 通道 → 父设备码 (目录反查; 通道叶谓词补值用):
+ *  告警列表 channelId 归一 = channel_id_str (列表端 = device_id 列值), 多通道设备
+ *  的告警以父设备码落库 → 仅 raw+base 的通道叶谓词恒 miss; 补父设备码后命中。 */
+export function parentDevOfChannel(id: unknown): string {
+  loadAlarmNameDirectory()
+  return chDevById.value.get(baseChannelId(id)) ?? ''
+}
+export function alarmDirReady() {
+  loadAlarmNameDirectory()
+  return dirReady
+}
+
+// [chan-col 2026-09-11 完成锚点] 设备→通道目录扩展批次 · 部署产物 entry=index-wS8-Hc--kp.js tgz md5=57e4f6f0d728c29eeca8f2a8f6dd629b

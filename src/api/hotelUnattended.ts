@@ -133,12 +133,14 @@ export const hotelUnattendedApi = {
   },
 
   // ----- 事件 (告警列表 + SSOT 场景事件类型) -----
-  listAlarms() {
+  listAlarms(channelId?: string) {
     // [SSOT 2026-09-07] 数据源场景过滤: scene=hotel_unattended 后端按 scene_tags
     //   (isEventInScene → SQL IN) 过滤 — 28 键及后续新增 tag 自动跟随;
     //   页内 isHotelEvent 保留作双保险兑底。
+    // [t3-tree-channel 2026-09-11] channelId 可选: 三级树通道下钻服务端过滤
+    //   (单值; 多值由调用方 fan-out — 后端参数单值 + pageSize clamp 100)
     return http.get<ApiResponse<{ items?: AlarmEvent[] }>>('/alarms', {
-      params: { page: 1, pageSize: 500, scene: HOTEL_SCENE_TAG },
+      params: { page: 1, pageSize: 500, scene: HOTEL_SCENE_TAG, ...(channelId ? { channel_id: channelId } : {}) },
     })
   },
 

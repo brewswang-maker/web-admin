@@ -229,6 +229,16 @@
       <el-tab-pane :label="$t('settings.tabAlarm')">
         <el-form :model="alarm" label-width="150px">
           <el-divider content-position="left">{{ $t('settings.alarmRule') }}</el-divider>
+          <!-- [P3-2 2026-09-11] 告警冷却双开关 (spec §7 P3-2): 目标去重 / 去重时间窗;
+               绑定 box_config alarm.dedup 节点 (重启生效, 纯配置呈现层) -->
+          <el-form-item :label="$t('settings.dedupByTrack')">
+            <el-switch v-model="alarm.dedupByTrackEnabled" />
+            <span class="form-tip">{{ $t('settings.dedupByTrackTip') }}</span>
+          </el-form-item>
+          <el-form-item :label="$t('settings.dedupWindowSeconds')">
+            <el-input-number v-model="alarm.dedupWindowSeconds" :min="5" :max="300" />
+            <span class="form-tip">{{ $t('settings.dedupWindowSecondsTip') }}</span>
+          </el-form-item>
           <el-form-item :label="$t('settings.dedupWindow')">
             <el-input-number v-model="alarm.dedupWindow" :min="5" :max="300" />
           </el-form-item>
@@ -336,6 +346,111 @@
         </el-table>
       </el-tab-pane>
 
+      <!-- [REC-SCHEDULE 2026-09-11] 录像计划 — 自录像回放页迁出, 独立 CRUD 子模块 -->
+      <el-tab-pane :label="$t('settings.tabRecordSchedule', '录像计划')">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;gap:12px;flex-wrap:wrap">
+          <span style="font-size:12px;color:#909399">按通道/时段/事件触发自动启停录像，支持节假日排除</span>
+          <div style="display:flex;gap:8px;align-items:center">
+            <el-input v-model="scheduleChannelFilter" placeholder="按通道ID过滤" size="small" clearable style="width:180px"
+              @keyup.enter="fetchSchedules" @clear="fetchSchedules" />
+            <el-button size="small" @click="fetchSchedules" :loading="scheduleLoading">{{ $t('settings.scheduleRefresh', '刷新') }}</el-button>
+            <el-button type="primary" size="small" @click="openScheduleDialog()">+ {{ $t('settings.addSchedule', '新增计划') }}</el-button>
+          </div>
+        </div>
+        <el-table :data="schedules" v-loading="scheduleLoading" stripe size="small" empty-text="暂无计划，点击「新增计划」创建">
+          <el-table-column :label="$t('settings.scheduleName', '计划名称')" width="140">
+            <template #default="{ row }">{{ row.schedule_name || `#${row.id}` }}</template>
+          </el-table-column>
+          <el-table-column :label="$t('settings.scheduleChannel', '通道')" width="140">
+            <template #default="{ row }">{{ row.channel_id }}</template>
+          </el-table-column>
+          <el-table-column :label="$t('settings.scheduleType', '类型')" width="100">
+            <template #default="{ row }">
+              <el-tag size="small" :type="row.schedule_type === 'continuous' ? 'success' : row.schedule_type === 'event' ? 'danger' : 'primary'">
+                {{ row.schedule_type === 'continuous' ? '连续录像' : row.schedule_type === 'event' ? '事件触发' : '分时段' }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column :label="$t('settings.scheduleSegments', '时间段')" min-width="220">
+            <template #default="{ row }">
+              <span v-if="row.schedule_type === 'continuous'">24小时不间断</span>
+              <span v-else-if="row.schedule_type === 'event'">触发类型: {{ row.event_types || '(未设置)' }}</span>
+              <div v-else>
+                <el-tag v-for="(seg, i) in (row.time_segments || [])" :key="i" size="small" style="margin:2px">
+                  {{ DAY_LABELS[seg.day] || `D${seg.day}` }} {{ seg.start }}-{{ seg.end }}
+                </el-tag>
+              </div>
+            </template>
+          </el-table-column>
+          <el-table-column :label="$t('settings.scheduleStream', '码流')" width="80">
+            <template #default="{ row }">{{ row.stream_type === 'sub' ? '子码流' : '主码流' }}</template>
+          </el-table-column>
+          <el-table-column label="预录/延录" width="100">
+            <template #default="{ row }">{{ row.pre_record_seconds }}s / {{ row.post_record_seconds }}s</template>
+          </el-table-column>
+          <el-table-column label="节假日排除" width="100">
+            <template #default="{ row }">
+              <el-tag v-if="row.holiday_exclusion?.enabled" type="warning" size="small">{{ (row.holiday_exclusion.holiday_dates || []).length }} 天</el-tag>
+              <span v-else style="color:#909399;font-size:12px">—</span>
+            </template>
+          </el-table-column>
+          <el-table-column :label="$t('settings.scheduleEnabled', '启用')" width="80">
+            <template #default="{ row }">
+              <el-switch :model-value="row.enabled" @change="toggleScheduleEnabled(row)" />
+            </template>
+          </el-table-column>
+          <el-table-column :label="$t('settings.actions', '操作')" width="130" fixed="right">
+            <template #default="{ row }">
+              <el-button size="small" @click="openScheduleDialog(row)">{{ $t('settings.edit', '编辑') }}</el-button>
+              <el-button type="danger" size="small" @click="removeSchedule(row)">{{ $t('settings.delete', '删除') }}</el-button>
+            </template>
+          </el-table-column>
+        </el-table>
+      </el-tab-pane>
+
+      <!-- [REC-STORAGE 2026-09-11] 存储预估 — 自录像回放页迁出 -->
+      <el-tab-pane :label="$t('settings.tabStorageEstimate', '存储预估')">
+        <h4 style="margin-bottom:16px;color:#303133">存储容量预估计算器</h4>
+        <div style="display:flex;gap:32px;flex-wrap:wrap;align-items:flex-start">
+          <div style="display:flex;flex-direction:column;gap:16px">
+            <div style="display:flex;align-items:center;gap:12px">
+              <span style="width:100px">通道数量:</span>
+              <el-input-number v-model="estParams.channel_count" :min="1" :max="256" />
+            </div>
+            <div style="display:flex;align-items:center;gap:12px">
+              <span style="width:100px">每日录像时长:</span>
+              <el-input-number v-model="estParams.hours_per_day" :min="1" :max="24" /> 小时
+            </div>
+            <div style="display:flex;align-items:center;gap:12px">
+              <span style="width:100px">码率:</span>
+              <el-input-number v-model="estParams.bitrate_kbps" :min="256" :max="16384" :step="512" /> kbps
+            </div>
+            <div style="display:flex;align-items:center;gap:12px">
+              <span style="width:100px">保留天数:</span>
+              <el-input-number v-model="estParams.retention_days" :min="1" :max="365" /> 天
+            </div>
+            <el-button type="primary" @click="calculateStorage">{{ $t('settings.calcEstimate', '计算预估') }}</el-button>
+          </div>
+          <div v-if="storageEstimate" class="storage-result">
+            <div class="storage-row">
+              <span class="storage-label">单通道/天</span>
+              <span class="storage-value">{{ storageEstimate.gb_per_channel_per_day }} GB</span>
+            </div>
+            <div class="storage-row highlight">
+              <span class="storage-label">总容量需求</span>
+              <span class="storage-value">{{ storageEstimate.total_tb }} TB</span>
+            </div>
+            <div class="storage-row">
+              <span class="storage-label">含20%冗余</span>
+              <span class="storage-value">{{ storageEstimate.recommended_disk_tb }} TB</span>
+            </div>
+            <div class="storage-formula">
+              公式: 码率 ÷ 8 × 3600 × 小时/天 × 通道数 × 天数
+            </div>
+          </div>
+        </div>
+      </el-tab-pane>
+
       <el-tab-pane :label="$t('settings.tabAbout')">
         <el-descriptions :column="1" border v-if="systemInfo">
           <el-descriptions-item :label="$t('settings.productName')">{{ systemInfo.productName }}</el-descriptions-item>
@@ -355,6 +470,89 @@
         </div>
       </el-tab-pane>
     </el-tabs>
+
+    <!-- [REC-SCHEDULE 2026-09-11] 录像计划编辑弹窗 (迁自录像回放页, 全字段保留) -->
+    <el-dialog v-model="scheduleDialogVisible" :title="editingSchedule?.id ? $t('settings.editSchedule', '编辑录像计划') : $t('settings.addScheduleTitle', '新增录像计划')" width="640px">
+      <el-form v-if="editingSchedule" label-width="100px" size="default">
+        <el-form-item label="计划名称">
+          <el-input v-model="editingSchedule.schedule_name" placeholder="如: 工作日白天录像" />
+        </el-form-item>
+        <el-form-item label="通道">
+          <el-input v-model="editingSchedule.channel_id" placeholder="通道ID" :disabled="!!editingSchedule.id" />
+        </el-form-item>
+        <el-form-item label="录像类型">
+          <el-radio-group v-model="editingSchedule.schedule_type">
+            <el-radio value="continuous">24小时连续</el-radio>
+            <el-radio value="time_segment">分时段</el-radio>
+            <el-radio value="event">事件触发</el-radio>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item v-if="editingSchedule.schedule_type === 'event'" label="触发类型">
+          <el-input v-model="editingSchedule.event_types" placeholder="如: fire_smoke,perimeter_intrusion" />
+        </el-form-item>
+        <el-form-item v-if="editingSchedule.schedule_type === 'time_segment'" label="时间段">
+          <div v-for="(seg, i) in editingSchedule.time_segments" :key="i" style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
+            <el-select v-model="seg.day" style="width:80px">
+              <el-option v-for="(label, di) in DAY_LABELS" :key="di" :label="label" :value="di" />
+            </el-select>
+            <el-time-picker v-model="seg.start" value-format="HH:mm" format="HH:mm" placeholder="开始" style="width:120px" />
+            <span>—</span>
+            <el-time-picker v-model="seg.end" value-format="HH:mm" format="HH:mm" placeholder="结束" style="width:120px" />
+            <el-button type="danger" size="small" circle @click="removeTimeSegment(i)">−</el-button>
+          </div>
+          <el-button size="small" @click="addTimeSegment">+ 添加时段</el-button>
+        </el-form-item>
+        <el-form-item label="码流类型">
+          <el-radio-group v-model="editingSchedule.stream_type">
+            <el-radio value="main">主码流</el-radio>
+            <el-radio value="sub">子码流</el-radio>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item label="预录时间">
+          <el-input-number v-model="editingSchedule.pre_record_seconds" :min="0" :max="300" /> 秒
+        </el-form-item>
+        <el-form-item label="延录时间">
+          <el-input-number v-model="editingSchedule.post_record_seconds" :min="0" :max="600" /> 秒
+        </el-form-item>
+        <el-form-item label="启用">
+          <el-switch v-model="editingSchedule.enabled" />
+        </el-form-item>
+        <!-- [P2-3] 节假日排除策略 (全字段保留) -->
+        <el-form-item label="节假日排除">
+          <el-switch v-model="editingSchedule.holiday_exclusion!.enabled" />
+          <span style="margin-left:8px;color:#909399;font-size:12px">启用后指定日期不录像</span>
+        </el-form-item>
+        <el-form-item v-if="editingSchedule.holiday_exclusion?.enabled" label="排除日期">
+          <el-input
+            v-model="editingSchedule.holiday_exclusion.holiday_name"
+            placeholder="节假日名称（如：春节）"
+            style="margin-bottom:8px"
+          />
+          <el-select
+            v-model="editingSchedule.holiday_exclusion.holiday_dates"
+            multiple
+            filterable
+            allow-create
+            default-first-option
+            placeholder="选择或输入日期 (YYYY-MM-DD)"
+            style="width:100%"
+          >
+            <el-option label="元旦 01-01" value="2026-01-01" />
+            <el-option label="春节 除夕" value="2026-02-09" />
+            <el-option label="春节 初一" value="2026-02-10" />
+            <el-option label="清明节" value="2026-04-04" />
+            <el-option label="劳动节" value="2026-05-01" />
+            <el-option label="端午节" value="2026-06-10" />
+            <el-option label="中秋节" value="2026-09-17" />
+            <el-option label="国庆节" value="2026-10-01" />
+          </el-select>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="scheduleDialogVisible = false">取消</el-button>
+        <el-button type="primary" @click="saveSchedule">保存</el-button>
+      </template>
+    </el-dialog>
   </el-card>
 </template>
 
@@ -365,6 +563,12 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { settingsApi, type BasicSettings, type CloudSettings, type AlarmPolicySettings, type SystemInfo } from '@/api/settings'
 import { getModels, activateModel, deactivateModel, type ModelInfo } from '@/api/model'
 import configApi from '@/api/config'
+// [REC-SCHEDULE 2026-09-11] 录像计划 + 存储预估 (自录像回放页迁出, 复用现有 API 不重复建)
+import {
+  getRecordingSchedules, createRecordingSchedule, updateRecordingSchedule, deleteRecordingSchedule,
+  getStorageEstimate,
+  type RecordingSchedule, type StorageEstimate,
+} from '@/api/recording'
 
 const { t } = useI18n()
 
@@ -449,7 +653,8 @@ async function testConnection() {
 // ---- 告警策略 ----
 const alarmSaving = ref(false)
 const alarmDefaults: AlarmPolicySettings = {
-  dedupWindow: 30, minConfidence: 0.5, criticalMaxLatency: 500, linkageActions: ['ptz', 'record', 'push']
+  dedupWindow: 30, minConfidence: 0.5, criticalMaxLatency: 500, linkageActions: ['ptz', 'record', 'push'],
+  dedupByTrackEnabled: true, dedupWindowSeconds: 30
 }
 const alarm = reactive<AlarmPolicySettings>({ ...alarmDefaults })
 
@@ -724,6 +929,124 @@ async function handleImportConfig() {
   input.click()
 }
 
+// ---- [REC-SCHEDULE 2026-09-11] 录像计划 (自录像回放页迁出, 独立 CRUD 子模块) ----
+const schedules = ref<RecordingSchedule[]>([])
+const scheduleLoading = ref(false)
+const scheduleDialogVisible = ref(false)
+const editingSchedule = ref<RecordingSchedule | null>(null)
+const scheduleChannelFilter = ref('')
+const DAY_LABELS = ['周日', '周一', '周二', '周三', '周四', '周五', '周六', '每天']
+const defaultSchedule = (): RecordingSchedule => ({
+  channel_id: '',
+  schedule_name: '',
+  schedule_type: 'time_segment',
+  time_segments: [{ day: 7, start: '08:00', end: '18:00' }],
+  stream_type: 'main',
+  pre_record_seconds: 10,
+  post_record_seconds: 60,
+  enabled: true,
+  // [P2-3] 节假日排除策略
+  holiday_exclusion: {
+    enabled: false,
+    holiday_dates: [] as string[],
+    holiday_name: '',
+  },
+})
+
+async function fetchSchedules() {
+  scheduleLoading.value = true
+  try {
+    schedules.value = await getRecordingSchedules(scheduleChannelFilter.value || undefined)
+  } catch (e: any) {
+    ElMessage.error('加载录像计划失败: ' + (e.message || ''))
+  } finally {
+    scheduleLoading.value = false
+  }
+}
+
+function openScheduleDialog(schedule?: RecordingSchedule) {
+  editingSchedule.value = schedule
+    ? { ...schedule, time_segments: (schedule.time_segments || []).map(s => ({ ...s })) }
+    : defaultSchedule()
+  // 节假日排除深拷贝, 避免编辑时直接改动列表行对象
+  if (schedule?.holiday_exclusion) {
+    editingSchedule.value.holiday_exclusion = {
+      ...schedule.holiday_exclusion,
+      holiday_dates: [...(schedule.holiday_exclusion.holiday_dates || [])],
+    }
+  }
+  scheduleDialogVisible.value = true
+}
+
+function addTimeSegment() {
+  if (!editingSchedule.value) return
+  editingSchedule.value.time_segments.push({ day: 7, start: '08:00', end: '18:00' })
+}
+
+function removeTimeSegment(idx: number) {
+  if (!editingSchedule.value) return
+  editingSchedule.value.time_segments.splice(idx, 1)
+}
+
+async function saveSchedule() {
+  if (!editingSchedule.value) return
+  if (!editingSchedule.value.channel_id) {
+    ElMessage.warning('请选择通道')
+    return
+  }
+  try {
+    if (editingSchedule.value.id) {
+      await updateRecordingSchedule(editingSchedule.value.id, editingSchedule.value)
+      ElMessage.success('录像计划已更新')
+    } else {
+      await createRecordingSchedule(editingSchedule.value)
+      ElMessage.success('录像计划已创建')
+    }
+    scheduleDialogVisible.value = false
+    await fetchSchedules()
+  } catch (e: any) {
+    ElMessage.error('保存失败: ' + (e.message || ''))
+  }
+}
+
+async function toggleScheduleEnabled(schedule: RecordingSchedule) {
+  if (!schedule.id) return
+  try {
+    await updateRecordingSchedule(schedule.id, { enabled: !schedule.enabled })
+    schedule.enabled = !schedule.enabled
+    ElMessage.success(`计划已${schedule.enabled ? '启用' : '禁用'}`)
+  } catch (e: any) {
+    ElMessage.error('操作失败: ' + (e.message || ''))
+  }
+}
+
+function removeSchedule(schedule: RecordingSchedule) {
+  if (!schedule.id) return
+  ElMessageBox.confirm('确定删除该录像计划？删除后不可恢复。', t('common.tip'), { type: 'warning' })
+    .then(async () => {
+      try {
+        await deleteRecordingSchedule(schedule.id!)
+        ElMessage.success('删除成功')
+        await fetchSchedules()
+      } catch (e: any) {
+        ElMessage.error('删除失败: ' + (e.message || ''))
+      }
+    })
+    .catch(() => { /* 用户取消 */ })
+}
+
+// ---- [REC-STORAGE 2026-09-11] 存储容量预估 (自录像回放页迁出) ----
+const storageEstimate = ref<StorageEstimate | null>(null)
+const estParams = ref({ channel_count: 8, hours_per_day: 24, bitrate_kbps: 2048, retention_days: 30 })
+
+async function calculateStorage() {
+  try {
+    storageEstimate.value = await getStorageEstimate(estParams.value)
+  } catch (e: any) {
+    ElMessage.error('预估失败: ' + (e.message || ''))
+  }
+}
+
 // ---- 初始化加载 ----
 onMounted(async () => {
   loading.value = true
@@ -758,6 +1081,7 @@ onMounted(async () => {
   } catch { /* individual errors handled above */ }
   loading.value = false
   loadModels()
+  fetchSchedules()  // [REC-SCHEDULE 2026-09-11] 录像计划迁入后预加载
 })
 </script>
 
@@ -767,4 +1091,42 @@ onMounted(async () => {
   padding: 20px 24px;
 }
 .opacity-60 { opacity: 0.6; }
+.form-tip {
+  margin-left: 12px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--el-text-color-secondary);
+}
+
+/* [REC-STORAGE 2026-09-11] 存储预估结果 (自录像回放页迁出) */
+.storage-result {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 20px;
+  background: linear-gradient(135deg, #e8f5e9, #f3e5f5);
+  border-radius: 8px;
+  min-width: 280px;
+}
+.storage-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 0;
+}
+.storage-row.highlight {
+  font-size: 18px;
+  font-weight: bold;
+  color: #0066cc;
+  border-top: 1px solid #ddd;
+  border-bottom: 1px solid #ddd;
+  padding: 12px 0;
+}
+.storage-label { color: #606266; }
+.storage-value { font-weight: bold; }
+.storage-formula {
+  font-size: 11px;
+  color: #909399;
+  margin-top: 4px;
+}
 </style>

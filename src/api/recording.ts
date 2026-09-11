@@ -45,11 +45,51 @@ export function stopPlayback(id: string) {
 }
 
 /**
+ * /record/ 静态直链候选链 (按优先级)
+ * [FIX rec-url 2026-09-11] 磁盘真实结构含 "record/record/" 双层 (ZLM rootPath 下
+ *   多套一层 record/)，nginx (80/8088 实测) ^~ /record/ alias /data/shield/record/
+ *   只有双层 URL 命中真实文件 (206 video/mp4)；单层 URL 两端口均 404。
+ *   候选顺序: ① 当前 origin 同源双层 (nginx alias → 206);
+ *             ② 8088 端口双层 (shieldbox-web nginx, 实测 206, LAN 兜底)。
+ * [FIX rec-layer 2026-09-11] 兼容单层输入: 证据接口 (/alarms/:id/evidence)
+ *   返回的 video_clip.url 是单层形态 (/record/rtp/...) → 自动补齐为双层作
+ *   首选, 否则播放恒 404 (弹窗回放"已尝试全部格式"根因)。
+ *   非 /record/ 形态 (绝对 URL / GB28181 回放流) 原样返回。
+ * [FIX rec-layer2 2026-09-11] 兼容绝对 URL 输入: getEvidence / normalizeAlarm
+ *   Payload (types/alarm.ts toAbsoluteUrl) 均把相对路径转成绝对 (http://
+ *   host:port/record/rtp/...) → 旧判断只认 "/record/" 开头会漏掉补层, 直显
+ *   回放仍单层 404 (b 场景实测: video currentSrc 归一化为单层 /record/rtp/
+ *   ... 快速全败)。现先剥 scheme+host 提取 path 再判层, 两形态均正确补层。
+ * [FIX rec-cand2 2026-09-11] 候选②由「18080 单层」修正为「8088 双层」:
+ *   单层 URL 在 80/8088/18080 三端口实测恒 404 (nginx alias 需 record/record/
+ *   双层), 原候选②在任何已知环境都是死链, 只会白耗一个 failNext 周期;
+ *   8088 为设备 shieldbox-web 的 nginx 端口, 双层实测 206 可作 LAN 兜底,
+ *   不可达时等价连接失败快速跳过, 无副作用。
+ */
+export function recordUrlCandidates(url: string): string[] {
+  if (!url) return []
+  // 绝对 URL (scheme://host[:port]/...) → 提取 path+query; 相对路径原样
+  const m = url.match(/^[a-z][a-z0-9+.-]*:\/\/[^/]+(\/.*)$/i)
+  const path = m ? m[1] : url
+  if (!path.startsWith('/record/')) return [url]
+  // 双层为磁盘真实结构 (nginx 只有双层命中), 单层恒 404 已被实测排除
+  const double = path.startsWith('/record/record/')
+    ? path
+    : '/record/record/' + path.slice('/record/'.length)
+  const cands = [`${window.location.origin}${double}`]
+  const hn = window.location.hostname
+  if (hn) cands.push(`http://${hn}:8088${double}`)
+  return cands
+}
+
+/**
  * 下载录像
  * Phase 14 P0 修复 14.3: BE 返回 JSON {download_url, recording_id},前端解析 URL 后触发浏览器下载
  * [REC-DL 2026-09-06] id 为 ZLM 磁盘绝对路径 (含 '/', 不能作 path 参数) →
- *   改走 download-file?path=; 返回的 download_url 是 nginx /record/ 静态直链
- *   (8088 同源, Range 206 实测), filename 为真实文件名。
+ *   改走 download-file?path=; 返回的 download_url 是 /record/ 静态直链, filename 为真实文件名。
+ * [FIX rec-dl 2026-09-11] ① download_url 相对路径在 nginx 未配 /record/ 时 404 →
+ *   沿 recordUrlCandidates 候选链回退; ② 旧实现 <a download> 直接指向跨域地址时
+ *   download 属性被浏览器忽略 (同源限制) → 改 fetch→blob→objectURL (同源化) 强制落盘。
  */
 export async function downloadRecording(id: string): Promise<void> {
   const resp = await recordingHttp.get<
@@ -59,15 +99,40 @@ export async function downloadRecording(id: string): Promise<void> {
   if (!url) {
     throw new Error('download_url not provided by backend')
   }
-  // 浏览器触发下载: 创建隐藏 <a download> 元素 (download 属性强制落盘,
-  //   即使 nginx 对 .mp4 是 inline 也不会变成播放页)
+  // [FIX rec-dl 2026-09-11] 同 downloadSegment「合法直链才触发」校验: 仅 http(s):// 与
+  //   /record/ 静态路径视为合法; 磁盘绝对路径 (如 /data/shield/record/...) 直接抛错,
+  //   避免 a.href 被浏览器相对化 → 恒 404 且不弹新窗口验收项被破坏。
+  if (!/^https?:\/\//.test(url) && !url.startsWith('/record/')) {
+    throw new Error('后端未返回可用下载直链')
+  }
+  const filename = resp.data?.data?.filename || `${Date.now()}.mp4`
+  // 候选链逐个尝试 fetch → blob (CORS: Drogon /record/ 返回 Access-Control-Allow-Origin: *)
+  let blob: Blob | null = null
+  for (const candidate of recordUrlCandidates(url)) {
+    try {
+      const dl = await fetch(candidate)
+      if (dl.ok) {
+        blob = await dl.blob()
+        break
+      }
+    } catch {
+      // 网络/CORS 失败 → 试下一候选
+    }
+  }
   const a = document.createElement('a')
-  a.href = url
-  a.download = resp.data?.data?.filename || `${Date.now()}.mp4`
   a.style.display = 'none'
+  if (blob) {
+    a.href = URL.createObjectURL(blob) // 同源 objectURL, download 属性强制落盘
+  } else {
+    a.href = url // 兜底: 原始相对路径 (同源 nginx 已配 /record/ 时可用)
+  }
+  a.download = filename
   document.body.appendChild(a)
   a.click()
   document.body.removeChild(a)
+  if (blob) {
+    setTimeout(() => URL.revokeObjectURL(a.href), 60_000)
+  }
 }
 
 /** 删除录像 */
@@ -241,6 +306,12 @@ export async function downloadSegment(params: {
   const { data } = await recordingHttp.post('/download-segment', params)
   const url = data?.data?.download_url
   if (!url) throw new Error('download_url not provided by backend')
+  // [FIX rec-dl 2026-09-11] GB28181 downloadStart 空实现时, 后端 fallback 会把本地
+  //   磁盘绝对路径 (如 /data/recordings/...) 当 download_url 返回——a.href 磁盘路径
+  //   被浏览器当站内相对 URL → 恒 404。合法直链仅 http(s):// 与 nginx /record/ 静态路径。
+  if (!/^https?:\/\//.test(url) && !url.startsWith('/record/')) {
+    throw new Error('后端未返回可用下载直链，请改用列表中的「下载」按钮')
+  }
   const a = document.createElement('a')
   a.href = url
   a.download = `segment_${params.start_time}_${params.end_time}.mp4`
