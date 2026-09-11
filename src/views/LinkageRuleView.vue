@@ -469,16 +469,31 @@
                   </div>
                 </el-form-item>
                 <el-form-item label="物理位置" label-position="top" class="cond-form-item">
-                  <el-select v-model="form.conditions.region.config.location" placeholder="选择位置" clearable filterable style="width: 100%">
-                    <template v-if="locationOptionsMerged.length > 0">
-                      <el-option v-for="l in locationOptionsMerged" :key="l.value" :label="l.label" :value="l.value" />
-                    </template>
-                    <template #empty><span class="text-secondary">暂无位置（可在安保区域页维护）</span></template>
-                  </el-select>
+                  <!-- [FIX area-cascade-label 2026-09-11] 扁平位置列表 → 「区域 (N 台设备)→设备」
+                       树形单选 (对标 ChannelView/LiveView 区域→设备主体范式): 区域节点 value=
+                       区域 id (引擎按 resolved 快照展开, 语义与旧下拉一致), 设备节点 value=设备 id
+                       (旧设备位置 fallback 语义); 旧版位置实体/老设备 id 不在树中 → legacy
+                       disabled 节点只读回显 (同 legacyPointEcho 模式), 不裸显未知 id。
+                       保存链不变: spatial_cond.location_id = cleanLocation(config.location)。 -->
+                  <el-tree-select
+                    v-model="form.conditions.region.config.location"
+                    :data="locationTreeData"
+                    node-key="value"
+                    :props="{ label: 'label', children: 'children' }"
+                    check-on-click-node
+                    clearable filterable
+                    placeholder="选择安保区域或设备"
+                    style="width: 100%"
+                    @focus="loadDeviceGroups"
+                  />
                 </el-form-item>
                 <el-form-item label="关联通道(快照背景)" label-position="top" class="cond-form-item">
-                  <el-select v-model="form.conditions.region.config.channelId" placeholder="选择通道加载快照" clearable style="width: 100%" @change="loadChannelSnapshot">
-                    <el-option v-for="ch in cameraChannelOptions" :key="ch.value" :label="ch.label" :value="ch.value" />
+                  <!-- [FIX area-cascade-label 2026-09-11] 池收窄 (症状 2): 区域已选时仅列
+                       「区域 resolved 摄像头 ∪ 绑定通道中摄像头」+ 当前值池外 fallback,
+                       无关通道不再淹没; label 升级「通道名 (设备名)」 (症状 3) —
+                       老规则 20 位串从 sc.location_id 回填时也走目录反查, 不裸显数字 -->
+                  <el-select v-model="form.conditions.region.config.channelId" placeholder="选择通道加载快照" clearable filterable style="width: 100%" @change="loadChannelSnapshot">
+                    <el-option v-for="ch in snapshotChannelOptions" :key="ch.value" :label="ch.label" :value="ch.value" />
                     <template #empty><span class="text-secondary">暂无摄像头通道</span></template>
                   </el-select>
                 </el-form-item>
@@ -1414,6 +1429,10 @@ import { linkageApi, ACTION_TYPE_MAP, ACTION_TYPE_REVERSE_MAP, getTargetForActio
 import { regionApi } from '@/api/region'  // [FIX 2026-08-28] 画板绊线自动创建 (createTripwireWithMirror)
 import type { LinkageRule, LinkageAction, LinkageLog, ActionLogEntry, TimeTemplate, LinkagePlan, CEPPattern, ConditionNode, RuleConflict, RuleTriggerStat } from '@/api/linkage'
 import { useLinkageOptions, type ChannelOption } from '@/composables/useLinkageOptions'
+// [FIX area-cascade-label 2026-09-11] 通道友好 label/回显反查兜底/区域收窄 纯函数 (自内联提取)
+import { friendlyChannelLabelOf, channelFallbackLabel, narrowSnapshotChannels } from '@/composables/useFriendlyChannelLabel'
+// [FIX area-cascade-label 2026-09-11] 目录反查 (fallback 四段降级中段; 首调懒加载目录)
+import { devNameOf, chNameOf } from '@/composables/useAlarmDeviceLabel'
 import { deviceApi } from '@/api/device'   // [AREA-CASCADE 2026-09-11] 级联树设备名解析
 // [FIX 2026-09-04 老规则通道反解] 编辑存量规则时哈希反解需要 (import 原仅 syncAlgosForRule)
 import { syncAlgosForRule, safeChannelHash } from '@/composables/useAlgoRuleSync'
@@ -1495,6 +1514,9 @@ async function loadDeviceGroups() {
     deviceGroups.value = gData?.items || []
     const lData = (lRes as any)?.data?.data ?? (lRes as any)?.data
     remoteLocations.value = lData?.items || []
+    // [FIX area-cascade-label 2026-09-11] 物理位置树设备节点名解析 (fire-and-forget,
+    //   cascadeDevices 就绪后 locationTreeData 自动重算)
+    loadCascadeDevices()
   } catch { /* 分组服务不可用时静默降级到设备位置 fallback */ }
 }
 // 分组下拉: value=id (LinkageEngine 按 resolved 快照展开), label=名称+覆盖数 (华为"分组视图"语义)
@@ -1504,12 +1526,35 @@ const deviceGroupOptions = computed(() => deviceGroups.value.map(g => ({
 })))
 // 选中分组的覆盖范围展示 (规则内确认范围)
 const selectedGroupInfo = computed(() => deviceGroups.value.find(g => g.id === form.conditions.region.config.group) || null)
-// 位置下拉: 位置表实体优先 (正确语义: 先选位置), 设备提取位置 fallback (向后兼容老规则)
+// 位置下拉: 位置表实体优先 (正确语义: 先选位置), 设备提取位置 fallback (向后兼 容老规则)
 const locationOptionsMerged = computed(() => {
   const remote = remoteLocations.value.map(l => ({ label: l.name, value: l.id }))
   const remoteVals = new Set(remote.map(r => r.value))
   const legacy = locationOptionsDynamic.value.filter(l => !remoteVals.has(l.value))
   return [...remote, ...legacy]
+})
+// [FIX area-cascade-label 2026-09-11] 物理位置树 (症状 1): 一级=安保区域 (label 带
+//   设备数, 选中=区域 id, 引擎 resolved 快照展开语义不变); 二级=区域下设备
+//   (cascadeDeviceName 解析, 未就绪时 fallback 设备 id)。旧值不在树中 (旧位置实体/
+//   老设备 id/手工串) → legacy disabled 只读节点置顶, 不裸显未知 id。
+//   与 location 条件分支三级树 (areaCascadeTreeData) 数据源同根 (deviceGroups),
+//   但本树服务 region 分支单选 location 字段, 仅两级且不做勾选集。
+const locationTreeData = computed(() => {
+  const nodes = deviceGroups.value.map(g => ({
+    value: g.id as string,
+    label: `${g.name} (${g.device_ids?.length ?? 0} 台设备)`,
+    disabled: false,
+    children: (g.device_ids || []).map((dv: string) => ({
+      value: dv,
+      label: cascadeDeviceName(dv),
+    })),
+  }))
+  const cur = form.conditions.region.config.location
+  if (cur && !nodes.some(n => n.value === cur || (n.children || []).some(c => c.value === cur))) {
+    const hit = locationOptionsMerged.value.find(l => l.value === cur)
+    nodes.unshift({ value: cur, label: `旧版位置: ${hit?.label || cur}`, disabled: true, children: [] })
+  }
+  return nodes
 })
 // 选位置 → 区域维度设备/通道清单 (hint 消费)
 // [AREA-CASCADE 2026-09-11] 全量重写: 原仅返回 deviceGroups.length 无实义; 新口径
@@ -1675,6 +1720,20 @@ const boundChannelDraft = computed<string[]>({
 const cameraChannelOptions = computed(() =>
   channelOptionsDynamic.value.filter(ch => !ch.deviceType || ch.deviceType === 'IPCamera'))
 
+// [FIX area-cascade-label 2026-09-11] 快照背景通道池 (症状 2/3): 区域已选时收窄为
+//   「区域 resolved 摄像头 ∪ 绑定通道中摄像头」, 未选区域维持全量摄像头 (现状);
+//   当前值 (含老规则从 sc.location_id 回填的 20 位串) 池外注入 fallback option —
+//   el-select tag 永不裸显数字。收窄/双形态/fallback 逻辑抽到
+//   useFriendlyChannelLabel.narrowSnapshotChannels (纯函数可测, LinkageRuleView.cascade.test.ts 覆盖)。
+const snapshotChannelOptions = computed(() =>
+  narrowSnapshotChannels(
+    cameraChannelOptions.value,
+    (selectedGroupInfo.value?.resolved_channel_ids || []) as string[],
+    boundChannelDraft.value,
+    form.conditions.region.config.channelId,
+    { chNameOf, devNameOf },
+  ))
+
 // ── [AREA-CASCADE 2026-09-11] region 绑定通道 option 池: 友好 label + 区域收窄 + 已选兜底 ──
 //   原问题: 编辑回显时 tag 直接渲染 GB28181 20 位串 (双形态/池缺失时 el-select 无 label 可匹配);
 //   修复: ① label 升级「通道名 (设备名)」/「通道名 · 设备IP」; ② 区域已选时只显该区域
@@ -1687,11 +1746,11 @@ function friendlyChannelLabel(ch: ChannelOption): string {
   return ch.label
 }
 const baseChannelId = (v: string) => v.replace(/_ch\d+$/, '')
+// [FIX area-cascade-label 2026-09-11] fallback 反查升级 (症状 3): 原「池不中→通 道 <id>」
+//   两段降级升级为四段 (通道池 → 目录通道名 → 目录设备名 → 通道 <id>), 与
+//   DisposeDialog [FIX dev-name-num] 同款思路, 逻辑抽到 useFriendlyChannelLabel 纯函数
 function fallbackBoundLabel(v: string): string {
-  const base = baseChannelId(v)
-  const hit = channelOptionsDynamic.value.find(ch => baseChannelId(ch.value) === base)
-  const suffix = v === base ? '' : ' (子码流)'
-  return hit ? `${friendlyChannelLabel(hit)}${suffix}` : `通道 ${v}`
+  return channelFallbackLabel(v, channelOptionsDynamic.value, { chNameOf, devNameOf })
 }
 const boundChannelOptions = computed<ChannelOption[]>(() => {
   const pool = channelOptionsDynamic.value
