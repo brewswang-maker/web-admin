@@ -112,7 +112,11 @@ export interface TimeCondition {
 export interface SpatialCondition {
   region_id: string
   location_id: string
-  device_group_id: string
+  /** [P1 2026-09-10 更名] 安保区域 id (原 device_group_id; 新规则写 area_id,
+   *  旧键仅作存量规则回显兼容读) */
+  area_id: string
+  /** 旧键 (vp9 前存量规则), 只读兼容 */
+  device_group_id?: string
   roi_polygon: number[]
   // [FIX 2026-09-02] 补齐后端实际字段 (修复 LinkageRuleView 6 个基线 TS2339):
   //   tripwire_id/direction/bound_channel_ids 后端早已返回 (v3/P0-PERIMETER/vp9);
@@ -121,6 +125,11 @@ export interface SpatialCondition {
   direction?: string
   bound_channel_ids?: string[]
   roi_shapes_json?: string
+  /** [AREA-CASCADE 2026-09-11] location 页签三级级联的设备级勾选集 (区域内显式圈定):
+   *   后端 spatial_cond 白名单暂未收录此键 (解析时丢弃, 引擎零改动), 真实持久化
+   *   走 ui_state_json 暂存往返; 此处仅前端类型扩展, 保存侧仍直写以便后端后续
+   *   白名单收录后零改造升级 */
+  area_device_ids?: string[]
 }
 
 /** 属性条件 (后端 AttributeCondition, [AttrDec β] + [P4-D 2026-08-29])

@@ -420,6 +420,24 @@
                     <el-option v-for="d in monthdayOptions" :key="d.value" :label="d.label" :value="d.value" />
                   </el-select>
                 </div>
+                <!-- [STAGE1 P1-2 2026-09-10] 布防时段 4 模板 chip: 华为 ivm_02_0043
+                     口径 (全天候/工作日/周末/工作时间), 点击仅改 draft, 不直接保存;
+                     与后端 LinkageEngine 判定逻辑解耦, 不触碰 .cpp 判定代码 -->
+                <div class="time-presets">
+                  <span class="cond-sub-label">快速模板</span>
+                  <div class="time-preset-chips">
+                    <el-tooltip v-for="p in TIME_PRESETS" :key="p.id" :content="p.tooltip" placement="top" :show-after="200">
+                      <el-tag
+                        class="time-preset-chip"
+                        :class="{ 'is-active': isTimePresetActive(p) }"
+                        effect="plain"
+                        round
+                        size="small"
+                        @click="applyTimePreset(p)"
+                      >{{ p.label }}</el-tag>
+                    </el-tooltip>
+                  </div>
+                </div>
                 <div class="time-template-actions">
                   <el-button size="small" text @click="showTimeTemplateDialog = true">管理时段模板</el-button>
                 </div>
@@ -427,12 +445,35 @@
 
               <!-- 空间条件 -->
               <template v-if="cond.type === 'region'">
+                <!-- [FEAT guard-badge 2026-09-10] 绑定通道插件层布防状态:
+                     规则空间条件(引擎过滤)与算法检测区(插件触发)是两层, 徽标把
+                     "插件层未布防"暴露给规则编辑者 — 消灭"规则开好了却永远无
+                     告警"的静默空转 (海康/华为智能事件区域必填同理, 不让两层
+                     脱节; 对标 AXIS 默认全画面/海康默认警戒面的可见性哲学)。 -->
+                <el-form-item v-if="guardStates.length" label="通道布防状态" label-position="top" class="cond-form-item">
+                  <div style="width: 100%">
+                    <div v-for="st in guardStates" :key="st.channel" style="display:flex; align-items:center; gap:8px; margin-bottom:4px">
+                      <span class="text-secondary" style="flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap" :title="st.channel">{{ st.label }}</span>
+                      <el-tag v-if="st.loading" size="small" type="info">查询中…</el-tag>
+                      <el-tag v-else-if="st.error" size="small" type="warning">状态未知</el-tag>
+                      <el-tag v-else-if="st.count === 0" size="small" type="danger" effect="dark">未布防</el-tag>
+                      <el-tag v-else-if="st.fullscreen" size="small" type="primary">全画面</el-tag>
+                      <el-tag v-else size="small" type="success">{{ st.count }} 个布防 (区/线)</el-tag>
+                    </div>
+                    <el-alert v-if="hasUnguarded" type="warning" :closable="false" style="margin-top:4px">
+                      <template #title>
+                        标红通道无任何启用的检测区/绊线 — 周界类算法(入侵/攀爬/越界)不会产生告警 (未布防=不触发, 对标海康/大华语义); 可在算法配置中一键满屏布防后再叠加排除区
+                      </template>
+                      <el-button size="small" type="primary" style="margin-top:6px" @click="goAlgoConfig">前往算法配置检测区</el-button>
+                    </el-alert>
+                  </div>
+                </el-form-item>
                 <el-form-item label="物理位置" label-position="top" class="cond-form-item">
                   <el-select v-model="form.conditions.region.config.location" placeholder="选择位置" clearable filterable style="width: 100%">
                     <template v-if="locationOptionsMerged.length > 0">
                       <el-option v-for="l in locationOptionsMerged" :key="l.value" :label="l.label" :value="l.value" />
                     </template>
-                    <template #empty><span class="text-secondary">暂无位置（可在设备分组页维护）</span></template>
+                    <template #empty><span class="text-secondary">暂无位置（可在安保区域页维护）</span></template>
                   </el-select>
                 </el-form-item>
                 <el-form-item label="关联通道(快照背景)" label-position="top" class="cond-form-item">
@@ -492,38 +533,66 @@
                     💡 仅选择越界绊线后, 方向过滤才生效; 仅选择方向则任意绊线的该方向都会触发。
                   </p>
                 </el-form-item>
-                <el-form-item label="设备分组" label-position="top" class="cond-form-item">
-                  <!-- [vp9 2026-09-01] 远程分组列表 (替代旧硬编码); 选中后展示覆盖设备/通道数;
-                       引擎按分组 resolved 快照展开匹配 (任一通道命中即触发) -->
-                  <el-select v-model="form.conditions.region.config.group" placeholder="选择分组 (按分组圈定触发范围)" clearable filterable style="width: 100%" @focus="loadDeviceGroups">
+                <el-form-item label="安保区域" label-position="top" class="cond-form-item">
+                  <!-- [P1 2026-09-10 更名] 远程区域列表 (替代旧硬编码); 选中后展示覆盖设备/通道数;
+                       引擎按区域 resolved 快照展开匹配 (任一通道命中即触发) -->
+                  <el-select v-model="form.conditions.region.config.group" placeholder="选择安保区域 (按区域圈定触发范围)" clearable filterable style="width: 100%" @focus="loadDeviceGroups">
                     <el-option v-for="g in deviceGroupOptions" :key="g.value" :label="g.label" :value="g.value" />
-                    <template #empty><span class="text-secondary">暂无分组（可在设备分组页创建）</span></template>
+                    <template #empty><span class="text-secondary">暂无区域（可在安保区域页创建）</span></template>
                   </el-select>
                   <div v-if="selectedGroupInfo" class="cond-hint" style="margin-top:4px">
-                    ✅ 分组「{{ selectedGroupInfo.name }}」覆盖 {{ selectedGroupInfo.device_count ?? selectedGroupInfo.device_ids.length }} 台设备 / {{ selectedGroupInfo.channel_count ?? selectedGroupInfo.resolved_channel_ids.length }} 路通道；事件来自其中任一通道即按本规则空间判定触发。
+                    ✅ 区域「{{ selectedGroupInfo.name }}」覆盖 {{ selectedGroupInfo.device_count ?? selectedGroupInfo.device_ids.length }} 台设备 / {{ selectedGroupInfo.channel_count ?? selectedGroupInfo.resolved_channel_ids.length }} 路通道；事件来自其中任一通道即按本规则空间判定触发。
                   </div>
                 </el-form-item>
                 <el-form-item label="绑定通道（多选，显式圈定）" label-position="top" class="cond-form-item">
                   <!-- [vp9 2026-09-01] spatial_cond.bound_channel_ids: 与分组/ROI/绊线共同决定触发范围;
                        引擎侧任一命中即通过 (与 source_cond 取并集, 避免规则静默) -->
                   <el-select v-model="boundChannelDraft" multiple filterable clearable collapse-tags collapse-tags-tooltip placeholder="按设备逐个勾选通道 (不选 = 不按通道收窄)" style="width: 100%" @change="onBoundChannelsChange">
-                    <el-option v-for="ch in channelOptionsDynamic" :key="ch.value" :label="ch.label" :value="ch.value" />
+                    <!-- [AREA-CASCADE 2026-09-11] 友好 label (通道名 (设备名)/·IP) + 区域已选时收窄至
+                         resolved 通道 ∪ 已绑通道; 池外已选值注入 fallback, tag/tooltip 永远可读 -->
+                    <el-option v-for="ch in boundChannelOptions" :key="ch.value" :label="ch.label" :value="ch.value" />
                   </el-select>
                   <p class="cond-hint" style="margin-top:4px">对标 NVIDIA sensor-scene 显式绑定：勾选后仅这些通道的事件进入本规则的 ROI/绊线判定；留空则由事件源与分组决定。</p>
                 </el-form-item>
               </template>
 
               <!-- 位置条件 -->
+              <!-- [AREA-CASCADE 2026-09-11] 三级级联改造 (区域→设备→通道, 参考LiveView 通道目录树范式):
+                   第一级仅安保区域 (带设备/通道徽标, 不混设备旧位置); 第二级区域设备可展开勾选;
+                   第三级仅已选设备名下通道。旧规则 point 走 legacyPointEcho 只读回显 (兼容读保留)。 -->
               <template v-if="cond.type === 'location'">
-                <el-form-item label="监控位置" label-position="top" class="cond-form-item">
-                  <el-select v-model="form.conditions.location.config.point" placeholder="选择位置" clearable filterable style="width: 100%">
-                                      <template v-if="locationOptionsMerged.length > 0">
-                                        <el-option v-for="l in locationOptionsMerged" :key="l.value" :label="l.label" :value="l.value" />
-                                      </template>
-                                      <template #empty><span class="text-secondary">暂无位置（可在设备分组页维护）</span></template>
-                                    </el-select>
-                  <p class="cond-hint" style="margin-top:4px">位置在「设备分组」页维护 (层级: 园区/楼栋/楼层)；选择旧规则中的设备位置仍兼容。</p>
+                <el-form-item label="安保区域" label-position="top" class="cond-form-item">
+                  <el-select v-model="areaCascadeAreaId" placeholder="选择安保区域 (按区域圈定范围)" clearable filterable style="width: 100%" @focus="loadDeviceGroups">
+                    <el-option v-for="o in areaCascadeAreaOptions" :key="o.value" :label="o.label" :value="o.value" />
+                    <el-option v-if="legacyPointEcho" :key="legacyPointEcho.value" :label="legacyPointEcho.label" :value="legacyPointEcho.value" disabled />
+                    <template #empty><span class="text-secondary">暂无安保区域（可在安保区域页创建）</span></template>
+                  </el-select>
+                  <p class="cond-hint" style="margin-top:4px">层级: 园区/楼栋/楼层 (安保区域页维护)；旧规则中的设备位置仍兼容显示 (不可新选)。</p>
                 </el-form-item>
+                <el-form-item v-if="areaCascadeAreaId" label="设备/通道圈定" label-position="top" class="cond-form-item">
+                  <el-tree
+                    ref="cascadeTreeRef"
+                    :key="cascadeTreeKey"
+                    :data="areaCascadeTreeData"
+                    :default-checked-keys="cascadeDefaultCheckedKeys"
+                    node-key="key"
+                    :props="{ label: 'label', children: 'children' }"
+                    show-checkbox
+                    :expand-on-click-node="false"
+                    class="cascade-tree"
+                    @check="onCascadeCheck"
+                  >
+                    <template #default="{ data }">
+                      <span class="casc-node" :title="data.label">
+                        <span class="casc-label">{{ data.label }}</span>
+                      </span>
+                    </template>
+                  </el-tree>
+                  <p class="cond-hint" style="margin-top:4px">不勾任何通道 = 整区域生效 (按区域 resolved 快照展开)；勾选后仅所选设备/通道的事件进入本规则判定。</p>
+                </el-form-item>
+                <div v-if="selectedLocationChannels" class="cond-hint" style="margin-top:2px; color: var(--el-color-success)">
+                  ✅ 区域「{{ selectedLocationChannels.areaName }}」共 {{ selectedLocationChannels.devices.length }} 台设备 / {{ selectedLocationChannels.totalChannels }} 路通道<template v-if="areaCascadeChannelIds.size">；已显式圈定 {{ areaCascadeChannelIds.size }} 路</template>。
+                </div>
               </template>
 
               <!-- 事件类型 -->
@@ -1337,14 +1406,15 @@
 
 <script setup lang="ts">
 import { ref, computed, reactive, onMounted, onUnmounted, watch, nextTick } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { FormInstance, FormRules } from 'element-plus'
 import { Search, Plus, Document, Link, Bell, Setting, ArrowDown, Download, Upload, Refresh, WarningFilled, DataLine } from '@element-plus/icons-vue'
 import { linkageApi, ACTION_TYPE_MAP, ACTION_TYPE_REVERSE_MAP, getTargetForActionType, unwrapRuleTemplates } from '@/api/linkage'
 import { regionApi } from '@/api/region'  // [FIX 2026-08-28] 画板绊线自动创建 (createTripwireWithMirror)
 import type { LinkageRule, LinkageAction, LinkageLog, ActionLogEntry, TimeTemplate, LinkagePlan, CEPPattern, ConditionNode, RuleConflict, RuleTriggerStat } from '@/api/linkage'
-import { useLinkageOptions } from '@/composables/useLinkageOptions'
+import { useLinkageOptions, type ChannelOption } from '@/composables/useLinkageOptions'
+import { deviceApi } from '@/api/device'   // [AREA-CASCADE 2026-09-11] 级联树设备名解析
 // [FIX 2026-09-04 老规则通道反解] 编辑存量规则时哈希反解需要 (import 原仅 syncAlgosForRule)
 import { syncAlgosForRule, safeChannelHash } from '@/composables/useAlgoRuleSync'
 // [FLOOR-MAP 2026-09-03] 适用平面图多选: 地图列表缓存 (与平面图页共用单例)
@@ -1371,9 +1441,10 @@ import DeviceChannelPicker from '@/components/linkage/DeviceChannelPicker.vue'
 import SimpleRuleDrawer from '@/components/linkage/SimpleRuleDrawer.vue'
 import type { SimpleCommitPatch, SimpleCommitEvent } from '@/components/linkage/SimpleRuleDrawer.vue'
 import { useSimpleRuleEdit } from '@/composables/useSimpleRuleEdit'
-import { deviceGroupApi } from '@/api/deviceGroups'
-import type { DeviceGroup, DeviceLocation } from '@/api/deviceGroups'
+import { securityAreaApi } from '@/api/securityAreas'
+import type { SecurityArea, DeviceLocation } from '@/api/securityAreas'
 import type { RoiData } from '@/composables/useRoiCanvas'
+import { isFullscreenPoints } from '@/composables/useAlarmShapes'  // [FEAT guard-badge] 满屏识别同口径 (与弹窗角标/满屏按钮一致)
 
 // ── 常量 ──
 
@@ -1394,17 +1465,31 @@ const weekdays = [
 // 每月日期选项 (1-31)
 const monthdayOptions = Array.from({ length: 31 }, (_, i) => ({ label: `${i + 1}日`, value: i + 1 }))
 
+// [STAGE1 P1-2 2026-09-10] 布防时段 4 模板 (华为 ivm_02_0043 口径):
+//   全天候=7×24, 工作日=周一-五, 周末=六-日, 工作时间=周一-五 09:00-18:00
+//   仅作为草稿快捷填充, 不动 LinkageEngine 判定口径。
+const TIME_PRESETS = [
+  { id: 'all_day',        label: '全天候',   start: '00:00', end: '23:59', weekdays: [1, 2, 3, 4, 5, 6, 7],
+    tooltip: '7×24 生效: 周一至周日 00:00-23:59 全时段布防' },
+  { id: 'workday',        label: '工作日',   start: '00:00', end: '23:59', weekdays: [1, 2, 3, 4, 5],
+    tooltip: '周一至周五 00:00-23:59 (周末不布防)' },
+  { id: 'weekend',        label: '周末',     start: '00:00', end: '23:59', weekdays: [6, 7],
+    tooltip: '周六、周日 00:00-23:59 (工作日不布防)' },
+  { id: 'business_hours', label: '工作时间', start: '09:00', end: '18:00', weekdays: [1, 2, 3, 4, 5],
+    tooltip: '周一至周五 09:00-18:00 上班时段布防' },
+] as const
+
 // 动态选项 (从后端加载)
 const { eventTypeOptions, eventTypeGrouped, severityColor, channelOptions: channelOptionsDynamic, locationOptions: locationOptionsDynamic, loading: optionsLoading, fetchOptions } = useLinkageOptions()
 
-// [vp9 2026-09-01] 设备分组/位置远程实体 (独立管理页维护, 替代旧硬编码下拉)
-const deviceGroups = ref<DeviceGroup[]>([])
+// [P1.3 2026-09-10 更名] 安保区域/位置远程实体 (独立管理页维护, 替代旧硬编码下拉)
+const deviceGroups = ref<SecurityArea[]>([])
 const remoteLocations = ref<DeviceLocation[]>([])
 async function loadDeviceGroups() {
   try {
     const [gRes, lRes] = await Promise.all([
-      deviceGroupApi.listGroups(),
-      deviceGroupApi.listLocations(),
+      securityAreaApi.listAreas(),
+      securityAreaApi.listLocations(),
     ])
     const gData = (gRes as any)?.data?.data ?? (gRes as any)?.data
     deviceGroups.value = gData?.items || []
@@ -1426,12 +1511,158 @@ const locationOptionsMerged = computed(() => {
   const legacy = locationOptionsDynamic.value.filter(l => !remoteVals.has(l.value))
   return [...remote, ...legacy]
 })
-// 选位置 → 该位置下设备/通道只读预览 (需求: 选位置自动加载该位置下清单)
+// 选位置 → 区域维度设备/通道清单 (hint 消费)
+// [AREA-CASCADE 2026-09-11] 全量重写: 原仅返回 deviceGroups.length 无实义; 新口径
+//   { areaId, areaName, devices:[{id,name,channelIds}], totalChannels } 供模板 hint
 const selectedLocationChannels = computed(() => {
-  const locId = form.conditions.location.config.point || form.conditions.region.config.location
-  if (!locId || !remoteLocations.value.some(l => l.id === locId)) return null   // 非位置表实体 → 不展示
-  return { devices: deviceGroups.value.length, label: remoteLocations.value.find(l => l.id === locId)?.name || '' }
+  const pid = form.conditions.location.config.point
+  const rloc = form.conditions.region.config.location
+  const areaId = areaCascadeAreaId.value
+    || (areaByIdMap.value.has(pid) ? pid : '')
+    || (areaByIdMap.value.has(rloc) ? rloc : '')
+  const area = areaByIdMap.value.get(areaId)
+  if (!area) return null   // 非安保区域实体 → 不展示
+  const devices = (area.device_ids || []).map(id => ({
+    id,
+    name: cascadeDeviceName(id),
+    channelIds: (cascadeChannelsByDevice.value.get(id) || []).map(c => c.value),
+  }))
+  const total = new Set<string>([...(area.resolved_channel_ids || []), ...(area.channel_ids || [])])
+  return { areaId, areaName: area.name, devices, totalChannels: total.size }
 })
+
+// ── [AREA-CASCADE 2026-09-11] location 页签三级级联 (区域→设备→通道) ──
+//   原交互: locationOptionsMerged 区域+设备旧位置混选, 选完还要去绑定通道多选翻通道, 链路割裂;
+//   新交互: 第一级仅安保区域 (带设备/通道徽标, 不混旧位置), 第二级该区域设备可展开勾选,
+//   第三级仅已选设备名下通道 — 勾选并集写 spatial_cond.area_id/area_device_ids/bound_channel_ids
+const areaByIdMap = computed(() => new Map(deviceGroups.value.map(g => [g.id, g])))
+// 层级路径名 (园区/楼栋/楼层, parent_id 链上溯)
+function areaNamePath(id: string): string {
+  const parts: string[] = []
+  let cur = areaByIdMap.value.get(id)
+  let guard = 0
+  while (cur && guard++ < 8) { parts.unshift(cur.name); cur = cur.parent_id ? areaByIdMap.value.get(cur.parent_id) : undefined }
+  return parts.join(' / ')
+}
+const areaCascadeAreaOptions = computed(() => deviceGroups.value.map(g => ({
+  value: g.id,
+  // 徽标口径与 selectedGroupInfo/deviceGroupOptions 一致 (后端 count ?? 前端展开)
+  label: `${areaNamePath(g.id)}（${g.device_count ?? g.device_ids.length} 设备 / ${g.channel_count ?? g.resolved_channel_ids.length} 通道）`,
+})))
+// 旧规则 point (device_location/设备旧位置) 回显 disabled option — 兼容读保留, 不允许新选
+const legacyPointEcho = computed(() => {
+  const p = form.conditions.location.config.point
+  if (!p || areaByIdMap.value.has(p)) return null
+  const hit = locationOptionsMerged.value.find(l => l.value === p)
+  return { value: p, label: `旧版位置: ${hit?.label || p}` }
+})
+
+// 设备名解析池 (级联树设备节点 label; 无通道设备也需展示)
+const cascadeDevices = ref<Map<string, { name: string; ip: string }>>(new Map())
+const cascadeDevLoaded = ref(false)
+async function loadCascadeDevices() {
+  if (cascadeDevLoaded.value) return
+  try {
+    const devRes: any = await deviceApi.getList()
+    const raw = devRes?.data
+    const devices: any[] = raw?.data?.devices ?? raw?.data ?? raw?.devices ?? raw?.items ?? []
+    const m = new Map<string, { name: string; ip: string }>()
+    for (const d of devices) {
+      const id = String(d?.id ?? '')
+      if (id) m.set(id, { name: d?.name || '', ip: d?.ip || d?.deviceIp || d?.config?.ip || '' })
+    }
+    cascadeDevices.value = m
+    cascadeDevLoaded.value = true
+  } catch { /* 降级: 设备节点退回显示原始 id */ }
+}
+function cascadeDeviceName(id: string): string {
+  return cascadeDevices.value.get(id)?.name || id
+}
+// 通道按设备分组 (channelOptionsDynamic 已带 deviceId/deviceName — AREA-CASCADE 扩展)
+const cascadeChannelsByDevice = computed(() => {
+  const m = new Map<string, Array<{ value: string; label: string }>>()
+  for (const ch of channelOptionsDynamic.value) {
+    if (!ch.deviceId) continue
+    if (!m.has(ch.deviceId)) m.set(ch.deviceId, [])
+    m.get(ch.deviceId)!.push({ value: ch.value, label: ch.deviceName ? `${ch.label} (${ch.deviceName})` : ch.label })
+  }
+  return m
+})
+function cascadeChannelLabel(id: string): string {
+  for (const chs of cascadeChannelsByDevice.value.values()) {
+    const hit = chs.find(c => c.value === id)
+    if (hit) return hit.label
+  }
+  return id
+}
+
+// 级联勾选状态 (保存写 spatial_cond 三键: area_id / area_device_ids / bound_channel_ids)
+const areaCascadeAreaId = ref('')
+const areaCascadeDeviceIds = ref<Set<string>>(new Set())
+const areaCascadeChannelIds = ref<Set<string>>(new Set())
+const restoringCascade = ref(false)   // 回显窗口: 阻断 watch 副作用 (清勾选/清 point)
+const cascadeTreeRef = ref()   // 保留实例 ref 供未来扩展 (当前勾选链路纯数据驱动)
+
+// 树数据: 区域设备→其名下通道 (第三级不放全量, 消灭无关通道误勾保存后匹配不到的静默规则);
+// 区域 channel_ids 直绑且不属于任何已列设备的通道归入「区域直绑通道」虚拟节点 (resolved 语义完整性)
+const areaCascadeTreeData = computed(() => {
+  const area = areaByIdMap.value.get(areaCascadeAreaId.value)
+  if (!area) return []
+  const nodes: Array<{ key: string; type: 'device' | 'direct' | 'channel'; label: string; children?: any[] }> = []
+  for (const devId of area.device_ids || []) {
+    const chs = cascadeChannelsByDevice.value.get(devId) || []
+    nodes.push({
+      key: `dev:${devId}`, type: 'device',
+      label: `${cascadeDeviceName(devId)}${chs.length ? ` (${chs.length} 通道)` : ' (无在线通道)'}`,
+      children: chs.map(c => ({ key: c.value, type: 'channel' as const, label: c.label })),
+    })
+  }
+  const claimed = new Set(nodes.flatMap(n => (n.children || []).map(c => c.key)))
+  const direct = (area.channel_ids || []).filter(id => !claimed.has(id))
+  if (direct.length) {
+    nodes.push({
+      key: 'areadirect', type: 'direct', label: `区域直绑通道 (${direct.length})`,
+      children: direct.map(id => ({ key: id, type: 'channel' as const, label: cascadeChannelLabel(id) })),
+    })
+  }
+  return nodes
+})
+// 树勾选 → 两级 Set (设备节点勾选 = 全选其通道; 仅统计实选, 半选不计入 device_ids)
+// [AREA-CASCADE FIX] 改用 @check 回调参数 checked.checkedNodes (数据驱动) —
+//   此前经 cascadeTreeRef.value.getCheckedNodes() 在按需导入下 ref 代理缺方法,
+//   回调参数自带勾选集零依赖且包含折叠未渲染节点 (级联在 store 层生效)
+function onCascadeCheck(_data: unknown, checked: unknown) {
+  if (restoringCascade.value) return
+  const nodes = ((checked as any)?.checkedNodes || []) as Array<{ key: string | number; type?: string }>
+  const devIds: string[] = []
+  const chIds: string[] = []
+  for (const nd of nodes) {
+    if (nd.type === 'device') devIds.push(String(nd.key).slice(4))
+    else if (nd.type === 'channel') chIds.push(String(nd.key))
+  }
+  areaCascadeDeviceIds.value = new Set(devIds)
+  areaCascadeChannelIds.value = new Set(chIds)
+}
+// 区域切换: 清勾选集 + 与旧位置单选互斥 (新选择走 area_id 链路)
+watch(areaCascadeAreaId, v => {
+  if (restoringCascade.value) return
+  areaCascadeDeviceIds.value = new Set()
+  areaCascadeChannelIds.value = new Set()
+  if (v) {
+    form.conditions.location.config.point = ''
+    loadCascadeDevices()
+  }
+})
+// 回显重放: 区域/数据源变化 → key 变 → 树重建 → default-checked-keys 重放勾选集
+//   (数据驱动, 不依赖组件实例方法; Set 是勾选 SSOT, 重建后状态无损)
+const cascadeTreeKey = computed(() =>
+  `${areaCascadeAreaId.value}|${cascadeDevLoaded.value ? 1 : 0}|${channelOptionsDynamic.value.length}`)
+// 重放勾选集: 通道 keys + 设备 keys 并集 (设备 key 勾选会级联其全部通道, 与 chIds 一致无冲突;
+// 无通道设备只有设备 key, 仅放通道 keys 会丢其勾选视觉)
+const cascadeDefaultCheckedKeys = computed(() => [
+  ...areaCascadeChannelIds.value,
+  ...[...areaCascadeDeviceIds.value].map(id => `dev:${id}`),
+])
 
 // [vp9 2026-09-01] 绑定通道多选代理 (spatial_cond.bound_channel_ids; 国标字符串形态)
 const boundChannelDraft = computed<string[]>({
@@ -1443,6 +1674,106 @@ const boundChannelDraft = computed<string[]>({
 //   绑定通道/事件源等多选不受限 (NVR 子通道仍是合法告警源)。
 const cameraChannelOptions = computed(() =>
   channelOptionsDynamic.value.filter(ch => !ch.deviceType || ch.deviceType === 'IPCamera'))
+
+// ── [AREA-CASCADE 2026-09-11] region 绑定通道 option 池: 友好 label + 区域收窄 + 已选兜底 ──
+//   原问题: 编辑回显时 tag 直接渲染 GB28181 20 位串 (双形态/池缺失时 el-select 无 label 可匹配);
+//   修复: ① label 升级「通道名 (设备名)」/「通道名 · 设备IP」; ② 区域已选时只显该区域
+//   resolved 通道 + 已显式绑定通道 (并集, 避免区域缩窄后已绑通道从下拉消失而静默丢失);
+//   ③ 池外已选值注入 fallback option (双形态/已删通道), tag/tooltip 永远可读。
+//   未选区域时维持全量 channelOptionsDynamic (现状不变)。
+function friendlyChannelLabel(ch: ChannelOption): string {
+  if (ch.deviceName) return `${ch.label} (${ch.deviceName})`
+  if (ch.deviceIp) return `${ch.label} · ${ch.deviceIp}`
+  return ch.label
+}
+const baseChannelId = (v: string) => v.replace(/_ch\d+$/, '')
+function fallbackBoundLabel(v: string): string {
+  const base = baseChannelId(v)
+  const hit = channelOptionsDynamic.value.find(ch => baseChannelId(ch.value) === base)
+  const suffix = v === base ? '' : ' (子码流)'
+  return hit ? `${friendlyChannelLabel(hit)}${suffix}` : `通道 ${v}`
+}
+const boundChannelOptions = computed<ChannelOption[]>(() => {
+  const pool = channelOptionsDynamic.value
+  const area = selectedGroupInfo.value
+  const draft = boundChannelDraft.value
+  let list = pool
+  if (area && (area.resolved_channel_ids?.length)) {
+    // 双形态匹配: resolved 存国标 20 位主形态, 通道 value 可能带 _chN 子码流后缀
+    const resolvedBase = new Set(area.resolved_channel_ids.map(baseChannelId))
+    const inArea = pool.filter(ch => resolvedBase.has(baseChannelId(ch.value)))
+    const known = new Set(inArea.map(c => c.value))
+    const draftExtras = pool.filter(ch => draft.includes(ch.value) && !known.has(ch.value))
+    list = [...inArea, ...draftExtras]
+  }
+  const knownAll = new Set(list.map(c => c.value))
+  const fallbacks = draft.filter(v => !knownAll.has(v)).map(v => ({ label: fallbackBoundLabel(v), value: v }))
+  return [...list.map(ch => ({ ...ch, label: friendlyChannelLabel(ch) })), ...fallbacks]
+})
+
+// ── [FEAT guard-badge 2026-09-10] 绑定通道插件层布防状态 (区域库查询) ──
+const router = useRouter()
+interface GuardState {
+  channel: string
+  label: string
+  loading: boolean
+  error: boolean
+  count: number
+  fullscreen: boolean
+}
+const guardStates = ref<GuardState[]>([])
+const hasUnguarded = computed(() => guardStates.value.some(g => !g.loading && !g.error && g.count === 0))
+// [FEAT guard-badge] 满屏识别统一用 useAlarmShapes.isFullscreenPoints (弹窗
+//   角标/画板满屏按钮/布防徽标三处同口径, 容差 0.04 覆盖拖角微调)
+
+/** 查绑定通道的插件层布防 (regions + tripwires 双表聚合):
+ *  [FIX guard-semantics 2026-09-10] 实测铁证: 告警流 19/20 是 tripwire,
+ *  绊线独立表 (channel 双写 _ch0 镜像) 驱动 — 只查 regions 会把「只画绊线
+ *  的通道」误报未布防。两表 × 主/镜像双形态查询, 取 max 去重 (双写同源);
+ *  include_disabled=false 只计启用布防 */
+async function refreshGuardStates() {
+  const channels = [...new Set(boundChannelDraft.value.filter(Boolean))]
+  if (!channels.length) { guardStates.value = []; return }
+  const labelOf = (ch: string) => {
+    // [AREA-CASCADE 2026-09-11] 改用 boundChannelOptions (友好 label + 区域收窄 + fallback 兑底)
+    const hit = boundChannelOptions.value.find(c => c.value === ch)
+    return hit?.label ?? ch
+  }
+  guardStates.value = channels.map(ch => ({
+    channel: ch, label: labelOf(ch), loading: true, error: false, count: 0, fullscreen: false,
+  }))
+  await Promise.all(guardStates.value.map(async st => {
+    // [FIX tdz 注] 此函数仅由非 immediate watch 触发, form 必已初始化
+    try {
+      const q = st.channel.replace(/_ch\d+$/, '')
+      const variants = [q, `${q}_ch0`]   // 主形态 + 双写镜像形态
+      const cnt = { region: 0, tripwire: 0 }
+      await Promise.all(variants.map(async v => {
+        const rres: any = await regionApi.listRegions({ channel_id: 0, channel_id_str: v, include_disabled: false })
+        const regions: any[] = rres?.data?.data?.regions ?? rres?.data?.regions ?? rres?.regions ?? []
+        cnt.region = Math.max(cnt.region, regions.length)
+        if (regions.some((r: any) => isFullscreenPoints(r?.polygon))) st.fullscreen = true
+        const tres: any = await regionApi.listTripwires({ channel_id: 0, channel_id_str: v, include_disabled: false })
+        const tws: any[] = tres?.data?.data?.tripwires ?? tres?.data?.tripwires ?? tres?.tripwires ?? []
+        cnt.tripwire = Math.max(cnt.tripwire, tws.length)
+      }))
+      st.count = cnt.region + cnt.tripwire
+    } catch {
+      st.error = true
+    } finally {
+      st.loading = false
+    }
+  }))
+}
+// [FIX tdz 2026-09-10] guard-badge 的 watch 不在此处挂载: Vue watch 建立时
+//   必执行一次 source getter 取初值 (与 immediate 无关) → boundChannelDraft
+//   getter 访问 form → form 在后文声明 → TDZ ReferenceError → /linkage 白屏。
+//   已投至 form 声明之后 (advancedCollapse 前)。
+
+function goAlgoConfig() {
+  router.push({ name: 'AlgoConfig' })
+}
+
 /// 选完通道联动预览: 无快照背景时取第一个摄像头通道加载 ROI 背景
 /// [FIX cam-ch 2026-09-07] 背景快照仅摄像头 (IPCamera) 通道有快照语义 —
 ///   非盲取 ids[0] (绑定通道允许勾选 NVR/DVR 子通道, 但它们不能做背景)
@@ -1945,6 +2276,10 @@ const form = reactive({
   mapIds: [] as number[],
   conditions: defaultConditions(),
 })
+// [FIX tdz 2026-09-10] guard-badge 的 watch 从 guard-badge 块投至此 (form 之后):
+//   Vue watch 建立即同步取 source 初值, boundChannelDraft getter 读 form,
+//   声明顺序错误 = setup 崩溃。挂载后回填/勾选/重置均自然触发刷新。
+watch(boundChannelDraft, () => { refreshGuardStates() })
 const advancedCollapse = ref<string[]>([])
 
 // ── 高级条件模式 ──
@@ -2024,7 +2359,9 @@ function applyTemplateToForm(t: any) {
     let hasAny = false
     if (tsc.location_id) { form.conditions.location.enabled = true; form.conditions.location.config.point = tsc.location_id; hasAny = true }
     if (tsc.region_id) { form.conditions.region.config.roi = tsc.region_id; hasAny = true }
-    if (tsc.device_group_id) { form.conditions.region.config.group = tsc.device_group_id; hasAny = true }
+    // [P1 2026-09-10 更名] area_id ?? device_group_id 双键读 (存量规则旧键回显兼容)
+    const legacyGroupId = tsc.area_id ?? ((tsc as any).device_group_id || '')
+    if (legacyGroupId) { form.conditions.region.config.group = legacyGroupId; hasAny = true }
     if (tsc.tripwire_id) { form.conditions.region.config.tripwireId = String(tsc.tripwire_id); hasAny = true }
     if (tsc.direction) { form.conditions.region.config.direction = tsc.direction; hasAny = true }
     if (Array.isArray(tsc.bound_channel_ids) && tsc.bound_channel_ids.length) {
@@ -2298,7 +2635,7 @@ function getActiveConditions(rule: LinkageRule): Array<{ key: string; label: str
   if (tc && (tc.time_start || tc.time_end || tc.weekdays?.length || tc.monthdays?.length))
     tags.push({ key: 'time', label: '🕐 时间' })
   const sc = rule.spatial_cond
-  if (sc && (sc.region_id || sc.location_id || sc.device_group_id || sc.roi_polygon?.length || sc.tripwire_id || sc.direction || (sc as any).roi_shapes_json))
+  if (sc && (sc.region_id || sc.location_id || sc.area_id || (sc as any).device_group_id || sc.roi_polygon?.length || sc.tripwire_id || sc.direction || (sc as any).roi_shapes_json))
     tags.push({ key: 'spatial', label: '📍 空间' })
   const src = rule.source_cond
   if (src && (src.event_types?.length || src.channel_ids?.length || src.algorithm_ids?.length))
@@ -2426,6 +2763,12 @@ function resetEditorState(rule: LinkageRule | null) {
   suppressPickerSync = true
   deviceChannelValue.value = { deviceIds: [], channelIds: [] }
   nextTick(() => { suppressPickerSync = false })
+  // [AREA-CASCADE 2026-09-11] 级联状态同步清空 (编辑态稍后由 ui_state.areaCascade 恢复)
+  restoringCascade.value = true
+  areaCascadeAreaId.value = ''
+  areaCascadeDeviceIds.value = new Set()
+  areaCascadeChannelIds.value = new Set()
+  nextTick(() => { restoringCascade.value = false })
   vlmSuppressThreshold.value = typeof (rule as any)?.vlm_suppress_threshold === 'number' ? (rule as any).vlm_suppress_threshold : 0.85
   // [r25] 折叠默认收起条件中删除 enableVlmVerify/responseDeadlineS (这两项不再为用户主动配置,
   //   VLM 已默认启用 (新建 enableVlmVerify=true)、response_deadline_s 后端仅存不用, 不该在高级折叠里提示)
@@ -2488,7 +2831,7 @@ function resetEditorState(rule: LinkageRule | null) {
     // [FIX 2026-09-04 老规则通道反解] 记录编辑源规则 (深链竞态 watch 补偿用); bound_channel_ids
     //   缺失 (vp9 前存量规则) 时从 source_cond.channel_ids 哈希反解字符串形态 (绑定多选/快照通道回填来源)
     lastEditSource = rule
-    const hasSpatial = !!(sc.region_id || sc.location_id || sc.device_group_id || sc.roi_polygon?.length || sc.tripwire_id || sc.direction || (sc as any).bound_channel_ids?.length || (sc as any).roi_shapes_json)
+    const hasSpatial = !!(sc.region_id || sc.location_id || sc.area_id || (sc as any).device_group_id || sc.roi_polygon?.length || sc.tripwire_id || sc.direction || (sc as any).bound_channel_ids?.length || (sc as any).roi_shapes_json)
     const boundRaw = (((sc as any).bound_channel_ids as unknown[]) || []).map(String)
     const boundResolved = boundRaw.length > 0
       ? boundRaw
@@ -2504,13 +2847,22 @@ function resetEditorState(rule: LinkageRule | null) {
       //   模板导入规则 bound_channel_ids/ui_state 双空, 通道实际存 location_id
       //   (设备实锚: 徘徊规则 location_id=3402... 但画板关联通道空 → 保存时
       //   区域/绊线镜像拿不到通道而跳过, 算法配置区永远看不到镜像)。
-      config: { location: ui?.region?.location ?? (sc.location_id || ''), roi: sc.region_id || '', group: sc.device_group_id || '', roiPolygon: roiShapesEcho.list, channelId: ui?.region?.channelId || firstCameraChannel(boundResolved) || (/^\d{20}$/.test(sc.location_id || '') ? sc.location_id : ''), tripwireId: sc.tripwire_id || '', direction: sc.direction || '', boundChannelIds: boundResolved, roiCombine: roiShapesEcho.combine },
+      config: { location: ui?.region?.location ?? (sc.location_id || ''), roi: sc.region_id || '', group: sc.area_id || (sc as any).device_group_id || '', roiPolygon: roiShapesEcho.list, channelId: ui?.region?.channelId || firstCameraChannel(boundResolved) || (/^\d{20}$/.test(sc.location_id || '') ? sc.location_id : ''), tripwireId: sc.tripwire_id || '', direction: sc.direction || '', boundChannelIds: boundResolved, roiCombine: roiShapesEcho.combine },
     }
     form.conditions.location = {
       // [COND-PERSIST] enabled/point 优先 ui 态 (解决与 region.location 混写折叠)
       enabled: ui?.location?.enabled ?? !!sc.location_id,
       config: { point: ui?.location?.point ?? (sc.location_id || '') },
     }
+    // [AREA-CASCADE 2026-09-11] 级联状态恢复: ui_state.areaCascade 优先 (新规则全量往返);
+    //   旧规则 (无 ui 态) 回退 sc.area_id/device_group_id — 区域可视化展开但不自动勾选
+    //   (bound_channel_ids 已回填 region 侧, 并集保存零丢失)
+    restoringCascade.value = true
+    areaCascadeAreaId.value = ui?.areaCascade?.areaId || sc.area_id || (sc as any).device_group_id || ''
+    areaCascadeDeviceIds.value = new Set<string>(ui?.areaCascade?.deviceIds || [])
+    areaCascadeChannelIds.value = new Set<string>(ui?.areaCascade?.channelIds || [])
+    if (areaCascadeAreaId.value) loadCascadeDevices()
+    nextTick(() => { restoringCascade.value = false })
     // source_cond → eventType + eventSource
     const src = rule.source_cond || {} as any
     // [FLOOR-MAP 2026-09-03] 适用平面图回填 (map_ids 可选字段, 老规则无此字段默认空)
@@ -2974,12 +3326,22 @@ async function handleSave(): Promise<boolean> {
     // 区域类形状 (组件级 AREA_ROI_TYPES: 引擎 pointInPolygon 判定);
     // 绊线走 tripwire_id 镜像链路, 关注点不做空间过滤
     const firstActiveArea = rc.config.roiPolygon.find(r => r.is_active && AREA_ROI_TYPES.includes(r.roi_type))
+    // [AREA-CASCADE 2026-09-11] location 页签三级级联勾选集合并集写三键:
+    //   area_id ← region.group 优先, 级联区域兑底 (单值键, 两入口不叠加);
+    //   bound_channel_ids ← region 绑定多选 ∪ 级联通道勾选 (并集, 键名/形态不变);
+    //   area_device_ids ← 级联设备勾选 (后端白名单暂丢弃, 真实持久化走 ui_state_json)
+    const cascadeAreaId = lc.enabled ? areaCascadeAreaId.value : ''
+    const cascadeChIds = lc.enabled ? [...areaCascadeChannelIds.value] : []
+    const mergedBoundChannelIds = [...new Set([...(rc.config.boundChannelIds || []).map(String), ...cascadeChIds])]
     const spatial_cond = (rc.enabled || lc.enabled) ? {
       region_id: cleanLocation(rc.config.roi || ''),
       location_id: cleanLocation(lc.enabled ? (lc.config.point || rc.config.location) : (rc.config.location || '')),
-      device_group_id: cleanGroup(rc.config.group || ''),
+      // [P1 2026-09-10 更名] 写新键 area_id (后端序列化双键镜像; 存量规则旧键双键读兼容)
+      area_id: cleanGroup(rc.config.group || cascadeAreaId),
       // [vp9 2026-09-01] 显式绑定通道 (多选, 字符串形态与引擎侧双形态匹配兼容)
-      bound_channel_ids: (rc.config.boundChannelIds || []).map(String),
+      bound_channel_ids: mergedBoundChannelIds,
+      // [AREA-CASCADE 2026-09-11] 级联设备级勾选 (引擎不解析; ui_state_json 同步暂存往返)
+      area_device_ids: (lc.enabled && cascadeAreaId) ? [...areaCascadeDeviceIds.value] : [] as string[],
       // [FIX 2026-09-02] 兼容字段: 第一个激活区域类形状 (归一化); 多形状并集见 roi_shapes_json
       roi_polygon: firstActiveArea ? buildNormPoints(firstActiveArea.polygon) : [] as number[],
       // [FIX 2026-09-02] 画板全量形状快照 (多形状并集判定 + 编辑回显 SSOT)
@@ -2989,7 +3351,7 @@ async function handleSave(): Promise<boolean> {
       //   否则仅匹配的 tripwire + direction 才触发动作
       tripwire_id: effectiveTripwireId || '',
       direction: dirUpper,
-    } : { region_id: '', location_id: '', device_group_id: '', roi_polygon: [] as number[], roi_shapes_json: '', tripwire_id: '', direction: '', bound_channel_ids: [] as string[] }
+    } : { region_id: '', location_id: '', area_id: '', roi_polygon: [] as number[], roi_shapes_json: '', tripwire_id: '', direction: '', bound_channel_ids: [] as string[], area_device_ids: [] as string[] }
 
     const etc = form.conditions.eventType
     const esc = form.conditions.eventSource
@@ -3044,6 +3406,13 @@ async function handleSave(): Promise<boolean> {
       time: { enabled: tc.enabled },
       autoMerge: { enabled: mc.enabled },
       picker: { deviceIds: [...deviceChannelValue.value.deviceIds], channelIds: [...deviceChannelValue.value.channelIds] },
+      // [AREA-CASCADE 2026-09-11] 级联态快照 (后端白名单丢弃 area_device_ids 的兑底持久化):
+      //   保存 → 编辑全量回显 区域/设备勾选/通道勾选
+      areaCascade: {
+        areaId: areaCascadeAreaId.value,
+        deviceIds: [...areaCascadeDeviceIds.value],
+        channelIds: [...areaCascadeChannelIds.value],
+      },
     })
     ;(spatial_cond as any).ui_state_json = ui_state_json // [COND-PERSIST] 运行时附加 (两分支字面量不侵入)
 
@@ -3620,6 +3989,26 @@ function applyTimeTemplate(tmpl: TimeTemplate) {
   ElMessage.success('已应用时段模板: ' + tmpl.name)
 }
 
+// [STAGE1 P1-2 2026-09-10] 4 模板 chip 应用: 仅改 draft (start/end/weekdays),
+//   启用时间条件开关, 不动 monthdays (留给用户按需选), 不触发保存。
+function applyTimePreset(p: typeof TIME_PRESETS[number]) {
+  form.conditions.time.enabled = true
+  form.conditions.time.config.startTime = p.start
+  form.conditions.time.config.endTime = p.end
+  form.conditions.time.config.weekdays = [...p.weekdays]
+  ElMessage.success(`已应用「${p.label}」模板 (草稿已更新, 点击「保存规则」后生效)`)
+}
+
+// [STAGE1 P1-2 2026-09-10] 当前 draft 是否与某预设一致 (用于 chip 高亮)
+function isTimePresetActive(p: typeof TIME_PRESETS[number]): boolean {
+  const cfg = form.conditions.time.config
+  if (cfg.startTime !== p.start || cfg.endTime !== p.end) return false
+  const a = [...cfg.weekdays].sort((x, y) => x - y)
+  const b = [...p.weekdays].sort((x, y) => x - y)
+  if (a.length !== b.length) return false
+  return a.every((v, i) => v === b[i])
+}
+
 // ── [SCENE-EDIT-INPLACE 2026-09-03] 嵌入编辑模式 ──
 // 宿主页 (五个场景 RulesView / AlgoConfigView) 就地渲染本组件并传 embedEditRuleId:
 // 隐藏列表外壳, onMounted 深链自动打开该规则 choice 编辑入口 — 与平台行内编辑
@@ -3924,6 +4313,12 @@ watch(mainTab, (tab) => {
 }
 .cond-form-item { margin-bottom: 8px; }
 .cond-hint { font-size: 12px; color: var(--app-text-secondary); margin-bottom: 6px; }
+/* [AREA-CASCADE 2026-09-11] location 三级级联树 (视觉对齐 LiveView live-tree) */
+.cascade-tree :deep(.el-tree-node__content) { height: 28px; border-radius: 6px; margin-bottom: 1px; }
+.cascade-tree :deep(.el-tree-node__content:hover) { background: var(--el-fill-color-light); }
+.cascade-tree :deep(.el-tree__empty-block) { background: transparent; color: var(--el-text-color-secondary); }
+.casc-node { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.casc-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
 .is-rotated { transform: rotate(180deg); }
 
 /* ── 星期/事件/通道网格 ── */
@@ -3934,6 +4329,21 @@ watch(mainTab, (tab) => {
 .event-type-group { width: 100%; margin-bottom: 4px; }
 .event-type-group__title { font-size: 11px; font-weight: 600; color: var(--color-primary-400, #3B82F6); margin-bottom: 2px; padding: 2px 0; }
 .channel-grid { display: flex; flex-wrap: wrap; gap: 4px; }
+
+/* ── [STAGE1 P1-2 2026-09-10] 布防时段快速模板 chip ── */
+.time-presets { margin-top: 8px; }
+.time-preset-chips { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.time-preset-chip {
+  cursor: pointer;
+  user-select: none;
+  transition: background-color 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+.time-preset-chip:hover { background-color: var(--el-color-primary-light-9, #ecf5ff); }
+.time-preset-chip.is-active {
+  background-color: var(--el-color-primary-light-8, #d9ecff);
+  color: var(--el-color-primary, #409eff);
+  border-color: var(--el-color-primary-light-5, #a0cfff);
+}
 
 /* v7.6 严重度颜色标签 (对标海康/大华事件配置) */
 .event-type-severity-legend {

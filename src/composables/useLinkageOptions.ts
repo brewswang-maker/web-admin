@@ -51,6 +51,12 @@ export interface ChannelOption {
   // [FIX cam-ch 2026-09-07] 所属设备类型 (后端 deviceType, 空则默认 IPCamera 与后端口径一致);
   //   快照背景等摄像头语义选择器按此过滤 (NVR/DVR/EdgeBox 通道无实时快照)
   deviceType?: string
+  // [AREA-CASCADE 2026-09-11] 设备归属三字段 (联动规则 bound_channel_ids 编辑回显友好化):
+  //   option label 由「通道名」升级为「通道名 (设备名)」/「通道名 · 设备IP」,
+  //   消灭 tag 直接展示 GB28181 20 位串的不知所云。可选字段零破坏存量消费方。
+  deviceId?: string
+  deviceName?: string
+  deviceIp?: string
 }
 
 /** 位置选项（从设备数据提取） */
@@ -223,17 +229,36 @@ async function fetchChannelOptions(): Promise<ChannelOption[]> {
 
   channelCache = (async () => {
     try {
-      const res = await channelApi.getList({ page: 1, pageSize: 200 })
+      // [AREA-CASCADE 2026-09-11] 并拉设备列表建 id→{name,ip} 映射: 通道 option 带归属
+      //   设备名/IP, 绑定通道多选的 tag/tooltip 才能显示「通道名 (设备名)」而非 GB 串
+      const [res, devRes] = await Promise.all([
+        channelApi.getList({ page: 1, pageSize: 200 }),
+        deviceApi.getList().catch(() => null),
+      ])
       const raw = res.data as any
       // 后端 GET /api/v1/channels 返回格式: { data: { channels: [...], total: N } }
       // 通道字段: channel_id (int32), device_id, name, source_url, ...
       // [FIX cam-ch 2026-09-07] 透传 deviceType (后端空值默认 IPCamera, 与 RestApiHandlers 口径一致)
       const items: any[] = raw?.data?.channels ?? raw?.data?.items ?? raw?.data ?? raw?.items ?? []
-      return items.map((ch: any) => ({
-        label: ch.name || `通道 ${ch.channel_id ?? ch.channelNo ?? ''}`,
-        value: String(ch.channel_id ?? ch.id ?? ''),
-        deviceType: ch.deviceType || 'IPCamera',
-      }))
+      const devRaw = (devRes?.data as any) ?? null
+      const devices: any[] = devRaw?.data?.devices ?? devRaw?.data ?? devRaw?.devices ?? devRaw?.items ?? []
+      const devMap = new Map<string, { name: string; ip: string }>()
+      for (const d of devices) {
+        const did = String(d?.id ?? '')
+        if (did) devMap.set(did, { name: d?.name || '', ip: d?.ip || d?.deviceIp || d?.config?.ip || '' })
+      }
+      return items.map((ch: any) => {
+        const deviceId = String(ch.device_id ?? ch.deviceId ?? '')
+        const dev = devMap.get(deviceId)
+        return {
+          label: ch.name || `通道 ${ch.channel_id ?? ch.channelNo ?? ''}`,
+          value: String(ch.channel_id ?? ch.id ?? ''),
+          deviceType: ch.deviceType || 'IPCamera',
+          deviceId: deviceId || undefined,
+          deviceName: dev?.name || undefined,
+          deviceIp: dev?.ip || undefined,
+        }
+      })
     } catch {
       return []
     }
