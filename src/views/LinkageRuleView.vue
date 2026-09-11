@@ -1725,10 +1725,34 @@ const cameraChannelOptions = computed(() =>
 //   当前值 (含老规则从 sc.location_id 回填的 20 位串) 池外注入 fallback option —
 //   el-select tag 永不裸显数字。收窄/双形态/fallback 逻辑抽到
 //   useFriendlyChannelLabel.narrowSnapshotChannels (纯函数可测, LinkageRuleView.cascade.test.ts 覆盖)。
+// [FIX area-dev-narrow 2026-09-11] 物理位置树联动收窄名单 (用户实测: 选设备节点后
+//   通道列表仍全量 — 原名单只挂分组 resolved, 与 location 字段零联动)。
+//   location 三形态解析: ① 区域节点 (areaByIdMap 命中) → resolved ∪ 直绑 ∪ 区域下
+//   设备通道; ② 设备节点 (某区域 device_ids 成员) → 该设备通道;
+//   ③ 旧版位置/空 → [] (不参与收窄, 维持原行为)。双形态 (_chN) 剥后缀比对由下游
+//   narrowChannelsToArea/boundChannelOptions 负责。
+const locationNarrowIds = computed<string[]>(() => {
+  const loc = form.conditions.region.config.location
+  if (!loc) return []
+  const area = areaByIdMap.value.get(loc)
+  if (area) {
+    const ids: string[] = [...(area.resolved_channel_ids || []), ...(area.channel_ids || [])]
+    for (const dv of area.device_ids || []) {
+      for (const c of cascadeChannelsByDevice.value.get(dv) || []) ids.push(c.value)
+    }
+    return ids
+  }
+  const owner = deviceGroups.value.find(g => (g.device_ids || []).includes(loc))
+  if (owner) return (cascadeChannelsByDevice.value.get(loc) || []).map(c => c.value)
+  return []
+})
 const snapshotChannelOptions = computed(() =>
   narrowSnapshotChannels(
     cameraChannelOptions.value,
-    (selectedGroupInfo.value?.resolved_channel_ids || []) as string[],
+    [
+      ...((selectedGroupInfo.value?.resolved_channel_ids || []) as string[]),
+      ...locationNarrowIds.value,
+    ],
     boundChannelDraft.value,
     form.conditions.region.config.channelId,
     { chNameOf, devNameOf },
@@ -1754,12 +1778,17 @@ function fallbackBoundLabel(v: string): string {
 }
 const boundChannelOptions = computed<ChannelOption[]>(() => {
   const pool = channelOptionsDynamic.value
-  const area = selectedGroupInfo.value
   const draft = boundChannelDraft.value
+  // [FIX area-dev-narrow 2026-09-11] 收窄名单 = 分组 resolved ∪ 物理位置树联动
+  //   (locationNarrowIds: 区域节点/设备节点双形态解析); 剥后缀双形态比对同下。
+  const narrowRaw = [
+    ...((selectedGroupInfo.value?.resolved_channel_ids || []) as string[]),
+    ...locationNarrowIds.value,
+  ]
   let list = pool
-  if (area && (area.resolved_channel_ids?.length)) {
+  if (narrowRaw.length) {
     // 双形态匹配: resolved 存国标 20 位主形态, 通道 value 可能带 _chN 子码流后缀
-    const resolvedBase = new Set(area.resolved_channel_ids.map(baseChannelId))
+    const resolvedBase = new Set(narrowRaw.map(baseChannelId))
     const inArea = pool.filter(ch => resolvedBase.has(baseChannelId(ch.value)))
     const known = new Set(inArea.map(c => c.value))
     const draftExtras = pool.filter(ch => draft.includes(ch.value) && !known.has(ch.value))

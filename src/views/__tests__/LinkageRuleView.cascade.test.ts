@@ -106,4 +106,36 @@ describe('narrowSnapshotChannels 快照背景池 (症状 2/3 主链路)', () => 
     expect(out).toHaveLength(pool.length)
     expect(out[0]!.label).toBe('前门 (前门半球)')
   })
+
+  // [FIX area-dev-narrow 2026-09-11] 物理位置树联动: 名单 = 分组 resolved ∪
+  //   locationNarrowIds (区域节点/设备节点双形态解析, 组件侧组装) —
+  //   用户实测: 选设备节点后通道列表仍全量, 根因是收窄名单未并入 location 维度。
+  it('位置树选设备节点: 合并名单 (分组 resolved + 该设备通道) 收窄, 无关通道剔除', () => {
+    // 模拟组件侧组装: 分组 resolved 只覆盖 前门/大厅, 位置树选中的设备名下仅 周界东
+    const merged = ['34020000001320000001', '34020000001320000002', '34020000001320000003']
+    const out = narrowSnapshotChannels(pool, merged, [], '')
+    expect(out.map(c => c.value)).toEqual([
+      '34020000001320000001',
+      '34020000001320000002_ch0',
+      '34020000001320000003',
+    ])
+    expect(out.some(c => c.value === '34020000001320000004')).toBe(false) // 无关通道被剔除
+    expect(out.every(c => !/^\d{20}$/.test(c.label))).toBe(true) // label 不裸显数字
+  })
+
+  it('位置树选设备节点: 背景快照旧值名单外 → ① 全量池命中友好 label (不裸显数字)', () => {
+    // 选设备后收窄名单仅含该设备通道 (周界东), 老规则背景快照指向停车场 →
+    //   降级 ① 全量目录池命中优先, label = 目录友好名「停车场」 (非数字串);
+    //   若池外才走 ② 目录反查 (用例 5 已覆盖)。
+    const out = narrowSnapshotChannels(
+      pool,
+      ['34020000001320000003'],
+      [],
+      '34020000001320000004',
+    )
+    expect(out.map(c => c.value)).toEqual(['34020000001320000003', '34020000001320000004'])
+    expect(out[1]!.__fallback).toBe(true)
+    expect(out[1]!.label).toBe('停车场')
+    expect(out[1]!.label).not.toMatch(/^\d+$/)
+  })
 })
