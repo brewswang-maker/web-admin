@@ -45,6 +45,37 @@ export interface User {
   lastLoginTime?: string
   createdAt?: string
   updatedAt?: string
+  // ── [UI-9 2026-09-10] 对标安防平台人员档案扩展字段 (华为/海康/大华/宇视) ──
+  /** 所属组织 id */
+  orgId?: string
+  /** 工号 [宇视/海康/大华/华为] */
+  employeeId?: string
+  /** 职位 [华为/宇视/大华] */
+  jobTitle?: string
+  /** 入职日期 YYYY-MM-DD [大华/华为] */
+  hireDate?: string
+  /** 离职日期 YYYY-MM-DD [大华] */
+  leaveDate?: string
+  /** 办公电话 [海康/大华] */
+  officePhone?: string
+  /** 性别 male/female，空=未知 [海康/大华/宇视] */
+  gender?: 'male' | 'female' | ''
+  /** 生日 YYYY-MM-DD [海康] */
+  birthday?: string
+  /** 证件类型 id_card/passport/officer/driver/other [海康/大华] */
+  idType?: string
+  /** 证件号码 [海康/大华] */
+  idNumber?: string
+  /** 地址 [海康/大华] */
+  address?: string
+  /** 紧急联系人 [大华] */
+  emergencyContact?: string
+  /** 紧急联系电话 [大华] */
+  emergencyPhone?: string
+  /** 标签 (逗号分隔) [华为/大华] */
+  tags?: string
+  /** 备注 */
+  remark?: string
 }
 
 export const ResourceLabels: Record<Resource, string> = {

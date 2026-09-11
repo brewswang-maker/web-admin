@@ -63,6 +63,26 @@ export interface CreateTeamRequest {
   projectIds?: string[]
 }
 
+/** 人员档案扩展字段 (PUT /users/:id 与 POST /users 双端透传) [UI-9 2026-09-10] */
+export interface UserProfileFields {
+  orgId?: string
+  phone?: string
+  employeeId?: string
+  jobTitle?: string
+  hireDate?: string
+  leaveDate?: string
+  officePhone?: string
+  gender?: 'male' | 'female' | ''
+  birthday?: string
+  idType?: string
+  idNumber?: string
+  address?: string
+  emergencyContact?: string
+  emergencyPhone?: string
+  tags?: string
+  remark?: string
+}
+
 export const rbacApi = {
   // ===== 角色管理 =====
 
@@ -117,6 +137,26 @@ export const rbacApi = {
   /** 获取用户列表（带角色） */
   getUsers(params?: { page?: number; pageSize?: number; keyword?: string; roleId?: string }) {
     return http.get<ApiResponse<PageResponse<UserInfo & { roles: Role[] }>>>('/rbac/users', { params })
+  },
+
+  /** 创建用户账户 (后端 POST /api/v1/users; 未传密码默认 Username@123)
+   *  [P1.4 2026-09-10] 原页面经 (rbacApi as any).createUser 调不存在的方法 → 运行时崩溃
+   *  [UI-9 2026-09-10] 后端创建后同步写入人员档案扩展字段 (org/phone/工号等) */
+  createUser(data: { username: string; password?: string; displayName?: string; email?: string; roleIds?: string[] } & UserProfileFields) {
+    return http.post<ApiResponse<{ id: string; rolesAssigned: number }>>('/users', data)
+  },
+
+  /** 更新用户账户 (PUT /api/v1/users/:id 白名单: displayName/email/phone/orgId + UI-9 扩展档案字段) */
+  updateUser(userId: string, data: UserProfileFields & { displayName?: string; name?: string; email?: string; isActive?: boolean; password?: string }) {
+    if (data.password) {
+      return http.post<ApiResponse<void>>(`/users/${userId}/reset-password`, { newPassword: data.password })
+    }
+    return http.put<ApiResponse<void>>(`/users/${userId}`, data)
+  },
+
+  /** 删除用户账户 */
+  deleteUser(userId: string) {
+    return http.delete<ApiResponse<void>>(`/users/${userId}`)
   },
 
   /** 为用户分配角色 */
