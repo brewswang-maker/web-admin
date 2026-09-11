@@ -16,7 +16,9 @@ import {
   channelFallbackLabel,
   narrowChannelsToArea,
   narrowSnapshotChannels,
+  filterChannelsByLocation,
   type FriendlyChannelLike,
+  type LocationAreaLike,
 } from '@/composables/useFriendlyChannelLabel'
 
 const pool: FriendlyChannelLike[] = [
@@ -137,5 +139,46 @@ describe('narrowSnapshotChannels 快照背景池 (症状 2/3 主链路)', () => 
     expect(out[1]!.__fallback).toBe(true)
     expect(out[1]!.label).toBe('停车场')
     expect(out[1]!.label).not.toMatch(/^\d+$/)
+  })
+})
+
+// ── [FIX area-dev-narrow2 2026-09-11] 位置树设备维度直滤 (治形态鸿沟) ──
+//   用户实测: 选华盾展厅设备后仍见其他设备通道 — 上一版「通道 id 名单中转」
+//   在区域 resolved (国标 20 位) vs 通道池 value (RTSP=int32 / GB=20 位混合)
+//   的形态鸿沟两侧互不命中 → 收窄失效回退全量。
+describe('filterChannelsByLocation 位置树设备维度直滤', () => {
+  // 模拟真实形态: RTSP 设备通道 value=int32, GB 设备通道 value=国标 20 位
+  const mixedPool: FriendlyChannelLike[] = [
+    { label: '展厅主屏', value: '101', deviceId: '3' },                    // 华盾展厅 RTSP 设备(id=3)
+    { label: '展厅入口', value: '102_ch0', deviceId: '3' },                // 同设备子码流
+    { label: '园区周界', value: '34020000001320000003', deviceId: '7' },   // 其他 GB 设备(id=7)
+    { label: '停车场', value: '201', deviceId: '9' },                      // 其他 RTSP 设备(id=9)
+  ]
+  const areas = new Map<string, LocationAreaLike>([
+    // 华盾展厅: device_ids=[3] (设备表 int32 id), resolved 存其他 GB 通道国标串
+    ['area-1', { id: 'area-1', device_ids: ['3'], channel_ids: [], resolved_channel_ids: ['34020000001320000003'] }],
+  ])
+  const owners = [['3'], ['7'], ['9']].map(ids => ids)  // 各区域 device_ids
+
+  it('选设备节点 (华盾展厅设备 id=3): 仅该设备通道, 其他设备全剔除 (形态鸿沟回归)', () => {
+    const out = filterChannelsByLocation(mixedPool, '3', areas, owners)
+    expect(out).not.toBeNull()
+    expect(out!.map(c => c.value)).toEqual(['101', '102_ch0'])
+  })
+
+  it('选区域节点 (华盾展厅): 设备维度 ∪ 国标直绑白名单双形态命中', () => {
+    const out = filterChannelsByLocation(mixedPool, 'area-1', areas, owners)
+    expect(out!.map(c => c.value)).toEqual(['101', '102_ch0', '34020000001320000003'])
+  })
+
+  it('旧版位置/空值 → null (调用方维持分组收窄/全量原逻辑)', () => {
+    expect(filterChannelsByLocation(mixedPool, '', areas, owners)).toBeNull()
+    expect(filterChannelsByLocation(mixedPool, 'legacy-loc-1', areas, owners)).toBeNull()
+  })
+
+  it('设备节点通道全为子码流形态也能命中 (剥后缀不参与 deviceId 比对, 直等)', () => {
+    const onlySub = [{ label: '展厅入口', value: '102_ch0', deviceId: '3' }]
+    const out = filterChannelsByLocation(onlySub, '3', areas, owners)
+    expect(out).toHaveLength(1)
   })
 })

@@ -1430,7 +1430,7 @@ import { regionApi } from '@/api/region'  // [FIX 2026-08-28] 画板绊线自动
 import type { LinkageRule, LinkageAction, LinkageLog, ActionLogEntry, TimeTemplate, LinkagePlan, CEPPattern, ConditionNode, RuleConflict, RuleTriggerStat } from '@/api/linkage'
 import { useLinkageOptions, type ChannelOption } from '@/composables/useLinkageOptions'
 // [FIX area-cascade-label 2026-09-11] 通道友好 label/回显反查兜底/区域收窄 纯函数 (自内联提取)
-import { friendlyChannelLabelOf, channelFallbackLabel, narrowSnapshotChannels } from '@/composables/useFriendlyChannelLabel'
+import { friendlyChannelLabelOf, channelFallbackLabel, narrowSnapshotChannels, filterChannelsByLocation } from '@/composables/useFriendlyChannelLabel'
 // [FIX area-cascade-label 2026-09-11] 目录反查 (fallback 四段降级中段; 首调懒加载目录)
 import { devNameOf, chNameOf } from '@/composables/useAlarmDeviceLabel'
 import { deviceApi } from '@/api/device'   // [AREA-CASCADE 2026-09-11] 级联树设备名解析
@@ -1725,38 +1725,45 @@ const cameraChannelOptions = computed(() =>
 //   当前值 (含老规则从 sc.location_id 回填的 20 位串) 池外注入 fallback option —
 //   el-select tag 永不裸显数字。收窄/双形态/fallback 逻辑抽到
 //   useFriendlyChannelLabel.narrowSnapshotChannels (纯函数可测, LinkageRuleView.cascade.test.ts 覆盖)。
-// [FIX area-dev-narrow 2026-09-11] 物理位置树联动收窄名单 (用户实测: 选设备节点后
-//   通道列表仍全量 — 原名单只挂分组 resolved, 与 location 字段零联动)。
-//   location 三形态解析: ① 区域节点 (areaByIdMap 命中) → resolved ∪ 直绑 ∪ 区域下
-//   设备通道; ② 设备节点 (某区域 device_ids 成员) → 该设备通道;
-//   ③ 旧版位置/空 → [] (不参与收窄, 维持原行为)。双形态 (_chN) 剥后缀比对由下游
-//   narrowChannelsToArea/boundChannelOptions 负责。
-const locationNarrowIds = computed<string[]>(() => {
-  const loc = form.conditions.region.config.location
-  if (!loc) return []
-  const area = areaByIdMap.value.get(loc)
-  if (area) {
-    const ids: string[] = [...(area.resolved_channel_ids || []), ...(area.channel_ids || [])]
-    for (const dv of area.device_ids || []) {
-      for (const c of cascadeChannelsByDevice.value.get(dv) || []) ids.push(c.value)
-    }
-    return ids
-  }
-  const owner = deviceGroups.value.find(g => (g.device_ids || []).includes(loc))
-  if (owner) return (cascadeChannelsByDevice.value.get(loc) || []).map(c => c.value)
-  return []
-})
-const snapshotChannelOptions = computed(() =>
-  narrowSnapshotChannels(
+// [FIX area-dev-narrow2 2026-09-11] 位置树选中 → 设备维度直滤 (治形态鸿沟):
+//   上一版 locationNarrowIds 走「通道 id 名单中转」, 但区域 resolved/channel_ids
+//   存国标 20 位串 (SecurityAreaStore.h L59) 而通道池 value 混合形态
+//   (RTSP=int32 通道 id, GB 设备=20 位), 名单∩池在鸿沟两侧互不命中 →
+//   收窄失效回退全量 (用户实测: 选华盾展厅设备后仍见其他设备通道)。
+//   治本: ch.deviceId 与区域 device_ids 同为设备表 id, 形态天然一致, 直接按
+//   归属过滤; 通道 id 仅作区域直绑白名单补充 (双形态比对内置)。
+//   优先级: 位置树直滤 > 分组 resolved 名单收窄 > 全量。
+const locationFilteredChannels = computed(() =>
+  filterChannelsByLocation(
     cameraChannelOptions.value,
-    [
-      ...((selectedGroupInfo.value?.resolved_channel_ids || []) as string[]),
-      ...locationNarrowIds.value,
-    ],
+    form.conditions.region.config.location,
+    areaByIdMap.value,
+    deviceGroups.value.map(g => g.device_ids || []),
+  ))
+const snapshotChannelOptions = computed(() => {
+  const locFiltered = locationFilteredChannels.value
+  if (locFiltered) {
+    // 位置树已选: 直滤结果 ∪ 已绑定通道中池内项 (显式选择不静默消失, 置后);
+    //   名单/绑定维度已由直滤+extras 完成, narrowSnapshotChannels 仅负责
+    //   label 友好化 + 当前快照值池外 fallback 注入
+    const known = new Set(locFiltered.map(c => c.value))
+    const extras = cameraChannelOptions.value.filter(ch => boundChannelDraft.value.includes(ch.value) && !known.has(ch.value))
+    return narrowSnapshotChannels(
+      [...locFiltered, ...extras],
+      [],
+      [],
+      form.conditions.region.config.channelId,
+      { chNameOf, devNameOf },
+    )
+  }
+  return narrowSnapshotChannels(
+    cameraChannelOptions.value,
+    (selectedGroupInfo.value?.resolved_channel_ids || []) as string[],
     boundChannelDraft.value,
     form.conditions.region.config.channelId,
     { chNameOf, devNameOf },
-  ))
+  )
+})
 
 // ── [AREA-CASCADE 2026-09-11] region 绑定通道 option 池: 友好 label + 区域收窄 + 已选兜底 ──
 //   原问题: 编辑回显时 tag 直接渲染 GB28181 20 位串 (双形态/池缺失时 el-select 无 label 可匹配);
@@ -1779,21 +1786,30 @@ function fallbackBoundLabel(v: string): string {
 const boundChannelOptions = computed<ChannelOption[]>(() => {
   const pool = channelOptionsDynamic.value
   const draft = boundChannelDraft.value
-  // [FIX area-dev-narrow 2026-09-11] 收窄名单 = 分组 resolved ∪ 物理位置树联动
-  //   (locationNarrowIds: 区域节点/设备节点双形态解析); 剥后缀双形态比对同下。
-  const narrowRaw = [
-    ...((selectedGroupInfo.value?.resolved_channel_ids || []) as string[]),
-    ...locationNarrowIds.value,
-  ]
-  let list = pool
-  if (narrowRaw.length) {
-    // 双形态匹配: resolved 存国标 20 位主形态, 通道 value 可能带 _chN 子码流后缀
-    const resolvedBase = new Set(narrowRaw.map(baseChannelId))
-    const inArea = pool.filter(ch => resolvedBase.has(baseChannelId(ch.value)))
-    const known = new Set(inArea.map(c => c.value))
-    const draftExtras = pool.filter(ch => draft.includes(ch.value) && !known.has(ch.value))
-    list = [...inArea, ...draftExtras]
+  // [FIX area-dev-narrow2 2026-09-11] 位置树设备维度直滤优先 (形态鸿沟治本,
+  //   详见 snapshotChannelOptions 处锚点注释); 无位置选择 → 分组名单收窄 → 全量。
+  const locFiltered = filterChannelsByLocation(
+    pool,
+    form.conditions.region.config.location,
+    areaByIdMap.value,
+    deviceGroups.value.map(g => g.device_ids || []),
+  )
+  let list: ChannelOption[]
+  if (locFiltered) {
+    list = locFiltered
+  } else {
+    const groupResolved = (selectedGroupInfo.value?.resolved_channel_ids || []) as string[]
+    if (groupResolved.length) {
+      // 双形态匹配: resolved 存国标 20 位主形态, 通道 value 可能带 _chN 子码流后缀
+      const resolvedBase = new Set(groupResolved.map(baseChannelId))
+      list = pool.filter(ch => resolvedBase.has(baseChannelId(ch.value)))
+    } else {
+      list = pool
+    }
   }
+  const known = new Set(list.map(c => c.value))
+  const draftExtras = pool.filter(ch => draft.includes(ch.value) && !known.has(ch.value))
+  list = [...list, ...draftExtras]
   const knownAll = new Set(list.map(c => c.value))
   const fallbacks = draft.filter(v => !knownAll.has(v)).map(v => ({ label: fallbackBoundLabel(v), value: v }))
   return [...list.map(ch => ({ ...ch, label: friendlyChannelLabel(ch) })), ...fallbacks]
