@@ -1507,7 +1507,23 @@ async function loadRegions() {
     // 之前直接透传二维结构, 编辑器按一维消费 → 已保存区域渲染错乱/不显示,
     // 且 roi_id undefined → 新画区域与存量无法区分。
     const rawRegions: any[] = curAlgo ? ((rRes.data as any)?.data?.regions ?? (rRes.data as any)?.regions ?? []) : []
+    // [FIX region-delete-strict 2026-09-11] 同名堆积显形: 历史残留同通道同算法
+    //   同名多行 (改名/重画逐次 INSERT 所致) 在列表里完全同名, 用户删掉一条后
+    //   另一条同名顶上 = 「删除成功但还在」体感根因之一。同名行显示名追加
+    //   #id 后缀让堆积一眼可辨 (仅显示层; 快照 lastLoadedRegions 用原名
+    //   生成, 确保 ② 更新分支 upsert 的 name 键不受显示后缀污染)。
+    const nameCount = new Map<string, number>()
+    for (const r of rawRegions) nameCount.set(r.name ?? '', (nameCount.get(r.name ?? '') ?? 0) + 1)
     regions.value = rawRegions.map((r: any) => ({
+      roi_id: `reg_${r.id}`,
+      roi_name: (nameCount.get(r.name ?? '') ?? 0) > 1 ? `${r.name} #${r.id}` : r.name,
+      roi_type: 'detection_zone',
+      polygon: (r.polygon ?? []).flat(),
+      is_active: r.enabled,
+      backend_id: r.id,
+    }))
+    // 快照用 DB 原名 (非显示后缀名) — ② 更新分支 upsert 按 prev.roi_name 落库
+    lastLoadedRegions.value = rawRegions.map((r: any) => ({
       roi_id: `reg_${r.id}`,
       roi_name: r.name,
       roi_type: 'detection_zone',
@@ -1515,7 +1531,6 @@ async function loadRegions() {
       is_active: r.enabled,
       backend_id: r.id,
     }))
-    lastLoadedRegions.value = regions.value.map((r: any) => ({ ...r }))
     // GET /algos/tripwires 后端仅支持 int32 channel_id (GB 超大数全部存 0),
     // 会混出其他通道的绊线 → 本地按 channel_id_str 过滤
     tripwires.value = ((tRes.data as any)?.data?.tripwires ?? (tRes.data as any)?.tripwires ?? []).filter(
