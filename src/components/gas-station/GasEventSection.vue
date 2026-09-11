@@ -1,5 +1,6 @@
 <template>
   <div class="gas-section">
+   <div class="gas-section-main">
     <!-- T6 顶部告警条: 仅在加油区/卸油区展示 (其他区域不显示) -->
     <el-alert v-if="showT6Banner" type="warning" :closable="false" show-icon class="t6-banner">
       <template #title>
@@ -26,12 +27,26 @@
           <span class="card-title">{{ title }}事件
             <span class="card-title-sub">共 {{ events.length }} 条 (最近 {{ listLimit }} 条显示)</span>
           </span>
-          <el-button size="small" :loading="loading" @click="load(true)">
-            <el-icon><Refresh /></el-icon>刷新
-          </el-button>
+          <span style="display:flex;align-items:center;gap:8px">
+            <!-- [P2 2026-09-10] 卡片/列表切换 -->
+            <AlarmViewToggle v-model="viewMode" page-key="gas" />
+            <el-button size="small" :loading="loading" @click="load(true)">
+              <el-icon><Refresh /></el-icon>刷新
+            </el-button>
+          </span>
         </div>
       </template>
-      <el-table :data="pagedEvents" v-loading="loading" size="small"
+      <!-- [P2 2026-09-10] 卡片视图 (AlarmCard 栅格; 筛选/分页逻辑零改动) -->
+      <div v-if="viewMode === 'card'" class="events-card-grid">
+        <AlarmCard v-for="e in pagedEvents" :key="e.id" :alarm="e" @click="openDetail(e)">
+          <template #actions="{ alarm }">
+            <el-button size="small" type="primary" link @click.stop="openDetail(alarm)">详情</el-button>
+            <el-button size="small" type="success" link @click.stop="goTrajectory(alarm)">轨迹</el-button>
+            <el-button size="small" type="warning" link @click.stop="jumpToPlayback(alarm)">回放</el-button>
+          </template>
+        </AlarmCard>
+      </div>
+      <el-table v-else :data="pagedEvents" v-loading="loading" size="small"
                 :empty-text="loading ? '加载中…' : '暂无事件'" @row-click="openDetail">
         <el-table-column label="类型" min-width="170">
           <template #default="{ row }">
@@ -68,9 +83,9 @@
           </template>
         </el-table-column>
       </el-table>
-      <div class="pager" v-if="events.length > listLimit">
-        <el-button size="small" :disabled="listLimit >= events.length" @click="listLimit += 20">
-          加载更多 ({{ events.length - listLimit }})
+      <div class="pager" v-if="filteredEvents.length > listLimit">
+        <el-button size="small" :disabled="listLimit >= filteredEvents.length" @click="listLimit += 20">
+          加载更多 ({{ filteredEvents.length - listLimit }})
         </el-button>
       </div>
     </el-card>
@@ -90,6 +105,10 @@
         <div v-else class="snap-error">快照已清理</div>
       </div>
     </el-drawer>
+   </div>
+
+   <!-- [P3 2026-09-10] 设备树筛选 (区块内嵌; 默认折叠竖条不挤占卡内空间) -->
+   <AlarmDeviceTreePanel default-collapsed @selection-change="onTreeSelection" />
   </div>
 </template>
 
@@ -112,8 +131,16 @@ import eventTypesApi from '@/api/eventTypes'
 import { GAS_EVENT_SECTIONS, type GasSectionKey } from '@/api/gasStation'
 import type { AlarmEvent, AlarmLevel } from '@/types/alarm'
 import { normalizeAlarmCore } from '@/types/alarm'
+// [FIX dev-name-num 2026-09-11] nl 拼接数字形态治理 (共享目录反查)
+import { resolveAlarmDeviceName } from '@/composables/useAlarmDeviceLabel'
 import type { EventTypeMetadataItem } from '@/api/eventTypes'
 import { useRealtimeAlarmEvents } from '@/composables/useRealtimeAlarmEvents'
+// [P3 2026-09-10] 设备树筛选面板 (安保区域→子区域→设备 多选; 区块内嵌默认折叠)
+import AlarmDeviceTreePanel from '@/components/alarm/AlarmDeviceTreePanel.vue'
+import type { AlarmTreeSelection } from '@/components/alarm/AlarmDeviceTreePanel.vue'
+// [P2 2026-09-10] 卡片/列表切换 + 告警卡片
+import AlarmViewToggle from '@/components/alarm/AlarmViewToggle.vue'
+import AlarmCard from '@/components/alarm/AlarmCard.vue'
 // [FIX realtime-push 2026-09-06] 场景页实时刷新: WS 告警到达去抖静默重拉 (无 loading 遮罩闪烁)
 useRealtimeAlarmEvents(() => load(true))
 
@@ -129,6 +156,11 @@ const events = ref<AlarmEvent[]>([])
 const listLimit = ref(20)
 const eventTypes = ref<EventTypeMetadataItem[]>([])
 let refreshTimer: ReturnType<typeof setInterval> | null = null
+
+// [P2 2026-09-10] 卡片/列表视图 (持久化 key alarm_view_mode_gas, 与 AlarmViewToggle 同规范)
+const viewMode = ref<'card' | 'table'>(
+  localStorage.getItem('alarm_view_mode_gas') === 'card' ? 'card' : 'table'
+)
 
 const sectionKeys = computed(() => [...GAS_EVENT_SECTIONS[props.sectionKey]])
 
@@ -160,7 +192,23 @@ const typeTiles = computed(() => {
   }))
 })
 
-const pagedEvents = computed(() => events.value.slice(0, listLimit.value))
+const pagedEvents = computed(() => filteredEvents.value.slice(0, listLimit.value))
+
+// [P3 2026-09-10] 设备树筛选 (右侧面板勾选集合命中判定; 空集不筛)
+const treeSel = ref<AlarmTreeSelection | null>(null)
+const treeChannelSet = computed(() => new Set(treeSel.value?.channelIds ?? []))
+const treeDeviceSet = computed(() => new Set(treeSel.value?.deviceIds ?? []))
+function onTreeSelection(sel: AlarmTreeSelection) {
+  treeSel.value = sel.chips.length ? sel : null
+}
+function hitTree(a: AlarmEvent): boolean {
+  const ch = String(a.channelId || '')
+  if (ch && treeChannelSet.value.has(ch)) return true
+  const dev = String(a.deviceId || '').replace(/_ch\d+$/, '')
+  return !!dev && treeDeviceSet.value.has(dev)
+}
+const filteredEvents = computed(() =>
+  treeSel.value ? events.value.filter(hitTree) : events.value)
 
 const detailVisible = ref(false)
 const current = ref<AlarmEvent | null>(null)
@@ -201,7 +249,8 @@ function goTrajectory(row: AlarmEvent) {
   }
   const ts = new Date(row.createdAt).getTime()
   const query: Record<string, string> = {
-    nl: `${typeName(row.type)} ${row.channelName || row.deviceName || row.channelId}`,
+    // [FIX dev-name-num 2026-09-11] 空名/纯数字 → 目录反查 (不裸显「通道+20位」兜底)
+    nl: `${typeName(row.type)} ${resolveAlarmDeviceName(row.channelName || row.deviceName, row.deviceId, row.channelId) || row.channelId}`,
     from: 'gas-event',
   }
   if (ts) {
@@ -324,6 +373,16 @@ onUnmounted(() => {
 .card-header { display: flex; justify-content: space-between; align-items: center; }
 .card-title { font-weight: 600; color: #303133; font-size: 14px; }
 .card-title-sub { color: #909399; font-weight: 400; font-size: 12px; margin-left: 8px; }
+/* [P3 2026-09-10] 区块内嵌设备树 → flex 双栏 (面板默认折叠竖条) */
+.gas-section { display: flex; gap: 12px; align-items: flex-start; }
+.gas-section-main { flex: 1; min-width: 0; }
+/* [P2 2026-09-10] 卡片栅格 */
+.events-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 12px;
+  margin-bottom: 12px;
+}
 .type-cell { display: flex; flex-direction: column; }
 .evt-name { color: #303133; }
 .evt-key { color: #909399; font-family: monospace; font-size: 11px; }

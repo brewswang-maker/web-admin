@@ -97,6 +97,8 @@ import eventTypesApi from '@/api/eventTypes'
 import { schoolApi, SCHOOL_EVENT_SECTIONS, type SchoolSectionKey } from '@/api/school'
 import type { AlarmEvent, AlarmLevel } from '@/types/alarm'
 import { normalizeAlarmCore } from '@/types/alarm'
+// [FIX dev-name-num 2026-09-11] nl 拼接数字形态治理 (共享目录反查)
+import { resolveAlarmDeviceName } from '@/composables/useAlarmDeviceLabel'
 import type { EventTypeMetadataItem } from '@/api/eventTypes'
 import { useRealtimeAlarmEvents } from '@/composables/useRealtimeAlarmEvents'
 // [FIX realtime-push 2026-09-06] 场景页实时刷新: WS 告警到达去抖静默重拉 (无 loading 遮罩闪烁)
@@ -172,7 +174,8 @@ function goTrajectory(row: AlarmEvent) {
   }
   const ts = new Date(row.createdAt).getTime()
   const query: Record<string, string> = {
-    nl: `${typeName(row.type)} ${row.channelName || row.deviceName || row.channelId}`,
+    // [FIX dev-name-num 2026-09-11] 空名/纯数字 → 目录反查 (不裸显「通道+20位」兜底)
+    nl: `${typeName(row.type)} ${resolveAlarmDeviceName(row.channelName || row.deviceName, row.deviceId, row.channelId) || row.channelId}`,
     from: 'campus-event',
   }
   if (ts) {

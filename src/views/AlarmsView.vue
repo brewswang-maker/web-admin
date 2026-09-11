@@ -1,5 +1,10 @@
 <template>
   <div class="alarms-page">
+   <!-- [P3 2026-09-10 → 本轮 UI-4] 左侧设备树筛选面板 (原右侧 280px 侧栏, 统一规则:
+        设备列表居左/主内容居右; 多选 chips 勾选集合前端过滤零后端改动) -->
+   <AlarmDeviceTreePanel @selection-change="onTreeSelection" />
+
+   <div class="alarms-main">
     <!-- ===== 统计卡片 ===== -->
     <el-row :gutter="16" class="alarm-stats-row">
       <el-col :span="6" v-for="s in alarmStatCards" :key="s.label">
@@ -45,8 +50,23 @@
             <el-option label="已升级" value="escalated" />
             <el-option label="已确认" value="confirmed" />
             <el-option label="误报" value="false_alarm" />
+            <!-- [接警单号 2026-09-09] 弹窗研判判定值: 历史库已有 true_positive/unsure/known
+                 (新提交已改用 confirmed), 补筛选避免处置后筛不出 -->
+            <el-option label="真实告警" value="true_positive" />
+            <el-option label="存疑" value="unsure" />
+            <el-option label="已知事件" value="known" />
             <el-option label="已关闭" value="closed" />
             <el-option label="已解决" value="resolved" />
+          </el-select>
+
+          <!-- [STAGE1 P0-1 2026-09-10] 复核状态筛选 — 与处理状态独立维度 -->
+          <el-select v-model="reviewFilter" placeholder="复核状态" style="width: 140px" clearable @change="handleFilterChange">
+            <el-option label="全部" value="" />
+            <el-option label="未复核" value="none" />
+            <el-option label="已确认" value="confirmed" />
+            <el-option label="已撤" value="retracted" />
+            <el-option label="误报" value="false_alarm" />
+            <el-option label="VLM 未决" value="unverified" />
           </el-select>
 
           <!-- [P0-12 2026-09-04] 设备分组筛选 (海康式分组过滤; 分组表为空时下拉自然为空) -->
@@ -80,8 +100,9 @@
         </div>
 
         <div class="toolbar-right">
-          <!-- [P3-VP2] 视图切换 -->
+          <!-- [P3-VP2] 视图切换 ([P2 2026-09-10] +card 卡片栅格, 选择持久化 localStorage) -->
           <el-radio-group v-model="viewMode" size="small" style="margin-right:8px">
+            <el-radio-button label="card">卡片</el-radio-button>
             <el-radio-button label="table">列表</el-radio-button>
             <el-radio-button label="gallery">证据库</el-radio-button>
           </el-radio-group>
@@ -175,7 +196,7 @@
                 <span>{{ item.type }}</span>
                 <el-tag size="small" :type="levelTagType(item.severity)" effect="light">{{ severityLabel(item.severity) }}</el-tag>
               </div>
-              <div style="color:#909399;margin-top:4px">{{ item.deviceName || item.deviceId }} · {{ item.channelName || item.channelId }}</div>
+              <div style="color:#909399;margin-top:4px">{{ alarmDevLabel(item) }} · {{ alarmChLabel(item) }}</div>
               <div style="color:#666;margin-top:2px">{{ formatTime(item.createdAt) }}</div>
             </div>
             <!-- 三个操作入口 -->
@@ -212,6 +233,28 @@
       </el-row>
 
       <!-- 证据库分页 -->
+      <div class="pagination-wrap" v-if="totalAlarms > pageSize">
+        <el-pagination
+          v-model:current-page="currentPage"
+          v-model:page-size="pageSize"
+          :total="totalAlarms"
+          :page-sizes="[10, 20, 50, 100]"
+          layout="total, sizes, prev, pager, next, jumper"
+          background
+          @change="handlePageChange"
+        />
+      </div>
+    </el-card>
+
+    <!-- ===== [P2 2026-09-10] 卡片视图 (AlarmCard 栅格; 字段/排序/筛选/分页零改动) ===== -->
+    <el-card v-if="viewMode === 'card'" shadow="never" class="table-card">
+      <div v-if="paginatedAlarms.length === 0" style="text-align:center;color:#888;padding:40px">暂无告警</div>
+      <el-row v-else :gutter="12">
+        <el-col v-for="a in paginatedAlarms" :key="a.id" :xs="24" :sm="12" :md="8" :lg="6" style="margin-bottom:12px">
+          <AlarmCard :alarm="a" :group-name="groupNameOf(a)" @click="handleDetail(a)" />
+        </el-col>
+      </el-row>
+      <!-- 分页 (服务端分页, 与表格模式同参) -->
       <div class="pagination-wrap" v-if="totalAlarms > pageSize">
         <el-pagination
           v-model:current-page="currentPage"
@@ -280,7 +323,7 @@
           <template #default="{ row }">
             <div class="device-cell">
               <span class="device-status-dot" :class="row.deviceStatus || 'online'"></span>
-              <span>{{ row.channelName || row.deviceName || row.deviceId }}</span>
+              <span>{{ alarmDevLabel(row) }}</span>
             </div>
           </template>
         </el-table-column>
@@ -344,6 +387,35 @@
             >
               {{ statusLabel(row.status) }}
             </el-tag>
+          </template>
+        </el-table-column>
+
+        <!-- [STAGE1 P0-1 2026-09-10] 复核状态 (独立维度, 与业务状态并存) -->
+        <el-table-column prop="reviewStatus" label="复核状态" width="110" align="center">
+          <template #default="{ row }">
+            <el-tooltip
+              :content="reviewTooltip(row)"
+              placement="top"
+              :show-after="500"
+              effect="dark"
+            >
+              <el-tag
+                :type="reviewTagType(row.reviewStatus)"
+                size="small"
+                effect="plain"
+              >
+                {{ reviewLabel(row.reviewStatus) }}
+              </el-tag>
+            </el-tooltip>
+          </template>
+        </el-table-column>
+
+        <!-- [STAGE1 P0-1 2026-09-10] 剩余 SLA (与 /alarms/review-sla 同口径: timestamp+8000ms 期限) -->
+        <el-table-column prop="reviewSlaRemainingMin" label="SLA 剩余" width="100" align="center" sortable>
+          <template #default="{ row }">
+            <span :class="['sla-remaining', slaRemainingClass(row.reviewSlaRemainingMin)]">
+              {{ slaRemainingText(row) }}
+            </span>
           </template>
         </el-table-column>
 
@@ -633,6 +705,7 @@
 
     <!-- [P0-10 2026-09-04] 规范处警对话框 (类型可选/已处警只读/追加) -->
     <DisposeDialog v-model="disposeDialogVisible" :alarm="disposeTarget" @submitted="fetchAlarms" />
+   </div>
   </div>
 </template>
 
@@ -648,7 +721,7 @@ import { alarmApi } from '@/api/alarm'
 import { screeningApi, type AlarmFeedbackItem } from '@/api/screening'
 import { exportApi } from '@/api/export'
 import { queryRecordings, toLocalISOString, type DeviceRecording } from '@/api/recording'
-import { deviceGroupApi } from '@/api/deviceGroups'
+import { securityAreaApi } from '@/api/securityAreas'
 import { recordingHttp } from '@/api/http'
 import type { AlarmHandleForm, AlarmEvidence, AlarmEvent } from '@/types/alarm'
 import { normalizeAlarmCore } from '@/types/alarm'
@@ -656,7 +729,14 @@ import { useAuthStore } from '@/stores/auth'
 import { useWebSocket } from '@/composables/useWebSocket'
 // [P0-9/6/10 2026-09-04] canonical zh SSOT + 规范处警对话框
 import { useEventTypeZh } from '@/composables/useEventTypeZh'
+// [FIX dev-name-num 2026-09-11] 设备名称数字形态治理 (共享目录反查)
+import { resolveAlarmDeviceName, isNumericId } from '@/composables/useAlarmDeviceLabel'
 import DisposeDialog from '@/components/alarm/DisposeDialog.vue'
+// [P3 2026-09-10] 右侧设备树筛选面板 (安保区域→子区域→设备 多选)
+import AlarmDeviceTreePanel from '@/components/alarm/AlarmDeviceTreePanel.vue'
+import type { AlarmTreeSelection } from '@/components/alarm/AlarmDeviceTreePanel.vue'
+// [P2 2026-09-10] 卡片视图 (上部 16:9 快照 + 级别/类型/状态/分组/设备/时间)
+import AlarmCard from '@/components/alarm/AlarmCard.vue'
 // [UX 2026-08-31] 1b: 列表行点击 → 全局告警详情弹窗 (与首页同套 AlarmPopup)
 import { showAlarmPopup } from '@/composables/useAlarmPopup'
 import SnapshotAnnotated from '@/views/perimeter/SnapshotAnnotated.vue'
@@ -677,6 +757,8 @@ const SEVERITY_LABELS: Record<string, string> = {
 const levelFilter = ref('')
 const typeFilter = ref('')
 const statusFilter = ref('')
+// [STAGE1 P0-1 2026-09-10] 复核状态筛选 (与 statusFilter 独立,两者并存)
+const reviewFilter = ref('')
 const dateRange = ref<any[]>([])
 const search = ref('')
 const selected = ref<any[]>([])
@@ -702,8 +784,8 @@ async function fetchDeviceGroups() {
   try {
     // [FIX 2026-09-06] 原用 recordingHttp.get('/api/v1/devices/groups') — recordingHttp
     //   baseURL=/api/v1/recordings, 传绝对路径拼成双重前缀恒 404 (告警中心实测
-    //   GET /api/v1/recordings/api/v1/devices/groups)。改用正主 deviceGroupApi。
-    const r = await deviceGroupApi.listGroups()
+    //   GET /api/v1/recordings/api/v1/devices/groups)。改用正主 securityAreaApi。
+    const r = await securityAreaApi.listAreas()
     const data = (r.data?.data ?? r.data) as { items?: DeviceGroupItem[] } | undefined
     deviceGroups.value = data?.items ?? []
   } catch {
@@ -716,6 +798,26 @@ function groupHasAlarm(g: DeviceGroupItem, a: any): boolean {
   if (ch && (g.resolved_channel_ids || []).includes(ch)) return true
   const dev = String(a.deviceId || '').replace(/_ch\d+$/, '')
   return !!dev && (g.device_ids || []).includes(dev)
+}
+
+// ── [P3 2026-09-10] 右侧设备树筛选 (与 groupFilter 下拉互斥避免口径混乱) ──
+const alarmTreeSel = ref<AlarmTreeSelection | null>(null)
+const treeChannelSet = computed(() => new Set(alarmTreeSel.value?.channelIds ?? []))
+const treeDeviceSet = computed(() => new Set(alarmTreeSel.value?.deviceIds ?? []))
+function onTreeSelection(sel: AlarmTreeSelection) {
+  alarmTreeSel.value = sel.chips.length ? sel : null
+  // 树勾选时清空分组下拉 (二者口径都是"区域→通道/设备", 并存易误读)
+  if (alarmTreeSel.value && groupFilter.value) {
+    groupFilter.value = ''
+  }
+}
+/** 树命中判定: 通道命中展开集合 或 设备 (剥 _chN) 命中设备集合; 空集合不筛 */
+function alarmHitTree(a: any): boolean {
+  if (!alarmTreeSel.value) return true
+  const ch = String(a.channelId || '')
+  if (ch && treeChannelSet.value.has(ch)) return true
+  const dev = String(a.deviceId || '').replace(/_ch\d+$/, '')
+  return !!dev && treeDeviceSet.value.has(dev)
 }
 /** 分组列渲染: id→name 反查, 未分组 '-' */
 function groupNameOf(row: any): string {
@@ -771,7 +873,18 @@ function openSnapshotPreview(row: any) {
   previewVisible.value = true
 }
 // [P3-VP2] 视图切换 + 证据库
-const viewMode = ref<'table' | 'gallery'>('table')
+const viewMode = ref<'table' | 'gallery' | 'card'>(
+  // [P2 2026-09-10] 选择持久化 (key 与 AlarmViewToggle 同规范)
+  ((): 'table' | 'gallery' | 'card' => {
+    try {
+      const v = localStorage.getItem('alarm_view_mode_alarms')
+      return v === 'card' || v === 'gallery' ? v : 'table'
+    } catch { return 'table' }
+  })()
+)
+watch(viewMode, (v) => {
+  try { localStorage.setItem('alarm_view_mode_alarms', v) } catch { /* 静默 */ }
+})
 const galleryItems = computed(() => {
   return paginatedAlarms.value.map(a => ({
     id: a.id,
@@ -800,7 +913,8 @@ const inlineVideoIsPlayback = ref(false)  // true=设备录像回放, false=实�
 
 async function openInlineVideo(item: any) {
   inlineVideoItem.value = item
-  inlineVideoTitle.value = `${item.type} · ${item.deviceName || item.deviceId} · ${formatTime(item.createdAt)}`
+  // [FIX dev-name-num 2026-09-11] 视频弹窗标题同口径治理 (不裸显数字编号)
+  inlineVideoTitle.value = `${item.type} · ${alarmDevLabel(item)} · ${formatTime(item.createdAt)}`
   inlineVideoVisible.value = true
   inlineVideoLoading.value = true
   inlineVideoUrl.value = ''
@@ -1115,6 +1229,15 @@ const unsubscribeAlarm = wsSubscribe('alarm.new', (data: any) => {
   }
 })
 
+// ── 处警保存后, 全局 CustomEvent 通知列表刷新 ──
+// useAlarmPopup.handleAlarm 成功后派发 alarm-handled. 本视图维护自己的
+// alarms[] (store.handleAlarm 只刷 store), 不重拉则行对象停留在处置前快照
+// (status='unhandled'/handleNote 空) → 重开弹窗走编辑态空备注, 看似"没保存";
+// 后端列表 SELECT 已回填治理字段, 重拉当前页即拿到最新状态/备注/接警单号。
+function onAlarmHandled() {
+  fetchAlarms()
+}
+
 // ── 联动录像完成后, 全局 CustomEvent 通知列表更新 videoClipUrl ──
 // useGlobalAlarm 在收到 system.linkage_action=record_complete 时派发 alarm-clip-updated 事件.
 // 我们维护自己的 alarms[] 数组 (不和 store.realtimeAlarms 共享), 需要单独更新.
@@ -1154,6 +1277,8 @@ const { alarmStatCards, filteredAlarms } = (() => {
     const lf = levelFilter.value
     const tf = typeFilter.value
     const sf = statusFilter.value
+    // [STAGE1 P0-1 2026-09-10] 复核状态 (前端内存筛, 不走服务端)
+    const rf = reviewFilter.value
     const gf = groupFilter.value
     // [P0-12] 选中分组对象预解析 (循环外一次, 避免行级 find)
     const activeGroup = gf ? deviceGroups.value.find((x) => x.id === gf) : null
@@ -1172,8 +1297,12 @@ const { alarmStatCards, filteredAlarms } = (() => {
       if (lf && (a.severity || a.level) !== lf) continue
       if (tf && a.type !== tf) continue
       if (sf && a.status !== sf) continue
+      // [STAGE1 P0-1 2026-09-10] 复核状态筛选
+      if (rf && (a.reviewStatus || 'none') !== rf) continue
       // [P0-12] 分组过滤 (当前页过滤, 与类型/状态筛选同模式; 未选中或组不在表时放行)
       if (activeGroup && !groupHasAlarm(activeGroup, a)) continue
+      // [P3 2026-09-10] 设备树筛选 (右侧面板勾选集合命中判定; 空集不筛)
+      if (!alarmHitTree(a)) continue
       if (q) {
         if (!((a.description || '').toLowerCase().includes(q) ||
               (a.title || '').toLowerCase().includes(q) ||
@@ -1228,9 +1357,64 @@ function statusLabel(status: string) {
     // [P0-3] 工单流转状态
     acknowledged: '已确认收到', disposed: '处置中',
     escalated: '已升级', reassigned: '已转派',
-    resolved: '已解决', closed: '已关闭'
+    resolved: '已解决', closed: '已关闭',
+    // [接警单号 2026-09-09] 弹窗研判判定历史值 (true_positive 新提交已改 confirmed)
+    true_positive: '真实告警', unsure: '存疑', known: '已知事件'
   }
   return map[status] || status
+}
+
+// [STAGE1 P0-1 2026-09-10] 复核状态显示 — 与 statusLabel 独立
+function reviewLabel(rs: string | undefined): string {
+  const map: Record<string, string> = {
+    none: '未复核',
+    confirmed: '已确认',
+    retracted: '已撤',
+    false_alarm: '误报',
+    unverified: 'VLM未决',
+  }
+  return map[rs || 'none'] || (rs || '未复核')
+}
+function reviewTagType(rs: string | undefined): 'primary' | 'success' | 'warning' | 'info' | 'danger' {
+  const map: Record<string, 'primary' | 'success' | 'warning' | 'info' | 'danger'> = {
+    none: 'info',
+    confirmed: 'success',
+    retracted: 'warning',
+    false_alarm: 'warning',
+    unverified: 'primary',
+  }
+  return map[rs || 'none'] || 'info'
+}
+function reviewTooltip(row: any): string {
+  const srcMap: Record<string, string> = {
+    '': '未接入复核',
+    retraction: 'AlarmRetractionService (已撤/已确认/未决)',
+    vlm: 'VLM 研判 (alarm_events.metadata.ai_review.verdict)',
+    feedback: '人工 false_alarm_feedback 表标注',
+    vlm_confirmed: 'VLM 已确认',
+  }
+  // 兼容 REST snake_case 与已归一化 camelCase；空来源但已有复核状态时仍显示来源未知，
+  // 避免 feedback 状态在 tooltip 中被误显示为“未接入复核”。
+  const rawSource = String(row.reviewSource ?? row.review_source ?? '').trim()
+  const src = srcMap[rawSource] || (rawSource || (row.reviewStatus && row.reviewStatus !== 'none' ? '复核来源未知' : '未接入复核'))
+  const dueMs = Number(row.reviewSlaDueAt ?? row.review_sla_due_at ?? 0)
+  const due = dueMs > 0 ? new Date(dueMs).toLocaleString() : '—'
+  const remaining = Number(row.reviewSlaRemainingMin ?? row.review_sla_remaining_min ?? 0)
+  return `来源: ${src}\nSLA 期限: ${due}\n剩余: ${Number.isFinite(remaining) ? remaining : 0} 分钟`
+}
+function slaRemainingClass(min: number | undefined): string {
+  if (min === undefined || min === null) return ''
+  if (min < 0) return 'sla-overdue'
+  if (min < 1) return 'sla-warning'
+  return 'sla-ok'
+}
+function slaRemainingText(row: any): string {
+  const min = row.reviewSlaRemainingMin
+  if (min === undefined || min === null || row.reviewSlaDueAt === 0) return '—'
+  if (row.reviewStatus && row.reviewStatus !== 'none') return reviewLabel(row.reviewStatus)
+  if (min < 0) return `超期 ${Math.abs(min)}分`
+  if (min < 1) return '<1分'
+  return `${min}分`
 }
 
 function statusTagType(status: string): 'primary' | 'success' | 'warning' | 'info' | 'danger' {
@@ -1240,7 +1424,8 @@ function statusTagType(status: string): 'primary' | 'success' | 'warning' | 'inf
     // [P0-3] 工单流转状态
     acknowledged: 'primary', disposed: 'warning',
     escalated: 'danger', reassigned: 'info',
-    resolved: 'success', closed: 'success'
+    resolved: 'success', closed: 'success',
+    true_positive: 'success', unsure: 'warning', known: 'info'
   }
   return map[status] || 'info'
 }
@@ -1265,6 +1450,19 @@ function confPct(row: any): number {
 
 
 const _timeCache = new Map<string, string>()
+// [FIX dev-name-num 2026-09-11] 设备标签: 空名/纯数字形态 (face 插件截断 hash 等历史数据)
+//   → 目录反查设备/通道名, 反查不中兜底 '-' (不裸显 deviceId 数字串)
+function alarmDevLabel(a: Pick<AlarmEvent, 'deviceName' | 'deviceId' | 'channelId'> & { channelName?: string }): string {
+  // deviceName 可读直接用; 数字形态/空 → channelName 兜底传入 (resolve 内部同形态拦截)
+  return resolveAlarmDeviceName(a.deviceName || a.channelName || '', a.deviceId, a.channelId) || '-'
+}
+// 通道标签: channelName 兜底「通道+20位」也是数字形态 → 同口径拦截反查
+function alarmChLabel(a: Pick<AlarmEvent, 'channelId'> & { channelName?: string }): string {
+  const cn = String(a.channelName ?? '').trim()
+  if (cn && !isNumericId(cn)) return cn
+  return resolveAlarmDeviceName('', '', a.channelId) || '-'
+}
+
 function formatTime(isoString: string | undefined) {
   if (!isoString) return '-'
   let v = _timeCache.get(isoString)
@@ -1718,11 +1916,13 @@ onMounted(() => {
   ensureEventTypes()
   fetchDeviceGroups()
   window.addEventListener('alarm-clip-updated', onAlarmClipUpdated)
+  window.addEventListener('alarm-handled', onAlarmHandled)
 })
 
 onUnmounted(() => {
   unsubscribeAlarm?.()
   window.removeEventListener('alarm-clip-updated', onAlarmClipUpdated)
+  window.removeEventListener('alarm-handled', onAlarmHandled)
   if (exportPollTimer) {
     clearInterval(exportPollTimer)
     exportPollTimer = null
@@ -1739,11 +1939,13 @@ onUnmounted(() => {
   cursor: pointer;
 }
 .alarms-page {
-  /* padding: 20px 24px; */
-  /* max-width: var(--content-max-width, 1440px); */
-  /* margin: 0 auto; */
+  /* [P3 2026-09-10 → 本轮 UI-4] 左侧设备树面板 + 右侧主内容 (flex 双栏) */
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
   animation: fadeIn 0.3s ease;
 }
+.alarms-main { flex: 1; min-width: 0; }
 
 /* [P3-VP2] 证据库网格 */
 .evidence-gallery { margin-top: 16px; margin-bottom: 16px; }
@@ -1909,6 +2111,12 @@ onUnmounted(() => {
 .level-dot.high { background: #EA580C; }
 .level-dot.medium { background: #F59E0B; }
 .level-dot.low { background: #22C55E; }
+
+/* [STAGE1 P0-1 2026-09-10] SLA 剩余时间列 — 三色分级 */
+.sla-remaining { font-variant-numeric: tabular-nums; font-weight: 500; }
+.sla-remaining.sla-ok { color: #22C55E; }
+.sla-remaining.sla-warning { color: #F59E0B; }
+.sla-remaining.sla-overdue { color: #DC2626; font-weight: 600; }
 
 /* ── 类型徽章 ── */
 .type-badge {

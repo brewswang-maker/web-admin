@@ -15,7 +15,8 @@
         </div>
         <div class="dispose-dialog__row">
           <span class="dispose-dialog__label">设备</span>
-          <span>{{ alarm.channelName || alarm.deviceName || alarm.deviceId }}</span>
+          <!-- [FIX dev-name-num 2026-09-11] 空名/纯数字形态 → 目录反查, 不裸显 deviceId 数字串 -->
+          <span>{{ deviceLabel }}</span>
         </div>
         <div class="dispose-dialog__row">
           <span class="dispose-dialog__label">时间</span>
@@ -96,6 +97,8 @@ import { ref, computed, watch } from 'vue'
 import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
 import { alarmApi } from '@/api/alarm'
 import { useEventTypeZh } from '@/composables/useEventTypeZh'
+// [FIX dev-name-num 2026-09-11] 设备名数字形态治理 (共享目录反查)
+import { resolveAlarmDeviceName } from '@/composables/useAlarmDeviceLabel'
 import { useAuthStore } from '@/stores/auth'
 import { showAlarmPopup } from '@/composables/useAlarmPopup'
 
@@ -110,6 +113,13 @@ const emit = defineEmits<{
 }>()
 
 const { ensure: ensureEventTypes, zh, canonicalTypes } = useEventTypeZh()
+
+// [FIX dev-name-num 2026-09-11] 设备行: channelName「通道+20位」兜底也是数字形态 → 同口径拦截,
+//   目录反查设备/通道名, 反查不中兜底 '-' (不裸显 deviceId 数字串)
+const deviceLabel = computed(() => {
+  const a = props.alarm || {}
+  return resolveAlarmDeviceName(a.channelName || a.deviceName || '', a.deviceId, a.channelId) || '-'
+})
 const auth = useAuthStore()
 
 /** 可处警状态集 (未完结生命周期) */

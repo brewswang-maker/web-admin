@@ -321,7 +321,7 @@
                       <span class="alarm-popup__detail-key">设备名称:</span>
                       <!-- [FIX align 2026-09-07] 移除装饰性摄像头小图标: 设备名称值与告警类型/
                            设备编号行错位 ~18px, 视觉上疑似隐藏字符; 三行同构对齐 -->
-                      <span class="alarm-popup__detail-val">{{ currentAlarm.deviceName || currentAlarm.deviceId || '-' }}</span>
+                      <span class="alarm-popup__detail-val">{{ resolvedDeviceName || '-' }}</span>
                     </div>
                     <div class="alarm-popup__detail-row">
                       <span class="alarm-popup__detail-key">设备编号:</span>
@@ -339,6 +339,45 @@
                       </div>
                       <div class="alarm-popup__detail-images-thumb" @click="activePrimaryTab = 'image'">
                         <img v-if="currentSnapshotUrl" :src="currentSnapshotUrl" alt="告警快照" />
+                      </div>
+                    </div>
+                    <!-- [AI 复核恢复 2026-09-10 P4 → 本轮移位] 详情面板「告警图片」缩略图紧下方
+                         AI 复核模块: VLM 二次复核结论 (后端 AlarmRetractionService 回写
+                         metadata.ai_review 字段组, 前端经 normalizeAlarmCore.aiReview 归一化);
+                         无复核数据时"未复核"占位不隐藏, 布局稳定 — 看图即看 AI 研判 -->
+                    <div class="alarm-popup__ai-review">
+                      <div class="alarm-popup__ai-review-head">
+                        <span class="alarm-popup__ai-review-title">AI 复核</span>
+                        <span
+                          class="alarm-popup__ai-review-tag"
+                          :class="`alarm-popup__ai-review-tag--${aiReviewTagKind}`"
+                        >{{ aiReviewVerdictLabel(currentAlarm?.aiReview) }}</span>
+                      </div>
+                      <div class="alarm-popup__ai-review-body">
+                        <div class="alarm-popup__ai-review-row">
+                          <span class="alarm-popup__ai-review-label">识别算法</span>
+                          <span class="alarm-popup__ai-review-value">{{ alarmTypeLabel }}</span>
+                          <span class="alarm-popup__ai-review-label">检测置信度</span>
+                          <span class="alarm-popup__ai-review-value">{{ Math.round((currentAlarm?.confidence || 0) * 100) }}%</span>
+                          <span class="alarm-popup__ai-review-label">复核置信度</span>
+                          <span class="alarm-popup__ai-review-value">{{ aiReviewConfidenceText }}</span>
+                        </div>
+                        <div class="alarm-popup__ai-review-row">
+                          <span class="alarm-popup__ai-review-label">复核时间</span>
+                          <span class="alarm-popup__ai-review-value">{{ currentAlarm?.aiReview?.reviewedAt ? formatTime(currentAlarm.aiReview.reviewedAt) : '—' }}</span>
+                          <template v-if="currentAlarm?.aiReview?.verifier && currentAlarm.aiReview.verifier !== 'none'">
+                            <span class="alarm-popup__ai-review-label">复核引擎</span>
+                            <span class="alarm-popup__ai-review-value">{{ currentAlarm.aiReview.verifier }}</span>
+                          </template>
+                          <template v-if="currentAlarm?.aiReview?.latencyMs">
+                            <span class="alarm-popup__ai-review-label">耗时</span>
+                            <span class="alarm-popup__ai-review-value">{{ currentAlarm.aiReview.latencyMs }}ms</span>
+                          </template>
+                        </div>
+                        <div v-if="currentAlarm?.aiReview?.reason" class="alarm-popup__ai-review-row">
+                          <span class="alarm-popup__ai-review-label">复核结论</span>
+                          <span class="alarm-popup__ai-review-value alarm-popup__ai-review-value--wrap">{{ currentAlarm.aiReview.reason }}</span>
+                        </div>
                       </div>
                     </div>
                     <!-- [P0-8 2026-09-04 人脸比对] 抓拍 vs 注册照并列对比 (大华式) -->
@@ -394,7 +433,10 @@
                         <span class="alarm-popup__dispose-key alarm-popup__dispose-key--required">告警类型:</span>
                         <el-select v-model="disposeType" placeholder="请选择" size="small" class="alarm-popup__dispose-select" popper-class="alarm-popup__dispose-popper">
                           <el-option label="误报" value="false_alarm" />
-                          <el-option label="真实告警" value="true_positive" />
+                          <!-- [接警单号 2026-09-09] '真实告警'原值 true_positive 落库为筛选不可见的
+                               非标准状态, 改用反馈同步路径同款 'confirmed' (recordFalseAlarmFeedback:
+                               true_positive→confirmed), 状态筛选“已确认”可直接捕获 -->
+                          <el-option label="真实告警" value="confirmed" />
                           <el-option label="存疑" value="unsure" />
                           <el-option label="已知事件" value="known" />
                         </el-select>
@@ -412,7 +454,7 @@
                       </div>
                       <div class="alarm-popup__dispose-row">
                         <span class="alarm-popup__dispose-key">误报备注:</span>
-                        <span class="alarm-popup__dispose-val">{{ currentAlarm.handleNote || '-' }}</span>
+                        <span class="alarm-popup__dispose-val">{{ originalNote }}</span>
                       </div>
                       <div class="alarm-popup__dispose-row">
                         <span class="alarm-popup__dispose-key">处置时间:</span>
@@ -421,13 +463,16 @@
                     </template>
                     <!-- <div class="alarm-popup__dispose-section">
                       <div class="alarm-popup__dispose-section-title">追加信息</div>
-                      <div class="alarm-popup__dispose-row">
-                        <span class="alarm-popup__dispose-key">追加内容:</span>
-                        <span class="alarm-popup__dispose-val">{{ appendInfo.content || '我有追加信息' }}</span>
+                      <div v-if="!currentAlarm.appendLogs?.length" class="alarm-popup__dispose-row">
+                        <span class="alarm-popup__dispose-val alarm-popup__dispose-val--muted">暂无追加信息</span>
                       </div>
-                      <div class="alarm-popup__dispose-row">
-                        <span class="alarm-popup__dispose-key">追加时间:</span>
-                        <span class="alarm-popup__dispose-val">{{ formatTime(appendInfo.time || currentAlarm.createdAt) }}</span>
+                      <div v-for="(log, i) in currentAlarm.appendLogs" :key="i" class="alarm-popup__append-log">
+                        <span class="alarm-popup__append-log-text">[{{ formatAppendTime(log) }}] {{ log.content }}</span>
+                        <span v-if="log.by" class="alarm-popup__append-log-by">追加人: {{ log.by }}</span>
+                      </div>
+                      <div class="alarm-popup__dispose-row alarm-popup__dispose-row--col">
+                        <span class="alarm-popup__dispose-key">追加内容:</span>
+                        <el-input v-model="appendNoteInput" type="textarea" :rows="2" resize="none" placeholder="请输入追加信息" class="alarm-popup__dispose-textarea" />
                       </div>
                     </div> -->
                     <div class="alarm-popup__dispose-actions">
@@ -474,10 +519,11 @@ import {
   currentPopupAutoCloseS,  // [POPUP-AUTOCLOSE 2026-09-03] 弹窗自动关闭秒数 (0=不启用)
   hasAction, dynamicButtons,
   queueInfo, nextAlarm, prevAlarm, handleAlarm as handleAlarmAction,
-  closePopup,
+  appendAlarmNote, closePopup,
 } from '@/composables/useAlarmPopup'
 import { ACTION_TYPE_REVERSE_MAP } from '@/api/linkage'
 import { alarmApi } from '@/api/alarm'
+import { useAuthStore } from '@/stores/auth'  // [接警单号 2026-09-09] 处置提交带当前登录用户 (handled_by)
 import { queryRecordings, toLocalISOString, type DeviceRecording } from '@/api/recording'
 import { recordingHttp } from '@/api/http'
 import { checkStreamAlive, stopStream } from '@/api/stream'
@@ -485,10 +531,14 @@ import { useObjectLabel, type ObjectLabelMeta } from '@/composables/useObjectLab
 // [P0-14 2026-09-04 SSOT] 弹窗类型名优先走 canonical zh (与列表/规则页同源), 本地映射降为 fallback
 import { useEventTypeZh } from '@/composables/useEventTypeZh'
 import { useChannelStore } from '@/stores/channel'
+// [AI 复核恢复 2026-09-10 P4] verdict 短标 (真事件/误报/未复核)
+import { aiReviewVerdictLabel } from '@/types/alarm'
 import { useRouter } from 'vue-router'
 // [FLOOR-MAP 2026-09-03] 地图 Tab 真实渲染: 只读画布 + 通道反查 (复用共享缓存)
 import FloorMapCanvas from '@/components/map/FloorMapCanvas.vue'
 import { useFloorMap } from '@/composables/useFloorMap'
+// [FIX dev-name-num 2026-09-11] 设备名称数字形态治理 (face 插件 channel_id 截断等历史数据)
+import { resolveAlarmDeviceName } from '@/composables/useAlarmDeviceLabel'
 import type { MapChannelPair, CameraMapBinding } from '@/types/floorMap'
 
 const { getCategoryName, getTargetName, getAlarmTypeName } = useObjectLabel()
@@ -692,16 +742,23 @@ const currentHour = computed(() => {
 })
 
 // ── 处警表单 ──
+const auth = useAuthStore()
 const disposeType = ref<string>('')
-const appendInfo = ref<{ content: string; time: string }>({ content: '', time: '' })
-const receiverUnit = computed(() => '1231')  // 接警单号
+const appendNoteInput = ref('')
+const appending = ref(false)
+/** [接警单号 2026-09-09] 原 UI 原型硬编码 '1231' (所有告警同号) → 后端 handle 时
+ *  自动生成落库 ticket_id 列 (JJ+时间戳+毫秒), 列表 SELECT 经 metadata 治理回填,
+ *  normalizeAlarmCore 四源透出; 未处置告警尚无接警单, 显示 '-' */
+const receiverUnit = computed(() => currentAlarm.value?.ticketId || '-')
 const receiverName = computed(() => currentAlarm.value?.handledBy || '值班人')
 // [POPUP-DISPOSE-STATE 2026-09-03] 已处置状态 → 只读展示 + 「追加处警」按钮; 未处置 → 表单 + 「确认处置」
 const isDisposed = computed(() => !!currentAlarm.value?.status && currentAlarm.value.status !== 'unhandled')
 const appendEditing = ref(false)
 const disposeTypeLabel = computed(() => {
   switch (disposeType.value) {
-    case 'false_alarm': return '误报'; case 'true_positive': return '真实告警'
+    case 'false_alarm': return '误报'
+    // 'true_positive' 历史库值兼容: 新提交已改用 'confirmed' (与反馈同步路径 status 对齐)
+    case 'confirmed': case 'true_positive': return '真实告警'
     case 'unsure': return '存疑'; case 'known': return '已知事件'
     default: return disposeType.value || '-'
   }
@@ -710,11 +767,50 @@ watch(currentAlarm, (a) => {
   disposeType.value = a?.status && a.status !== 'unhandled' ? a.status : ''
   appendEditing.value = false
 })
-function confirmDispose() {
-  if (!disposeType.value) { ElMessage.warning('请先选择告警类型'); return }
-  handleAlarmAction(disposeType.value as any, handleNote.value || undefined)
-  ElMessage.success(isDisposed.value ? '追加处警已提交' : '已确认处置')
-  appendEditing.value = false
+/** [FIX 2026-09-09] await 真实结果: 原实现无 await, 后端失败也弹“已确认处置”假成功
+ *  (store.handleAlarm 失败时弹错误提示, 此处不再叠加成功 toast);
+ *  成功提示统一由 store 弹 (statusLabels), 此处仅收起追加编辑态 */
+async function confirmDispose() {
+  if (!disposeType.value || !currentAlarm.value) return
+  const ok = await handleAlarmAction(
+    disposeType.value as any,
+    handleNote.value || undefined,
+    auth.username || undefined,
+  )
+  if (ok) appendEditing.value = false
+}
+
+// ── [追加信息 2026-09-09] 已处置告警追加处警信息 ──
+//   disposition 追加后为多行全文 (原备注 + [追加 ...] 行), 只读区"误报备注"
+//   仅显示原处置记录, 追加行在下方追加信息区结构化展示 (独立表回填)。
+const originalNote = computed(() => {
+  const full = currentAlarm.value?.handleNote || ''
+  if (full.startsWith('[追加 ')) return '-'  // 原备注为空, 全是追加行
+  const idx = full.indexOf('\n[追加 ')
+  return idx >= 0 ? full.slice(0, idx) : (full || '-')
+})
+function formatAppendTime(log: { time?: string; timeMs?: number }): string {
+  if (log.time) return log.time
+  if (log.timeMs) {
+    const d = new Date(log.timeMs)
+    const p = (n: number) => String(n).padStart(2, '0')
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
+  }
+  return '-'
+}
+async function confirmAppend() {
+  if (!appendNoteInput.value.trim() || appending.value) return
+  appending.value = true
+  try {
+    const ok = await appendAlarmNote(appendNoteInput.value)
+    if (ok) {
+      appendNoteInput.value = ''   // 清空输入框
+      appendEditing.value = false  // 关闭追加编辑态
+      ElMessage.success('已追加信息')
+    }
+  } finally {
+    appending.value = false
+  }
 }
 
 // ── 设备录像列表 ──
@@ -910,6 +1006,13 @@ watch(popupVisible, (v) => {
 // ── 计算属性 ──
 const { ensure: ensureEventTypes, zh: eventTypeZh } = useEventTypeZh()
 ensureEventTypes()
+// [FIX dev-name-num 2026-09-11] 设备名称: 空名/纯数字形态 (历史 int32 截断 hash) → 目录反查
+//   设备/通道名; 反查不中返回 '' → 模板兜底 '-' (不再裸显 deviceId 数字串)
+const resolvedDeviceName = computed(() => {
+  const a = currentAlarm.value
+  if (!a) return ''
+  return resolveAlarmDeviceName(a.deviceName, a.deviceId, a.channelId)
+})
 const alarmTypeLabel = computed(() => {
   const t = currentAlarm.value?.type || ''
   if (!t) return '告警'
@@ -929,6 +1032,18 @@ const targetMeta = computed<ObjectLabelMeta>(() => {
 })
 const targetCategoryLabel = computed(() => getCategoryName(targetMeta.value))
 const targetNameLabel = computed(() => getTargetName(targetMeta.value) || '-')
+
+// ── [AI 复核恢复 2026-09-10 P4] 图片 Tab AI 复核卡片数据 ──
+const aiReviewTagKind = computed(() => {
+  const v = currentAlarm.value?.aiReview?.verdict
+  if (v === 'confirmed') return 'success'
+  if (v === 'retracted') return 'danger'
+  return 'info'
+})
+const aiReviewConfidenceText = computed(() => {
+  const c = currentAlarm.value?.aiReview?.confidence
+  return c && c > 0 ? `${Math.round(c * 100)}%` : '—'
+})
 
 const snapshotImageUrl = computed(() => {
   const alarm = currentAlarm.value
@@ -1376,7 +1491,11 @@ void jumpToPlayback; void openImageTab
 
 /* ── 图片 Tab ── */
 .alarm-popup__image-wrap {
-  width: 100%; height: 100%;
+  width: 100%;
+  /* [AI 复核恢复 2026-09-10] 原 height:100% 独占 pane; 改 flex 自适应后
+     图片下方为 AI 复核卡片让出空间 (pane 为 flex column) */
+  flex: 1 1 auto;
+  min-height: 0;
   display: flex; flex-direction: column;
   background: #0a0e1c;
 }
@@ -1890,6 +2009,35 @@ void jumpToPlayback; void openImageTab
   padding: 8px 10px;
   margin-top: 10px;
 }
+/* [追加信息 2026-09-09] 追加记录条目 + 输入区 */
+.alarm-popup__append-log {
+  padding: 6px 10px;
+  margin-top: 6px;
+  background: rgba(245, 247, 250, 0.8);
+  border-left: 3px solid #409EFF;
+  border-radius: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.alarm-popup__append-log-text {
+  font-size: 13px;
+  color: #303133;
+  line-height: 1.5;
+  word-break: break-all;
+  white-space: pre-wrap;
+}
+.alarm-popup__append-log-by {
+  font-size: 12px;
+  color: #909399;
+}
+.alarm-popup__dispose-val--muted {
+  color: #909399;
+}
+.alarm-popup__append-btn {
+  margin-top: 8px;
+  width: 100%;
+}
 .alarm-popup__dispose-section-title {
   font-size: 14px; font-weight: 600;
   color: #606266;
@@ -2004,5 +2152,42 @@ void jumpToPlayback; void openImageTab
 .alarm-popup__recording-list::-webkit-scrollbar-track,
 .alarm-popup__thumbs-track::-webkit-scrollbar-track {
   background: transparent;
+}
+
+/* ── [AI 复核恢复 2026-09-10 P4 → 本轮移位详情面板] 缩略图下方 AI 复核卡片
+   (浅色风格对齐详情面板: 原 image Tab 暗色变体随卡片移位同步改造) ── */
+.alarm-popup__ai-review {
+  flex: 0 0 auto;
+  margin: 8px 0 4px;
+  padding: 8px 12px;
+  background: #f7f9fc;
+  border: 1px solid #ebeef5;
+  border-radius: 6px;
+}
+.alarm-popup__ai-review-head {
+  display: flex; align-items: center; gap: 8px;
+  margin-bottom: 6px;
+}
+.alarm-popup__ai-review-title {
+  font-size: 12px; font-weight: 600; color: #3294ED;
+  letter-spacing: 1px;
+}
+.alarm-popup__ai-review-tag {
+  font-size: 11px; padding: 1px 8px; border-radius: 9px; line-height: 16px;
+}
+.alarm-popup__ai-review-tag--success { background: rgba(0, 212, 170, 0.15); color: #00D4AA; border: 1px solid rgba(0, 212, 170, 0.5); }
+.alarm-popup__ai-review-tag--danger  { background: rgba(245, 108, 108, 0.15); color: #f56c6c; border: 1px solid rgba(245, 108, 108, 0.5); }
+.alarm-popup__ai-review-tag--info    { background: rgba(255, 255, 255, 0.08); color: #909399; border: 1px solid rgba(255, 255, 255, 0.15); }
+.alarm-popup__ai-review-body { display: flex; flex-direction: column; gap: 4px; }
+.alarm-popup__ai-review-row {
+  display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap;
+  font-size: 12px; line-height: 18px;
+}
+.alarm-popup__ai-review-label { color: #909399; flex: 0 0 auto; }
+.alarm-popup__ai-review-value { color: #303133; }
+.alarm-popup__ai-review-value--wrap {
+  flex: 1 1 auto; min-width: 0;
+  word-break: break-all;
+  color: #606266;
 }
 </style>
