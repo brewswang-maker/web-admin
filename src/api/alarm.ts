@@ -94,6 +94,14 @@ export const alarmApi = {
     return alarmApi.handle(id, { status: 'disposed', disposition, assignee })
   },
 
+  /** [追加信息 2026-09-09] 已处置告警追加信息 — status='append' 专用语义:
+   *  复用 handle 端点, 后端分流在状态机前 (不改主状态/接警单号), 原子读-拼-写
+   *  disposition ("[追加 时间] 内容") + 独立表 alarm_append_logs INSERT;
+   *  响应回传合并全文 disposition + 结构化新记录 appended */
+  appendNote(id: string, content: string, handler?: string) {
+    return alarmApi.handle(id, { status: 'append', note: content, handler })
+  },
+
   /** 关闭告警 (close) */
   close(id: string, disposition?: string) {
     return alarmApi.handle(id, { status: 'closed', disposition })

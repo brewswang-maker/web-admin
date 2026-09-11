@@ -31,8 +31,51 @@
       </div>
     </div>
 
-    <!-- 主体：地图 + 侧边栏 -->
+    <!-- 主体：侧边栏 + 地图 [UI-3/UI-4 2026-09-10] 设备列表统一左侧, 改区域→设备两级树 -->
     <div class="main-content">
+      <!-- 侧边栏：安保区域→设备 树形列表 -->
+      <div class="sidebar-panel" :class="{ collapsed: !showSidebar }">
+        <div class="sidebar-toggle" @click="showSidebar = !showSidebar">
+          <el-icon><DArrowLeft v-if="showSidebar" /><DArrowRight v-else /></el-icon>
+        </div>
+        <div v-if="showSidebar" class="sidebar-content">
+          <div class="sidebar-header">
+            <span>设备列表</span>
+            <el-input
+              v-model="deviceFilter"
+              placeholder="搜索设备..."
+              size="small"
+              clearable
+              prefix-icon="Search"
+              style="width: 140px"
+            />
+          </div>
+          <!-- [UI-3 2026-09-10] 区域→设备 两级树 (securityAreaApi + buildAreaTree 同源;
+               未归属设备挂「未分组」兜底; 点击设备叶子联动地图/平面图, deviceId 命中不变) -->
+          <el-tree
+            ref="locTreeRef"
+            class="loc-tree"
+            :data="locTreeData"
+            node-key="key"
+            :props="{ label: 'label', children: 'children' }"
+            :expand-on-click-node="false"
+            highlight-current
+            :filter-node-method="filterLocTreeNode"
+            default-expand-all
+            empty-text="暂无区域/设备"
+            @node-click="onLocNodeClick"
+          >
+            <template #default="{ data }">
+              <span class="loc-node" :class="{ 'is-device': data.type === 'device' }">
+                <span v-if="data.type === 'device'" class="dot" :class="data.online ? 'online' : 'offline'" />
+                <span class="loc-node-label">{{ data.label }}</span>
+                <span v-if="data.type === 'area' && data.deviceCount" class="loc-node-count">{{ data.deviceCount }}</span>
+              </span>
+            </template>
+          </el-tree>
+        </div>
+      </div>
+
       <!-- 地图 -->
       <div class="map-container" ref="mapContainerRef">
         <div v-show="sceneMode === 'outdoor'" id="location-map" class="map-canvas"></div>
@@ -184,53 +227,6 @@
         </div>
       </div>
 
-      <!-- 侧边栏：设备列表 -->
-      <div class="sidebar-panel" :class="{ collapsed: !showSidebar }">
-        <div class="sidebar-toggle" @click="showSidebar = !showSidebar">
-          <el-icon><DArrowLeft v-if="showSidebar" /><DArrowRight v-else /></el-icon>
-        </div>
-        <div v-if="showSidebar" class="sidebar-content">
-          <div class="sidebar-header">
-            <span>设备列表</span>
-            <el-input
-              v-model="deviceFilter"
-              placeholder="搜索设备..."
-              size="small"
-              clearable
-              prefix-icon="Search"
-              style="width: 160px"
-            />
-          </div>
-          <div class="device-list">
-            <div
-              v-for="d in filteredDevices"
-              :key="d.deviceId"
-              class="device-card"
-              :class="{ active: selectedDeviceId === d.deviceId }"
-              @click="handleDeviceSelect(d.deviceId)"
-            >
-              <div class="device-card-header">
-                <!-- [FIX camera-icon 2026-09-06] 设备卡片头部补摄像头图标 -->
-                <svg class="cam-icon" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
-                  <path d="M8 9.5 16.5 7v7L8 12.5z M12 9.6a2.4 2.4 0 1 0 0 4.8 2.4 2.4 0 0 0 0-4.8z" fill="currentColor"/>
-                </svg>
-                <span class="dot" :class="d.status === 'online' ? 'online' : 'offline'"></span>
-                <span class="device-name">{{ d.name || d.deviceId }}</span>
-              </div>
-              <div class="device-card-body">
-                <span v-if="d.manufacturer" class="device-meta">{{ d.manufacturer }} {{ d.model }}</span>
-                <span v-if="d.longitude" class="device-coord">
-                  {{ d.longitude?.toFixed(4) }}, {{ d.latitude?.toFixed(4) }}
-                </span>
-                <span v-else class="device-coord no-coord">暂无位置</span>
-              </div>
-            </div>
-            <div v-if="filteredDevices.length === 0" class="empty-hint">
-              暂无设备
-            </div>
-          </div>
-        </div>
-      </div>
     </div>
 
     <!-- 轨迹查询对话框 -->
@@ -267,10 +263,12 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { useRouter } from 'vue-router'
 
 import { locationApi, type DeviceLocation, type TrackPoint } from '@/api/location'
+import { securityAreaApi } from '@/api/securityAreas'  // [UI-3 2026-09-10] 区域→设备两级树
+import { buildAreaTree, areaTreeToElTreeData } from '@/utils/areaTree'
 import { http as _unused } from '@/api/http' // 保留以便后续需要
 import { useEventTypeNames } from '@/composables/useEventTypeNames'  // [P3-3] SSOT 事件类型名称
 // [UX 2026-08-31] 1d: 告警标记点击 → 全局告警详情弹窗 (不再只看摘要 InfoWindow)
@@ -307,6 +305,9 @@ const selectedDeviceId = ref('')
 const showDeviceInfo = ref(false)
 const showSidebar = ref(true)
 const deviceFilter = ref('')
+// [UI-3 2026-09-10] 区域→设备 两级树数据 (el-tree 节点: area/device 两型)
+const locTreeRef = ref()
+const locTreeData = ref<any[]>([])
 const mapContainerRef = ref<HTMLElement>()
 
 // 轨迹相关
@@ -440,6 +441,58 @@ function updateMarkers() {
   }
 }
 
+// ── [UI-3 2026-09-10] 区域→设备 两级树 ──
+/** 拉取安保区域组树; 设备叶子按 area.device_ids 挂接, 未归属设备挂「未分组」兜底
+ *  (全量设备可达; 点击设备叶子仍走 handleDeviceSelect — 地图/平面图 deviceId 命中不变) */
+async function loadLocAreaTree() {
+  try {
+    const res = await securityAreaApi.listAreas() as any
+    const rawAreas = res?.data?.data?.areas ?? res?.data?.data?.items ?? res?.data?.data ?? res?.data ?? []
+    const areas: any[] = Array.isArray(rawAreas) ? rawAreas : []
+    const claimed = new Set<string>()
+    const leafOf = (devId: string) => {
+      const d = devices.value.find(x => x.deviceId === devId)
+      return d ? { key: devId, label: d.name || devId, type: 'device', online: d.status === 'online', isLeaf: true } : null
+    }
+    locTreeData.value = areaTreeToElTreeData(buildAreaTree(areas as any), (n) => {
+      const out: NonNullable<ReturnType<typeof leafOf>>[] = []
+      for (const devId of (n.area as any).device_ids ?? []) {
+        const leaf = leafOf(devId)
+        if (leaf) { claimed.add(devId); out.push(leaf) }
+      }
+      return out
+    }) as any
+    // 区域节点设备数角标 (含子树)
+    const countLeaves = (nd: any): number =>
+      (nd.children ?? []).reduce((acc: number, c: any) => acc + (c.type === 'device' ? 1 : countLeaves(c)), 0)
+    const walk = (nodes: any[]) => {
+      for (const nd of nodes) { nd.deviceCount = countLeaves(nd); walk(nd.children ?? []) }
+    }
+    walk(locTreeData.value)
+    const rest = devices.value.filter(d => !claimed.has(d.deviceId))
+    if (rest.length) {
+      locTreeData.value.push({
+        key: '__ungrouped__', label: '未分组', type: 'area', deviceCount: rest.length,
+        children: rest.map(d => ({ key: d.deviceId, label: d.name || d.deviceId, type: 'device', online: d.status === 'online', isLeaf: true })),
+      })
+    }
+  } catch (e) {
+    console.error('[LocationTrack] 加载安保区域树失败:', e)
+  }
+}
+
+function onLocNodeClick(data: { type?: string; deviceId?: string }) {
+  // 仅设备叶子触发联动; 区域节点仅展开/收起
+  if (data?.type === 'device' && data.deviceId) handleDeviceSelect(data.deviceId)
+}
+
+watch(deviceFilter, (v) => locTreeRef.value?.filter(v))
+
+function filterLocTreeNode(value: string, data: { label?: string }) {
+  if (!value) return true
+  return String(data?.label ?? '').toLowerCase().includes(value.toLowerCase())
+}
+
 // ── 数据加载 ──
 async function refreshLocations() {
   loading.value = true
@@ -463,6 +516,7 @@ async function refreshLocations() {
       model: d.model,
     }))
     updateMarkers()
+    loadLocAreaTree()   // [UI-3] 设备位置刷新后同步重建区域→设备树 (在线态/成员跟随)
     // 自动选中第一个有坐标的设备
     if (!selectedDeviceId.value && devices.value.length) {
       const first = devices.value.find(d => d.longitude && d.latitude)
@@ -1048,11 +1102,11 @@ onUnmounted(() => {
   border-top: 1px solid var(--app-border, rgba(255,255,255,0.08));
 }
 
-/* 侧边栏 */
+/* 侧边栏 [UI-4 2026-09-10] 统一左侧: border 翻转 + 折叠竖条随边移动 */
 .sidebar-panel {
   width: 300px;
   background: var(--app-card-bg, #161b22);
-  border-left: 1px solid var(--app-border, rgba(255,255,255,0.08));
+  border-right: 1px solid var(--app-border, rgba(255,255,255,0.08));
   display: flex;
   position: relative;
   transition: width 0.3s;
@@ -1064,15 +1118,15 @@ onUnmounted(() => {
 
 .sidebar-toggle {
   position: absolute;
-  left: -20px;
+  right: -20px;
   top: 50%;
   transform: translateY(-50%);
   width: 20px;
   height: 40px;
   background: var(--app-card-bg, #161b22);
   border: 1px solid var(--app-border, rgba(255,255,255,0.08));
-  border-right: none;
-  border-radius: 4px 0 0 4px;
+  border-left: none;
+  border-radius: 0 4px 4px 0;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1101,6 +1155,29 @@ onUnmounted(() => {
   flex: 1;
   overflow-y: auto;
   padding: 8px;
+}
+
+/* [UI-3 2026-09-10] 区域→设备 树 (替代原扁平 device-list) */
+.loc-tree {
+  flex: 1;
+  overflow-y: auto;
+  padding: 6px 4px;
+}
+.loc-node {
+  display: flex; align-items: center; gap: 6px;
+  flex: 1; min-width: 0;
+  font-size: 13px;
+}
+.loc-node.is-device { cursor: pointer; }
+.loc-node-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.loc-node-count {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--app-text-secondary, #8b949e);
+  background: var(--app-border, rgba(255,255,255,0.08));
+  border-radius: 8px;
+  padding: 0 6px;
+  line-height: 16px;
 }
 
 .device-card {

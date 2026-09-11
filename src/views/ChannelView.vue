@@ -1,5 +1,58 @@
 <template>
   <div class="channel-page">
+    <!-- [P1.5 2026-09-10] 左侧安保区域树筛选 (仅全量通道视图; 设备详情入口不显示) -->
+    <aside v-if="!hasDeviceId" class="area-aside">
+      <div class="area-aside__head">
+        <span class="area-aside__title">安保区域</span>
+        <el-button v-if="selectedAreaId" link size="small" type="primary" @click="clearAreaFilter">清除</el-button>
+      </div>
+      <el-tree
+        ref="areaTreeRef"
+        :data="areaTreeData"
+        node-key="key"
+        :props="{ label: 'label', children: 'children' }"
+        :expand-on-click-node="false"
+        highlight-current
+        :current-node-key="selectedAreaId"
+        default-expand-all
+        empty-text="暂无区域, 请到「安保区域管理」创建"
+        @node-click="onAreaNodeClick"
+      />
+      <div v-if="selectedAreaId" class="area-aside__chips">
+        <el-tag closable size="small" @close="clearAreaFilter">{{ selectedAreaName }}</el-tag>
+      </div>
+
+      <!-- [UI-2 2026-09-10] 通道目录树: 区域→设备→通道 三级主体视图 (checkbox 多选,
+           勾选集合并集过滤右侧通道表; 上方 P1.5 区域树筛选作为外部筛选器保留) -->
+      <div class="area-aside__divider" />
+      <div class="area-aside__head">
+        <span class="area-aside__title">通道目录</span>
+        <el-button v-if="treeCheckedChannelIds.size" link size="small" type="primary" @click="clearChannelTreeFilter">清除</el-button>
+      </div>
+      <el-input
+        v-model="channelTreeFilterText"
+        placeholder="筛选设备/通道..."
+        size="small"
+        clearable
+        style="margin-bottom:6px"
+      >
+        <template #prefix><el-icon><Search /></el-icon></template>
+      </el-input>
+      <el-tree
+        ref="channelTreeRef"
+        :data="channelTreeData"
+        node-key="key"
+        :props="{ label: 'label', children: 'children' }"
+        show-checkbox
+        :filter-node-method="filterChannelTreeNode"
+        :expand-on-click-node="false"
+        default-expand-all
+        empty-text="暂无区域/设备/通道"
+        @check="onChannelTreeCheck"
+      />
+    </aside>
+
+    <div class="channel-main">
     <!-- 返回栏 -->
     <div class="page-header">
       <div class="header-left">
@@ -351,6 +404,7 @@
         <el-button type="primary" :loading="saving" @click="saveAlgoConfig">应用插件</el-button>
       </template>
     </el-dialog>
+    </div>
   </div>
 </template>
 
@@ -361,8 +415,101 @@ import { useDeviceStore } from '@/stores/device'
 import { getDeviceChannels, updateChannel } from '@/api/devices'
 import { channelApi } from '@/api/channel'
 import { http } from '@/api/http'
+// [P1.5 2026-09-10] 安保区域树筛选 — 复用 P1.3 区域树工具 (与区域管理页同源)
+import { securityAreaApi } from '@/api/securityAreas'
+import type { SecurityArea } from '@/api/securityAreas'
+import { buildAreaTree, areaTreeToElTreeData, collectAreaIdsFromRoots, expandAreaChannels } from '@/utils/areaTree'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { Channel } from '@/types/device'
+
+// ---- [UI-2 2026-09-10] 通道目录树 (区域→设备→通道 三级) ----
+const channelTreeRef = ref()
+const channelTreeFilterText = ref('')
+const treeCheckedChannelIds = ref(new Set<string>())
+const deviceById = ref(new Map<string, { id: string; name: string }>())
+
+/** 通道按设备分组 (目录树二级→三级挂接源) */
+const channelsByDevice = computed(() => {
+  const m = new Map<string, Channel[]>()
+  for (const ch of allChannels.value) {
+    const k = ch.deviceId || '_'
+    if (!m.has(k)) m.set(k, [])
+    ;(m.get(k) as Channel[]).push(ch)
+  }
+  return m
+})
+
+/** 三级树数据: 区域(复用 areaTreeToElTreeData) → 设备(device_ids) → 通道叶子。
+ *  node-key 全局唯一: 同一设备/通道只挂到首个管辖它的区域 (目录语义, 跨区域重复
+ *  会破坏 el-tree 勾选态); 区域显式 channel_ids 中不属于已列设备的通道直挂区域下 */
+const channelTreeData = computed(() =>
+  areaTreeToElTreeData(areaRoots.value, (n) => {
+    const claimed = new Set<string>()
+    const out: Array<{ key: string; label: string; type: string; deviceId?: string; isLeaf?: boolean; children?: unknown[] }> = []
+    for (const devId of n.area.device_ids ?? []) {
+      if (claimed.has(`dev:${devId}`)) continue
+      const chs = channelsByDevice.value.get(devId) ?? []
+      if (!chs.length) continue   // 无通道设备不入目录 (区域归属语义由 P1.5 筛选器承担)
+      claimed.add(`dev:${devId}`)
+      out.push({
+        key: `dev:${devId}`,
+        label: deviceById.value.get(devId)?.name || devId,
+        type: 'device',
+        deviceId: devId,
+        children: chs
+          .filter(c => !claimed.has(c.id))
+          .map(c => { claimed.add(c.id); return { key: c.id, label: c.name || c.id, type: 'channel', isLeaf: true } }),
+      })
+    }
+    for (const cid of n.area.channel_ids ?? []) {
+      const ch = allChannels.value.find(x => x.id === cid)
+      if (ch && !claimed.has(ch.id)) {
+        claimed.add(ch.id)
+        out.push({ key: ch.id, label: ch.name || ch.id, type: 'channel', isLeaf: true })
+      }
+    }
+    return out
+  }),
+)
+
+watch(channelTreeFilterText, (v) => channelTreeRef.value?.filter(v))
+
+function filterChannelTreeNode(value: string, data: { label?: string }) {
+  if (!value) return true
+  return String(data?.label ?? '').toLowerCase().includes(value.toLowerCase())
+}
+
+function onChannelTreeCheck() {
+  // 勾选集合并集: 通道叶子取 key; 设备节点取其全部通道; 区域节点取 resolved 快照全量
+  const nodes: Array<{ type: string; key: string; deviceId?: string; area?: SecurityArea }> =
+    channelTreeRef.value?.getCheckedNodes(false, false) ?? []
+  const ids = new Set<string>()
+  for (const nd of nodes) {
+    if (nd.type === 'channel') {
+      ids.add(nd.key)
+    } else if (nd.type === 'device' && nd.deviceId) {
+      for (const c of channelsByDevice.value.get(nd.deviceId) ?? []) ids.add(c.id)
+    } else if (nd.type === 'area' && nd.area) {
+      for (const c of expandAreaChannels([nd.area])) ids.add(c)
+    }
+  }
+  treeCheckedChannelIds.value = ids
+  currentPage.value = 1
+}
+
+function clearChannelTreeFilter() {
+  channelTreeRef.value?.setCheckedKeys([])
+  treeCheckedChannelIds.value = new Set()
+  currentPage.value = 1
+}
+
+/** 设备名反查 (树二级显示真实名称, 失败回退 deviceId) */
+async function loadDeviceNames() {
+  try {
+    if (!deviceStore.devices.length) await deviceStore.fetchDevices()
+    deviceById.value = new Map(deviceStore.devices.map((d: any) => [d.id, { id: d.id, name: d.name }]))
+  } catch { /* 名称缺失时回退 deviceId 显示 */ }
+}
 
 // ---- 算法列表 ----
 const modelList = ref<any[]>([])
@@ -402,6 +549,40 @@ const filterProtocol = ref('')
 
 // ---- 视图模式 ----
 const viewMode = ref<'card' | 'table'>('card')
+
+// ---- [P1.5 2026-09-10] 安保区域树筛选 ----
+// 数据源 security_areas (resolved_channel_ids ∪ channel_ids); 点选节点 = 子树全量区域并集。
+// 与设备下拉筛选口径独立可叠加: 树按通道归属收窄, 设备下拉按所属设备收窄。
+const areaTreeRef = ref()
+const areaTreeData = ref<Array<{ key: string; label: string; area: SecurityArea; children: unknown[] }>>([])
+const areaRoots = ref<ReturnType<typeof buildAreaTree>>([])
+const areaById = ref(new Map<string, SecurityArea>())
+const selectedAreaId = ref('')
+
+async function loadAreaTree() {
+  try {
+    const res = await securityAreaApi.listAreas() as any
+    // [FIX 2026-09-10 真机] 解包链补 .items 分支 + 数组守卫 (同 AlarmDeviceTreePanel)
+    const rawAreas = res?.data?.data?.areas ?? res?.data?.data?.items ?? res?.data?.data ?? res?.data ?? []
+    const areas: SecurityArea[] = Array.isArray(rawAreas) ? rawAreas : []
+    areaById.value = new Map(areas.map(a => [a.id, a]))
+    areaRoots.value = buildAreaTree(areas)
+    areaTreeData.value = areaTreeToElTreeData(areaRoots.value)
+  } catch { console.error('加载安保区域树失败') }
+}
+
+const selectedAreaName = computed(() => areaById.value.get(selectedAreaId.value)?.name || selectedAreaId.value)
+
+function onAreaNodeClick(data: { key: string }) {
+  // 再点已选节点 = 取消选择 (树筛选开关闭环)
+  selectedAreaId.value = selectedAreaId.value === data.key ? '' : data.key
+  currentPage.value = 1
+}
+
+function clearAreaFilter() {
+  selectedAreaId.value = ''
+  currentPage.value = 1
+}
 
 // ---- 分页 ----
 const currentPage = ref(1)
@@ -446,6 +627,23 @@ const filteredChannels = computed(() => {
   // 协议筛选
   if (filterProtocol.value) {
     result = result.filter(ch => (ch as any).protocol === filterProtocol.value)
+  }
+  // [P1.5 2026-09-10] 安保区域树筛选: 选中节点→子树全量区域→resolved 通道集合并集,
+  // 通道 id 命中即保留 (区域节点勾选语义 = 其全子树并集, 零后端改动)
+  if (selectedAreaId.value) {
+    const ids = collectAreaIdsFromRoots(areaRoots.value, [selectedAreaId.value])
+    const channelSet = expandAreaChannels(
+      ids.map(id => areaById.value.get(id)).filter((a): a is SecurityArea => !!a)
+    )
+    if (channelSet.size) {
+      result = result.filter(ch => channelSet.has(ch.id))
+    } else {
+      result = []   // 区域存在但未绑定任何通道 → 收窄为空而非放行全量
+    }
+  }
+  // [UI-2 2026-09-10] 通道目录树勾选过滤: 勾选集合并集 (与上方筛选叠加, 分页/批量兼容)
+  if (treeCheckedChannelIds.value.size) {
+    result = result.filter(ch => treeCheckedChannelIds.value.has(ch.id))
   }
   // 排序
   if (sortField.value) {
@@ -773,12 +971,30 @@ async function saveAlgoConfig() {
   }
 }
 
-onMounted(() => { loadModelList(); loadChannels() })
+onMounted(() => { loadModelList(); loadChannels(); loadAreaTree(); loadDeviceNames() })
 watch(() => route.params.id, () => loadChannels())
 </script>
 
 <style scoped>
-.channel-page { padding: 0 4px; }
+.channel-page { padding: 0 4px; display: flex; gap: 12px; align-items: flex-start; }
+
+/* [P1.5 2026-09-10] 左侧安保区域树面板 */
+.area-aside {
+  width: 240px; flex-shrink: 0;
+  background: var(--el-bg-color); border-radius: 8px;
+  padding: 12px;
+}
+.area-aside__head {
+  display: flex; justify-content: space-between; align-items: center;
+  margin-bottom: 8px; padding-bottom: 8px;
+  border-bottom: 1px solid var(--el-border-color-lighter);
+}
+.area-aside__title { font-weight: 600; font-size: 14px; }
+.area-aside__chips { margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--el-border-color-lighter); }
+.area-aside :deep(.el-tree-node__content) { height: 30px; }
+.area-aside__divider { margin: 10px 0; border-top: 1px solid var(--el-border-color-lighter); }
+
+.channel-main { flex: 1; min-width: 0; }
 
 /* 头部 */
 .page-header {

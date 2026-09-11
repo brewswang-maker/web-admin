@@ -41,6 +41,13 @@ export function useAlarmRowActions() {
     }
     try {
       await alarmApi.handle(row.id, { status, note: '' })
+      // [FIX handle-refresh 2026-09-10] 行内处置成功后广播 — 与弹窗路径
+      //   (useAlarmPopup.handleAlarm) 统一: 各场景事件列表/KPI 经
+      //   useRealtimeAlarmEvents 或自有监听去抖重拉, 状态即时同步;
+      //   行内 onDone 回写保留 (即时反馈, 不等重拉)。
+      window.dispatchEvent(new CustomEvent('alarm-handled', {
+        detail: { alarmId: row.id, status },
+      }))
       onDone?.(row.id, status)
       ElMessage.success(c.ok)
     } catch (e) {

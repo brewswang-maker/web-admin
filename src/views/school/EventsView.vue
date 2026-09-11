@@ -1,19 +1,13 @@
 <template>
-  <div class="le-events-page">
-   <!-- [P3 → 本轮 UI-4] 左侧设备树筛选面板 (统一规则: 设备列表居左/主内容居右) -->
+  <div class="sch-events-page">
+   <!-- [UI-4b 2026-09-10] 左侧设备树筛选面板 (统一规则: 设备列表居左/主内容居右) -->
    <AlarmDeviceTreePanel @selection-change="onTreeSelection" />
 
-   <div class="le-events-main">
-    <!-- ===== 场景事件类型筛选 (SSOT metadata?scene= 动态拉取) ===== -->
+   <div class="sch-events-main">
+    <!-- ===== 场景事件类型筛选 (SSOT metadata?scene=school_campus 动态拉取) ===== -->
     <el-card shadow="never" class="filter-card">
       <div class="scene-bar">
-        <span class="bar-label">场景</span>
-        <el-radio-group v-model="sceneTag" size="small" @change="onSceneChange">
-          <el-radio-button label="">全部</el-radio-button>
-          <el-radio-button v-for="s in sceneOptions" :key="s.tag" :label="s.tag">
-            {{ s.label }}
-          </el-radio-button>
-        </el-radio-group>
+        <span class="bar-label">校园事件</span>
         <span class="bar-count" v-if="activeTypeKeys.size > 0">
           SSOT 覆盖 {{ activeTypeKeys.size }} 事件类型
         </span>
@@ -35,18 +29,16 @@
     <el-card shadow="never">
       <template #header>
         <div class="card-header">
-          <span>事件告警列表</span>
+          <span>校园事件列表</span>
           <div class="header-right">
-            <span class="hint">黄色 / 橙色 / 红色分级 · stampede 深红</span>
-            <!-- [P2 2026-09-10] 卡片/列表切换 -->
-            <AlarmViewToggle v-model="viewMode" page-key="largeevent" />
+            <span class="hint">critical 红 / high 橙 / medium 黄</span>
+            <AlarmViewToggle v-model="viewMode" page-key="school" />
             <el-button size="small" :loading="loading" @click="refreshAll">
               <el-icon><Refresh /></el-icon>刷新
             </el-button>
           </div>
         </div>
       </template>
-      <!-- [P2 2026-09-10] 卡片视图 (AlarmCard 栅格; 筛选/分页逻辑零改动) -->
       <div v-if="viewMode === 'card'" class="events-card-grid">
         <AlarmCard v-for="e in pagedFinal" :key="e.id" :alarm="e" @click="openAlarmPopup(e)">
           <template #actions="{ alarm }">
@@ -56,7 +48,7 @@
         </AlarmCard>
       </div>
       <el-table v-else :data="pagedFinal" v-loading="loading" size="small"
-                :empty-text="selectedType ? '该类型暂无事件' : '暂无大型活动相关事件'">
+                :empty-text="selectedType ? '该类型暂无事件' : '暂无校园相关事件'">
         <el-table-column label="类型" min-width="170">
           <template #default="{ row }">
             <div class="type-cell">
@@ -80,8 +72,6 @@
         <el-table-column prop="description" label="描述" min-width="220" show-overflow-tooltip />
         <el-table-column label="快照" width="70" align="center">
           <template #default="{ row }">
-            <!-- [fix 2026-09-02] 缩略图点击只开图片全屏预览: @click.stop 阻断冒泡,
-              否则 row-click 同帧弹出详情抽屉盖住预览层 (与安检/态势同款) -->
             <el-image v-if="row.snapshotUrl" :src="row.snapshotUrl"
                       :preview-src-list="[row.snapshotUrl]" fit="cover"
                       preview-teleported class="snap-thumb" @click.stop />
@@ -91,8 +81,6 @@
         <el-table-column label="时间" width="165">
           <template #default="{ row }">{{ formatTime(row.createdAt) }}</template>
         </el-table-column>
-        <!-- [行操作 2026-09-01] 详情=全局报警弹窗 + 处理下拉 (与周界/安检/无人值守同款,
-          useAlarmRowActions 共享) -->
         <el-table-column label="操作" width="150" align="center">
           <template #default="{ row }">
             <el-button size="small" type="primary" link @click.stop="openAlarmPopup(row)">详情</el-button>
@@ -122,47 +110,39 @@
 
 <script setup lang="ts">
 /**
- * 事件告警列表 — EventGuard T2.4 (方案任务 5.2)
+ * 校园事件列表 — [UI-4b 2026-09-10]
  *
- * 事件类型筛选 chips 从 /event-types/metadata?scene=<四场景> 动态拉取 (SSOT),
- * 表格: 类型/级别/置信度/通道/描述/快照/时间, 级别色标 黄/橙/红 + stampede 深红。
- * 数据源: alarmApi.getList 前端按场景事件键并集过滤。
+ * 事件类型筛选 chips 从 /event-types/metadata?scene=school_campus 动态拉取 (SSOT),
+ * 表格: 类型/级别/置信度/通道/描述/快照/时间; 左侧 AlarmDeviceTreePanel (默认折叠)。
+ * 数据源: alarmApi.getList scene 过滤下沉服务端 + normalizeAlarmCore 归一化。
  */
 import { computed, onMounted, ref } from 'vue'
-import { Refresh } from '@element-plus/icons-vue'
+import { Refresh, ArrowDown } from '@element-plus/icons-vue'
 import { alarmApi } from '@/api/alarm'
 import eventTypesApi from '@/api/eventTypes'
 import type { EventTypeMetadataItem } from '@/api/eventTypes'
 import { normalizeAlarmCore, type AlarmEvent, type AlarmStatus } from '@/types/alarm'
 import { useAlarmRowActions } from '@/composables/useAlarmRowActions'
-import { ArrowDown } from '@element-plus/icons-vue'
-import { LARGE_EVENT_SCENES } from '@/types/largeEvent'
 import { useRealtimeAlarmEvents } from '@/composables/useRealtimeAlarmEvents'
-// [P3 2026-09-10] 右侧设备树筛选面板 (安保区域→子区域→设备 多选)
+// 左侧设备树筛选面板 (安保区域→子区域→设备 多选)
 import AlarmDeviceTreePanel from '@/components/alarm/AlarmDeviceTreePanel.vue'
 import type { AlarmTreeSelection } from '@/components/alarm/AlarmDeviceTreePanel.vue'
-// [P2 2026-09-10] 卡片/列表切换 + 告警卡片
+// 卡片/列表切换 + 告警卡片
 import AlarmViewToggle from '@/components/alarm/AlarmViewToggle.vue'
 import AlarmCard from '@/components/alarm/AlarmCard.vue'
 // [FIX realtime-push 2026-09-06] 场景页实时刷新: WS 告警到达去抖重拉 (零新增连接)
 useRealtimeAlarmEvents(() => fetchEvents())
 
-const sceneOptions = [
-  { tag: 'large_event_stadium', label: '体育场馆' },
-  { tag: 'large_event_openair', label: '户外演出' },
-  { tag: 'large_event_expo', label: '展会博览' },
-  { tag: 'large_event_marathon', label: '马拉松' },
-]
+const SCENE_TAG = 'school_campus'
 
 const loading = ref(false)
-const sceneTag = ref('')
 const selectedType = ref('')
 const typeItems = ref<EventTypeMetadataItem[]>([])
 
 const events = ref<AlarmEvent[]>([])
 const { openAlarmPopup, handleAlarmRow } = useAlarmRowActions()
 
-/** 处理成功后行内回写状态 (与周界/安检/告警中心同范式) */
+/** 处理成功后行内回写状态 (与周界/安检同范式) */
 function onHandled(id: string, status: string) {
   const row = events.value.find(e => e.id === id)
   if (row) row.status = status as AlarmStatus
@@ -170,44 +150,26 @@ function onHandled(id: string, status: string) {
 const page = ref(1)
 const pageSize = 20
 
-// [P2 2026-09-10] 卡片/列表视图 (持久化 key alarm_view_mode_largeevent, 与 AlarmViewToggle 同规范)
+// 卡片/列表视图 (持久化 key alarm_view_mode_school, 与 AlarmViewToggle 同规范)
 const viewMode = ref<'card' | 'table'>(
-  localStorage.getItem('alarm_view_mode_largeevent') === 'card' ? 'card' : 'table'
+  localStorage.getItem('alarm_view_mode_school') === 'card' ? 'card' : 'table'
 )
 
-// 当前场景 (或全部=四场景并集) 的事件类型元数据
-const activeItems = computed(() => {
-  if (!sceneTag.value) return typeItems.value
-  return typeItems.value.filter(i => i.aliases?.includes(sceneTag.value) || matchScene(i))
-})
-const typeChips = computed(() => activeItems.value)
-const activeTypeKeys = computed(() => new Set(activeItems.value.map(i => i.alarm_type)))
-
-/** metadata 响应按 scene 过滤后端已做, 前端按场景切换时重拉 */
-function matchScene(_i: EventTypeMetadataItem) {
-  return true // 场景过滤在后端 scene 参数完成, 此处保守放行
-}
+const typeChips = computed(() => typeItems.value)
+const activeTypeKeys = computed(() => new Set(typeItems.value.map(i => i.alarm_type)))
 
 function chipClass(alarmType: string) {
-  if (alarmType.includes('red')) return 'chip-red'
-  if (alarmType.includes('orange')) return 'chip-orange'
-  if (alarmType.includes('yellow')) return 'chip-yellow'
-  if (alarmType === 'stampede_risk') return 'chip-stampede'
+  if (alarmType.includes('fire') || alarmType.includes('intrusion')) return 'chip-red'
   return ''
 }
 
 function typeName(alarmType: string) {
-  return activeItems.value.find(i => i.alarm_type === alarmType)?.display_name ?? ''
+  return typeItems.value.find(i => i.alarm_type === alarmType)?.display_name ?? ''
 }
 
-// ── 级别色标: 黄/橙/红/stampede 深红 ──
+// ── 级别色标: 通用 severity 映射 (critical 红 / high 橙 / medium 黄) ──
 function levelClass(row: AlarmEvent) {
-  const t = String(row.type)
-  if (t === 'stampede_risk') return 'lv-stampede'
-  if (t.endsWith('_red')) return 'lv-red'
-  if (t.endsWith('_orange')) return 'lv-orange'
-  if (t.endsWith('_yellow')) return 'lv-yellow'
-  const lv = String(row.level).toLowerCase()
+  const lv = String(row.level ?? '').toLowerCase()
   if (lv === 'critical') return 'lv-red'
   if (lv === 'high') return 'lv-orange'
   if (lv === 'medium') return 'lv-yellow'
@@ -215,28 +177,23 @@ function levelClass(row: AlarmEvent) {
 }
 
 function levelText(row: AlarmEvent) {
-  const t = String(row.type)
-  if (t === 'stampede_risk') return '踩踏深红'
-  if (t.endsWith('_red')) return '红色'
-  if (t.endsWith('_orange')) return '橙色'
-  if (t.endsWith('_yellow')) return '黄色'
+  const lv = String(row.level ?? '').toLowerCase()
+  if (lv === 'critical') return '严重'
+  if (lv === 'high') return '高'
+  if (lv === 'medium') return '中'
   return String(row.level ?? '-')
 }
 
 const filteredEvents = computed(() => {
-  // [SSOT 2026-09-07] 数据源已带 scene 过滤 (fetchEvents scene=四场景并集/选中 场景,
-  //   后端 isEventInScene → SQL IN, 与 scene_tags 登记自动同步) — 未选类型 chip 时
-  //   显示场景全部事件 (原 fallback 仅 NEW_LARGE_EVENT_TYPES 9 键, 四场景其余
-  //   15~20 键事件被隐藏, “场景列表缺事件”根因之一)。
   const keys = activeTypeKeys.value
   let base = events.value
   if (keys.size !== 0) base = base.filter(a => keys.has(String(a.type)))
-  // [P3 2026-09-10] 设备树筛选 (右侧面板勾选集合命中判定; 空集不筛)
+  // 设备树筛选 (左侧面板勾选集合命中判定; 空集不筛)
   if (treeSel.value) base = base.filter(hitTree)
   return base
 })
 
-// [P3 2026-09-10] 右侧设备树筛选状态 (与 AlarmsView 同款命中判定)
+// 设备树筛选状态 (与 AlarmsView 同款命中判定)
 const treeSel = ref<AlarmTreeSelection | null>(null)
 const treeChannelSet = computed(() => new Set(treeSel.value?.channelIds ?? []))
 const treeDeviceSet = computed(() => new Set(treeSel.value?.deviceIds ?? []))
@@ -276,18 +233,11 @@ function formatTime(iso: string) {
 // ── 数据拉取 ──
 async function fetchTypes() {
   try {
-    const scene = sceneTag.value || LARGE_EVENT_SCENES.join(',')
-    const res = await eventTypesApi.metadata({ scene })
+    const res = await eventTypesApi.metadata({ scene: SCENE_TAG })
     const data = res.data?.data
     const items: EventTypeMetadataItem[] = []
     for (const g of Object.values(data?.groups ?? {})) items.push(...(g?.items ?? []))
-    // 去重 (多场景并集可能重复返回同类型)
-    const seen = new Set<string>()
-    typeItems.value = items.filter(i => {
-      if (seen.has(i.alarm_type)) return false
-      seen.add(i.alarm_type)
-      return true
-    })
+    typeItems.value = items
   } catch {
     typeItems.value = []
   }
@@ -296,14 +246,8 @@ async function fetchTypes() {
 async function fetchEvents() {
   loading.value = true
   try {
-    // [SSOT 2026-09-07] 场景过滤下沉服务端: scene=选中场景或四场景并集 (逗号多值),
-    //   与 scene_tags 登记自动同步 — 后端补 tag 前端零改动。
-    const scene = sceneTag.value
-      || sceneOptions.map(s => s.tag).join(',')
-    const res = await alarmApi.getList({ page: 1, pageSize: 500, scene })
-    // [FIX scene-empty 2026-09-07] 裸 items 字段是 alarm_type/alarm_id/timestamp
-    //   (无 type/createdAt), 页面模板与 String(a.type) 过滤全读 undefined → 恒 0 条;
-    //   统一走 normalizeAlarmCore (SSOT, 与周界/安检/加油站同范式)。
+    // 场景过滤下沉服务端 (scene=school_campus, 与 scene_tags 登记自动同步)
+    const res = await alarmApi.getList({ page: 1, pageSize: 500, scene: SCENE_TAG })
     events.value =
       ((res.data?.data as unknown as { items?: unknown[] })?.items ?? []).map(e => normalizeAlarmCore(e))
   } catch {
@@ -311,14 +255,6 @@ async function fetchEvents() {
   } finally {
     loading.value = false
   }
-}
-
-function onSceneChange() {
-  selectedType.value = ''
-  page.value = 1
-  fetchTypes()
-  // [SSOT 2026-09-07] 场景切换同时重拉数据 (原只重拉类型 chips, 数据不随场景变)
-  fetchEvents()
 }
 
 function refreshAll() {
@@ -332,27 +268,22 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.le-events-page { padding: 4px 0; display: flex; gap: 12px; align-items: flex-start; }
-/* [P3 2026-09-10] 右侧设备树面板 → flex 双栏 */
-.le-events-main { flex: 1; min-width: 0; }
-/* [P2 2026-09-10] 卡片栅格 */
+.sch-events-page { padding: 4px 0; display: flex; gap: 12px; align-items: flex-start; }
+.sch-events-main { flex: 1; min-width: 0; }
 .events-card-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
   gap: 12px;
   margin-bottom: 12px;
 }
-.act-handle { margin-left: 8px; }  /* [行操作 2026-09-01] dropdown 包裹后相邻按钮间距失效 */
+.act-handle { margin-left: 8px; }
 .filter-card { margin-bottom: 16px; }
 .scene-bar { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
-.bar-label { font-size: 13px; color: var(--el-text-color-secondary); }
+.bar-label { font-size: 13px; font-weight: 600; }
 .bar-count { font-size: 12px; color: var(--el-color-success); margin-left: auto; }
 .type-chips { display: flex; flex-wrap: wrap; gap: 8px; }
 .type-chips :deep(.el-check-tag) { height: 26px; padding: 0 10px; font-size: 12px; }
 .type-chips :deep(.el-check-tag.is-checked.chip-red) { background: #f56c6c; }
-.type-chips :deep(.el-check-tag.is-checked.chip-orange) { background: #e6a23c; }
-.type-chips :deep(.el-check-tag.is-checked.chip-yellow) { background: #f7d43a; color: #333; }
-.type-chips :deep(.el-check-tag.is-checked.chip-stampede) { background: #7f1d1d; }
 .card-header { display: flex; justify-content: space-between; align-items: center; }
 .header-right { display: flex; align-items: center; gap: 12px; }
 .hint { font-size: 12px; color: var(--el-text-color-secondary); }
@@ -363,7 +294,6 @@ onMounted(() => {
 .lv-yellow { background: #e9b90b; }
 .lv-orange { background: #e6770c; }
 .lv-red { background: #d93636; }
-.lv-stampede { background: #7f1d1d; font-weight: bold; }
 .lv-info { background: #909399; }
 .snap-thumb { width: 48px; height: 36px; border-radius: 3px; cursor: pointer; }
 .pager { display: flex; justify-content: flex-end; margin-top: 12px; }

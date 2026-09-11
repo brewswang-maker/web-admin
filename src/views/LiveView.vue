@@ -1,7 +1,7 @@
 <template>
   <div class="live-page">
     <el-row :gutter="16" class="live-layout">
-      <!-- 左侧: 视频区 -->
+      <!-- [UI-6 2026-09-10] 右侧: 视频预览区 (通道树列经 order:-1 统一至左侧) -->
       <el-col :span="18" class="live-main-column">
         <el-card class="video-card" :body-style="{ padding: '0' }">
           <div class="video-toolbar">
@@ -162,36 +162,59 @@
 
       </el-col>
 
-      <!-- 右侧: 通道 + PTZ -->
+      <!-- [UI-6] 左侧: 通道目录树 + PTZ (CSS order:-1 靠左渲染) -->
       <el-col :span="6" class="live-side-column">
-        <el-card class="channel-card">
+        <el-card class="channel-card" v-loading="channelsLoading">
           <template #header>
-            <div style="display:flex;justify-content:space-between;align-items:center">
-              <span>通道列表</span>
-              <el-input v-model="chSearch" size="small" style="width:140px" placeholder="搜索..." clearable />
+            <div class="tree-head">
+              <span>通道目录</span>
+              <el-input v-model="chSearch" size="small" style="width:120px" placeholder="搜索..." clearable />
             </div>
           </template>
-          <div class="channel-list">
-            <div v-for="ch in filteredChannels" :key="ch.id"
-                 class="ch-item"
-                 draggable="true"
-                 @dragstart="onDragChannel($event, ch)"
-                 @click="assignToActive(ch)">
-              <div class="ch-icon" :class="ch.status">
-                <el-icon :size="18"><VideoCamera /></el-icon>
+          <!-- [UI-6 2026-09-10] 勾选操作行: 多选上墙 (区域勾选含下级设备全通道) -->
+          <div class="tree-toolbar">
+            <span class="tree-count">已选 {{ treeCheckedChannelIds.size }}</span>
+            <el-button size="small" type="primary" :disabled="!treeCheckedChannelIds.size" @click="batchAssignChecked">批量上墙</el-button>
+            <el-button size="small" :disabled="!treeCheckedChannelIds.size && !chSearch" @click="clearLiveTreeFilter">清除</el-button>
+          </div>
+          <el-alert
+            v-if="liveAreaFailed"
+            type="warning"
+            :closable="false"
+            title="安保区域加载失败, 通道已按「未分组」显示"
+            class="tree-alert"
+          />
+          <!-- 三级树: 安保区域→设备→通道; 点通道叶子上墙 / 拖拽到视频格 / 勾选批量 -->
+          <el-tree
+            ref="liveTreeRef"
+            :data="liveTreeData"
+            node-key="key"
+            :props="{ label: 'label', children: 'children' }"
+            show-checkbox
+            default-expand-all
+            :expand-on-click-node="false"
+            :filter-node-method="filterLiveTreeNode"
+            class="live-tree"
+            @check="onLiveTreeCheck"
+            @node-click="onLiveNodeClick"
+          >
+            <template #default="{ data }">
+              <div
+                class="lt-node"
+                :class="['lt-' + data.type, data.type === 'channel' ? 'lt-ch-' + liveChStatusOf(data.key) : '']"
+                :draggable="data.type === 'channel'"
+                @dragstart="onLiveDragChannel($event, data)"
+              >
+                <span v-if="data.type === 'channel'" class="lt-dot" :class="liveChStatusOf(data.key)" />
+                <span class="lt-label" :title="data.label">{{ data.label }}</span>
+                <span v-if="data.type === 'area'" class="lt-badge">{{ liveAreaChannelCount(data) }}</span>
               </div>
-              <div class="ch-body">
-                <div class="ch-name">{{ ch.name }}</div>
-                <div class="ch-meta">
-                  <span>{{ ch.algoPlugin || '无算法' }}</span>
-                  <span>{{ ch.fps || 0 }}fps</span>
-                </div>
-              </div>
-              <el-tag :type="((ch as any).status === 'streaming' ? 'success' : (ch as any).status === 'online' ? 'primary' : 'info') as any" size="small">
-                {{ (ch as any).status === 'streaming' ? '推流' : (ch as any).status === 'online' ? '在线' : '离线' }}
-              </el-tag>
-            </div>
-            <el-empty v-if="!filteredChannels.length" description="暂无通道" :image-size="50" />
+            </template>
+          </el-tree>
+          <el-empty v-if="!channels.length && !channelsLoading && !loadError" description="暂无通道数据" :image-size="50" />
+          <div v-if="loadError" class="tree-error">
+            <span>通道加载失败, 请检查设备连接</span>
+            <el-button size="small" type="primary" link @click="loadData">重试</el-button>
           </div>
         </el-card>
 
@@ -436,6 +459,9 @@ import { useAdaptiveBitrate } from '@/composables/useAdaptiveBitrate'
 import StreamStatsPanel from '@/components/StreamStatsPanel.vue'
 import { normalizeStreamUrl, normalizeWsFlvUrl } from '@/utils/streamUrl'
 import { useChannelStore } from '@/stores/channel'
+// [UI-6 2026-09-10] 通道目录树 (安保区域→设备→通道) — 与 ChannelView/LocationTrackView 同源工具
+import { securityAreaApi } from '@/api/securityAreas'
+import { buildAreaTree, areaTreeToElTreeData, expandAreaChannels } from '@/utils/areaTree'
 import type { PlayerFormat as StorePlayerFormat, ActiveSlotData } from '@/stores/channel'
 // [P3-CO3] E2E 延迟监控
 import { e2eLatencyStats } from '@/composables/useGlobalAlarm'
@@ -778,6 +804,182 @@ const setVideoRef = (el: any, idx: number) => {
 const channels = ref<Channel[]>([])
 const devices = ref<DeviceItem[]>([])
 const chSearch = ref('')
+// [UI-6 2026-09-10] 通道目录树状态
+const liveTreeRef = ref()
+const treeCheckedChannelIds = ref(new Set<string>())
+const liveAreaFailed = ref(false)
+const channelsLoading = ref(false)
+const loadError = ref(false)
+const liveAreaRoots = ref<ReturnType<typeof buildAreaTree>>([])
+
+const channelById = computed(() => new Map(channels.value.map(c => [String(c.id), c] as [string, Channel])))
+const deviceById = computed(() => new Map(devices.value.map(d => [String(d.id), d] as [string, DeviceItem])))
+
+/** 通道按设备分组 (树二级→三级挂接源) */
+const liveChannelsByDevice = computed(() => {
+  const m = new Map<string, Channel[]>()
+  for (const ch of channels.value) {
+    const k = (ch as any).deviceId || '_'
+    if (!m.has(k)) m.set(k, [])
+    ;(m.get(k) as Channel[]).push(ch)
+  }
+  return m
+})
+
+function chLabelOf(c: Channel): string { return c.name || String(c.id) }
+
+/** 通道状态反查 (叶子状态点 + 离线置灰) */
+function liveChStatusOf(key: unknown): string {
+  return String((channelById.value.get(String(key)) as any)?.status || '')
+}
+
+/** 区域节点角标: 子树可预览通道数 (resolved 快照) */
+function liveAreaChannelCount(data: { area?: unknown }): number {
+  try { return data?.area ? expandAreaChannels([data.area as any]).size : 0 } catch { return 0 }
+}
+
+/** 安保区域加载 (解包链同 ChannelView; 失败降级「未分组」扁平) */
+async function loadLiveAreaTree() {
+  liveAreaFailed.value = false
+  try {
+    const res = await securityAreaApi.listAreas() as any
+    const raw = res?.data?.data?.areas ?? res?.data?.data?.items ?? res?.data?.data ?? res?.data ?? []
+    liveAreaRoots.value = buildAreaTree(Array.isArray(raw) ? raw : [])
+  } catch {
+    liveAreaRoots.value = []
+    liveAreaFailed.value = true
+  }
+}
+
+/** 三级树数据: 区域→设备→通道 + 「未分组」兑底 (预览选择语义必须全量可达)。
+ *  node-key 全局唯一: 同设备/通道只挂首个管辖区域 (claimed 去重, 跨区域重复破坏勾选态) */
+const liveTreeData = computed(() => {
+  const claimed = new Set<string>()
+  const areaNodes = areaTreeToElTreeData(liveAreaRoots.value, (n) => {
+    const out: Array<{ key: string; label: string; type: string; deviceId?: string; isLeaf?: boolean; children?: unknown[] }> = []
+    for (const devId of n.area.device_ids ?? []) {
+      if (claimed.has(`dev:${devId}`)) continue
+      const chs = liveChannelsByDevice.value.get(devId) ?? []
+      if (!chs.length) continue
+      claimed.add(`dev:${devId}`)
+      out.push({
+        key: `dev:${devId}`,
+        label: deviceById.value.get(devId)?.name || devId,
+        type: 'device',
+        deviceId: devId,
+        children: chs
+          .filter(c => !claimed.has(c.id))
+          .map(c => { claimed.add(String(c.id)); return { key: String(c.id), label: chLabelOf(c), type: 'channel', isLeaf: true } }),
+      })
+    }
+    for (const cid of n.area.channel_ids ?? []) {
+      const ch = channelById.value.get(String(cid))
+      if (ch && !claimed.has(String(ch.id))) {
+        claimed.add(String(ch.id))
+        out.push({ key: String(ch.id), label: chLabelOf(ch), type: 'channel', isLeaf: true })
+      }
+    }
+    return out
+  })
+  // 未分组兑底: 未被任何区域领取的设备 (整设备) 与孤立通道
+  const orphanNodes: Array<{ key: string; label: string; type: string; deviceId?: string; isLeaf?: boolean; children?: unknown[] }> = []
+  for (const [devId, chs] of liveChannelsByDevice.value) {
+    const free = chs.filter(c => !claimed.has(String(c.id)))
+    if (!free.length) continue
+    if (devId !== '_' && deviceById.value.has(devId)) {
+      claimed.add(`dev:${devId}`)
+      orphanNodes.push({
+        key: `dev:${devId}`,
+        label: deviceById.value.get(devId)?.name || devId,
+        type: 'device',
+        deviceId: devId,
+        children: free.map(c => { claimed.add(String(c.id)); return { key: String(c.id), label: chLabelOf(c), type: 'channel', isLeaf: true } }),
+      })
+    } else {
+      for (const c of free) { claimed.add(String(c.id)); orphanNodes.push({ key: String(c.id), label: chLabelOf(c), type: 'channel', isLeaf: true }) }
+    }
+  }
+  if (!orphanNodes.length) return areaNodes
+  const ungrouped = { key: '__ungrouped__', label: '未分组', type: 'ungrouped', children: orphanNodes as unknown[] }
+  return areaNodes.length ? [...areaNodes, ungrouped] : [ungrouped]
+})
+
+watch(chSearch, (v) => liveTreeRef.value?.filter(v))
+
+function filterLiveTreeNode(value: string, data: { label?: string }) {
+  if (!value) return true
+  return String(data?.label ?? '').toLowerCase().includes(value.toLowerCase())
+}
+
+/** 勾选集合收集: 通道取 key; 设备取其全部通道; 区域取 resolved 快照 (与 ChannelView 同口径) */
+function onLiveTreeCheck() {
+  const nodes: Array<{ type: string; key: string; deviceId?: string; area?: any }> =
+    liveTreeRef.value?.getCheckedNodes(false, false) ?? []
+  const ids = new Set<string>()
+  for (const nd of nodes) {
+    if (nd.type === 'channel') {
+      ids.add(String(nd.key))
+    } else if (nd.type === 'device' && nd.deviceId) {
+      for (const c of liveChannelsByDevice.value.get(nd.deviceId) ?? []) ids.add(String(c.id))
+    } else if (nd.type === 'area' && nd.area) {
+      for (const c of expandAreaChannels([nd.area])) ids.add(String(c))
+    }
+  }
+  treeCheckedChannelIds.value = ids
+}
+
+function clearLiveTreeFilter() {
+  liveTreeRef.value?.setCheckedKeys([])
+  treeCheckedChannelIds.value = new Set()
+  chSearch.value = ''
+}
+
+/** 点击通道叶子上墙到当前选中格 (复用 assignChannel, 不改预览联动逻辑) */
+function onLiveNodeClick(data: { type?: string; key?: unknown }) {
+  if (data?.type !== 'channel') return
+  const ch = channelById.value.get(String(data.key))
+  if (ch) assignToActive(ch)
+}
+
+/** 树内拖拽通道 → 视频格 (onDropChannel 载荷格式不变) */
+function onLiveDragChannel(e: DragEvent, data: { type?: string; key?: unknown; label?: string }) {
+  if (data?.type !== 'channel') return
+  const ch = channelById.value.get(String(data.key))
+  const payload = ch ?? ({ id: String(data.key), name: data.label || String(data.key) } as Channel)
+  e.dataTransfer?.setData('application/json', JSON.stringify({ id: payload.id, name: payload.name, status: (payload as any).status, deviceId: (payload as any).deviceId }))
+}
+
+/** 批量上墙: 勾选通道依次填槽 (从当前格起找空槽; 已在播跳过; 无空槽覆盖未录像槽) */
+function batchAssignChecked() {
+  const chs = [...treeCheckedChannelIds.value]
+    .map(id => channelById.value.get(id)).filter(Boolean) as Channel[]
+  if (!chs.length) return
+  const total = layout.value
+  let assigned = 0
+  for (const ch of chs) {
+    let slotIdx = -1
+    let alreadyOn = false
+    for (let off = 0; off < total; off++) {
+      const i = (activeSlotIdx.value + off) % total
+      if (gridSlots[i].channelId === ch.id) { alreadyOn = true; break }
+      if (!gridSlots[i].channelId && slotIdx === -1) slotIdx = i
+    }
+    if (alreadyOn) continue
+    if (slotIdx === -1) {
+      for (let off = 0; off < total; off++) {
+        const i = (activeSlotIdx.value + off) % total
+        if (!gridSlots[i].recording) { slotIdx = i; break }
+      }
+    }
+    if (slotIdx >= 0) {
+      assignChannel(slotIdx, ch)
+      assigned++
+      activeSlotIdx.value = (slotIdx + 1) % total
+    }
+  }
+  if (assigned) ElMessage.success(`已上墙 ${assigned} 路通道`)
+  else ElMessage.warning('所选通道均已在画面中')
+}
 // 主/子码流切换状态 (P0-1 对标海康/大华双码流策略)
 // 主码流: 高清 1080P/4Mbps → 单屏/4分屏预览
 // 子码流: 流畅 720P/0.5Mbps → 9/16分屏多路预览
@@ -1055,11 +1257,6 @@ let talkNextPlayTime = 0
 
 const hasActive = computed(() => !!gridSlots[activeSlotIdx.value]?.channelId)
 const activeChannelName = computed(() => gridSlots[activeSlotIdx.value]?.name || '实时监控')
-const filteredChannels = computed(() => {
-  if (!chSearch.value) return channels.value
-  const s = chSearch.value.toLowerCase()
-  return channels.value.filter(c => c.name.toLowerCase().includes(s))
-})
 
 // 切换分屏布局
 function setLayout(n: number) {
@@ -1069,40 +1266,51 @@ function setLayout(n: number) {
 
 // 加载设备+通道
 async function loadData() {
-  if (!deviceStore.devices.length) await deviceStore.fetchDevices({ page: 1, pageSize: 100 })
-  devices.value = deviceStore.devices
-  // [FIX] 加载所有设备的通道（包括离线设备）
-  const allChs: Channel[] = []
-  for (const dev of devices.value) {
-    try {
-      const res = await getDeviceChannels(dev.id) as any
-      const chs: Channel[] = res?.data?.data ?? res?.data ?? res
-      for (const ch of chs) {
-        (ch as any).deviceId = dev.id
-        if (dev.status === 'offline' && !(ch as any).status) {
-          (ch as any).status = 'offline'
+  channelsLoading.value = true
+  loadError.value = false
+  try {
+    if (!deviceStore.devices.length) await deviceStore.fetchDevices({ page: 1, pageSize: 100 })
+    devices.value = deviceStore.devices
+    // [FIX] 加载所有设备的通道（包括离线设备）
+    const allChs: Channel[] = []
+    for (const dev of devices.value) {
+      try {
+        const res = await getDeviceChannels(dev.id) as any
+        const chs: Channel[] = res?.data?.data ?? res?.data ?? res
+        for (const ch of chs) {
+          (ch as any).deviceId = dev.id
+          if (dev.status === 'offline' && !(ch as any).status) {
+            (ch as any).status = 'offline'
+          }
         }
-      }
-      allChs.push(...chs)
-    } catch { /* skip */ }
-  }
-  channels.value = allChs
+        allChs.push(...chs)
+      } catch { /* skip */ }
+    }
+    channels.value = allChs
 
-  // 如果URL指定了设备，自动分配通道
-  const qDev = route.query.deviceId as string
-  const qCh = route.query.channelId as string
-  if (qDev || qCh) {
-    let ch: Channel | undefined
-    if (qCh) {
-      // 精确匹配通道 ID
-      ch = allChs.find(c => c.id === qCh)
+    // 如果URL指定了设备，自动分配通道
+    const qDev = route.query.deviceId as string
+    const qCh = route.query.channelId as string
+    if (qDev || qCh) {
+      let ch: Channel | undefined
+      if (qCh) {
+        // 精确匹配通道 ID
+        ch = allChs.find(c => c.id === qCh)
+      }
+      if (!ch && qDev) {
+        // 匹配设备下的第一个通道
+        ch = allChs.find(c => c.deviceId === qDev)
+      }
+      if (ch) assignChannel(0, ch)
     }
-    if (!ch && qDev) {
-      // 匹配设备下的第一个通道
-      ch = allChs.find(c => c.deviceId === qDev)
-    }
-    if (ch) assignChannel(0, ch)
+  } catch {
+    // [UI-6] 设备/通道整体拉取失败: 树区给出明确失败提示 + 重试
+    loadError.value = true
+  } finally {
+    channelsLoading.value = false
   }
+  // 安保区域树与通道主链解耦: 失败不影响通道可用性 (降级「未分组」)
+  loadLiveAreaTree()
 }
 
 // 分配通道到视频格
@@ -2684,8 +2892,11 @@ onUnmounted(() => {
   padding-left:0 !important;
   padding-right:0 !important;
 }
+/* [UI-6 2026-09-10] 通道树+PTZ 侧列统一至左侧 (flex order 零搬移换序),
+   视频区右移; 间隙随侧移方向翻转 */
+.live-side-column { order: -1; }
 .live-main-column{
-    padding-right:8px !important;
+    padding-left:8px !important;
 }
 .video-card {
   display: flex;
@@ -2865,8 +3076,46 @@ onUnmounted(() => {
 .rec-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: #ef4444; margin-left: 2px; }
 @keyframes pulse-rec { 0%,100% { opacity: 1; } 50% { opacity: 0.6; } }
 
-/* 通道列表 */
+/* 通道列表 (旧扁平列表样式保留: onDropChannel 载荷兼容与回退) */
 .channel-list { min-height: 0; flex: 1; overflow-y: auto; }
+
+/* [UI-6 2026-09-10] 通道目录树 — 文字/背景全部走 EP 主题变量:
+   真机浅色主题下卡底为白色, 硬编码暗色文字会白底白字看不清 [FIX 2026-09-10] */
+.tree-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.tree-toolbar { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; }
+.tree-count { font-size: 12px; color: var(--el-text-color-secondary); margin-right: auto; }
+.tree-alert { margin-bottom: 8px; }
+.live-tree {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  background: transparent;
+}
+.live-tree :deep(.el-tree-node__content) { height: 30px; border-radius: 6px; margin-bottom: 1px; }
+.live-tree :deep(.el-tree-node__content:hover) { background: var(--el-fill-color-light); }
+.live-tree :deep(.el-tree-node.is-current > .el-tree-node__content) { background: var(--el-color-primary-light-9); }
+.live-tree :deep(.el-tree-node__content .el-checkbox) { margin-right: 4px; }
+.live-tree :deep(.el-tree__empty-block) { background: transparent; color: var(--el-text-color-secondary); }
+.lt-node { display: flex; align-items: center; gap: 6px; min-width: 0; flex: 1; padding-right: 4px; }
+.lt-node.lt-channel { cursor: grab; }
+.lt-node.lt-channel:active { cursor: grabbing; }
+.lt-node.lt-ungrouped > .lt-label { color: var(--el-text-color-secondary); }
+.lt-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; background: var(--el-text-color-placeholder); }
+.lt-dot.streaming { background: #0F9D58; box-shadow: 0 0 4px rgba(15,157,88,0.6); }
+.lt-dot.online { background: var(--el-color-primary); }
+.lt-ch-offline .lt-label { color: var(--el-text-color-placeholder); }
+.lt-label {
+  font-size: 12px; color: var(--el-text-color-primary);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.lt-badge {
+  font-size: 10px; color: var(--el-text-color-secondary); background: var(--el-fill-color);
+  padding: 0 6px; border-radius: 8px; flex-shrink: 0; line-height: 16px;
+}
+.tree-error {
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+  padding: 12px 0; color: var(--el-color-warning); font-size: 12px; text-align: center;
+}
 .ch-item { display: flex; gap: 10px; padding: 8px 10px; border-radius: 6px; cursor: pointer; margin-bottom: 4px; transition: all 0.15s; border: 1px solid transparent; }
 .ch-item:hover { background: #2D3039; border-color: #1A73E8; }
 .ch-icon { width: 36px; height: 36px; border-radius: 6px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }

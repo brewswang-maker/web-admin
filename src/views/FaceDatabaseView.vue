@@ -148,6 +148,22 @@
           </template>
         </el-table-column>
         <el-table-column prop="name" label="姓名" min-width="100" />
+        <el-table-column label="关联用户" width="130">
+          <template #default="{ row }">
+            <!-- [UI-7 2026-09-10] 平台用户↔人脸库双向打通 (metadata.rbac_user_id);
+                 孤儿绑定 (用户已删除) 红色警示可清理 -->
+            <el-tooltip v-if="linkedUserOf(row).orphan" content="绑定的平台用户已删除, 可点击操作列「关联」重新绑定或清除" placement="top">
+              <el-tag type="danger" size="small" effect="plain">用户已删除</el-tag>
+            </el-tooltip>
+            <el-tag v-else-if="linkedUserOf(row).user" type="success" size="small" effect="plain">
+              {{ linkedUserOf(row).user?.username }}
+            </el-tag>
+            <el-tag v-else-if="linkedUserOf(row).fallbackName" type="warning" size="small" effect="plain">
+              {{ linkedUserOf(row).fallbackName }}
+            </el-tag>
+            <span v-else class="link-none">未关联</span>
+          </template>
+        </el-table-column>
         <el-table-column prop="phone" label="手机号" width="130" />
         <el-table-column prop="group_type_cn" label="分组" width="100">
           <template #default="{ row }">
@@ -186,10 +202,11 @@
         <el-table-column prop="created_at" label="添加时间" width="160">
           <template #default="{ row }">{{ formatDate(row.created_at) }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="230" fixed="right">
+        <el-table-column label="操作" width="290" fixed="right">
           <template #default="{ row }">
             <el-button type="info" link size="small" @click="handleDetail(row)">详情</el-button>
             <el-button type="primary" link size="small" @click="handleEdit(row)">编辑</el-button>
+            <el-button type="success" link size="small" @click="openLinkDialog(row)" v-permission="['users:write']">关联</el-button>
             <el-button :type="row.is_active ? 'warning' : 'success'" link size="small" @click="handleToggleStatus(row)">
               {{ row.is_active ? '禁用' : '启用' }}
             </el-button>
@@ -282,6 +299,40 @@
       <template #footer>
         <el-button @click="handleCloseDialog">取消</el-button>
         <el-button type="primary" @click="handleSubmit" :loading="submitting">确定</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- [UI-7 2026-09-10] 关联平台用户对话框 (双向打通: 人脸→用户侧发起) -->
+    <el-dialog v-model="linkDlgVisible" :title="`关联平台用户 — ${linkTargetFace?.name || ''}`" width="560px">
+      <div class="link-hint">
+        将此人脸绑定到平台用户 (写入门禁 metadata)；若所选用户已绑其他人脸，将自动换绑。
+      </div>
+      <el-input v-model="userSearchKw" placeholder="搜索用户名/显示名" clearable size="small" style="margin-bottom: 10px" />
+      <el-table :data="linkCandidates" border size="small" max-height="320" v-loading="usersLoading"
+                :empty-text="'无匹配用户'">
+        <el-table-column prop="username" label="用户名" min-width="110" />
+        <el-table-column label="显示名称" min-width="110">
+          <template #default="{ row }">{{ row.displayName || row.name || '—' }}</template>
+        </el-table-column>
+        <el-table-column label="已绑人脸" min-width="150">
+          <template #default="{ row }">
+            <el-tag v-if="faceOfUser(row)" size="small" :type="faceOfUser(row)!.person_id === linkTargetFace?.person_id ? 'success' : 'warning'" effect="plain">
+              {{ faceOfUser(row)!.name }}{{ faceOfUser(row)!.person_id === linkTargetFace?.person_id ? ' (本条)' : '' }}
+            </el-tag>
+            <span v-else style="color: var(--el-text-color-secondary)">无</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="90" fixed="right">
+          <template #default="{ row }">
+            <el-button type="primary" link size="small" @click="linkToUser(row)" v-permission="['users:write']">
+              {{ faceOfUser(row)?.person_id === linkTargetFace?.person_id ? '已关联' : '绑定' }}
+            </el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+      <template #footer>
+        <el-button v-if="linkTargetFace?.metadata?.rbac_user_id" type="danger" @click="unlinkFace(linkTargetFace)" v-permission="['users:write']">解除关联</el-button>
+        <el-button @click="linkDlgVisible = false">关闭</el-button>
       </template>
     </el-dialog>
 
@@ -383,10 +434,11 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { User, Warning, CircleCheck, UserFilled, Search, Plus, Upload, Download, Delete, Trophy, Suitcase, Setting } from '@element-plus/icons-vue'
 import faceApi, { FaceRecord, FaceDatabaseStats, FaceGroupTypeStr } from '@/api/face'
+import { rbacApi } from '@/api/rbac'   // [UI-7] 平台用户↔人脸库双向打通
 import { evaluateImageQuality, evaluateImageQualityFromDataUrl } from '@/utils/imageQuality'
 import { useI18n } from 'vue-i18n'
 
@@ -489,6 +541,117 @@ async function loadStats() {
     const res = await faceApi.getStats()
     if (res.data.code === 0) Object.assign(stats, res.data.data)
   } catch (err) { console.error('Failed to load stats:', err) }
+}
+
+// ---- [UI-7 2026-09-10] 平台用户↔人脸库双向打通 ----
+// 绑定锚点: face_record.metadata.rbac_user_id/rbac_username (与人员管理页同一 SSOT);
+// 孤儿绑定 = rbac_user_id 指向已删除用户 → 「关联用户」列红色警示
+const users = ref<any[]>([])
+const usersLoading = ref(false)
+const usersFetchFailed = ref(false)   // [UI-7] 区分「拉取失败」与「用户表真空」: 失败时不误标孤儿
+const linkDlgVisible = ref(false)
+const linkTargetFace = ref<FaceRecord | null>(null)
+const userSearchKw = ref('')
+
+/** 平表人脸→用户反查: userId→FaceRecord (取首张) */
+const faceByUserId = computed(() => {
+  const m = new Map<string, FaceRecord>()
+  for (const rec of records.value) {
+    const uid = rec.metadata?.rbac_user_id
+    if (uid && !m.has(uid)) m.set(uid, rec)
+  }
+  return m
+})
+
+function faceOfUser(row: any): FaceRecord | undefined {
+  return faceByUserId.value.get(String(row.id))
+}
+
+/** 行关联态: user=绑定的平台用户; orphan=确认用户已删除 (仅用户列表成功加载后判定,
+ *  避免接口失败时把绑定误标为「用户已删除」; 失败时回退显示 metadata 用户名快照) */
+function linkedUserOf(row: FaceRecord): { user?: any; orphan?: boolean; fallbackName?: string } {
+  const uid = row.metadata?.rbac_user_id
+  if (!uid) return {}
+  const u = users.value.find(x => String(x.id) === String(uid))
+  if (u) return { user: u }
+  if (usersFetchFailed.value || usersLoading.value) return { fallbackName: row.metadata?.rbac_username || uid }
+  return { orphan: true }
+}
+
+async function fetchUsers() {
+  usersLoading.value = true
+  try {
+    const res = await rbacApi.getUsers()
+    users.value = ((res.data as any)?.data?.items || (res.data as any)?.data || []) as any[]
+    usersFetchFailed.value = false
+  } catch { users.value = []; usersFetchFailed.value = true } finally { usersLoading.value = false }
+}
+
+function openLinkDialog(row: FaceRecord) {
+  linkTargetFace.value = row
+  userSearchKw.value = ''
+  linkDlgVisible.value = true
+  if (!users.value.length) fetchUsers()
+}
+
+/** 候选用户: 关键字过滤 (全量展示, 绑定态在列内标注) */
+const linkCandidates = computed(() => {
+  const kw = userSearchKw.value.toLowerCase()
+  if (!kw) return users.value
+  return users.value.filter((u: any) =>
+    String(u.username || '').toLowerCase().includes(kw)
+    || String(u.displayName || u.name || '').toLowerCase().includes(kw))
+})
+
+/** 绑定/换绑: 若所选用户已绑其他人脸, 确认后自动清旧写新 */
+async function linkToUser(user: any) {
+  const face = linkTargetFace.value
+  if (!face) return
+  const uid = String(user.id)
+  if (face.metadata?.rbac_user_id === uid) { ElMessage.info('该人脸已绑定此用户'); return }
+  const old = faceByUserId.value.get(uid)
+  if (old && old.person_id !== face.person_id) {
+    try {
+      await ElMessageBox.confirm(
+        `用户「${user.username}」已绑定人脸「${old.name}」，确认换绑到「${face.name}」？原绑定将被清除。`,
+        '换绑确认', { type: 'warning', confirmButtonText: '换绑', cancelButtonText: '取消' })
+    } catch { return }
+    try {
+      await faceApi.updateRecord(old.person_id, {
+        metadata: { ...(old.metadata || {}), rbac_user_id: '', rbac_username: '' },
+      })
+    } catch (e: any) {
+      ElMessage.error('清除原绑定失败: ' + (e?.message || e)); return
+    }
+  }
+  try {
+    await faceApi.updateRecord(face.person_id, {
+      metadata: { ...(face.metadata || {}), rbac_user_id: uid, rbac_username: user.username },
+    })
+    ElMessage.success(`已关联到用户「${user.username}」`)
+    await loadRecords()
+  } catch (e: any) {
+    ElMessage.error('关联失败: ' + (e?.message || e))
+  }
+}
+
+/** 解绑: 清空 metadata 中 rbac 两字段 (其余键保留) */
+async function unlinkFace(row: FaceRecord) {
+  try {
+    await ElMessageBox.confirm(
+      `解除人脸「${row.name}」与用户「${row.metadata?.rbac_username || row.metadata?.rbac_user_id}」的关联？`,
+      '解除确认', { type: 'warning', confirmButtonText: '解除', cancelButtonText: '取消' })
+  } catch { return }
+  try {
+    await faceApi.updateRecord(row.person_id, {
+      metadata: { ...(row.metadata || {}), rbac_user_id: '', rbac_username: '' },
+    })
+    ElMessage.success('已解除关联')
+    linkDlgVisible.value = false
+    await loadRecords()
+  } catch (e: any) {
+    ElMessage.error('解除失败: ' + (e?.message || e))
+  }
 }
 
 async function loadRecords() {
@@ -749,12 +912,18 @@ function formatDate(timestamp: number) {
   return new Date(timestamp * 1000).toLocaleString('zh-CN')
 }
 
-onMounted(() => { readConsentRecord(); loadStats(); loadRecords() })
+onMounted(() => { readConsentRecord(); loadStats(); loadRecords(); fetchUsers() })
 </script>
 
 <style scoped>
 /* .face-database-view { padding: 20px; } */
 .stats-card, .toolbar-card, .table-card { margin-bottom: 20px; }
+/* [UI-7 2026-09-10] 用户关联列/对话框 */
+.link-none { color: var(--el-text-color-placeholder); font-size: 12px; }
+.link-hint {
+  font-size: 12px; color: var(--el-text-color-secondary);
+  margin-bottom: 10px; line-height: 1.5;
+}
 .stat-item { display: flex; align-items: center; gap: 15px; }
 .stat-icon {
   width: 50px; height: 50px; border-radius: 10px;

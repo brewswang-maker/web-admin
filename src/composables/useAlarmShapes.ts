@@ -68,12 +68,23 @@ function stripChSuffix(chId: string): string {
   return String(chId || '').replace(/_ch\d+$/, '')
 }
 
-/** 像素/归一化双形态顶点 → 归一化 [0,1] (任一 >1 判像素, 1920×1080 画布基准) */
+/** 像素/归一化双形态顶点 → 归一化 [0,1] (写入侧画布基准 1920×1080)
+ * [FIX shape-guard 2026-09-10] 防御性归一化 (对齐 parseDetections R3 三重保险
+ *   口径, 真机实锚 110105 区域库 climbing 多边形 y=1209 像素 → /1080=1.12
+ *   顶点画到快照画布外 — 弹窗"上一条/下一条"切换到攀爬类告警时区域库回退链
+ *   喂出越界多边形, 用户感知为"越界的检测框"):
+ *   ① 判像素阈值 1→1.5 (1~1.5 视为归一坐标轻微越界噪声, clamp 到 1;
+ *     >1.5 判像素按 1920×1080 归一 — 与 parseDetections/normBBox 同口径);
+ *   ② 归一后 clamp [0,1] (像素超出写入基准的存量脏数据不再越界画布,
+ *     位置仍偏但形状完整可见, 数据治理另行收敛);
+ *   ③ 非有限值顶点丢弃 (原逻辑保留)。 */
 function normPoints(raw: Array<[number, number]>): Array<[number, number]> {
   if (!raw.length) return []
-  const isPixel = raw.some(([x, y]) => x > 1 || y > 1)
   return raw
-    .map(([x, y]) => (isPixel ? [x / 1920, y / 1080] : [x, y]) as [number, number])
+    .map(([x, y]) => {
+      if (x > 1.5 || y > 1.5) { x /= 1920; y /= 1080 }
+      return [Math.min(Math.max(x, 0), 1), Math.min(Math.max(y, 0), 1)] as [number, number]
+    })
     .filter(([x, y]) => Number.isFinite(x) && Number.isFinite(y))
 }
 
@@ -82,6 +93,17 @@ function normFlatPoints(flat: number[]): Array<[number, number]> {
   const pts: Array<[number, number]> = []
   for (let i = 0; i + 1 < flat.length; i += 2) pts.push([flat[i], flat[i + 1]])
   return normPoints(pts)
+}
+
+/** 满屏四边形识别: 4 顶点各距画布角 ≤0.04 容差
+ *  (与 RoiPolygonEditor 满屏按钮 2% 边距 + 拖角微调余量匹配)
+ *  [FEAT fullscreen-roi 2026-09-10] LinkageRuleView 布防徽标同口径复用 */
+export function isFullscreenPoints(pts: Array<[number, number]>): boolean {
+  if (!Array.isArray(pts) || pts.length !== 4) return false
+  const corners: Array<[number, number]> = [[0, 0], [1, 0], [1, 1], [0, 1]]
+  const TOL = 0.04
+  return corners.every(c => pts.some(p =>
+    Math.abs(p[0] - c[0]) <= TOL && Math.abs(p[1] - c[1]) <= TOL))
 }
 
 /** 算法 ID 匹配 (区域库存短名 'person_with_backpack' 与全名 'shield.algo.*' 并存):
@@ -95,7 +117,7 @@ function algoMatch(a?: string, b?: string): boolean {
 
 // ─────────────────────────── 数据获取 (两级链 + 模块级缓存) ───────────────────────────
 
-interface ShapeCacheEntry { list: OverlayShape[]; ts: number }
+interface ShapeCacheEntry { list: OverlayShape[]; fullscreen: boolean; ts: number }
 const shapeCache = new Map<string, ShapeCacheEntry>()
 const CACHE_TTL = 30_000
 
@@ -260,16 +282,28 @@ async function loadFromRegionStore(channelId: string, algoId: string): Promise<O
   return out
 }
 
-/** 形状叠加 composable: 两组件各自实例化, 缓存模块级共享 (30s TTL, 空结果也缓存) */
+/** 形状叠加 composable: 两组件各自实例化, 缓存模块级共享 (30s TTL, 空结果也缓存)
+ *  [FEAT fullscreen-roi 2026-09-10] 满屏检测区不画框 (对标 AXIS 告警叠加
+ *    只画目标框): 三个来源统一出口过滤满屏四边形 detection_zone/
+ *    rectangle → shapes 不含满屏形状, fullscreenGuard=true 供弹窗角标
+ *    显示「全画面布防」。缓存同步存过滤后列表 + 满屏标志。 */
 export function useAlarmShapes() {
   const shapes: Ref<OverlayShape[]> = ref([])
   const loading: Ref<boolean> = ref(false)
+  const fullscreenGuard: Ref<boolean> = ref(false)
+  function splitFullscreen(list: OverlayShape[]): OverlayShape[] {
+    const out = list.filter(s =>
+      !((s.type === 'detection_zone' || s.type === 'rectangle') && isFullscreenPoints(s.points)))
+    if (out.length !== list.length) fullscreenGuard.value = true
+    return out
+  }
   async function load(channelId?: string, algoId?: string, alarmShapes?: unknown) {
+    fullscreenGuard.value = false
     // ⓪ 告警自包含快照 (metadata.alarm_shapes): 插件上报告警时冻结的当时生效
     //    区域几何 — 区域被删后历史告警仍可核对「当时为什么报警」。
-    //    per-alarm 数据, 绕过模块级共享缓存 (同 key 不同告警不可互相污染)。
+    //    per-alarm 的数据, 绕过模块级共享缓存 (同 key 不同告警不可互相污染)。
     if (Array.isArray(alarmShapes) && alarmShapes.length) {
-      shapes.value = alarmShapes
+      shapes.value = splitFullscreen(alarmShapes
         // [FIX 2026-09-06] 同规则链: point 单顶点放行 (顶点数组 [[x,y]] ≥1)
         .filter((s: any) => s && Array.isArray(s.points)
           && (s.points.length >= 2 || (s.type === 'point' && s.points.length >= 1)))
@@ -282,7 +316,7 @@ export function useAlarmShapes() {
           // source 复用 'region' 渲染分支 (绘制按 type 不按 source),
           // 与区域库回退同色同形, 语义差异仅在于数据已冻结在告警里
           source: 'region' as const,
-        }))
+        })))
       return
     }
     const ch = String(channelId || '')
@@ -291,6 +325,7 @@ export function useAlarmShapes() {
     const cached = shapeCache.get(key)
     if (cached && Date.now() - cached.ts < CACHE_TTL) {
       shapes.value = cached.list
+      fullscreenGuard.value = cached.fullscreen
       return
     }
     loading.value = true
@@ -298,15 +333,16 @@ export function useAlarmShapes() {
       let list: OverlayShape[] = []
       if (ch) list = await loadFromRules(ch, algo)
       if (!list.length && (ch || algo)) list = await loadFromRegionStore(ch, algo)
-      shapeCache.set(key, { list, ts: Date.now() })
-      shapes.value = list
+      const filtered = splitFullscreen(list)
+      shapeCache.set(key, { list: filtered, fullscreen: fullscreenGuard.value, ts: Date.now() })
+      shapes.value = filtered
     } catch {
       shapes.value = []
     } finally {
       loading.value = false
     }
   }
-  return { shapes, loading, load }
+  return { shapes, loading, fullscreenGuard, load }
 }
 
 // ─────────────────────────── 检测框解析 (两组件共用) ───────────────────────────

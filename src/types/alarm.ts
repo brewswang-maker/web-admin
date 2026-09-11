@@ -126,6 +126,9 @@ export interface AlarmEvent {
   snapshotUrl?: string
   videoClipUrl?: string
   aiConclusion?: string
+  /** [AI 复核恢复 2026-09-10] VLM 二次复核结论 (后端 AlarmRetractionService 三派发点
+   *  统一回写 metadata.ai_review 字段组, 归一化见 parseAiReview) */
+  aiReview?: AiReviewInfo
   confidence: number
   status: AlarmStatus
   location?: string
@@ -135,11 +138,43 @@ export interface AlarmEvent {
   handledBy?: string
   handledAt?: string
   handleNote?: string
+  // [STAGE1 P0-1 2026-09-10] 复核状态超集聚合 (后端告警列表接口输出, 4 字段)
+  reviewStatus?: string
+  reviewSource?: string
+  reviewSlaDueAt?: number
+  reviewSlaRemainingMin?: number
   /** [接警单号 2026-09-09] 后端 handle 时自动生成落库 ticket_id 列, 列表 SELECT 经 metadata 治理回填 */
   ticketId?: string
   /** [追加信息 2026-09-09] 已处置告警的追加记录列表 (后端独立表 alarm_append_logs
    *  按时间序回填 gov.append_logs, normalizeAlarmCore 解析透出; 弹窗只读区展示) */
   appendLogs?: AlarmAppendLog[]
+}
+
+/** [AI 复核恢复 2026-09-10] VLM 二次复核结论 (metadata.ai_review 字段组归一化形态).
+ *  后端 verdict 值域: 'confirmed' | 'retracted' | 'unverified'
+ *  (review-sla 统计 SQL 同口径: json_extract($.ai_review.verdict)) */
+export interface AiReviewInfo {
+  verdict: 'confirmed' | 'retracted' | 'unverified' | string
+  confidence: number
+  verifier: string
+  /** ISO 时间串 (后端 reviewed_at 毫秒时间戳归一) */
+  reviewedAt: string
+  latencyMs: number
+  reason: string
+}
+
+/** [STAGE1 P0-1 2026-09-10] 告警列表 API 新增 4 字段 — 复核状态超集聚合
+ *  review_status 优先级: retraction > feedback(false_positive) > vlm_verdict > none
+ *  review_source: 对应来源标签 (retraction/vlm/feedback) */
+export interface AlarmReviewFields {
+  /** 复核状态 none=未复核, retracted=已撤, confirmed=已确认, false_alarm=人工标注误报, unverified=VLM 解析失败 */
+  reviewStatus: 'none' | 'retracted' | 'confirmed' | 'false_alarm' | 'unverified' | string
+  /** 复核来源标签: 空=none, retraction=vlm撤警服务, vlm=vlm研判, feedback=人工反馈 */
+  reviewSource: '' | 'retraction' | 'vlm' | 'feedback'
+  /** SLA 期限 (timestamp+8000ms, ms) — 与后端 /alarms/review-sla p95 target 同口径 */
+  reviewSlaDueAt: number
+  /** 距 SLA 期限剩余分钟数 (可负,代表超期) */
+  reviewSlaRemainingMin: number
 }
 
 /** 告警统计 */
@@ -616,6 +651,46 @@ function parseAppendLogs(v: unknown): AlarmAppendLog[] {
     }))
 }
 
+/** [AI 复核恢复 2026-09-10 P4 取数断层修复] metadata.ai_review 归一化解析.
+ *  断层根因: 后端告警 API 只透出 metadata (无顶层 ai_conclusion/ai_analysis 列),
+ *  原 aiConclusion 兜底链读不到 → 弹窗/列表 AI 复核恒空。此处从 metadata.ai_review
+ *  (兼容 HTTP 拦截器 snake→camel 后的 aiReview 键) 恢复取数。 */
+function parseAiReview(gov: Record<string, unknown>): AiReviewInfo | undefined {
+  const r = (gov.ai_review ?? gov.aiReview) as Record<string, unknown> | undefined
+  if (!r || typeof r !== 'object' || Array.isArray(r)) return undefined
+  const verdict = String(r.verdict ?? '')
+  const reason = String(r.reason ?? '')
+  if (!verdict && !reason) return undefined
+  const reviewedMs = Number(r.reviewed_at ?? r.reviewedAt ?? 0)
+  return {
+    verdict: verdict || 'unverified',
+    confidence: Number(r.confidence ?? 0),
+    verifier: String(r.verifier ?? ''),
+    reviewedAt: reviewedMs > 0 ? new Date(reviewedMs).toISOString() : '',
+    latencyMs: Number(r.latency_ms ?? r.latencyMs ?? 0),
+    reason,
+  }
+}
+
+/** [AI 复核恢复] verdict → 中文结论文案 (带 EventsView aiReviewOf 关键词锚点
+ *  '误报'/'真告警', 列表短标/筛选分类同步恢复工作; 空串表示无结论文案) */
+export function aiReviewText(v: AiReviewInfo | undefined): string {
+  if (!v) return ''
+  const reason = v.reason ? `：${v.reason}` : ''
+  if (v.verdict === 'retracted') return `误报${reason}`
+  if (v.verdict === 'confirmed') return `真告警${reason}`
+  if (v.verdict === 'unverified') return ''
+  return v.reason
+}
+
+/** [AI 复核恢复] verdict → 短标文案 (弹窗 AI 复核卡片 tag 用) */
+export function aiReviewVerdictLabel(v: AiReviewInfo | undefined): string {
+  if (!v || v.verdict === 'unverified') return '未复核'
+  if (v.verdict === 'retracted') return '误报'
+  if (v.verdict === 'confirmed') return '真事件'
+  return '已复核'
+}
+
 /**
  * 统一归一化: 后端 snake_case (或部分 camelCase) → 前端 AlarmEvent
  * 所有模块 (WS / REST / 缓存) 必须走这一个函数, 避免字段漂移.
@@ -662,6 +737,9 @@ export function normalizeAlarmCore(raw: any): AlarmEvent {
   // [FIX tsc 2026-09-07] 保留 string 形态: 后端/历史数据可能发 'new' (L630 归一
   //   为 'unhandled'), 原 as AlarmStatus 收窄后 'new' 比较成 TS2367 无重叠
   const rawStatusVal = String(raw.status || gov.status || '')
+  // [AI 复核恢复 2026-09-10] gov 已含 metadata.ai_review (...gov 展开), 在 return 前
+  //   统一解析一次供 aiReview 结构化字段与 aiConclusion 兜底链共用
+  const aiReview = parseAiReview(gov)
 
   return {
     id: raw.id || raw.alarm_id || `${raw.device_id || ''}_${channelId}_${raw.timestamp_ms || Date.now()}`,
@@ -690,12 +768,22 @@ export function normalizeAlarmCore(raw: any): AlarmEvent {
     deviceName: raw.device_name || raw.deviceName || raw.zone || raw.channel_name || raw.channelName || '',
     snapshotUrl: toAbsoluteUrl(raw.snapshot_url || raw.snapshotUrl || raw.snapshot_path),
     videoClipUrl: toAbsoluteUrl(raw.video_clip_url || raw.videoClipUrl),
-    aiConclusion: raw.ai_conclusion || raw.aiConclusion || raw.ai_analysis || raw.aiAnalysis || '',
+    // [AI 复核恢复 2026-09-10 P4] 兜底链补 metadata.ai_review 结论 (顶层
+    //   ai_conclusion/ai_analysis 后端不存在 → 原 AI 复核恒空根因);
+    //   aiReviewText 带 '误报'/'真告警' 锚点词, EventsView 短标/筛选分类同源
+    aiConclusion: raw.ai_conclusion || raw.aiConclusion || raw.ai_analysis || raw.aiAnalysis
+      || aiReviewText(aiReview) || '',
+    aiReview,
     confidence: Number(raw.confidence ?? raw.ai_confidence ?? raw.aiConfidence ?? 0),
     // [加油站三期 2026-08-30 EHS 闭环] status 双源: 后端顶层字段优先,
     //    兜底工单状态机回填的 metadata 治理字段 (handleAlarm 持久化 →
     //    getRecentAlarmsPaged SELECT 回填数组首元素), 未处理保持 'unhandled'
     status: (rawStatusVal === 'new' ? 'unhandled' : (rawStatusVal || 'unhandled')) as AlarmStatus,
+    // [STAGE1 P0-1 2026-09-10] 复核状态超集聚合 4 字段 — 后端 REST 列表接口输出
+    reviewStatus: (raw.review_status || 'none') as string,
+    reviewSource: (raw.review_source || '') as string,
+    reviewSlaDueAt: Number(raw.review_sla_due_at ?? 0),
+    reviewSlaRemainingMin: Number(raw.review_sla_remaining_min ?? 0),
     location: raw.location || raw.location_name || raw.zone || '',
     metadata: {
       bbox: raw.bbox || [],

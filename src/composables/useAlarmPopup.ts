@@ -26,7 +26,7 @@ import { useAlarmStore } from '@/stores/alarm'
 import { linkageApi, ACTION_TYPE_MAP } from '@/api/linkage'
 import { alarmApi } from '@/api/alarm'
 import type { LinkageRule, LinkageAction } from '@/api/linkage'
-import type { AlarmEvent } from '@/types/alarm'
+import type { AlarmEvent, AlarmAppendLog } from '@/types/alarm'
 import { normalizeAlarmCore, ALARM_CATEGORY } from '@/types/alarm'
 // [FIX 2026-09-05 弹窗不显示回归] 通道 hash 契约: 与后端 LinkageEngine.cpp/
 //   AlgoConfigView.loadRuleCounts 同源 (FNV-1a int32), GB 双流 _ch0 双形态参命中
@@ -305,19 +305,76 @@ export function prevAlarm() {
 }
 
 // ── 处警操作 ──
-export async function handleAlarm(action: 'confirmed' | 'false_alarm' | 'forwarded' | 'ignored', note?: string) {
-  if (!currentAlarm.value) return
+// [接警单号 2026-09-09] 返回 boolean 供弹窗区分成功/失败 (原 void + 调用方无 await,
+//   后端失败也弹“已确认处置”假成功); handler 透传当前登录用户 (后端写 handled_by,
+//   原缺省恒 'admin'); action 扩 unsure/known 研判判定值 (后端 else 兕底直写 status)
+export async function handleAlarm(
+  action: 'confirmed' | 'false_alarm' | 'forwarded' | 'ignored' | 'unsure' | 'known',
+  note?: string,
+  handler?: string,
+): Promise<boolean> {
+  if (!currentAlarm.value) return false
   try {
     const store = useAlarmStore()
-    await store.handleAlarm(currentAlarm.value.id, { status: action, note })
+    const alarmId = currentAlarm.value.id
+    const ok = await store.handleAlarm(alarmId, { status: action, note, handler })
+    if (!ok) return false
+    // [FIX 备注回显 2026-09-09] 处置成功就地回写 + 全局广播:
+    //   ① currentAlarm 就地更新 — 弹窗只读态 (appendEditing 收起后) 立即显示
+    //      备注/状态, 不闪空 (原 currentAlarm 是处置前快照, 只读态恒 '-');
+    //   ② dispatch 'alarm-handled' — store.handleAlarm 只刷 store.alarms,
+    //      AlarmsView 等自维护本地列表的视图行对象停留在处置前快照
+    //      (status='unhandled'/handleNote 空), 重开弹窗走编辑态空输入框,
+    //      看似"没保存"; 视图监听后重拉当前页即拿到回填治理字段。
+    const cur = currentAlarm.value as any
+    cur.status = action
+    if (note) cur.handleNote = note
+    if (handler) cur.handledBy = handler
+    window.dispatchEvent(new CustomEvent('alarm-handled', { detail: { alarmId } }))
     // 跳到下一条或关闭
     if (queueIndex.value < alarmQueue.value.length - 1) {
       nextAlarm()
     } else {
       closePopup()
     }
+    return true
   } catch (e) {
     console.error('[useAlarmPopup] handleAlarm failed:', e)
+    return false
+  }
+}
+
+// ── [追加信息 2026-09-09] 已处置告警追加处警信息 ──
+//   与 handleAlarm 不同: 追加后弹窗保持打开 (只读区就地追加一行展示),
+//   不跳队列/不关闭; 后端 status='append' 不动状态机 (主状态/接警单号不变)。
+export async function appendAlarmNote(content: string): Promise<boolean> {
+  if (!currentAlarm.value || !content.trim()) return false
+  try {
+    const res: any = await alarmApi.appendNote(currentAlarm.value.id, content.trim())
+    const d = res?.data?.data ?? res?.data ?? res
+    const appended = (d?.appended ?? {}) as Record<string, unknown>
+    const cur = currentAlarm.value as any
+    // 后端合并结果就地更新 (disposition 全文 + 接警单号沿用回显; 双源兼容
+    //   响应拦截器可能已 snake→camel)
+    const merged = d?.disposition ?? d?.dispositionNew
+    if (merged) cur.handleNote = String(merged)
+    const tk = d?.ticket_id ?? d?.ticketId
+    if (tk) cur.ticketId = String(tk)
+    // 结构化追加记录列表追加一行 (只读区立即显示, 带时间戳前缀)
+    const logs: AlarmAppendLog[] = Array.isArray(cur.appendLogs) ? [...cur.appendLogs] : []
+    logs.push({
+      content: String(appended.content ?? content.trim()),
+      by: String(appended.by ?? '') || undefined,
+      time: String(appended.time ?? '') || undefined,
+      timeMs: Number(appended.time_ms ?? appended.timeMs ?? 0) || undefined,
+    })
+    cur.appendLogs = logs
+    // 广播刷新列表 (AlarmsView 重拉拿到回填的 gov.append_logs + 新 disposition)
+    window.dispatchEvent(new CustomEvent('alarm-handled', { detail: { alarmId: cur.id } }))
+    return true
+  } catch (e) {
+    console.error('[useAlarmPopup] appendAlarmNote failed:', e)
+    return false
   }
 }
 

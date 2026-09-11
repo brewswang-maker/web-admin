@@ -289,13 +289,13 @@
                       <i class="iconfont1 icon1-wushuju" aria-hidden="true"></i>
                     </span>
                   </span>
-                  <!-- [DEV-GROUP 2026-09-07] "所属分组"列改真正的分组反查 (对齐
+                  <!-- [DEV-GROUP 2026-09-07] "所属区域"列改真正的分组反查 (对齐
                        AlarmsView P0-6 范式): 未分组显示 '-', 悬停 title 看设备名 -->
                   <span class="alarm-location" :title="`${groupOfAlarm(alarm)} · ${alarm.location}`">{{ groupOfAlarm(alarm) }}</span>
                   <!-- [FIX type-zh 2026-09-07] 告警类型英文 key → 中文 (canonical SSOT
-                       优先 + ALARM_TYPE_CN 本地兑底, 与 AlarmPopup alarmTypeLabel 同口径) -->
+                       优先 + ALARM_TYPE_CN 本地兜底, 与 AlarmPopup alarmTypeLabel 同口径) -->
                   <span class="alarm-type" :title="alarmTypeText(alarm)">{{ alarmTypeText(alarm) }}</span>
-                  <!-- [DEV-NAME-COL 2026-09-07] 设备名称列: 后端 deviceName 已经三级兑底
+                  <!-- [DEV-NAME-COL 2026-09-07] 设备名称列: 后端 deviceName 已经三级兜底
                        (设备列表页口径), location 即设备名; 空时 '-' -->
                   <span class="alarm-device" :title="alarm.location">{{ alarm.location || '-' }}</span>
                   <span class="alarm-time">{{ alarm.time }}</span>
@@ -462,9 +462,9 @@ import { situationApi, type SituationOverview, type SituationAlarmStream, type S
 import { statsHttp, streamHttp } from '@/api/http'
 import { normalizeStreamUrl } from '@/utils/streamUrl'
 import { locationApi } from '@/api/location'
-// [DEV-GROUP 2026-09-07] "所属分组"列反查数据源 (与 AlarmsView 同款 deviceGroupApi)
-import { deviceGroupApi } from '@/api/deviceGroups'
-// [FIX type-zh 2026-09-07] 实时告警列表类型中文化: canonical SSOT + 本地兑底
+// [P1.3 2026-09-10 更名] "所属区域"列反查数据源 (与 AlarmsView 同款 securityAreaApi)
+import { securityAreaApi } from '@/api/securityAreas'
+// [FIX type-zh 2026-09-07] 实时告警列表类型中文化: canonical SSOT + 本地兜底
 import { ALARM_TYPE_CN } from '@/types/alarm'
 import { useEventTypeZh } from '@/composables/useEventTypeZh'
 import { sceneApi } from '@/api/scene'
@@ -540,12 +540,12 @@ interface Alarm {
 }
 const latestAlarms = ref<Alarm[]>([])
 
-// ── [DEV-GROUP 2026-09-07] "所属分组"列分组反查 (对齐 AlarmsView P0-6 范式) ──
+// ── [DEV-GROUP 2026-09-07] "所属区域"列分组反查 (对齐 AlarmsView P0-6 范式) ──
 interface DeviceGroupItem { id: string; name: string; device_ids?: string[]; resolved_channel_ids?: string[] }
 const deviceGroups = ref<DeviceGroupItem[]>([])
 async function fetchDeviceGroups() {
   try {
-    const r = await deviceGroupApi.listGroups()
+    const r = await securityAreaApi.listAreas()
     const data = (r.data?.data ?? r.data) as { items?: DeviceGroupItem[] } | undefined
     deviceGroups.value = data?.items ?? []
   } catch { deviceGroups.value = [] } // 分组接口失败静默 (列显示 '-')
@@ -2560,6 +2560,17 @@ function onFullscreenEsc(e: KeyboardEvent) {
   if (e.key === 'Escape' && isFullscreen.value) exitFullscreen()
 }
 
+// [FIX handle-refresh 2026-09-10] 处警后状态同步: 态势大屏告警条 REST+WS 混源,
+//   WS 只推新告警增量 (处置不推送) — 监听全局 'alarm-handled' 广播重拉
+//   latestAlarms (与各场景事件列表 useRealtimeAlarmEvents 同范式;
+//   只重拉告警面板, 不动 overview/charts/视频轮巡)。
+function onAlarmHandled() {
+  situationApi.getRealtimeAlarms({ limit: 20 }).then(res => {
+    const alarms = res.data?.data
+    if (alarms?.length) latestAlarms.value = alarms.map(toAlarm)
+  }).catch(() => { /* 静默 — 处置刷新失败保持现有列表 */ })
+}
+
 onMounted(async () => {
   const updateClock = () => {
     currentTime.value = new Date().toLocaleString('zh-CN', { hour12: false, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' })
@@ -2573,7 +2584,7 @@ onMounted(async () => {
   // [FIX type-zh 2026-09-07] 事件类型 SSOT 预热 (模块级单例缓存, 静默失败)
   ensureEventTypes()
 
-  // [DEV-GROUP 2026-09-07] 分组列表 ("所属分组"列反查; 静默失败)
+  // [DEV-GROUP 2026-09-07] 分组列表 ("所属区域"列反查; 静默失败)
   fetchDeviceGroups()
 
   // [v8.6] 非阻塞: 并行加载各面板数据, 到达即渲染
@@ -2586,6 +2597,8 @@ onMounted(async () => {
   restoreVideoSlotsFromStore()
   // 全屏ESC退出
   window.addEventListener('keydown', onFullscreenEsc)
+  // [FIX handle-refresh 2026-09-10] 处警广播 → 重拉告警条 (状态即时同步)
+  window.addEventListener('alarm-handled', onAlarmHandled)
 })
 
 onUnmounted(() => {
@@ -2611,6 +2624,7 @@ onUnmounted(() => {
   }
   isFullscreen.value = false
   window.removeEventListener('keydown', onFullscreenEsc)
+  window.removeEventListener('alarm-handled', onAlarmHandled)
 })
 </script>
 

@@ -1,5 +1,9 @@
 <template>
   <div class="vp-events-page">
+   <!-- [P3 → 本轮 UI-4] 左侧设备树筛选面板 (统一规则: 设备列表居左/主内容居右) -->
+   <AlarmDeviceTreePanel @selection-change="onTreeSelection" />
+
+   <div class="vp-events-main">
     <el-card shadow="hover">
     <!-- ===== 页头 + 过滤器 ===== -->
     <div class="events-header">
@@ -32,6 +36,8 @@
           <el-option value="reviewed" :label="t('perimeter.events.aiReviewed')" />
           <el-option value="none" :label="t('perimeter.events.reviewNone')" />
         </el-select>
+        <!-- [P2 2026-09-10] 卡片/列表切换 (选择持久化 localStorage) -->
+        <AlarmViewToggle v-model="viewMode" page-key="perimeter" />
         <el-button :icon="Refresh" :loading="loading" @click="reload">{{ t('common.refresh') }}</el-button>
       </div>
     </div>
@@ -52,6 +58,11 @@
     <el-empty v-else-if="filtered.length === 0" :description="t('perimeter.events.empty')" />
 
     <!-- ===== 事件表格 (前端分页) ===== -->
+    <!-- [P2 2026-09-10] 卡片视图 (AlarmCard 栅格; 筛选/分页逻辑零改动) -->
+    <div v-else-if="viewMode === 'card'" class="events-card-grid">
+      <AlarmCard v-for="e in paged" :key="e.id" :alarm="e" @click="openDetail(e)" />
+    </div>
+
     <el-table v-else :data="paged" size="default" @row-click="openDetail" class="events-table">
       <el-table-column :label="t('perimeter.events.colLevel')" width="90" align="center">
         <template #default="{ row }">
@@ -149,6 +160,7 @@
       </template>
     </el-drawer>
     </el-card>
+   </div>
   </div>
 </template>
 
@@ -165,13 +177,29 @@ import { useDebounceFn } from '@vueuse/core'
 import { videoPerimeterApi, isPerimeterEvent } from '@/api/videoPerimeter'
 import { normalizeAlarmCore, type AlarmEvent, type AlarmLevel, type AlarmStatus } from '@/types/alarm'
 import { useAlarmRowActions } from '@/composables/useAlarmRowActions'
+import { useRealtimeAlarmEvents } from '@/composables/useRealtimeAlarmEvents'
 import { useEventTypeZh } from '@/composables/useEventTypeZh'
 import SnapshotAnnotated from './SnapshotAnnotated.vue'
 import EvidenceFrames from '@/components/EvidenceFrames.vue'
+// [P3 2026-09-10] 右侧设备树筛选面板 (安保区域→子区域→设备 多选)
+import AlarmDeviceTreePanel from '@/components/alarm/AlarmDeviceTreePanel.vue'
+import type { AlarmTreeSelection } from '@/components/alarm/AlarmDeviceTreePanel.vue'
+// [P2 2026-09-10] 卡片/列表切换 + 告警卡片
+import AlarmViewToggle from '@/components/alarm/AlarmViewToggle.vue'
+import AlarmCard from '@/components/alarm/AlarmCard.vue'
 
 const { t } = useI18n()
 const { openAlarmPopup, handleAlarmRow } = useAlarmRowActions()
+
+// [P2 2026-09-10] 卡片/列表视图 (持久化 key alarm_view_mode_perimeter, 与 AlarmViewToggle 同规范)
+const viewMode = ref<'card' | 'table'>(
+  localStorage.getItem('alarm_view_mode_perimeter') === 'card' ? 'card' : 'table'
+)
 const { zh, ensure: ensureEventTypes } = useEventTypeZh()
+// [FIX handle-refresh 2026-09-10] 处警后状态同步: 处置成功广播 'alarm-handled'
+//   去抖重拉 (与 WS 实时插入 onWsAlarmEvent 互补 — 插入即时, 重拉对齐后端
+//   回填的治理字段 status/disposition/ticket_id, 行内 onHandled 回写仅快照)。
+useRealtimeAlarmEvents(() => reload())
 
 /** 处理成功后行内回写状态 (避免整表刷新, 与 AlarmsView row.status 回写同范式) */
 function onHandled(id: string, status: string) {
@@ -217,6 +245,21 @@ function onLevelFilterChange() {
   reload()
 }
 
+// [P3 2026-09-10] 右侧设备树筛选状态 (与 AlarmsView 同款命中判定)
+const treeSel = ref<AlarmTreeSelection | null>(null)
+const treeChannelSet = computed(() => new Set(treeSel.value?.channelIds ?? []))
+const treeDeviceSet = computed(() => new Set(treeSel.value?.deviceIds ?? []))
+function onTreeSelection(sel: AlarmTreeSelection) {
+  treeSel.value = sel.chips.length ? sel : null
+  page.value = 1
+}
+function hitTree(a: AlarmEvent): boolean {
+  const ch = String(a.channelId || '')
+  if (ch && treeChannelSet.value.has(ch)) return true
+  const dev = String(a.deviceId || '').replace(/_ch\d+$/, '')
+  return !!dev && treeDeviceSet.value.has(dev)
+}
+
 const filtered = computed(() => {
   const kw = keyword.value.toLowerCase()
   return events.value.filter(e => {
@@ -224,6 +267,8 @@ const filtered = computed(() => {
     if (statusFilter.value !== '' && e.status !== statusFilter.value) return false
     if (typeFilter.value !== '' && e.type !== typeFilter.value) return false
     if (aiFilter.value !== '' && aiReviewKeyOf(e) !== aiFilter.value) return false
+    // [P3 2026-09-10] 设备树筛选 (右侧面板勾选集合命中判定; 空集不筛)
+    if (treeSel.value && !hitTree(e)) return false
     if (kw) {
       const hay = `${e.description ?? ''} ${e.channelName ?? ''} ${e.channelId ?? ''} ${e.type ?? ''} ${zh(String(e.type ?? ''))}`.toLowerCase()
       if (!hay.includes(kw)) return false
@@ -387,6 +432,15 @@ onUnmounted(() => {
 
 <style scoped>
 /*.vp-events-page { padding: 16px 20px; }*/
+/* [P3 2026-09-10] 右侧设备树面板 → flex 双栏 */
+.vp-events-page { display: flex; gap: 12px; align-items: flex-start; }
+.vp-events-main { flex: 1; min-width: 0; }
+/* [P2 2026-09-10] 卡片栅格 */
+.events-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 12px;
+}
 .events-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 16px; }
 .events-title { margin: 0 0 4px; font-size: 20px; }
 .events-sub { color: var(--el-text-color-secondary); font-size: 13px; }

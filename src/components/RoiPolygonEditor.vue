@@ -20,6 +20,13 @@
         <el-button size="small" text @click="confirmAndAdd" :disabled="disabled || (points.length < minPoints && visibleRois.length === 0)" type="primary">
           确认添加
         </el-button>
+        <!-- [FEAT fullscreen-roi 2026-09-10] 区域类形状一键满屏 (对标华为入侵检测
+             "满屏绘制"/海康默认警戒面: 消灭"未配置=不布防"状态)。绊线/关注点无
+             满屏语义不显示; 生成后可拖角继续编辑 (复用普通形状路径)。 -->
+        <el-button v-if="isAreaType" size="small" text :disabled="disabled" title="一键生成覆盖画面的检测区域 (留 2% 边距防贴边目标漏检), 可拖角微调"
+          @click="addFullscreenRoi">
+          ⛶ 满屏
+        </el-button>
       </div>
 
       <!-- [FIX 2026-09-02] 编辑操作: 撤销/重做/清空/吸附 (对标海康 iVMS 工具栏范式) -->
@@ -490,6 +497,40 @@ function clearAll() {
   pushHistory()
   emitRois()
   renderCanvas()
+}
+
+// [FEAT fullscreen-roi 2026-09-10] 区域类类型才有满屏语义 (绊线/方向线/关注点
+//   是线/点概念, 满屏不成立)。计数区/矩形拖拽是工具差异, 语义同为区域。
+const AREA_TYPES: RoiType[] = [
+  RoiType.DETECTION_ZONE, RoiType.EXCLUSION_ZONE,
+  RoiType.RECTANGLE, RoiType.COUNTING_ZONE,
+]
+const isAreaType = computed(() => AREA_TYPES.includes(currentType.value))
+
+/** [FEAT fullscreen-roi 2026-09-10] 一键满屏区域: 归一化四顶点留 2% 边距
+ *  (贴边目标 bbox 中心可能压线, 边距防漏检; 海康默认警戒面同为非贴边四边形)。
+ *  复用 confirmAndAdd 的入列表/入撤销栈/选中/toast 路径。 */
+function addFullscreenRoi() {
+  const m = 0.02
+  const corners: Array<{ x: number; y: number }> = [
+    { x: m, y: m }, { x: 1 - m, y: m }, { x: 1 - m, y: 1 - m }, { x: m, y: 1 - m },
+  ]
+  const newRoi: RoiData = {
+    roi_id: `roi_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
+    roi_name: `${typeLabel(currentType.value)} ${visibleRois.value.length + 1}`,
+    roi_type: currentType.value,
+    polygon: pointsToArray(corners),
+    is_active: true,
+  }
+  rois.value.push(newRoi)
+  points.value = []
+  rectAnchor.value = null
+  drawing.value = false
+  pushHistory()
+  emitRois()
+  renderCanvas()
+  selectedRoiIndex.value = rois.value.length - 1
+  ElMessage.success(`已添加满屏「${newRoi.roi_name}」, 可拖角微调或叠加排除区域`)
 }
 
 function confirmAndAdd() {

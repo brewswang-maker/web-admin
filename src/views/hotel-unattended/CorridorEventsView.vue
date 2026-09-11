@@ -1,5 +1,9 @@
 <template>
   <div class="hu-events-page">
+   <!-- [P3 → 本轮 UI-4] 左侧设备树筛选面板 (统一规则: 设备列表居左/主内容居右) -->
+   <AlarmDeviceTreePanel @selection-change="onTreeSelection" />
+
+   <div class="hu-events-main">
     <!-- ===== 场景事件类型筛选 (SSOT metadata?scene=hotel_unattended 动态拉取) ===== -->
     <el-card shadow="never" class="filter-card">
       <div class="scene-bar">
@@ -50,10 +54,18 @@
       <template #header>
         <div class="card-header">
           <span>{{ t('hotel.events.tableTitle', { n: finalEvents.length }) }}</span>
-          <span class="hint">{{ t('hotel.events.tableHint') }}</span>
+          <span style="display:flex;align-items:center;gap:8px">
+            <span class="hint">{{ t('hotel.events.tableHint') }}</span>
+            <!-- [P2 2026-09-10] 卡片/列表切换 -->
+            <AlarmViewToggle v-model="viewMode" page-key="corridor" />
+          </span>
         </div>
       </template>
-      <el-table :data="pagedFinal" v-loading="loading" size="small" @row-click="openDetail"
+      <!-- [P2 2026-09-10] 卡片视图 (AlarmCard 栅格; 筛选/分页逻辑零改动) -->
+      <div v-if="viewMode === 'card'" class="events-card-grid">
+        <AlarmCard v-for="e in pagedFinal" :key="e.id" :alarm="e" @click="openDetail(e)" />
+      </div>
+      <el-table v-else :data="pagedFinal" v-loading="loading" size="small" @row-click="openDetail"
                 :empty-text="selectedType ? t('hotel.events.emptyType') : t('hotel.events.emptyAll')"
                 class="events-table">
         <el-table-column :label="t('hotel.events.colType')" min-width="150">
@@ -157,6 +169,7 @@
         <div class="meta-hint">{{ t('hotel.events.metaHint') }}</div>
       </template>
     </el-drawer>
+   </div>
   </div>
 </template>
 
@@ -187,6 +200,12 @@ import { ArrowDown } from '@element-plus/icons-vue'
 // [FEAT 2026-09-02] 详情抽屉快照展示: 复用周界标注组件 (上轮已带全屏/下载按钮)
 import SnapshotAnnotated from '../perimeter/SnapshotAnnotated.vue'
 import { useRealtimeAlarmEvents } from '@/composables/useRealtimeAlarmEvents'
+// [P3 2026-09-10] 右侧设备树筛选面板 (安保区域→子区域→设备 多选)
+import AlarmDeviceTreePanel from '@/components/alarm/AlarmDeviceTreePanel.vue'
+import type { AlarmTreeSelection } from '@/components/alarm/AlarmDeviceTreePanel.vue'
+// [P2 2026-09-10] 卡片/列表切换 + 告警卡片
+import AlarmViewToggle from '@/components/alarm/AlarmViewToggle.vue'
+import AlarmCard from '@/components/alarm/AlarmCard.vue'
 // [FIX realtime-push 2026-09-06] 场景页实时刷新: WS 告警到达去抖重拉 (零新增连接)
 useRealtimeAlarmEvents(() => fetchEvents())
 
@@ -210,6 +229,11 @@ const selectedGroup = ref('')
 const page = ref(1)
 const pageSize = 20
 
+// [P2 2026-09-10] 卡片/列表视图 (持久化 key alarm_view_mode_corridor, 与 AlarmViewToggle 同规范)
+const viewMode = ref<'card' | 'table'>(
+  localStorage.getItem('alarm_view_mode_corridor') === 'card' ? 'card' : 'table'
+)
+
 const drawerVisible = ref(false)
 const activeEvent = ref<AlarmEvent | null>(null)
 
@@ -223,7 +247,24 @@ const filteredEvents = computed(() =>
     (interceptOnly.value
       ? (CORRIDOR_INTERCEPT_TYPES as readonly string[]).includes(String(a.type))
       : true) &&
+    // [P3 2026-09-10] 设备树筛选 (右侧面板勾选集合命中判定; 空集不筛)
+    (!treeSel.value || hitTree(a)) &&
     (!selectedGroup.value || groupOf(eventGroup(a)) === selectedGroup.value)))
+
+// [P3 2026-09-10] 右侧设备树筛选状态 (与 AlarmsView 同款命中判定)
+const treeSel = ref<AlarmTreeSelection | null>(null)
+const treeChannelSet = computed(() => new Set(treeSel.value?.channelIds ?? []))
+const treeDeviceSet = computed(() => new Set(treeSel.value?.deviceIds ?? []))
+function onTreeSelection(sel: AlarmTreeSelection) {
+  treeSel.value = sel.chips.length ? sel : null
+  page.value = 1
+}
+function hitTree(a: AlarmEvent): boolean {
+  const ch = String(a.channelId || '')
+  if (ch && treeChannelSet.value.has(ch)) return true
+  const dev = String(a.deviceId || '').replace(/_ch\d+$/, '')
+  return !!dev && treeDeviceSet.value.has(dev)
+}
 
 // ── 人员分类筛选 (group_type 来自事件 metadata, AlarmEvent 已归一透传) ──
 const groupOptions = computed(() =>
@@ -385,6 +426,15 @@ onMounted(() => {
 
 <style scoped>
 /*.hu-events-page { padding: 4px 0; }*/
+/* [P3 2026-09-10] 右侧设备树面板 → flex 双栏 */
+.hu-events-page { display: flex; gap: 12px; align-items: flex-start; }
+.hu-events-main { flex: 1; min-width: 0; }
+/* [P2 2026-09-10] 卡片栅格 */
+.events-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 12px;
+}
 .act-handle { margin-left: 8px; }  /* [行操作 2026-09-01] dropdown 包裹后相邻按钮间距失效 */
 .filter-card { margin-bottom: 16px; }
 .scene-bar { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }

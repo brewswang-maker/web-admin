@@ -310,11 +310,15 @@ import type { EChartsOption } from 'echarts'
 import LazyChart from '@/components/LazyChart.vue'
 import { useEventTypeZh } from '@/composables/useEventTypeZh'
 import { useAlarmRowActions } from '@/composables/useAlarmRowActions'
+import { useRealtimeAlarmEvents } from '@/composables/useRealtimeAlarmEvents'
 
 const { t } = useI18n()
 const router = useRouter()
 const { openAlarmPopup } = useAlarmRowActions()
 const { zh, ensure: ensureEventTypes } = useEventTypeZh()
+// [FIX handle-refresh 2026-09-10] 处警后状态同步: 处置成功广播 'alarm-handled'
+//   去抖重拉 — KPI 卡 (未处理/已处置计数) 与事件列表即时对齐后端治理字段。
+useRealtimeAlarmEvents(() => reload())
 
 interface RuleLite { rule_id?: string; scene_pack_id?: string; source_pack?: string; tags?: string[]; enabled?: boolean }
 

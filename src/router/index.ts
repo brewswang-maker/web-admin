@@ -45,6 +45,8 @@ const FLConfigView = () => import('@/views/FLConfigView.vue')
 const PermissionManagementView = () => import('@/views/rbac/PermissionManagementView.vue')
 const RoleManagementView = () => import('@/views/rbac/RoleManagementView.vue')
 const UserManagementView = () => import('@/views/rbac/UserManagementView.vue')
+// [UI-5 2026-09-10] 组织架构管理页 (OrgStore 前端落地, 平台管理必备子页)
+const OrgManagementView = () => import('@/views/platform/OrgManagementView.vue')
 const LocationTrackView = () => import('@/views/LocationTrackView.vue')
 const TopologyView = () => import('@/views/TopologyView.vue')
 const AlgorithmStoreView = () => import('@/views/AlgorithmStoreView.vue')
@@ -75,6 +77,10 @@ const PerimeterScenePacksView = () => import('@/views/perimeter/ScenePacksView.v
 const PerimeterRulesView = () => import('@/views/perimeter/RulesView.vue') // [vp4 2026-09-01] 事件规则聚合页
 const SchoolRulesView = () => import('@/views/school/RulesView.vue')       // [vp4 2026-09-01] 校园事件规则
 const GasRulesView = () => import('@/views/gas-station/RulesView.vue')     // [vp4 2026-09-01] 加油站事件规则
+// [UI-4b 2026-09-10] 安检/校园/加油站 三场景事件列表页 (补齐对齐大型活动/周界/酒店)
+const ScreeningEventsView = () => import('@/views/screening/EventsView.vue')
+const SchoolEventsView = () => import('@/views/school/EventsView.vue')
+const GasEventsView = () => import('@/views/gas-station/EventsView.vue')
 // 安检场景 (Phase 2 S1-3/S1-4 — 2026-08-27)
 const ScreeningOverviewView = () => import('@/views/screening/ScreeningOverview.vue')
 const ScreeningChannelOrderView = () => import('@/views/screening/ScreeningChannelOrder.vue')
@@ -154,11 +160,11 @@ export const asyncRoutes: RouteRecordRaw[] = [
         meta: { title: '设备通道', icon: 'Grid', hidden: true, roles: ['admin', 'user'] }
       },
       {
-        // [vp9 2026-09-01] 设备分组独立管理 (对标华为"分组即管理单位")
-        path: 'device-groups',
-        name: 'DeviceGroups',
-        component: () => import('@/views/DeviceGroupManager.vue'),
-        meta: { title: '设备分组', icon: 'Files', roles: ['admin', 'user'] }
+        // [P1.3 2026-09-10 更名] 安保区域独立管理 (原 device-groups; 对标海康 iSC 区域树)
+        path: 'security-areas',
+        name: 'SecurityAreas',
+        component: () => import('@/views/SecurityAreaManager.vue'),
+        meta: { title: '安保区域', icon: 'Files', roles: ['admin', 'user'] }
       },
       {
         path: 'live',
@@ -394,6 +400,13 @@ export const asyncRoutes: RouteRecordRaw[] = [
         meta: { title: '用户管理', icon: 'Avatar', hidden: true, roles: ['admin'] }
       },
       {
+        // [UI-5 2026-09-10] 组织架构管理 (平台管理必备子页, 菜单挂 MainLayout platform 组)
+        path: 'org-management',
+        name: 'OrgManagement',
+        component: OrgManagementView,
+        meta: { title: '组织架构', icon: 'OfficeBuilding', roles: ['admin'] }
+      },
+      {
         path: 'algo-config',
         name: 'AlgoConfig',
         component: AlgoConfigView,
@@ -550,6 +563,13 @@ export const asyncRoutes: RouteRecordRaw[] = [
         component: ScreeningRuleManagerView,
         meta: { title: '规则管理', icon: 'Setting', roles: ['admin', 'user'] }
       },
+      {
+        // [UI-4b 2026-09-10] 安检事件列表 (SSOT scene=security_screening)
+        path: 'screening/events',
+        name: 'ScreeningEvents',
+        component: ScreeningEventsView,
+        meta: { title: '安检事件', icon: 'Bell', roles: ['admin', 'user', 'viewer'] }
+      },
       // ═══ [校园方案 2026-08-30] 校园一级模块 9 子路由 ═══
       {
         path: 'school/overview',
@@ -618,6 +638,13 @@ export const asyncRoutes: RouteRecordRaw[] = [
         component: SchoolRulesView,
         meta: { title: '校园事件规则', icon: 'List', roles: ['admin', 'user', 'viewer'] }
       },
+      {
+        // [UI-4b 2026-09-10] 校园事件列表 (SSOT scene=school_campus)
+        path: 'school/events',
+        name: 'SchoolEvents',
+        component: SchoolEventsView,
+        meta: { title: '校园事件', icon: 'Bell', roles: ['admin', 'user', 'viewer'] }
+      },
       // ═══ [加油站方案 2026-08-30] 加油站一级模块场景包子页 ═══
       {
         path: 'gas-station/scene-packs',
@@ -631,6 +658,13 @@ export const asyncRoutes: RouteRecordRaw[] = [
         name: 'GasRules',
         component: GasRulesView,
         meta: { title: '加油站事件规则', icon: 'List', roles: ['admin', 'user', 'viewer'] }
+      },
+      {
+        // [UI-4b 2026-09-10] 加油站事件列表 (SSOT scene=gas_station)
+        path: 'gas-station/events',
+        name: 'GasEvents',
+        component: GasEventsView,
+        meta: { title: '加油站事件', icon: 'Bell', roles: ['admin', 'user', 'viewer'] }
       },
       // [加油站方案 2026-08-30] 加油站 7 子页 (总览/加油区/卸油区/周界/油罐区/态势大屏/3D)
       {

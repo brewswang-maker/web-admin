@@ -24,8 +24,13 @@
     </div>
     <!-- Detection boxes + 原始几何形状 overlay
          [FEAT 2026-09-04] data-shapes/data-boxes 供 DOM 探针验证渲染计数 -->
+    <!-- [STAGE1 P1-4 2026-09-10] 叠加层开关: 默认开, 刷新后沿用 localStorage 偏好 -->
+    <div class="alarm-snapshot__overlay-control" aria-label="告警叠加层显示设置">
+      <span>叠加层</span>
+      <el-switch v-model="overlayOn" inline-prompt active-text="开" inactive-text="关" size="small" />
+    </div>
     <canvas
-      v-if="imageUrl && (normalizedBoxes.length || shapes.length)"
+      v-if="overlayOn && imageUrl && (normalizedBoxes.length || shapes.length)"
       ref="canvasRef"
       class="alarm-snapshot__canvas"
       :data-shapes="shapes.length"
@@ -40,6 +45,14 @@
     >
       ⬇ 下载标注图
     </button>
+    <!-- [FEAT fullscreen-roi 2026-09-10] 满屏布防角标: 检测区=全画面时不画
+         边框 (对标 AXIS 告警叠加只画目标框), 角标替代边框传达布防语义;
+         右上角下载按钮左侧同层悬浮, 非交互纯信息展示 -->
+    <span
+      v-if="fullscreenGuard"
+      class="alarm-snapshot__fs-badge"
+      title="检测区覆盖全画面 — 未画边框, 仅标注目标"
+    >🌐 全画面布防</span>
     <!-- [FEAT 2026-09-02] 全屏预览: 显式按钮触发 el-image-viewer (teleported 防
          报警弹窗 el-dialog z-index 遮挡), 左上角与下载按钮对称 -->
     <button
@@ -73,9 +86,16 @@ import {
   drawDetsOnCtx, drawShapesOnCtx, downloadPngWithFallback,
   markTriggerDet, parseDetections, useAlarmShapes, type ParsedDet,
 } from '@/composables/useAlarmShapes'
+import { getAlarmSnapshotOverlay, setAlarmSnapshotOverlay } from '@/utils/localStorage'
 
 /** [FEAT 2026-09-02] 全屏预览开关 (el-image-viewer v-if 挂载) */
 const viewerVisible = ref(false)
+/** [STAGE1 P1-4 2026-09-10] 告警检测框/防区叠加层显示开关 */
+const overlayOn = ref(getAlarmSnapshotOverlay())
+watch(overlayOn, (on) => {
+  setAlarmSnapshotOverlay(on)
+  if (on) nextTick(drawBoxes)
+})
 
 interface DetectionBox {
   x: number; y: number; w: number; h: number
@@ -112,7 +132,7 @@ const imageSize = ref<{ w: number; h: number }>({ w: 0, h: 0 })
 
 /** [FEAT 2026-09-04] 原始几何形状叠加 (检测区/排除区/绊线/方向线/计数区):
  *  数据源两级链 (规则 roi_shapes_json → 区域库), 详见 useAlarmShapes.ts */
-const { shapes, load: loadShapes } = useAlarmShapes()
+const { shapes, fullscreenGuard, load: loadShapes } = useAlarmShapes()
 watch(
   [() => props.channelId, () => props.algoId, () => props.alarmShapes],
   ([ch, algo, snap]) => {
@@ -270,6 +290,20 @@ function downloadAnnotated() {
   border-radius: 0;
   background: #262626;
 }
+.alarm-snapshot__overlay-control {
+  position: absolute;
+  bottom: 8px;
+  left: 8px;
+  z-index: 11;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  font-size: 12px;
+}
 .alarm-snapshot__canvas {
   position: absolute;
   inset: 0;
@@ -295,6 +329,21 @@ function downloadAnnotated() {
 }
 .alarm-snapshot__download:hover {
   background: rgba(0, 0, 0, 0.78);
+}
+/* [FEAT fullscreen-roi 2026-09-10] 满屏布防角标: 蓝色主题区别于黑白操作按钮,
+   pointer-events:none 不抢快照交互 */
+.alarm-snapshot__fs-badge {
+  position: absolute;
+  top: 8px;
+  right: 108px;
+  z-index: 10;
+  padding: 4px 10px;
+  border-radius: 4px;
+  background: rgba(64, 158, 255, 0.82);
+  color: #fff;
+  font-size: 12px;
+  line-height: 18px;
+  pointer-events: none;
 }
 /* [FEAT 2026-09-02] 全屏预览悬浮按钮: 左上角与下载按钮对称, 同款悬浮风格 */
 .alarm-snapshot__fullscreen {

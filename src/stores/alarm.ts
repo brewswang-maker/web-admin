@@ -127,7 +127,12 @@ export const useAlarmStore = defineStore('alarm', () => {
   async function handleAlarm(id: string, form: AlarmHandleForm) {
     try {
       await alarmApi.handle(id, form)
-      const statusLabels: Record<string, string> = { confirmed: '已确认', false_alarm: '已标记误报', forwarded: '已转发' }
+      // [接警单号 2026-09-09] 补 unsure/known/true_positive 文案 (弹窗研判判定提交路径)
+      const statusLabels: Record<string, string> = {
+        confirmed: '已确认', true_positive: '已确认为真实告警',
+        false_alarm: '已标记误报', forwarded: '已转发',
+        unsure: '已标记存疑', known: '已标记已知事件',
+      }
       ElMessage.success(statusLabels[form.status] || '处理成功')
       await fetchAlarms()
       await fetchUnhandledCount()

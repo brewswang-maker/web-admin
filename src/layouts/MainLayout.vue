@@ -509,6 +509,7 @@ import {
   // [加油站方案 2026-08-30] 一级菜单加油站 (T6 硬红线 + EHS 闭环)
   TakeawayBox, MagicStick,
   Files,   // [vp9 2026-09-01] 设备分组菜单
+  OfficeBuilding, // [UI-5 2026-09-10] 组织架构管理菜单
 } from '@element-plus/icons-vue'
 import logoUrl from '@/assets/logo.png'
 import userAvatarUrl from '@/assets/photo2.jpg'
@@ -618,6 +619,8 @@ const primaryMenus = computed<PrimaryMenu[]>(() => {
       { path: '/screening/rules', label: t('menu.screeningRules'), icon: DocumentChecked },
       // [安检对标优化 2026-08-30] 安检专属事件规则列表入口 (页面已存在, 此前漏接入菜单)
       { path: '/screening/rule-manager', label: t('menu.screeningRuleManager'), icon: Setting },
+      // [UI-4b 2026-09-10] 安检事件列表 (SSOT scene=security_screening)
+      { path: '/screening/events', label: '安检事件', icon: Bell },
     ],
   },
   {
@@ -637,6 +640,8 @@ const primaryMenus = computed<PrimaryMenu[]>(() => {
       { path: '/school/campus3d', label: t('menu.campus3d'), icon: MapLocation },
       { path: '/school/scene-packs', label: t('menu.schoolScenePacks'), icon: Box },
       { path: '/school/rules', label: t('menu.schoolRules'), icon: List },
+      // [UI-4b 2026-09-10] 校园事件列表 (SSOT scene=school_campus)
+      { path: '/school/events', label: '校园事件', icon: Bell },
     ],
   },
   {
@@ -656,6 +661,8 @@ const primaryMenus = computed<PrimaryMenu[]>(() => {
       { path: '/gas-station/gas3d',       label: t('menu.gasStationGas3D'),       icon: MapLocation },
       { path: '/gas-station/scene-packs', label: t('menu.gasStationScenePacks'),  icon: Box },
       { path: '/gas-station/rules',      label: t('menu.gasStationRules'), icon: List },
+      // [UI-4b 2026-09-10] 加油站事件列表 (SSOT scene=gas_station)
+      { path: '/gas-station/events',     label: '加油站事件', icon: Bell },
     ],
   },
   {
@@ -705,7 +712,9 @@ const primaryMenus = computed<PrimaryMenu[]>(() => {
       // [vp9-fix 2026-09-02] 设备分组菜单项必须加在此 primaryMenus 数据源
       //   (首次误加到 v-if="false" 的 legacy 兼容菜单致不可见)
       { path: '/devices', label: t('menu.devices'), icon: Monitor },
-      { path: '/device-groups', label: t('menu.deviceGroups'), icon: Files },
+      { path: '/security-areas', label: t('menu.securityAreas'), icon: Files },
+      // [UI-5 2026-09-10] 组织架构管理 (OrgStore 后端已建, 本轮前端 UI 落地)
+      { path: '/org-management', label: '组织架构', icon: OfficeBuilding, roles: ['admin'] },
       { path: '/scene-management', label: '3D场景管理', icon: MapLocation, roles: ['admin'] },
       { path: '/topology', label: t('menu.topology'), icon: Share },
       { path: '/linkage', label: t('menu.linkage'), icon: Connection },

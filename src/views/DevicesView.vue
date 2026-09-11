@@ -26,8 +26,8 @@
           </el-select>
         </div>
         <div class="toolbar-right">
-          <!-- [DEV-GROUP 2026-09-07] 分组管理入口: 设备页直接跳转分组实体管理页 -->
-          <el-button plain @click="$router.push('/device-groups')">分组管理</el-button>
+          <!-- [DEV-GROUP 2026-09-07] 区域管理入口: 设备页直接跳转安保区域管理页 -->
+          <el-button plain @click="$router.push('/security-areas')">区域管理</el-button>
           <el-dropdown trigger="click" @command="handleToolbarDiscover">
             <el-button type="success" plain>
               <el-icon><Search /></el-icon>发现设备<el-icon style="margin-left:4px"><ArrowDown /></el-icon>
@@ -156,7 +156,7 @@
           <template #default="{ row }">
             <template v-if="groupsOf(row).length">
               <el-tag v-for="g in groupsOf(row).slice(0, 2)" :key="g.id" size="small" type="info" effect="plain" style="margin-right:4px">{{ g.name }}</el-tag>
-              <el-tooltip v-if="groupsOf(row).length > 2" :content="groupsOf(row).map((g: DeviceGroup) => g.name).join('、')">
+              <el-tooltip v-if="groupsOf(row).length > 2" :content="groupsOf(row).map((g: SecurityArea) => g.name).join('、')">
                 <el-tag size="small" type="info" effect="plain">+{{ groupsOf(row).length - 2 }}</el-tag>
               </el-tooltip>
             </template>
@@ -525,7 +525,7 @@
     </el-dialog>
 
     <!-- [DEV-GROUP 2026-09-07] 行内设置分组对话框 (设备视角勾选;
-         分组实体 CRUD/通道级绑定在 /device-groups 独立页) -->
+         区域实体 CRUD/通道级绑定在 /security-areas 独 立页) -->
     <el-dialog v-model="groupDlgVisible" :title="`设置分组 — ${groupDlgDevice?.name || ''}`" width="420px">
       <div v-if="activeGroups.length === 0" style="color:#8c8c8c;padding:8px 0">
         暂无可用分组，先到右上角「分组管理」创建。
@@ -534,7 +534,7 @@
         <div v-for="g in activeGroups" :key="g.id" style="padding:4px 0">
           <el-checkbox :value="g.id" :label="g.id">
             {{ g.name }}
-            <el-tag size="small" type="info" effect="plain" style="margin-left:6px">{{ groupTypeLabel(g.group_type) }}</el-tag>
+            <el-tag size="small" type="info" effect="plain" style="margin-left:6px">{{ groupTypeLabel(g.area_type) }}</el-tag>
           </el-checkbox>
         </div>
       </el-checkbox-group>
@@ -596,8 +596,8 @@ import { useWebSocket } from '@/composables/useWebSocket'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { discoverGB28181, getGB28181Config } from '@/api/devices'
 import { deviceApi } from '@/api/device'
-import { deviceGroupApi } from '@/api/deviceGroups'
-import type { DeviceGroup } from '@/api/deviceGroups'
+import { securityAreaApi } from '@/api/securityAreas'
+import type { SecurityArea } from '@/api/securityAreas'
 import type { DeviceItem, ProtocolType, DiscoveredDevice } from '@/types/device'
 import type { GB28181Config } from '@/api/devices'
 import { PROTOCOL_OPTIONS } from '@/types/device'
@@ -692,9 +692,9 @@ const channelMap = ref<Record<string, any[]>>({})
 const channelLoading = ref('')
 
 // ── [DEV-GROUP 2026-09-07] 设备分组闭环: 列表页查看/设置分组 ──
-// 分组实体管理在 /device-groups 独立页 (左分组/右成员绑定); 此处补设备视角
+// 区域实体管理在 /security-areas 独立页 (左区域树/右成员绑定); 此处补设备视角
 // 的归属反查与快捷绑定, 避免两边割裂 (用户在设备页找不到设分组入口)。
-const deviceGroups = ref<DeviceGroup[]>([])
+const deviceGroups = ref<SecurityArea[]>([])
 const groupDlgVisible = ref(false)
 const groupDlgDevice = ref<DeviceItem | null>(null)
 const draftGroupIds = ref<string[]>([])
@@ -704,7 +704,7 @@ const activeGroups = computed(() => deviceGroups.value.filter(g => g.status === 
 
 async function loadGroups() {
   try {
-    const res = await deviceGroupApi.listGroups()
+    const res = await securityAreaApi.listAreas()
     deviceGroups.value = res.data?.data?.items ?? []
   } catch { deviceGroups.value = [] }
 }
@@ -715,7 +715,7 @@ function groupTypeLabel(t: string) {
 
 /** 设备所属分组: 设备级绑定 (device_ids) 或通道级 resolved 反查
  *  (resolved_channel_ids 含 20 位码/_ch0 码, 与设备国标码前缀匹配) */
-function groupsOf(d: DeviceItem): DeviceGroup[] {
+function groupsOf(d: DeviceItem): SecurityArea[] {
   return activeGroups.value.filter(g =>
     (g.device_ids ?? []).includes(d.id)
     || (g.resolved_channel_ids ?? []).some(c => c === d.id || c.startsWith(d.id + '_')))
@@ -742,7 +742,7 @@ async function saveGroups() {
       const ids = after.has(g.id)
         ? [...(g.device_ids ?? []), dev.id]
         : (g.device_ids ?? []).filter((x: string) => x !== dev.id)
-      await deviceGroupApi.setMembers(g.id, { device_ids: ids, channel_ids: g.channel_ids ?? [] })
+      await securityAreaApi.setMembers(g.id, { device_ids: ids, channel_ids: g.channel_ids ?? [] })
     }
     ElMessage.success(`已更新「${dev.name}」的分组绑定 (${changed.length} 组)`)
     groupDlgVisible.value = false
