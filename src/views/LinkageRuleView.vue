@@ -3243,11 +3243,18 @@ async function handleSave(): Promise<boolean> {
     if (rc.enabled) {
       const drawnAreas = rc.config.roiPolygon.filter(r => r.is_active &&
         (r.roi_type === 'detection_zone' || r.roi_type === 'exclusion_zone' || r.roi_type === 'rectangle'))
-      if (drawnAreas.length > 0) {
-        const areaChStr = (rc.config.channelId || '').replace(/_ch\d+$/, '')
-        if (!areaChStr) {
-          ElMessage.warning('画了区域但未选"关联通道", 区域未同步到算法配置; 请选择通道后重新保存')
-        } else {
+      const areaChStr = (rc.config.channelId || '').replace(/_ch\d+$/, '')
+      // [FIX roi-sync-delete 2026-09-11] 镜像补删除分支 (用户报告: 规则页删掉的区域
+      //   跨页复活/删不掉最后 1 个): 原镜像只增不删 — 画板删掉的区域在 RegionStore
+      //   永久残留, 算法配置页/布防判定/插件弹窗继续消费 = 「删除了还在弹」。
+      //   现对齐算法页 onRegionsChange diff 先例: 保存时以画板名单为 SSOT,
+      //   同通道同形态 (algo_id === areaAlgoId) 的孤儿区域一并清理;
+      //   空画板保存 = 全清 (drawnAreas.length > 0 短路解除)。
+      //   防误删: 仅清理规则镜像形态 (algo_id 精确等值), 算法页手工画的其他
+      //   算法区域不动; 停用残留不查 (include_disabled 默认 false) 边界留待后续。
+      if (drawnAreas.length > 0 && !areaChStr) {
+        ElMessage.warning('画了区域但未选"关联通道", 区域未同步到算法配置; 请选择通道后重新保存')
+      } else if (areaChStr) {
           // algo_id 推导: 覆盖率矩阵优先, 兜底事件类型裸短 id (与区域库存量形态一致,
           //   插件 getEffectiveRegions 兜底链两种形态均已兼容)
           await loadEventCoverage()
@@ -3287,11 +3294,26 @@ async function handleSave(): Promise<boolean> {
               })
               synced++
             }
-            if (synced > 0) ElMessage.success(`区域已同步到算法配置 (${synced} 个, 插件判定同几何)`)
+            // [FIX roi-sync-delete 2026-09-11] diff 清理: 画板名单外的同形态孤儿区域
+            //   (含空画板全清路径 — 用户删掉最后 1 个后保存即真删, 跨页不再复活)
+            const drawnNames = new Set(drawnAreas.map(a => a.roi_name))
+            let cleaned = 0
+            if (areaAlgoId) {
+              for (const e of existing) {
+                if (drawnNames.has(e.name)) continue
+                if (e.algo_id !== areaAlgoId) continue
+                try {
+                  await regionApi.deleteRegion(e.id)
+                  cleaned++
+                } catch { /* 单个清理失败不阻断同步主链 */ }
+              }
+            }
+            if (synced > 0 && cleaned > 0) ElMessage.success(`区域已同步到算法配置 (${synced} 更新, ${cleaned} 清理, 插件判定同几何)`)
+            else if (cleaned > 0) ElMessage.success(`已同步清理 ${cleaned} 个画板已删除的区域`)
+            else if (synced > 0) ElMessage.success(`区域已同步到算法配置 (${synced} 个, 插件判定同几何)`)
           } catch (e: any) {
             ElMessage.error(`区域同步失败: ${e?.message ?? e} (规则仍会保存, 算法配置区未更新)`)
           }
-        }
       }
     }
     // 清理 "全部XXX" 占位值，后端空字符串 = 不过滤
