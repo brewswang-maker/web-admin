@@ -2843,7 +2843,7 @@ onUnmounted(() => {
 }
 .speed-select :deep(.el-select__suffix) { display: none; }
 .speed-select :deep(.el-input__inner),
-.speed-select :deep(.el-select__selected-item) { color: #00cfff !important; text-align: center; }
+.speed-select :deep(.el-select__selected-item) { color: #00cfff !important; text-align: center;width: 20px; }
 .speed-select :deep(.el-select__caret) { color: #00cfff; }
 .pc-continuous { margin-left: 8px; }
 

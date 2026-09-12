@@ -1553,7 +1553,7 @@ void jumpToPlayback; void openImageTab
   color: #fff;
 }
 .alarm-flash {
-  animation: alarm-flash-anim 1.2s ease-out 1;
+  /*animation: alarm-flash-anim 1.2s ease-out 1;*/
 }
 @keyframes alarm-flash-anim {
     0%   { box-shadow: 0 0 0 0 rgba(var(--alarm-header-rgb, 249, 58, 85), 0.6); }
