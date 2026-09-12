@@ -491,7 +491,7 @@
                        「区域 resolved 摄像头 ∪ 绑定通道中摄像头」+ 当前值池外 fallback,
                        无关通道不再淹没; label 升级「通道名 (设备名)」 (症状 3) —
                        老规则 20 位串从 sc.location_id 回填时也走目录反查, 不裸显数字 -->
-                  <el-select v-model="form.conditions.region.config.channelId" placeholder="选择通道加载快照" clearable filterable style="width: 100%" @change="loadChannelSnapshot">
+                  <el-select v-model="form.conditions.region.config.channelId" placeholder="选择通道加载快照" clearable filterable style="width: 100%" @change="onRegionChannelChange">
                     <el-option v-for="ch in snapshotChannelOptions" :key="ch.value" :label="ch.label" :value="ch.value" />
                     <template #empty><span class="text-secondary">暂无摄像头通道</span></template>
                   </el-select>
@@ -506,6 +506,34 @@
                        全部 ROI 绘制收敛到本画板: 绊线按消费算法集放行 (4 插件,
                        写库 algo_id 跟随消费算法); 关注点 (point) 仅回显不参与判定
                        — 入口移除, 存量随 modelValue 全量保留不丢。 -->
+                  <!-- [ROI-PER-CHANNEL 2026-09-12] 逐通道绘制入口 (对标海康多通道 ROI):
+                       绑定 ≥2 通道时列出通道页签, 点击切换画布+快照底图; 首次在页签下
+                       编辑即进入逐通道模式 (保存写 roi_shapes_by_channel, 未绘通道不
+                       触发 — 与引擎严格模式同契约; 单通道/未点击页签 = 通用模式)。 -->
+                  <div v-if="roiTabChannels.length >= 2 || roiStrictMode" class="roi-ch-tabs">
+                    <span class="roi-ch-tabs__label">绘制通道</span>
+                    <!-- [UX-UNPAINTED 2026-09-12] 未绘通道红色警示 (对标海康"警戒面必填"强反馈):
+                         激活=primary / 已绘=info / 未绘=danger (与引擎严格模式"不绘不触发"同口径) -->
+                    <el-tag
+                      v-for="t in roiTabChannels"
+                      :key="t.value"
+                      size="small"
+                      :effect="t.value === activeRoiChannel ? 'dark' : 'plain'"
+                      :type="t.value === activeRoiChannel ? 'primary' : (isChannelUnpainted(t.value) ? 'danger' : 'info')"
+                      class="roi-ch-tag"
+                      @click="switchRoiChannel(t.value)"
+                    >{{ t.label }} · {{ roiPackBadge(t.value) }}</el-tag>
+                    <el-button v-if="roiStrictMode" size="small" text type="info" @click="clearRoiPerChannel">清除逐通道数据</el-button>
+                  </div>
+                  <div v-if="roiTabChannels.length >= 2 || roiStrictMode" class="roi-ch-toolbar">
+                    <el-button size="small" @click="openCopyRoiDialog">复制到其他通道</el-button>
+                    <el-button size="small" @click="fillRoiFromBaseline">填充通用形状</el-button>
+                    <span class="roi-ch-hint">
+                      {{ roiStrictMode
+                        ? '逐通道模式: 各通道独立绘制与判定, 未绘制通道不会触发本规则 (保存前会提示)'
+                        : '点击通道名开始逐通道绘制 (未进入 = 所有绑定通道共用同一份形状)' }}
+                    </span>
+                  </div>
                   <RoiPolygonEditor
                     v-model="form.conditions.region.config.roiPolygon"
                     :background-image-url="roiBackgroundUrl"
@@ -1307,6 +1335,35 @@
       <template #footer><el-button @click="showDryRunDialog = false">关闭</el-button></template>
     </el-dialog>
 
+    <!-- ===== [ROI-PER-CHANNEL 2026-09-12] 逐通道形状复制对话框 ===== -->
+    <!-- 编辑链一环 (对标海康"参数复制到其他通道"): 编辑抽屉为 append-to-body, 本弹窗同 -->
+    <el-dialog v-model="showCopyRoiDialog" title="复制当前通道形状到其他通道" width="440px" destroy-on-close append-to-body>
+      <el-form label-position="top">
+        <el-form-item label="目标通道 (可多选)">
+          <!-- [UX-UNPAINTED 2026-09-12] 批量提效: 一键勾选全部未绘通道 (追加式) -->
+          <div style="margin-bottom:4px">
+            <el-button size="small" link type="primary" @click="copyTargetsSelectUnpainted">一键勾选全部未绘通道</el-button>
+          </div>
+          <el-checkbox-group v-model="copyRoiTargets">
+            <el-checkbox v-for="t in copyRoiOptions" :key="t.value" :value="t.value" style="display:block; margin:4px 0">
+              {{ t.label }} <span :style="{ color: isChannelUnpainted(t.value) ? 'var(--el-color-danger, #f56c6c)' : undefined }">({{ roiPackBadge(t.value) }})</span>
+            </el-checkbox>
+          </el-checkbox-group>
+          <p class="cond-hint" v-if="copyRoiOptions.length === 0">无其他通道可复制 (请先在绑定通道/关联通道中添加)</p>
+        </el-form-item>
+        <el-form-item label="复制方式">
+          <el-radio-group v-model="copyRoiMode">
+            <el-radio value="overwrite">覆盖目标通道已绘形状</el-radio>
+            <el-radio value="append">追加到目标通道 (保留原形状)</el-radio>
+          </el-radio-group>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showCopyRoiDialog = false">取消</el-button>
+        <el-button type="primary" @click="confirmCopyRoi">确定复制</el-button>
+      </template>
+    </el-dialog>
+
     <!-- ===== 模板库对话框 ===== -->
     <el-dialog v-model="showTemplateDialog" title="规则模板库" width="900px" destroy-on-close>
       <div v-loading="templateLoading">
@@ -1476,8 +1533,10 @@ import { linkageApi, ACTION_TYPE_MAP, ACTION_TYPE_REVERSE_MAP, getTargetForActio
 import { regionApi } from '@/api/region'  // [FIX 2026-08-28] 画板绊线自动创建 (createTripwireWithMirror)
 import type { LinkageRule, LinkageAction, LinkageLog, ActionLogEntry, TimeTemplate, LinkagePlan, CEPPattern, ConditionNode, RuleConflict, RuleTriggerStat } from '@/api/linkage'
 import { useLinkageOptions, type ChannelOption } from '@/composables/useLinkageOptions'
-// [FIX area-cascade-label 2026-09-11] 通道友好 label/回显反查兜底/区域收窄 纯函数 (自内联提取)
-import { friendlyChannelLabelOf, channelFallbackLabel, narrowSnapshotChannels, filterChannelsByLocation } from '@/composables/useFriendlyChannelLabel'
+// [FIX area-cascade-label 2026-09-11] 通道友好 label/回显反查兑底/区域收窄 纯函数 (自内联提取)
+// [FIX ghost-chan 2026-09-12] locationFilterKind: 位置树节点类型判定 (区域/设备),
+//   设备节点时已选绑定通道严格跟随收窄 (消除幽灵通道)
+import { friendlyChannelLabelOf, channelFallbackLabel, narrowSnapshotChannels, filterChannelsByLocation, locationFilterKind } from '@/composables/useFriendlyChannelLabel'
 // [FIX area-cascade-label 2026-09-11] 目录反查 (fallback 四段降级中段; 首调懒加载目录)
 import { devNameOf, chNameOf } from '@/composables/useAlarmDeviceLabel'
 import { deviceApi } from '@/api/device'   // [AREA-CASCADE 2026-09-11] 级联树设备名解析
@@ -1807,7 +1866,16 @@ const snapshotChannelOptions = computed(() => {
     //   名单/绑定维度已由直滤+extras 完成, narrowSnapshotChannels 仅负责
     //   label 友好化 + 当前快照值池外 fallback 注入
     const known = new Set(locFiltered.map(c => c.value))
-    const extras = cameraChannelOptions.value.filter(ch => boundChannelDraft.value.includes(ch.value) && !known.has(ch.value))
+    // [FIX ghost-chan 2026-09-12] 设备节点: extras 不再注入已绑草稿中的外部设备通道
+    //   (快照背景下拉同步严格); channelId 池外兑底保留 — 快照背景单选回显契约,
+    //   避免旧规则底图/ROI 丢失副作用, 非告警圈定语义
+    const extras = locationFilterKind(
+      form.conditions.region.config.location,
+      areaByIdMap.value,
+      deviceGroups.value.map(g => g.device_ids || []),
+    ) === 'device'
+      ? []
+      : cameraChannelOptions.value.filter(ch => boundChannelDraft.value.includes(ch.value) && !known.has(ch.value))
     return narrowSnapshotChannels(
       [...locFiltered, ...extras],
       [],
@@ -1855,6 +1923,15 @@ const boundChannelOptions = computed<ChannelOption[]>(() => {
     deviceGroups.value.map(g => g.device_ids || []),
   )
   let list: ChannelOption[]
+  // [FIX ghost-chan 2026-09-12] 设备节点: 严格只保留该设备名下通道 — 已绑定草稿
+  //   中的外部通道不注入 draftExtras/fallbacks (拉平历史 bound_channel_ids 里
+  //   区域维度/级联勾选并入的跨设备值); 草稿本体由 location watch 跟随收窄,
+  //   下拉/tag/保存三层数据一致
+  const isDeviceLoc = locationFilterKind(
+    form.conditions.region.config.location,
+    areaByIdMap.value,
+    deviceGroups.value.map(g => g.device_ids || []),
+  ) === 'device'
   if (locFiltered) {
     list = locFiltered
   } else {
@@ -1866,6 +1943,10 @@ const boundChannelOptions = computed<ChannelOption[]>(() => {
     } else {
       list = pool
     }
+  }
+  if (isDeviceLoc) {
+    // 设备节点严格集: 草稿已跟随收窄, 无需 extras/兑底 (防御: 池未就绪窗口期也不放行外部通道)
+    return [...list.map(ch => ({ ...ch, label: friendlyChannelLabel(ch) }))]
   }
   const known = new Set(list.map(c => c.value))
   const draftExtras = pool.filter(ch => draft.includes(ch.value) && !known.has(ch.value))
@@ -1971,6 +2052,213 @@ const roiOptions = ['全部区域', '周界线A', '绊线B', '区域C']
 // 改为解析 url 后预加载校验 (nginx 已 alias /snapshots/ → /data/shield/snapshots/);
 // ZLM getSnap 偶发产出 0 字节 JPEG (~3%), 加载失败自动重试一次。
 const roiBackgroundUrl = ref('')
+
+// ═══ [ROI-PER-CHANNEL 2026-09-12] 逐通道绘制状态 (海康式多通道 ROI) ═══
+// 背景: 原规则级 roi_shapes_json 一份几何对全部绑定通道统一判定 — 不同视角
+//   坐标含义不同 → 误报/漏报; 无逐通道绘制入口。对标海康/大华/华为端侧智能
+//   事件 (ROI 是视角相关资产, per-channel 独立绘制, 不绘制不告警) + NVIDIA
+//   per-stream ROI / AXIS per-camera profile。
+// 语义: 专用优先通用回退 — roi_shapes_by_channel 非空 = 严格模式 (仅已绘制
+//   通道触发); 空/缺失 = 通用模式 (存量规则零变更)。后端契约见 LinkageEngine.h。
+// 本组状态: roiByChannel = 通道基准码 → 形状包 (list/combine/tripwire_refs);
+//   roiTouched = 本次会话显式编辑过的通道; roiEchoed = 规则回显的已绘通道
+//   (两者并集 = 保存时序列化集); roiGeneralBaseline = 进入逐通道前冻结的通用
+//   基线 (回填"填充通用形状" + 回滚旧二进制的 roi_shapes_json 字段)。
+interface RoiChannelPack {
+  list: RoiData[]
+  combine: 'union' | 'intersection'
+  tripwireRefs: Array<{ id: string; direction: string }>
+}
+const roiByChannel = ref<Record<string, RoiChannelPack>>({})
+const roiTouched = ref(new Set<string>())
+const roiEchoed = ref(new Set<string>())
+const roiGeneralBaseline = ref<RoiData[]>([])
+/** 当前激活的通道页签 (基准码; '' = 未进入逐通道交互) */
+const activeRoiChannel = ref('')
+/** 程序性赋值抑制标记: 切换通道/回显/复制等写入 roiPolygon 时不误标 touched */
+let roiSuppressTouch = false
+/** 通道基准码 (剥 _chN 后缀; 与后端 channelBaseCode / stripChSuffix 同口径) */
+const roiBaseOf = (ch: string) => String(ch || '').replace(/_ch\d+$/, '')
+const roiClone = <T,>(v: T): T => JSON.parse(JSON.stringify(v))
+/** 通道页签集: 绑定通道 ∪ 快照通道 ∪ 已序列化/回显通道 (基准码去重) */
+const roiTabChannels = computed<Array<{ value: string; label: string }>>(() => {
+  const seen = new Map<string, string>()
+  const push = (raw: string) => {
+    const base = roiBaseOf(raw)
+    if (base && !seen.has(base)) seen.set(base, '')
+  }
+  for (const c of form.conditions.region.config.boundChannelIds || []) push(String(c))
+  push(String(form.conditions.region.config.channelId || ''))
+  for (const k of roiEchoed.value) push(k)
+  for (const k of roiTouched.value) push(k)
+  const labeled = [...seen.keys()].map(base => {
+    const hit = [...boundChannelOptions.value, ...snapshotChannelOptions.value]
+      .find(o => roiBaseOf(String(o.value)) === base)
+    return { value: base, label: hit?.label || base }
+  })
+  return labeled
+})
+/** 严格模式 (逐通道生效): 回显含 by_channel 或本次会话有触碰 */
+const roiStrictMode = computed(() => roiEchoed.value.size > 0 || roiTouched.value.size > 0)
+/** 保存序列化集 = 回显通道 ∪ 本次触碰通道 */
+const roiSerializeKeys = computed(() => new Set<string>([...roiEchoed.value, ...roiTouched.value]))
+/** 页签徽标: 已绘形状数 (区域类+绊线) / 未绘 */
+/** 通道"激活且可判定"形状计数 (与引擎 hasActiveActionableShape 同口径:
+ *  区域类/绊线且 is_active; point 仅回显不计数) — badge 与未绘警示共用 */
+function roiActiveActionableCount(base: string): number {
+  const list = base === activeRoiChannel.value
+    ? form.conditions.region.config.roiPolygon
+    : (roiByChannel.value[base]?.list || [])
+  return list.filter(r => r.is_active && (AREA_ROI_TYPES.includes(r.roi_type) || r.roi_type === 'tripwire')).length
+}
+function roiPackBadge(base: string): string {
+  const n = roiActiveActionableCount(base)
+  return n > 0 ? `已绘 ${n}` : '未绘'
+}
+/** [UX-UNPAINTED 2026-09-12] 未绘通道判定 (页签红标 + 复制对话框快捷全选共用) */
+function isChannelUnpainted(base: string): boolean {
+  return roiActiveActionableCount(base) === 0
+}
+/** 一键勾选全部未绘通道 (追加式, 不清已有勾选) — 复制工具批量提效 */
+function copyTargetsSelectUnpainted() {
+  const unpainted = copyRoiOptions.value.filter(t => isChannelUnpainted(t.value)).map(t => t.value)
+  copyRoiTargets.value = Array.from(new Set([...copyRoiTargets.value, ...unpainted]))
+  if (unpainted.length === 0) ElMessage.info('没有未绘制的其他通道')
+}
+/** 当前工作副本 → 存档到激活通道包 (保留 tripwire_refs) */
+function roiSyncWorkCopyToPack() {
+  const key = activeRoiChannel.value
+  if (!key) return
+  const prev = roiByChannel.value[key]
+  roiByChannel.value[key] = {
+    list: roiClone(form.conditions.region.config.roiPolygon),
+    combine: form.conditions.region.config.roiCombine,
+    tripwireRefs: prev?.tripwireRefs || [],
+  }
+}
+/** 激活逐通道模式 (幂等): 设置激活通道 + 首次进入时冻结通用基线 */
+function roiEnsureActive(base: string) {
+  if (!base) return
+  if (!roiStrictMode.value && !activeRoiChannel.value) {
+    // 首次进入逐通道: 冻结当前画布为通用基线 (回滚旧二进制 + 填充来源);
+    //   已回显的通用基线 (roi_shapes_json) 不覆盖
+    if (roiGeneralBaseline.value.length === 0) {
+      roiGeneralBaseline.value = roiClone(form.conditions.region.config.roiPolygon)
+    }
+  }
+  activeRoiChannel.value = base
+}
+/** 切换通道页签: 存档当前工作副本 → 载入目标包 (无包则继承通用基线副本) */
+async function switchRoiChannel(target: string) {
+  const base = roiBaseOf(target)
+  if (!base || base === activeRoiChannel.value) return
+  roiSyncWorkCopyToPack()
+  roiEnsureActive(base)
+  roiSuppressTouch = true
+  const pack = roiByChannel.value[base]
+  // [ROI-PER-CHANNEL 2026-09-12] 严格模式未绘通道 → 空画布 (未绘=不触发, 不给通用
+  //   基线误导, 与回显口径一致); 首次进入 (非严格) → 通用基线副本作起点 (迁移便利,
+  //   后续可继续调整或用「填充通用形状」显式回填)
+  form.conditions.region.config.roiPolygon = pack
+    ? roiClone(pack.list)
+    : (roiStrictMode.value ? [] : roiClone(roiGeneralBaseline.value))
+  form.conditions.region.config.roiCombine = pack?.combine || 'union'
+  // 关联通道(快照背景) 跟随页签 — 底图与工作副本一致 (旧 watch 链 @change 失效, 手动加载)
+  if (form.conditions.region.config.channelId !== base) {
+    form.conditions.region.config.channelId = base
+    await loadChannelSnapshot(base)
+  }
+  await nextTick()
+  roiSuppressTouch = false
+}
+/** 关联通道下拉变更: 载入快照底图 + 逐通道模式下同步激活页签 (画布与底图一致) */
+async function onRegionChannelChange(val: string) {
+  await loadChannelSnapshot(val)
+  if (roiStrictMode.value) {
+    const base = roiBaseOf(String(val || ''))
+    if (base && base !== activeRoiChannel.value) await switchRoiChannel(base)
+  }
+}
+/** 标记当前激活通道已编辑 (watch roiPolygon 触发, 供保存序列化) */
+function roiMarkTouched() {
+  const key = activeRoiChannel.value
+  if (!key) return
+  roiTouched.value.add(key)  // reactive Set: 就地变更即可触发依赖
+  roiSyncWorkCopyToPack()
+}
+// 逐通道数据清除 → 回通用模式 (保存后 roi_shapes_by_channel 发空串)
+async function clearRoiPerChannel() {
+  try {
+    await ElMessageBox.confirm(
+      '清除后本规则回到「通用区域」模式: 所有绑定通道共用同一份形状 (roi_shapes_json); 逐通道已绘数据将丢失。确定清除?',
+      '清除逐通道绘制', { type: 'warning', confirmButtonText: '清除', cancelButtonText: '取消' })
+  } catch { return }
+  roiByChannel.value = {}
+  roiTouched.value.clear()
+  roiEchoed.value.clear()
+  activeRoiChannel.value = ''
+  roiSuppressTouch = true
+  form.conditions.region.config.roiPolygon = roiClone(roiGeneralBaseline.value)
+  form.conditions.region.config.roiCombine = 'union'
+  await nextTick()
+  roiSuppressTouch = false
+  ElMessage.success('已清除逐通道数据 (保存规则后回到通用模式)')
+}
+// ── 复制到其他通道 / 填充通用形状 ──
+const showCopyRoiDialog = ref(false)
+const copyRoiTargets = ref<string[]>([])
+const copyRoiMode = ref<'overwrite' | 'append'>('overwrite')
+const copyRoiOptions = computed(() =>
+  roiTabChannels.value.filter(t => t.value !== activeRoiChannel.value))
+function openCopyRoiDialog() {
+  if (!activeRoiChannel.value) {
+    roiEnsureActive(roiBaseOf(form.conditions.region.config.channelId) || roiTabChannels.value[0]?.value || '')
+  }
+  if (!activeRoiChannel.value) { ElMessage.warning('请先选择关联通道/绑定通道后再复制'); return }
+  copyRoiTargets.value = []
+  copyRoiMode.value = 'overwrite'
+  showCopyRoiDialog.value = true
+}
+function confirmCopyRoi() {
+  if (copyRoiTargets.value.length === 0) { ElMessage.warning('请勾选目标通道'); return }
+  roiMarkTouched()  // 确认复制才真正进入逐通道模式 (取消关闭不改变模式)
+  const src = roiByChannel.value[activeRoiChannel.value] || {
+    list: roiClone(form.conditions.region.config.roiPolygon),
+    combine: form.conditions.region.config.roiCombine,
+    tripwireRefs: [],
+  }
+  for (const t of copyRoiTargets.value) {
+    const key = roiBaseOf(t)
+    if (!key || key === activeRoiChannel.value) continue
+    const prev = roiByChannel.value[key]
+    const base = copyRoiMode.value === 'append' && prev ? prev.list : []
+    roiByChannel.value[key] = {
+      list: [...roiClone(base), ...roiClone(src.list)],
+      combine: copyRoiMode.value === 'append' && prev ? prev.combine : src.combine,
+      tripwireRefs: copyRoiMode.value === 'append' && prev ? prev.tripwireRefs : [],
+    }
+    roiTouched.value.add(key)
+  }
+  ElMessage.success(`已复制到 ${copyRoiTargets.value.length} 个通道`)
+  showCopyRoiDialog.value = false
+}
+function fillRoiFromBaseline() {
+  if (!activeRoiChannel.value) {
+    roiEnsureActive(roiBaseOf(form.conditions.region.config.channelId) || roiTabChannels.value[0]?.value || '')
+  }
+  if (!activeRoiChannel.value) return
+  if (roiGeneralBaseline.value.length === 0) { ElMessage.warning('当前没有可填充的通用形状 (通用画布为空)'); return }
+  roiSuppressTouch = true
+  form.conditions.region.config.roiPolygon = roiClone(roiGeneralBaseline.value)
+  form.conditions.region.config.roiCombine = 'union'
+  roiSuppressTouch = false
+  roiMarkTouched()
+  ElMessage.success('已填充通用形状 (可继续调整)')
+}
+// [FIX tdz 2026-09-12] 画板 roiPolygon watch 已投至 form 声明之后 (guard-badge watch 旁):
+//   watch 建立即同步取 source 初值, 此处 form 未初始化 → TDZ 崩溃 /linkage 白屏
+//   (同 09-10 boundChannelDraft watch 先例; 本文件多处注释已沉淀该陷阱)
+
 
 // [ROI-GAP 2026-09-06] 区域类形状 (引擎 matchRoiShapes pointInPolygon 判定,
 //   组合语义作用域): 绊线走 tripwire_id 镜像链路, 关注点仅持久化回显不参与
@@ -2472,6 +2760,40 @@ const form = reactive({
 //   Vue watch 建立即同步取 source 初值, boundChannelDraft getter 读 form,
 //   声明顺序错误 = setup 崩溃。挂载后回填/勾选/重置均自然触发刷新。
 watch(boundChannelDraft, () => { refreshGuardStates() })
+
+// [FIX tdz 2026-09-12] 画板 roiPolygon 变更 → 标记当前激活通道 (自 form 前投至此, TDZ 修复);
+//   程序性赋值经 roiSuppressTouch 抑制
+watch(() => form.conditions.region.config.roiPolygon, () => {
+  if (roiSuppressTouch) return
+  if (!activeRoiChannel.value) return  // 未进入逐通道交互 → 保持通用模式 (存量行为零变更)
+  roiMarkTouched()
+}, { deep: true })
+
+// [FIX ghost-chan 2026-09-12] 物理位置选设备节点 → 已绑通道跟随收窄 (幽灵通道治本):
+//   boundChannelOptions 只治「下拉选项」层, 历史草稿 (区域维度/级联勾选并集保存的
+//   跨设备值) 若不同步收窄, tag 裸显 GB 串且保存链照旧写入 — UI 与规则圈定不一致。
+//   严格契约: 设备节点 = 该设备名下通道 (双形态归一: 子码流形态值映射回池内
+//   主形态 option value, 同物理通道只留一项); 区域节点/未选/旧版值不干预 (现状不变)。
+//   防误伤: 池未就绪 (编辑回显早期 fetchOptions 未完成) 跳过, 选项就绪后用户
+//   下次改选位置时自然收齐; 回显本身不改草稿 (打开编辑器零静默变更)。
+watch(() => form.conditions.region.config.location, (loc) => {
+  const pool = channelOptionsDynamic.value
+  if (!pool.length) return
+  if (locationFilterKind(loc, areaByIdMap.value, deviceGroups.value.map(g => g.device_ids || [])) !== 'device') return
+  const filtered = filterChannelsByLocation(pool, loc, areaByIdMap.value, deviceGroups.value.map(g => g.device_ids || []))
+  if (!filtered?.length) return
+  const normByBase = new Map(filtered.map(c => [baseChannelId(c.value), c.value]))
+  const next: string[] = []
+  const seenBase = new Set<string>()
+  for (const v of boundChannelDraft.value) {
+    const b = baseChannelId(String(v))
+    const norm = normByBase.get(b)
+    if (norm && !seenBase.has(b)) { next.push(norm); seenBase.add(b) }
+  }
+  if (next.length !== boundChannelDraft.value.length || next.some((v, i) => v !== boundChannelDraft.value[i])) {
+    boundChannelDraft.value = next
+  }
+})
 const advancedCollapse = ref<string[]>([])
 
 // ── 高级条件模式 ──
@@ -3066,6 +3388,14 @@ function resetEditorState(rule: LinkageRule | null) {
   areaCascadeDeviceIds.value = new Set()
   areaCascadeChannelIds.value = new Set()
   nextTick(() => { restoringCascade.value = false })
+  // [ROI-PER-CHANNEL 2026-09-12] 逐通道状态清空 (编辑态稍后由回显重建; 新建态保持空)
+  //   suppress 覆盖整个 reset (回显/清空赋值不误标 touched), 函数尾 nextTick 释放
+  roiSuppressTouch = true
+  roiByChannel.value = {}
+  roiTouched.value = new Set()
+  roiEchoed.value = new Set()
+  roiGeneralBaseline.value = []
+  activeRoiChannel.value = ''
   vlmSuppressThreshold.value = typeof (rule as any)?.vlm_suppress_threshold === 'number' ? (rule as any).vlm_suppress_threshold : 0.85
   // [r25] 折叠默认收起条件中删除 enableVlmVerify/responseDeadlineS (这两项不再为用户主动配置,
   //   VLM 已默认启用 (新建 enableVlmVerify=true)、response_deadline_s 后端仅存不用, 不该在高级折叠里提示)
@@ -3125,14 +3455,60 @@ function resetEditorState(rule: LinkageRule | null) {
         return { list, combine }
       } catch { return empty }
     })()
+    // [ROI-PER-CHANNEL 2026-09-12] 逐通道回显: roi_shapes_by_channel 非空 → 重建通道包
+    //   (roiByChannel/roiEchoed); roi_shapes_json 保留为通用基线 (回滚旧二进制 +
+    //   "填充通用形状"来源)。损坏 JSON 退化通用模式 (存量行为)。
+    const byChPacksEcho: Record<string, RoiChannelPack> = {}
+    {
+      const rawByCh = (sc as any).roi_shapes_by_channel
+      if (typeof rawByCh === 'string' && rawByCh) {
+        try {
+          const m = JSON.parse(rawByCh)
+          if (m && typeof m === 'object' && !Array.isArray(m)) {
+            for (const k of Object.keys(m)) {
+              const e = (m as any)[k]
+              if (!e || typeof e !== 'object') continue
+              const arr = (Array.isArray(e.shapes) ? e.shapes : []) as Array<{ shape: string; name?: string; active?: boolean; direction?: string; points: number[] }>
+              const list = arr.filter(s => s && Array.isArray(s.points)).map((s, i) => ({
+                roi_id: `roi_ch_${Date.now()}_${i}`,
+                roi_name: s.name || `区域 ${i + 1}`,
+                roi_type: s.shape as RoiData['roi_type'],
+                polygon: s.points.map((v, k2) => Math.round(k2 % 2 === 0 ? v * 1920 : v * 1080)),
+                is_active: s.active !== false,
+                direction: (s.direction || undefined) as RoiData['direction'],
+              }))
+              const refs = Array.isArray(e.tripwire_refs)
+                ? e.tripwire_refs.filter((r: any) => r && r.id !== undefined && r.id !== null)
+                    .map((r: any) => ({ id: String(r.id), direction: String(r.direction || '') }))
+                : []
+              byChPacksEcho[k] = { list, combine: e.combine === 'intersection' ? 'intersection' : 'union', tripwireRefs: refs }
+            }
+          }
+        } catch { /* 损坏忽略 → 通用模式 */ }
+      }
+    }
+    roiByChannel.value = byChPacksEcho
+    roiEchoed.value = new Set(Object.keys(byChPacksEcho))
     // [FIX 2026-09-04 老规则通道反解] 记录编辑源规则 (深链竞态 watch 补偿用); bound_channel_ids
     //   缺失 (vp9 前存量规则) 时从 source_cond.channel_ids 哈希反解字符串形态 (绑定多选/快照通道回填来源)
     lastEditSource = rule
-    const hasSpatial = !!(sc.region_id || sc.location_id || sc.area_id || (sc as any).device_group_id || sc.roi_polygon?.length || sc.tripwire_id || sc.direction || (sc as any).bound_channel_ids?.length || (sc as any).roi_shapes_json)
+    const hasSpatial = !!(sc.region_id || sc.location_id || sc.area_id || (sc as any).device_group_id || sc.roi_polygon?.length || sc.tripwire_id || sc.direction || (sc as any).bound_channel_ids?.length || (sc as any).roi_shapes_json || (sc as any).roi_shapes_by_channel)
     const boundRaw = (((sc as any).bound_channel_ids as unknown[]) || []).map(String)
     const boundResolved = boundRaw.length > 0
       ? boundRaw
       : resolveChannelsFromHashes(((rule.source_cond || {}) as any).channel_ids)
+    // 激活通道 = 快照通道命中优先 (回显含该通道条目), 否则首个已绘通道; 无逐通道数据则 ''
+    const echoChannelId = ui?.region?.channelId || firstCameraChannel(boundResolved) || (/^\d{20}$/.test(sc.location_id || '') ? sc.location_id : '')
+    const echoChBase = roiBaseOf(echoChannelId)
+    const echoActive = roiEchoed.value.has(echoChBase) ? echoChBase
+      : (roiEchoed.value.size > 0 ? [...roiEchoed.value][0] : '')
+    activeRoiChannel.value = echoActive
+    roiGeneralBaseline.value = roiShapesEcho.list
+    // 工作副本: 激活通道包命中 → 用其形状; 未命中 (严格模式未绘通道) → 空画板
+    //   (未绘=不触发, 不给通用基线误导); 非逐通道模式 → 通用基线 (存量行为)
+    const workEcho = echoActive && byChPacksEcho[echoActive]
+      ? byChPacksEcho[echoActive]
+      : (echoActive ? { list: [] as RoiData[], combine: 'union' as const } : roiShapesEcho)
     form.conditions.region = {
       // [COND-PERSIST 2026-09-03] enabled/location/channelId 优先 ui 态 (channelId 后端无
       //   白名单字段, 唯一持久化途径; location 解决与 location.point 混写折叠)
@@ -3140,11 +3516,12 @@ function resetEditorState(rule: LinkageRule | null) {
       // [FIX 2026-08-27 P0-PERIMETER v3] tripwire + direction 从后端读出
       // [vp9 2026-09-01] bound_channel_ids 显式绑定通道回填 (字符串形态直存)
       // [FIX 2026-09-02] roiPolygon 从 roi_shapes_json 完整回显 (多形状/方向/角点)
+      // [ROI-PER-CHANNEL 2026-09-12] roiPolygon 换为"激活通道工作副本" (见 workEcho)
       // [ROI-SYNC 2026-09-08] channelId 三级兜底末位补 location_id (GB 20 位编码形态):
       //   模板导入规则 bound_channel_ids/ui_state 双空, 通道实际存 location_id
       //   (设备实锚: 徘徊规则 location_id=3402... 但画板关联通道空 → 保存时
       //   区域/绊线镜像拿不到通道而跳过, 算法配置区永远看不到镜像)。
-      config: { location: ui?.region?.location ?? (sc.location_id || ''), roi: sc.region_id || '', group: sc.area_id || (sc as any).device_group_id || '', roiPolygon: roiShapesEcho.list, channelId: ui?.region?.channelId || firstCameraChannel(boundResolved) || (/^\d{20}$/.test(sc.location_id || '') ? sc.location_id : ''), tripwireId: sc.tripwire_id || '', direction: sc.direction || '', boundChannelIds: boundResolved, roiCombine: roiShapesEcho.combine },
+      config: { location: ui?.region?.location ?? (sc.location_id || ''), roi: sc.region_id || '', group: sc.area_id || (sc as any).device_group_id || '', roiPolygon: workEcho.list, channelId: echoChannelId, tripwireId: sc.tripwire_id || '', direction: sc.direction || '', boundChannelIds: boundResolved, roiCombine: workEcho.combine },
     }
     form.conditions.location = {
       // [COND-PERSIST] enabled/point 优先 ui 态 (解决与 region.location 混写折叠)
@@ -3234,6 +3611,8 @@ function resetEditorState(rule: LinkageRule | null) {
     }
   }
 
+  // [ROI-PER-CHANNEL 2026-09-12] 释放回显期间的 touched 抑制 (nextTick 覆盖同拍 watch flush)
+  nextTick(() => { roiSuppressTouch = false })
 }
 
 // [FIX 2026-09-04 老规则通道反解] 编辑源规则快照 (深链竞态补偿 watch 用; 声明在 setup 顶层,
@@ -3456,6 +3835,36 @@ async function handleSave(): Promise<boolean> {
     //   存量兼容: 回显的 tripwireId (上次保存残留) 不再阻断同步 — 画板有绊线
     //   即同步 (否则老规则永久失同步, 实锚夜间周界入侵 tw=161); 同步后按
     //   新几何重新决策关联。仅画板无绊线时才保留显式选择不动。
+    // [ROI-PER-CHANNEL 2026-09-12] 保存前未绘通道警示 (海康式"不绘制不告警" —
+    //   防隐性破坏: 只画了部分通道就保存, 其余通道静默停触发。确认弹窗列名 +
+    //   "返回绘制"出口; 用户可继续=显式接受该通道不触发)。
+    //   先同步落袋工作副本, 保证序列化集/警示用最新画布状态。
+    roiSyncWorkCopyToPack()
+    if (rc.enabled && roiStrictMode.value && roiTabChannels.value.length >= 2) {
+      const effTypes = isTripwireRule.value ? [...AREA_ROI_TYPES, 'tripwire'] : AREA_ROI_TYPES
+      const unpainted = roiTabChannels.value.filter(t => {
+        const list = t.value === activeRoiChannel.value
+          ? rc.config.roiPolygon
+          : (roiByChannel.value[t.value]?.list || [])
+        return list.filter(r => r.is_active && effTypes.includes(r.roi_type)).length === 0
+      })
+      if (unpainted.length > 0) {
+        try {
+          await ElMessageBox.confirm(
+            `以下 ${unpainted.length} 个通道未绘制检测区/绊线: ${unpainted.map(u => u.label).join('、')}。` +
+            '保存后这些通道不会触发本规则 (对标海康"不绘制不告警"), 可用「复制到其他通道」或「填充通用形状」补齐。',
+            '存在未绘制通道', { type: 'warning', confirmButtonText: '继续保存', cancelButtonText: '返回绘制' })
+        } catch { return false }
+      }
+    }
+    // [ROI-PER-CHANNEL 2026-09-12] 逐通道同步单元: 严格模式逐通道 (激活通道用工作
+    //   副本, 其余用存档); 通用模式单通道 (关联通道 = 快照背景, 行为同旧版)。
+    const roiSyncUnits: Array<{ ch: string; list: RoiData[] }> = roiStrictMode.value
+      ? [...roiSerializeKeys.value].map(k => ({
+          ch: k,
+          list: k === activeRoiChannel.value ? rc.config.roiPolygon : (roiByChannel.value[k]?.list || []),
+        }))
+      : [{ ch: roiBaseOf(rc.config.channelId), list: rc.config.roiPolygon }]
     let effectiveTripwireId = isTripwireRule.value ? (rc.config.tripwireId || '') : ''
     // [FIX tw-route 2026-09-12] 非绊线消费事件: 不写库 + 全库清理历史残留
     //   (namePrefix 匹配, 含本规则旧名; 删除级联镜像对)。设备实锚: 「周界禁区
@@ -3485,12 +3894,13 @@ async function handleSave(): Promise<boolean> {
         }
       } catch { /* 清理失败不阻断保存主链 */ }
     }
-    const drawnTripwires = activeTwRois
-    if (drawnTripwires.length > 0) {
-      const chStr = (rc.config.channelId || '').replace(/_ch\d+$/, '')
-      if (!chStr) {
-        ElMessage.warning('画了绊线但未选"关联通道", 绊线未同步到算法库; 请选择通道后重新保存')
-      } else {
+    // [ROI-PER-CHANNEL 2026-09-12] 逐通道绊线同步 (原单通道链路按 roiSyncUnits
+    //   展开): 严格模式 → 各已绘通道分别同步并回写 tripwire_refs (引擎白名单);
+    //   通用模式 → 单 unit (关联通道), 行为与旧版一致。
+    let totSynced = 0, totSkipped = 0, totDrawn = 0
+    const twUsedIds = new Set<string>()
+    const twRefsByChannel: Record<string, Array<{ id: string; direction: string }>> = {}
+    if (isTripwireRule.value) {
         // [FIX tw-route 2026-09-12] 写库 algo_id 按本规则事件消费算法推导 (与区域
         //   镜像同口径): boundary/客流/违停规则画的绊线进各自算法库, 插件才查得到;
         //   覆盖率未就绪短名兑底 (均未命中不回落 — 上游 isTripwireRule 门控已
@@ -3504,70 +3914,118 @@ async function handleSave(): Promise<boolean> {
           const res = await regionApi.listTripwires({})
           allTw = ((res.data as any)?.data?.tripwires ?? (res.data as any)?.tripwires ?? [])
         } catch { /* 查询失败按全新建 */ }
-        const mirrorOf = (mainId: any) => allTw.find((t: any) =>
+        const mirrorOf = (mainId: any, ch: string) => allTw.find((t: any) =>
           String(t.channel_id_str || '').endsWith('_ch0')
-          && String(t.channel_id_str || '').replace(/_ch\d+$/, '') === chStr
+          && String(t.channel_id_str || '').replace(/_ch\d+$/, '') === ch
           && String(t.algo_id || '') === twAlgoId
           && String(t.name) === String(allTw.find((m: any) => String(m.id) === String(mainId))?.name ?? '###'))
         const normPt1920 = (arr: number[]): [number, number] =>
           [arr[0] > 1.5 ? arr[0] / 1920 : arr[0], arr[1] > 1.5 ? arr[1] / 1080 : arr[1]]
         const namePrefix = `${form.name || '规则'}_绊线`
-        let synced = 0, skipped = 0
-        const idByIndex: string[] = []
-        for (let i = 0; i < drawnTripwires.length; i++) {
-          const r = drawnTripwires[i]
-          const p = r.polygon || []
-          if (p.length < 4) continue
-          // 0-1920 画布域 → 0-1 归一化 (写侧统一口径)
-          const pa: [number, number] = [p[0] / 1920, p[1] / 1080]
-          const pb: [number, number] = [p[2] / 1920, p[3] / 1080]
-          const dirLower = String(r.direction || '').toLowerCase()
-          const direction = dirLower === 'a_to_b' ? 'a_to_b' : dirLower === 'b_to_a' ? 'b_to_a' : 'both'
-          // name 防重: 老形态首条无序号, 新形态带序号 (画板列表顺序稳定)
-          const cand = allTw.find((t: any) => !String(t.channel_id_str || '').endsWith('_ch0')
-            && String(t.channel_id_str || '').replace(/_ch\d+$/, '') === chStr
-            && String(t.algo_id || '') === twAlgoId
-            && (t.name === (i === 0 ? namePrefix : `${namePrefix}_${i + 1}`) || t.name === `${namePrefix}_${i + 1}`))
-          if (cand) {
-            const oldA = normPt1920(Array.isArray(cand.point_a) ? cand.point_a : [0, 0])
-            const oldB = normPt1920(Array.isArray(cand.point_b) ? cand.point_b : [0, 0])
-            const drift = Math.abs(oldA[0] - pa[0]) > 0.002 || Math.abs(oldA[1] - pa[1]) > 0.002
-              || Math.abs(oldB[0] - pb[0]) > 0.002 || Math.abs(oldB[1] - pb[1]) > 0.002
-            const dirChanged = String(cand.direction || 'both') !== direction
-            if (!drift && !dirChanged && cand.enabled !== false) { skipped++; idByIndex[i] = String(cand.id); continue }
-            // 漂移更新: 主形态 + 镜像同步 (插件按 _ch0 查询, 只改主不生效)
-            try {
-              await regionApi.upsertTripwire({ ...cand, point_a: pa, point_b: pb, direction, enabled: r.is_active !== false } as any)
-              const mir = mirrorOf(cand.id)
-              if (mir) await regionApi.upsertTripwire({ ...mir, point_a: pa, point_b: pb, direction, enabled: r.is_active !== false } as any)
-              synced++; idByIndex[i] = String(cand.id)
-            } catch (e: any) {
-              ElMessage.error(`绊线「${r.roi_name || i + 1}」同步失败: ${e?.message ?? e}`)
-              idByIndex[i] = String(cand.id)  // [FIX tw-route] 同步失败不误清理 (画板意图保留)
-            }
-          } else {
-            try {
-              const newId = await regionApi.createTripwireWithMirror({
-                channel_id: 0,
-                channel_id_str: chStr,
-                algo_id: twAlgoId,
-                name: drawnTripwires.length === 1 ? namePrefix : `${namePrefix}_${i + 1}`,
-                point_a: pa,
-                point_b: pb,
-                direction,
-                enabled: true,
-              })
-              synced++; idByIndex[i] = String(newId)
-            } catch (e: any) {
-              ElMessage.error(`绊线创建失败: ${e?.message ?? e} (规则仍会保存)`)
+        for (const unit of roiSyncUnits) {
+          const chStr = unit.ch
+          const drawnTripwires = unit.list.filter(r => r.is_active && r.roi_type === 'tripwire')
+          if (drawnTripwires.length === 0) {
+            // [ROI-PER-CHANNEL 2026-09-12] 本通道画板无绊线 → refs 清空 (防 stale:
+            //   用户删光绊线后旧 refs 仍指向已删 id → 该通道绊线事件永不命中;
+            //   空 refs = 不设绊线门槛, 与"未画绊线不设限"语义一致)
+            if (roiStrictMode.value && chStr) twRefsByChannel[chStr] = []
+            continue
+          }
+          totDrawn += drawnTripwires.length
+          if (!chStr) {
+            ElMessage.warning('画了绊线但未选"关联通道", 绊线未同步到算法库; 请选择通道后重新保存')
+            continue
+          }
+          let synced = 0, skipped = 0
+          const idByIndex: string[] = []
+          for (let i = 0; i < drawnTripwires.length; i++) {
+            const r = drawnTripwires[i]
+            const p = r.polygon || []
+            if (p.length < 4) continue
+            // 0-1920 画布域 → 0-1 归一化 (写侧统一口径)
+            const pa: [number, number] = [p[0] / 1920, p[1] / 1080]
+            const pb: [number, number] = [p[2] / 1920, p[3] / 1080]
+            const dirLower = String(r.direction || '').toLowerCase()
+            const direction = dirLower === 'a_to_b' ? 'a_to_b' : dirLower === 'b_to_a' ? 'b_to_a' : 'both'
+            // name 防重: 老形态首条无序号, 新形态带序号 (画板列表顺序稳定)
+            const cand = allTw.find((t: any) => !String(t.channel_id_str || '').endsWith('_ch0')
+              && String(t.channel_id_str || '').replace(/_ch\d+$/, '') === chStr
+              && String(t.algo_id || '') === twAlgoId
+              && (t.name === (i === 0 ? namePrefix : `${namePrefix}_${i + 1}`) || t.name === `${namePrefix}_${i + 1}`))
+            if (cand) {
+              const oldA = normPt1920(Array.isArray(cand.point_a) ? cand.point_a : [0, 0])
+              const oldB = normPt1920(Array.isArray(cand.point_b) ? cand.point_b : [0, 0])
+              const drift = Math.abs(oldA[0] - pa[0]) > 0.002 || Math.abs(oldA[1] - pa[1]) > 0.002
+                || Math.abs(oldB[0] - pb[0]) > 0.002 || Math.abs(oldB[1] - pb[1]) > 0.002
+              const dirChanged = String(cand.direction || 'both') !== direction
+              if (!drift && !dirChanged && cand.enabled !== false) { skipped++; idByIndex[i] = String(cand.id); continue }
+              // 漂移更新: 主形态 + 镜像同步 (插件按 _ch0 查询, 只改主不生效)
+              try {
+                await regionApi.upsertTripwire({ ...cand, point_a: pa, point_b: pb, direction, enabled: r.is_active !== false } as any)
+                const mir = mirrorOf(cand.id, chStr)
+                if (mir) await regionApi.upsertTripwire({ ...mir, point_a: pa, point_b: pb, direction, enabled: r.is_active !== false } as any)
+                synced++; idByIndex[i] = String(cand.id)
+              } catch (e: any) {
+                ElMessage.error(`绊线「${r.roi_name || i + 1}」(通道 ${chStr}) 同步失败: ${e?.message ?? e}`)
+                idByIndex[i] = String(cand.id)  // [FIX tw-route] 同步失败不误清理 (画板意图保留)
+              }
+            } else {
+              try {
+                const newId = await regionApi.createTripwireWithMirror({
+                  channel_id: 0,
+                  channel_id_str: chStr,
+                  algo_id: twAlgoId,
+                  name: drawnTripwires.length === 1 ? namePrefix : `${namePrefix}_${i + 1}`,
+                  point_a: pa,
+                  point_b: pb,
+                  direction,
+                  enabled: true,
+                })
+                synced++; idByIndex[i] = String(newId)
+              } catch (e: any) {
+                ElMessage.error(`绊线创建失败 (通道 ${chStr}): ${e?.message ?? e} (规则仍会保存)`)
+              }
             }
           }
+          // [ROI-PER-CHANNEL 2026-09-12] 回写本通道绊线引用 (引擎严格模式白名单):
+          //   id + 方向 (大写形态; 空 = 不约束方向)。同步失败槽位跳过 (refs 空
+          //   → 引擎不约束, 防误杀 — 契约见 LinkageEngine.h)。
+          const refs: Array<{ id: string; direction: string }> = []
+          for (let i = 0; i < drawnTripwires.length; i++) {
+            if (!idByIndex[i]) continue
+            const dUpper = String(drawnTripwires[i].direction || '').toUpperCase()
+            if (!refs.some(x => x.id === idByIndex[i])) refs.push({ id: idByIndex[i], direction: dUpper })
+          }
+          twRefsByChannel[chStr] = refs
+          for (const id of idByIndex) if (id) twUsedIds.add(String(id))
+          totSynced += synced; totSkipped += skipped
+          // tripwire_id 决策 (单值兼容字段; 严格模式引擎走 refs 白名单, 此值仅回显):
+          //   仅激活通道 (或通用模式单通道) 参与, 防多通道轮转时末位覆盖。
+          if (chStr === activeRoiChannel.value || !roiStrictMode.value) {
+            if (drawnTripwires.length === 1 && idByIndex[0]) {
+              effectiveTripwireId = idByIndex[0]
+            } else if (drawnTripwires.length > 1) {
+              effectiveTripwireId = ''
+            }
+          }
+          if (drawnTripwires.length > 1) {
+            ElMessage.info(`通道 ${chStr} 已同步 ${synced} 条绊线 (共 ${drawnTripwires.length} 条, 规则不限具体绊线, 任一触发)`)
+          }
         }
-        // [FIX tw-route 2026-09-12] 画板 → 库 diff 清理: 本规则 namePrefix 名下
-        //   未出现在本次同步集合的残留删除 (画板删线/改名旧名/改绑通道旧通道),
+        // [ROI-PER-CHANNEL 2026-09-12] 严格模式: refs 回写通道包 (序列化段组装
+        //   roi_shapes_by_channel 时读取; 无绊线绘制的通道保留回显 refs 不动)
+        if (roiStrictMode.value) {
+          for (const [ch, refs] of Object.entries(twRefsByChannel)) {
+            const pack = roiByChannel.value[ch]
+            if (pack) pack.tripwireRefs = refs
+          }
+        }
+        // [FIX tw-route 2026-09-12] 画板 → 库 diff 清理 (跨通道): 本规则 namePrefix
+        //   名下未出现在本次同步集合的残留删除 (画板删线/改名旧名/改绑通道旧通道),
         //   级联镜像对。算法页手工线名字不带规则名前缀, 不受影响。
         {
-          const usedIds = new Set(idByIndex.filter(Boolean).map(String))
+          const usedIds = twUsedIds
           const stalePfxs = new Set<string>([namePrefix])
           if (editRuleId.value && lastEditSource?.name && String(lastEditSource.name) !== form.name) {
             stalePfxs.add(`${String(lastEditSource.name)}_绊线`)
@@ -3591,20 +4049,13 @@ async function handleSave(): Promise<boolean> {
           }
           if (cleanedTw > 0) ElMessage.info(`已清理 ${cleanedTw} 条画板外残留绊线`)
         }
-        // tripwire_id 关联: 恰 1 条关联该条; 多条留空 (不限绊线, 任一触发)
-        if (drawnTripwires.length === 1 && idByIndex[0]) {
-          effectiveTripwireId = idByIndex[0]
-        } else if (drawnTripwires.length > 1) {
-          effectiveTripwireId = ''
-          ElMessage.info(`已同步 ${synced} 条绊线 (共 ${drawnTripwires.length} 条, 规则不限具体绊线, 任一触发)`)
-        } else if (synced > 0) {
+        if (totSynced > 0) {
           ElMessage.success('绊线已同步到算法库 (插件最多 5 分钟自动加载)')
         }
-        if (skipped > 0 && synced === 0 && drawnTripwires.length > 1) {
-          ElMessage.info(`${skipped} 条绊线无变化, 未重复同步`)
+        if (totSkipped > 0 && totSynced === 0 && totDrawn > 1) {
+          ElMessage.info(`${totSkipped} 条绊线无变化, 未重复同步`)
         }
         tripwireOptions.value = []  // 失效缓存, 下次 focus 重新加载
-      }
     }
     // [ROI-SYNC 2026-09-08] 画板区域形状 → 镜像到算法区域库 (RegionStore):
     //   事件规则与算法配置此前双 SSOT 不互通 (规则画区域只存 roi_shapes_json,
@@ -3613,80 +4064,96 @@ async function handleSave(): Promise<boolean> {
     //   (同引擎判定语义); point 关注点不镜像 (无判定语义)。
     //   防重: 按 name 匹配 — 命中且几何+类型一致跳过, 漂移则 upsert 更新
     //   (保留原 id/algo 形态, 避免重复堆积)。
+    // [ROI-PER-CHANNEL 2026-09-12] 按 roiSyncUnits 逐通道展开 (与上方绊线同步同
+    //   单元口径): 严格模式 → 每个已绘通道各自镜像+diff 清理; 通用模式 → 单
+    //   unit (关联通道), 行为与旧版一致。algo_id 为规则级推导 (事件类型决定),
+    //   移出循环多通道共享。
     if (rc.enabled) {
-      const drawnAreas = rc.config.roiPolygon.filter(r => r.is_active &&
-        (r.roi_type === 'detection_zone' || r.roi_type === 'exclusion_zone' || r.roi_type === 'rectangle'))
-      const areaChStr = (rc.config.channelId || '').replace(/_ch\d+$/, '')
-      // [FIX roi-sync-delete 2026-09-11] 镜像补删除分支 (用户报告: 规则页删掉的区域
-      //   跨页复活/删不掉最后 1 个): 原镜像只增不删 — 画板删掉的区域在 RegionStore
-      //   永久残留, 算法配置页/布防判定/插件弹窗继续消费 = 「删除了还在弹」。
-      //   现对齐算法页 onRegionsChange diff 先例: 保存时以画板名单为 SSOT,
-      //   同通道同形态 (algo_id === areaAlgoId) 的孤儿区域一并清理;
-      //   空画板保存 = 全清 (drawnAreas.length > 0 短路解除)。
-      //   防误删: 仅清理规则镜像形态 (algo_id 精确等值), 算法页手工画的其他
-      //   算法区域不动; 停用残留不查 (include_disabled 默认 false) 边界留待后续。
-      if (drawnAreas.length > 0 && !areaChStr) {
-        ElMessage.warning('画了区域但未选"关联通道", 区域未同步到算法库; 请选择通道后重新保存')
-      } else if (areaChStr) {
-          // algo_id 推导: 覆盖率矩阵优先, 兜底事件类型裸短 id (与区域库存量形态一致,
-          //   插件 getEffectiveRegions 兜底链两种形态均已兼容)
-          await loadEventCoverage()
-          let areaAlgoId = ''
-          for (const et of form.conditions.eventType.config.types) {
-            const c = eventCoverageMap.value[et]
-            if (c?.algo_id) { areaAlgoId = c.algo_id; break }
+      // algo_id 推导: 覆盖率矩阵优先, 兜底事件类型裸短 id (与区域库存量形态一致,
+      //   插件 getEffectiveRegions 兜底链两种形态均已兼容)
+      await loadEventCoverage()
+      let areaAlgoId = ''
+      for (const et of form.conditions.eventType.config.types) {
+        const c = eventCoverageMap.value[et]
+        if (c?.algo_id) { areaAlgoId = c.algo_id; break }
+      }
+      if (!areaAlgoId && form.conditions.eventType.config.types.length > 0) {
+        areaAlgoId = form.conditions.eventType.config.types[0]
+      }
+      const areaMulti = roiSyncUnits.length > 1
+      for (const unit of roiSyncUnits) {
+        const drawnAreas = unit.list.filter(r => r.is_active &&
+          (r.roi_type === 'detection_zone' || r.roi_type === 'exclusion_zone' || r.roi_type === 'rectangle'))
+        const areaChStr = String(unit.ch || '').replace(/_ch\d+$/, '')
+        // [FIX roi-sync-delete 2026-09-11] 镜像补删除分支 (用户报告: 规则页删掉的区域
+        //   跨页复活/删不掉最后 1 个): 原镜像只增不删 — 画板删掉的区域在 RegionStore
+        //   永久残留, 算法配置页/布防判定/插件弹窗继续消费 = 「删除了还在弹」。
+        //   现对齐算法页 onRegionsChange diff 先例: 保存时以画板名单为 SSOT,
+        //   同通道同形态 (algo_id === areaAlgoId) 的孤儿区域一并清理;
+        //   空画板保存 = 全清 (drawnAreas.length > 0 短路解除)。
+        //   防误删: 仅清理规则镜像形态 (algo_id 精确等值), 算法页手工画的其他
+        //   算法区域不动; 停用残留不查 (include_disabled 默认 false) 边界留待后续。
+        if (drawnAreas.length > 0 && !areaChStr) {
+          ElMessage.warning('画了区域但未选"关联通道", 区域未同步到算法库; 请选择通道后重新保存')
+          continue
+        }
+        if (!areaChStr) continue
+        try {
+          // 现有区域 (str 主查+ch 回退去重后端已做; 不按 algo 过滤防双形态分裂)
+          const exRes = await regionApi.listRegions({ channel_id: 0, channel_id_str: areaChStr })
+          const existing: any[] = ((exRes as any)?.data?.data?.regions ?? (exRes as any)?.data?.regions ?? [])
+          let synced = 0
+          for (const area of drawnAreas) {
+            const raw = area.polygon || []
+            const polygon: [number, number][] = []
+            for (let i = 0; i + 1 < raw.length; i += 2) polygon.push([raw[i], raw[i + 1]])
+            if (polygon.length < 3) continue
+            const regionType = area.roi_type === 'exclusion_zone' ? 'exclusion_zone' : 'detection_zone'
+            const hit = existing.find(e => e.name === area.roi_name)
+            const sameGeom = !!hit && Array.isArray(hit.polygon) && hit.polygon.length === polygon.length &&
+              hit.polygon.every((p: any, i2: number) =>
+                Math.abs(Number(p[0]) - polygon[i2][0]) < 0.001 && Math.abs(Number(p[1]) - polygon[i2][1]) < 0.001)
+            if (sameGeom && hit.region_type === regionType) continue
+            await regionApi.createRegion({
+              id: hit?.id ?? 0,
+              channel_id: hit?.channel_id ?? 0,
+              channel_id_str: hit?.channel_id_str || areaChStr,
+              algo_id: hit?.algo_id || areaAlgoId,
+              name: area.roi_name,
+              region_type: regionType,
+              polygon,
+              enabled: true,
+            })
+            synced++
           }
-          if (!areaAlgoId && form.conditions.eventType.config.types.length > 0) {
-            areaAlgoId = form.conditions.eventType.config.types[0]
-          }
-          try {
-            // 现有区域 (str 主查+ch 回退去重后端已做; 不按 algo 过滤防双形态分裂)
-            const exRes = await regionApi.listRegions({ channel_id: 0, channel_id_str: areaChStr })
-            const existing: any[] = ((exRes as any)?.data?.data?.regions ?? (exRes as any)?.data?.regions ?? [])
-            let synced = 0
-            for (const area of drawnAreas) {
-              const raw = area.polygon || []
-              const polygon: [number, number][] = []
-              for (let i = 0; i + 1 < raw.length; i += 2) polygon.push([raw[i], raw[i + 1]])
-              if (polygon.length < 3) continue
-              const regionType = area.roi_type === 'exclusion_zone' ? 'exclusion_zone' : 'detection_zone'
-              const hit = existing.find(e => e.name === area.roi_name)
-              const sameGeom = !!hit && Array.isArray(hit.polygon) && hit.polygon.length === polygon.length &&
-                hit.polygon.every((p: any, i2: number) =>
-                  Math.abs(Number(p[0]) - polygon[i2][0]) < 0.001 && Math.abs(Number(p[1]) - polygon[i2][1]) < 0.001)
-              if (sameGeom && hit.region_type === regionType) continue
-              await regionApi.createRegion({
-                id: hit?.id ?? 0,
-                channel_id: hit?.channel_id ?? 0,
-                channel_id_str: hit?.channel_id_str || areaChStr,
-                algo_id: hit?.algo_id || areaAlgoId,
-                name: area.roi_name,
-                region_type: regionType,
-                polygon,
-                enabled: true,
-              })
-              synced++
+          // [FIX roi-sync-delete 2026-09-11] diff 清理: 画板名单外的同形态孤儿区域
+          //   (含空画板全清路径 — 用户删掉最后 1 个后保存即真删, 跨页不再复活)
+          const drawnNames = new Set(drawnAreas.map(a => a.roi_name))
+          let cleaned = 0
+          if (areaAlgoId) {
+            for (const e of existing) {
+              if (drawnNames.has(e.name)) continue
+              if (e.algo_id !== areaAlgoId) continue
+              try {
+                await regionApi.deleteRegion(e.id)
+                cleaned++
+              } catch { /* 单个清理失败不阻断同步主链 */ }
             }
-            // [FIX roi-sync-delete 2026-09-11] diff 清理: 画板名单外的同形态孤儿区域
-            //   (含空画板全清路径 — 用户删掉最后 1 个后保存即真删, 跨页不再复活)
-            const drawnNames = new Set(drawnAreas.map(a => a.roi_name))
-            let cleaned = 0
-            if (areaAlgoId) {
-              for (const e of existing) {
-                if (drawnNames.has(e.name)) continue
-                if (e.algo_id !== areaAlgoId) continue
-                try {
-                  await regionApi.deleteRegion(e.id)
-                  cleaned++
-                } catch { /* 单个清理失败不阻断同步主链 */ }
-              }
-            }
-            if (synced > 0 && cleaned > 0) ElMessage.success(`区域已同步 (${synced} 更新, ${cleaned} 清理, 插件判定同几何)`)
-            else if (cleaned > 0) ElMessage.success(`已同步清理 ${cleaned} 个画板已删除的区域`)
-            else if (synced > 0) ElMessage.success(`区域已同步 (${synced} 个, 插件判定同几何)`)
-          } catch (e: any) {
-            ElMessage.error(`区域同步失败: ${e?.message ?? e} (规则仍会保存, 算法库未更新)`)
           }
+          if (synced > 0 && cleaned > 0) ElMessage.success(areaMulti
+            ? `通道 ${areaChStr}: 区域已同步 (${synced} 更新, ${cleaned} 清理)`
+            : `区域已同步 (${synced} 更新, ${cleaned} 清理, 插件判定同几何)`)
+          else if (cleaned > 0) ElMessage.success(areaMulti
+            ? `通道 ${areaChStr}: 已清理 ${cleaned} 个画板已删除的区域`
+            : `已同步清理 ${cleaned} 个画板已删除的区域`)
+          else if (synced > 0) ElMessage.success(areaMulti
+            ? `通道 ${areaChStr}: 区域已同步 (${synced} 个)`
+            : `区域已同步 (${synced} 个, 插件判定同几何)`)
+        } catch (e: any) {
+          ElMessage.error(areaMulti
+            ? `区域同步失败 (通道 ${areaChStr}): ${e?.message ?? e} (规则仍会保存, 算法库未更新)`
+            : `区域同步失败: ${e?.message ?? e} (规则仍会保存, 算法库未更新)`)
+        }
       }
     }
     // 清理 "全部XXX" 占位值，后端空字符串 = 不过滤
@@ -3718,6 +4185,38 @@ async function handleSave(): Promise<boolean> {
         direction: r.direction || '', points: buildNormPoints(r.polygon),
       })),
     })
+    // [ROI-PER-CHANNEL 2026-09-12] 逐通道条目序列化 (严格模式): 序列化集每通道一条
+    //   {combine, shapes, tripwire_refs}; 引擎按事件通道基准码查表 (双形态归一),
+    //   条目缺失 [ROI-PC-UNDRAWN] / shapes 空 [ROI-PC-EMPTY] → 不触发。
+    //   已绘但后来全删的通道保留空条目 (回显通道列表不丢; 引擎等价不触发)。
+    //   tripwire_refs: 仅绊线消费规则携带 (绊线同步段回写); 非绊线规则恒空 —
+    //   防事件类型改绑后 stale refs 让 tripwire_id 为空的事件被白名单误拒
+    //   (引擎: refs 非空但事件无 tripwire_id → reject)。
+    //   非严格模式返回 '' (键缺席 = 通用模式, 引擎/存量规则零变更)。
+    const buildChannelEntries = (): string => {
+      if (!roiStrictMode.value) return ''
+      const keys = [...roiSerializeKeys.value].filter(Boolean)
+      if (keys.length === 0) return ''
+      const out: Record<string, object> = {}
+      for (const k of keys) {
+        const isWork = k === activeRoiChannel.value
+        const list = isWork ? rc.config.roiPolygon : (roiByChannel.value[k]?.list || [])
+        const combine = isWork ? rc.config.roiCombine : (roiByChannel.value[k]?.combine || 'union')
+        out[k] = {
+          combine: combine === 'intersection' ? 'intersection' : 'union',
+          shapes: list.filter(r => isTripwireRule.value || r.roi_type !== 'tripwire').map(r => ({
+            shape: r.roi_type, name: r.roi_name, active: r.is_active,
+            direction: r.direction || '', points: buildNormPoints(r.polygon),
+          })),
+          tripwire_refs: isTripwireRule.value
+            ? (roiByChannel.value[k]?.tripwireRefs || []).map(x => ({
+                id: String(x.id), direction: String(x.direction || '').toUpperCase(),
+              }))
+            : [],
+        }
+      }
+      return JSON.stringify(out)
+    }
     // 区域类形状 (组件级 AREA_ROI_TYPES: 引擎 pointInPolygon 判定);
     // 绊线走 tripwire_id 镜像链路, 关注点不做空间过滤
     const firstActiveArea = rc.config.roiPolygon.find(r => r.is_active && AREA_ROI_TYPES.includes(r.roi_type))
@@ -3742,14 +4241,20 @@ async function handleSave(): Promise<boolean> {
       // [FIX 2026-09-02] 画板全量形状快照 (多形状并集判定 + 编辑回显 SSOT)
       // [FIX tw-route 2026-09-12] 非绊线消费事件剔除绊线残留形状 (快照自净:
       //   库内已清理, 快照保留会让下次保存"复活"上库)。
-      roi_shapes_json: buildRoiShapesJson(rc.config.roiPolygon.filter(
+      // [ROI-PER-CHANNEL 2026-09-12] 严格模式: 本键冻结为通用基线 (旧二进制回滚
+      //   读取 + "填充通用形状"来源); 逐通道判定走下一键。通用模式: 存量行为。
+      roi_shapes_json: buildRoiShapesJson((roiStrictMode.value ? roiGeneralBaseline.value : rc.config.roiPolygon).filter(
         r => isTripwireRule.value || r.roi_type !== 'tripwire')),
+      // [ROI-PER-CHANNEL 2026-09-12] 逐通道专属形状集 (海康式): 非空 = 严格模式
+      //   (仅已绘通道触发, 引擎 [ROI-PC-UNDRAWN]/[ROI-PC-EMPTY]); 序列化集 =
+      //   回显通道 ∪ 本次触碰通道。通用模式发空串 (键缺席语义 → 存量行为)。
+      roi_shapes_by_channel: buildChannelEntries(),
       // [FIX 2026-08-27 P0-PERIMETER v3] tripwire 越界联动
       //   tripwireId 与 direction 都空 = 不启用 tripwire 过滤
       //   否则仅匹配的 tripwire + direction 才触发动作
       tripwire_id: effectiveTripwireId || '',
       direction: dirUpper,
-    } : { region_id: '', location_id: '', area_id: '', roi_polygon: [] as number[], roi_shapes_json: '', tripwire_id: '', direction: '', bound_channel_ids: [] as string[], area_device_ids: [] as string[] }
+    } : { region_id: '', location_id: '', area_id: '', roi_polygon: [] as number[], roi_shapes_json: '', roi_shapes_by_channel: '', tripwire_id: '', direction: '', bound_channel_ids: [] as string[], area_device_ids: [] as string[] }
 
     const etc = form.conditions.eventType
     const esc = form.conditions.eventSource
@@ -4797,4 +5302,11 @@ watch(mainTab, (tab) => {
 .pw-list__item { display: flex; align-items: center; justify-content: space-between; padding: 6px 10px; background: var(--el-fill-color-light, #f5f7fa); border-radius: 4px; }
 .pw-toolbar-row { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
 .pw-mig-hint { font-size: 12px; color: #909399; }
+
+/* ── [ROI-PER-CHANNEL 2026-09-12] 逐通道绘制页签/工具栏 (海康式多通道 ROI) ── */
+.roi-ch-tabs { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 6px; }
+.roi-ch-tabs__label { font-size: 12px; color: var(--app-text-secondary); }
+.roi-ch-tag { cursor: pointer; user-select: none; }
+.roi-ch-toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 6px; }
+.roi-ch-hint { font-size: 12px; color: var(--app-text-secondary); }
 </style>

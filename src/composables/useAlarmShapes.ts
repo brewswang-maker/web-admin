@@ -150,9 +150,33 @@ async function loadFromRules(channelId: string, algoId?: string): Promise<Overla
     if (!r?.enabled) continue
     const sc = r.source_cond || {}
     const sp = r.spatial_cond || {}
-    // spatial_cond 优先 (后端 SSOT), source_cond 兼容历史/异构写入
-    const rawJson: unknown = sp.roi_shapes_json ?? sc.roi_shapes_json
-    if (typeof rawJson !== 'string' || !rawJson) continue
+    // [ROI-PER-CHANNEL 2026-09-12] 逐通道形状集 (严格模式) 优先: 本通道条目命中 →
+    //   仅渲染该通道专属几何 (通用键在严格模式下退役, 引擎同口径); 严格模式但
+    //   本通道未绘 (条目缺失) → 本规则不渲染也不进候补桶 (未绘=不触发, 对齐
+    //   引擎 [ROI-PC-UNDRAWN] — 原通用键回退会把规则级几何画到未绘通道上,
+    //   弹窗标注误导"该通道有检测区")。键缺失/空 = 通用模式 → 存量路径零变更。
+    const byCh = (sp as any).roi_shapes_by_channel ?? (sc as any).roi_shapes_by_channel
+    let strictEntryHit = false
+    let shapesJson = ''
+    if (typeof byCh === 'string' && byCh) {
+      let entry: any = null
+      try {
+        const m = JSON.parse(byCh)
+        if (m && typeof m === 'object' && !Array.isArray(m)) {
+          for (const k of Object.keys(m)) {
+            if (stripChSuffix(k) === chNorm) { entry = (m as any)[k]; break }
+          }
+        }
+      } catch { entry = null }
+      if (!entry || typeof entry !== 'object') continue  // 严格模式未绘通道: 不渲染
+      shapesJson = JSON.stringify(entry)
+      strictEntryHit = true
+    } else {
+      // spatial_cond 优先 (后端 SSOT), source_cond 兼容历史/异构写入
+      const legacy = sp.roi_shapes_json ?? sc.roi_shapes_json
+      if (typeof legacy !== 'string' || !legacy) continue
+      shapesJson = legacy
+    }
     const srcChs: number[] = ((sc.channel_ids as any[]) || []).map(Number)
     const bound: string[] = ((sp.bound_channel_ids as any[]) || []).map(String)
     // [FIX 2026-09-08] location_id 纳入通道命中: 模板导入规则 bound/src 双池空但
@@ -163,12 +187,12 @@ async function loadFromRules(channelId: string, algoId?: string): Promise<Overla
     //   不匹配则不参与 wildcard 回退 (通道一对一, 宁缺勿串)。
     const locId = typeof sp.location_id === 'string' ? sp.location_id : ''
     const locHit = !!locId && (locId === chNorm || stripChSuffix(locId) === chNorm)
-    // 通道命中 (location_id / channel_ids hash / bound GB 码三形态, 后缀双向归一);
-    // 三池全空 = 通配规则 (不限定通道)
-    const chHit = locHit
+    // 通道命中 (location_id / channel_ids hash / bound GB 码三形态, 后缀双向归一;
+    // 严格模式条目命中即绑定); 三池全空 = 通配规则 (不限定通道)
+    const chHit = strictEntryHit || locHit
       || srcChs.some((c) => c === chHash)
       || bound.some((c) => Number(c) === chHash || stripChSuffix(c) === chNorm)
-    const isWildcard = !locId && srcChs.length + bound.length === 0
+    const isWildcard = !strictEntryHit && !locId && srcChs.length + bound.length === 0
     if (!chHit && !isWildcard) continue
     const ets: string[] = ((sc.event_types as any[]) || []).map(String)
     // [FIX loiter-tw-overlay 2026-09-09] 算法维度候补收紧 (设备实锚: 徘徊告警
@@ -185,7 +209,7 @@ async function loadFromRules(channelId: string, algoId?: string): Promise<Overla
       //   (引擎组合语义可配, LinkageRuleView combine 选择器写入; 渲染层只取
       //   shapes 数组 — combine 是引擎判定语义, 不影响叠加几何); 老规则纯
       //   数组 v1 形态照旧。
-      const parsed = JSON.parse(rawJson) as unknown
+      const parsed = JSON.parse(shapesJson) as unknown
       const shapesSrc = (Array.isArray(parsed) ? parsed
         : Array.isArray((parsed as any)?.shapes) ? (parsed as any).shapes : []) as Array<{
         shape?: string; name?: string; active?: boolean; direction?: string; points?: number[]

@@ -119,6 +119,28 @@ export function narrowSnapshotChannels(
 export { fallbackBaseId as baseChannelIdCompat }
 
 /**
+ * 位置树选中节点类型判定 (filterChannelsByLocation 与组件侧共用单一事实源):
+ *   'area'   = 区域节点 (areaById 命中, 引擎 resolved 快照展开语义)
+ *   'device' = 设备节点 (各区域 device_ids 命中, 严格设备归属语义)
+ *   null     = 未选/旧版位置 (调用方维持全量/分组收窄原逻辑)
+ * [FIX ghost-chan 2026-09-12] 抽出: 组件侧 boundChannelOptions/snapshotChannelOptions
+ *   需按节点类型区分「已选值跟随收窄」行为 — 设备节点严格 (外部通道清出),
+ *   区域节点保持 ∪ 直绑白名单现状。此前判定逻辑内联在 filterChannelsByLocation
+ *   里, 组件侧无法感知节点类型, 只能对 draftExtras/fallbacks 一刀切并回,
+ *   导致选设备节点后关联通道仍混入其他设备通道 (幽灵通道)。
+ */
+export function locationFilterKind(
+  loc: string,
+  areaById: Map<string, LocationAreaLike>,
+  ownerDeviceIds: string[][],
+): 'area' | 'device' | null {
+  if (!loc) return null
+  if (areaById.has(loc)) return 'area'
+  if (ownerDeviceIds.some(ids => ids.includes(loc))) return 'device'
+  return null
+}
+
+/**
  * 物理位置树选中 → 通道池设备维度直滤 [FIX area-dev-narrow2 2026-09-11]:
  * 上一版走「通道 id 名单中转」在混合形态部署下失效 —
  *   安保区域 resolved/channel_ids 存国标 20 位串 (SecurityAreaStore.h L59),
@@ -136,9 +158,10 @@ export function filterChannelsByLocation<T extends FriendlyChannelLike>(
   areaById: Map<string, LocationAreaLike>,
   ownerDeviceIds: string[][],   // 各区域的 device_ids (用于设备节点归属判定)
 ): T[] | null {
-  if (!loc) return null
-  const area = areaById.get(loc)
-  if (area) {
+  const kind = locationFilterKind(loc, areaById, ownerDeviceIds)
+  if (kind === 'area') {
+    const area = areaById.get(loc)
+    if (!area) return null
     // 区域节点: 设备维度 (device_ids) ∪ 直绑通道 id (国标/int32 双形态比对)
     const devs = new Set((area.device_ids || []).map(String))
     const direct = new Set(
@@ -147,10 +170,19 @@ export function filterChannelsByLocation<T extends FriendlyChannelLike>(
     )
     return pool.filter(ch => devs.has(String(ch.deviceId ?? '')) || direct.has(String(ch.value)))
   }
-  if (ownerDeviceIds.some(ids => ids.includes(loc))) {
+  if (kind === 'device') {
     // 设备节点: 仅该设备名下通道 (deviceId 直等)
+    // [FIX ghost-chan 2026-09-12] 同物理通道主/子码流双形态 (value 剥 _chN 后同 base)
+    //   只保留池序首个形态 — 每个物理通道恰好一项, 严防重复计数。
     const target = String(loc)
-    return pool.filter(ch => String(ch.deviceId ?? '') === target)
+    const seenBase = new Set<string>()
+    return pool.filter(ch => {
+      if (String(ch.deviceId ?? '') !== target) return false
+      const base = fallbackBaseId(ch.value)
+      if (seenBase.has(base)) return false
+      seenBase.add(base)
+      return true
+    })
   }
   return null
 }

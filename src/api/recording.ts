@@ -80,7 +80,11 @@ export function recordUrlCandidates(url: string): string[] {
     : '/record/record/' + path.slice('/record/'.length)
   const cands = [`${window.location.origin}${double}`]
   const hn = window.location.hostname
-  if (hn) cands.push(`http://${hn}:8088${double}`)
+  // [FIX rec-cand-lan 2026-09-12] 8088 兑底仅限 LAN 直连场景 (同源端口为空/80/8088):
+  //   vite dev (3100) 下 hostname 是开发机而非设备, 8088 候选恒 ECONNREFUSED,
+  //   且偶发首笔 404 回退后 video.src 停留在不可达地址致播放卡死 (实测), 故跳过。
+  const port = window.location.port
+  if (hn && (port === '' || port === '80' || port === '8088')) cands.push(`http://${hn}:8088${double}`)
   // [FIX rec-cand-dedup 2026-09-12] 去重: 8088 同源访问时两候选完全一致 (origin 即
   //   http://host:8088) → 原实现同一 URL 白重试一整个 mp4 超时周期 (实测「已尝试
   //   全部格式」需 40s 才报); 去重后候选链只留唯一项, 失败快速进入上层处理。

@@ -125,6 +125,11 @@ export interface SpatialCondition {
   direction?: string
   bound_channel_ids?: string[]
   roi_shapes_json?: string
+  /** [ROI-PER-CHANNEL 2026-09-12] 逐通道专属形状集 (JSON 字符串, 海康式多通道绘制):
+   *  {"<通道基准码>": {combine, shapes:[...], tripwire_refs:[{id,direction}]}}
+   *  非空 = 严格模式 (未绘制通道不触发); 空/缺失 = 通用模式 (存量规则零变更)。
+   *  契约与引擎语义见 LinkageEngine.h SpatialCondition 注释。 */
+  roi_shapes_by_channel?: string
   /** [AREA-CASCADE 2026-09-11] location 页签三级级联的设备级勾选集 (区域内显式圈定):
    *   后端 spatial_cond 白名单暂未收录此键 (解析时丢弃, 引擎零改动), 真实持久化
    *   走 ui_state_json 暂存往返; 此处仅前端类型扩展, 保存侧仍直写以便后端后续
