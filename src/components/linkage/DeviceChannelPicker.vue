@@ -74,7 +74,7 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { Search } from '@element-plus/icons-vue'
 import { deviceApi } from '@/api/device'
 import { channelApi } from '@/api/channel'
-import { safeChannelHash } from '@/composables/useAlgoRuleSync'
+import { safeChannelHash } from '@/utils/channelHash'
 import type { DeviceItem, ChannelItem } from '@/types/device'
 
 interface DeviceRow extends DeviceItem { _expanded?: boolean }

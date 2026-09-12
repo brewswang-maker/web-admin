@@ -1040,6 +1040,12 @@ const zhCN = {
       // [P1-1 v2.1] 构成卡分组点击联动 (通行同组过滤 + 事件同组筛选入口)
       viewGroupEvents: '查看该分类事件',
       clearGroupFilter: '清除筛选',
+      // [分组开关 2026-09-11] 六分组功能开关 (构成卡开关列)
+      colSwitch: '功能开关',
+      switchTip: '关闭后该分组不再产生告警与通行事件',
+      switchOnDone: '{group} 分组功能已开启',
+      switchOffDone: '{group} 分组功能已关闭',
+      switchFailed: '开关更新失败, 请重试',
     },
     common: {
       loadFailed: '数据加载失败',

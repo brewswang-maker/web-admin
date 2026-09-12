@@ -169,3 +169,5 @@ export function pickPerimeterTemplates(body: unknown): RuleTemplate[] {
 export function isPerimeterEvent(type: unknown): boolean {
   return (PERIMETER_EVENT_TYPES as readonly string[]).includes(String(type))
 }
+
+// [t3-tree-channel 2026-09-11 完成锚点] 三级树通道级服务端下钻(单值直传+多值 fan-out)批次 · 部署产物 entry=index-CvT0U9Nv4f.js tgz md5=07a2e26224ed93a40c47f987c04b7bb5

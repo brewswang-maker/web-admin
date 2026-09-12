@@ -1485,15 +1485,29 @@ async function doTimeSeek() {
       ElMessage.error('时间格式无效')
       return
     }
-    // 3. 找覆盖段 (end 容差 +5s); 无覆盖取目标前最近段 (MP4 可任意 Range seek, 仍能精准定位)
+    // 3. 段选择: 本地片 (带 url, 可 Range seek 精准定位) 优先, GB28181 段兜底
+    //    [FIX rec-tseek 2026-09-11] 原「sort 后取首个覆盖段」在两源合并 (rec-merge)
+    //    后会先命中跨度大的 GB28181 段 (整段录像), 其回放走设备推流 (无 Range 精准定位);
+    //    注: "固件死路"系误判, 真因是本端 SDP t= 用 NTP 基准, 已修 pb-t 2026-09-12。
+    //    本地 ZLM 片直链可精准定位。分层选择:
+    //    ① 本地片覆盖目标 (end 容差 +5s);
+    //    ② 就近本地片 (≤60s) — 事件片常从目标后数秒起步, 从头播即可覆盖目标时段;
+    //    ③ 任意覆盖段 — GB28181 语义兜底;
+    //    ④ 就近任意段 — 无覆盖时最后兜底。
     const segs = recordings.value
       .map(r => ({ r, s: Date.parse(r.startTime || ''), e: Date.parse(r.endTime || '') }))
       .filter(x => !isNaN(x.s))
       .sort((a, b) => a.s - b.s)
-    let hit = segs.find(x => x.s <= targetMs && targetMs <= x.e + 5000)
-    if (!hit && segs.length) {
-      const before = segs.filter(x => x.s <= targetMs)
-      hit = before.length ? before[before.length - 1] : segs[0]
+    type Seg = (typeof segs)[number]
+    const covers = (x: { s: number; e: number }) => x.s <= targetMs && targetMs <= x.e + 5000
+    const dist = (x: { s: number; e: number }) =>
+      Math.min(Math.abs(x.s - targetMs), Math.abs(x.e - targetMs))
+    const locals = segs.filter(x => x.r.url)
+    let hit: Seg | undefined = locals.find(covers)
+      || locals.filter(x => dist(x) <= 60_000).sort((a, b) => dist(a) - dist(b))[0]
+      || segs.find(covers)
+      || segs.reduce<Seg | undefined>((best, cur) => (!best || dist(cur) < dist(best) ? cur : best), undefined)
+    if (hit && !covers(hit)) {
       ElMessage.info('无精确覆盖段，已定位到最近录像段')
     }
     if (!hit) {

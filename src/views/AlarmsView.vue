@@ -2311,3 +2311,5 @@ onUnmounted(() => {
 </style>
 
 <!-- [chan-col 2026-09-11 完成锚点] 同构列升级+状态列移位+pageTotal 收敛批次 · 部署产物 entry=index-wS8-Hc--kp.js tgz md5=57e4f6f0d728c29eeca8f2a8f6dd629b -->
+
+<!-- [t3-tree-channel 2026-09-11 完成锚点] 三级树通道级服务端下钻(单值直传+多值 fan-out)批次 · 部署产物 entry=index-CvT0U9Nv4f.js tgz md5=07a2e26224ed93a40c47f987c04b7bb5 -->

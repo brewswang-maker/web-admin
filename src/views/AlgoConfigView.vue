@@ -91,18 +91,24 @@
           <el-table-column label="模式" width="62" align="center">
             <template #default="{ row }">{{ row.mode === 'streaming' ? '连续' : '抓拍' }}</template>
           </el-table-column>
-          <el-table-column label="启禁用" width="72" align="center">
+          <!-- [R6 P1-3 2026-09-12 算法页降视图] 行开关 → 调度态只读徽标:
+               调度真值 = 规则 (绑定即启用, 启停经 AlgoDeploymentReconciler 对账收敛),
+               本页不再双写调度串; 开启入口 = 右上「+ 绑定事件规则」 -->
+          <el-table-column label="调度态" width="82" align="center">
             <template #default="{ row }">
-              <!-- @click.stop: 防冒泡触发行点击 (选中+滚动编辑卡干扰); 切换进行中防连点 -->
-              <div @click.stop>
-                <el-switch size="small" :model-value="row.enabled"
-                  :loading="togglingId === row.algoId" :disabled="togglingId === row.algoId"
-                  @change="toggleAlgoEnabled(row)" />
-              </div>
+              <el-tag size="small" :type="row.enabled ? 'success' : 'info'" effect="plain">
+                {{ row.enabled ? '运行中' : '已停止' }}
+              </el-tag>
             </template>
           </el-table-column>
-          <el-table-column label="操作" width="52" align="center">
+          <el-table-column label="操作" width="104" align="center">
             <template #default="{ row }">
+              <!-- 单向快捷停用: 停用绑定本通道且依赖该算法的启用规则 → 算法失去规则支撑,
+                   对账收敛停止调度 (规则再启用即自动恢复) -->
+              <el-button v-if="row.enabled" size="small" type="warning" link
+                title="快捷停用: 停用绑定本通道且依赖该算法的启用规则 (算法调度随对账收敛停止)"
+                :loading="disablingId === row.algoId" :disabled="disablingId === row.algoId"
+                @click.stop="quickDisableAlgo(row)">停用</el-button>
               <el-button size="small" type="danger" link title="删除该算法" @click.stop="removeAlgo(row)">
                 <el-icon><Delete /></el-icon>
               </el-button>
@@ -363,6 +369,9 @@
           <el-checkbox v-for="t in filteredEventTypes" :key="t.key" :value="t.key" :label="t.key" class="rule-check-item">
             {{ t.name_zh }}
             <span class="rule-check-key">{{ t.key }}</span>
+            <!-- [R6 P1-4 2026-09-12] 三档标注 (doc §5.4): B=VLM 兜底 / C=预留位 (仍可选) -->
+            <el-tag v-if="coverageTierOf(t.key) === 'B'" size="small" type="warning" effect="plain" class="rule-tier-tag">AI 研判兜底</el-tag>
+            <span v-else-if="coverageTierOf(t.key) === 'C'" class="rule-tier-hint">预留位</span>
           </el-checkbox>
         </el-checkbox-group>
         <el-empty v-if="!ruleTypesLoading && filteredEventTypes.length === 0" description="无匹配事件类型" :image-size="60" />
@@ -500,10 +509,11 @@ import algorithmsApi from '@/api/algorithms'
 import type { AlgorithmInfo } from '@/api/algorithms'
 import eventTypesApi, { type CanonicalEventType } from '@/api/eventTypes'
 import { useEventTypeZh } from '@/composables/useEventTypeZh'
-import {
-  syncRulesForAlgo, forgetAlgoInRuleMemory, safeChannelHash, algoIdMatches,
-  loadChannelDisabledMap, saveChannelDisabledMap,
-} from '@/composables/useAlgoRuleSync'
+// [R6 P1-3 2026-09-12 算法页降视图] useAlgoRuleSync 已废除 (与规则页的双向联动链
+//   及 localStorage 三键整体下线): safeChannelHash 契约迁 utils/channelHash;
+//   algoIdMatches 收拢为本组件局部函数 (原唯一消费方); 行开关改单向快捷停用
+import { safeChannelHash } from '@/utils/channelHash'
+import { testApi } from '@/api/test'
 import { linkageApi, type LinkageRule } from '@/api/linkage'
 import { regionApi } from '@/api/region'
 import type { TripwireDef, PassagewayDef, SuppressMode } from '@/types/region'
@@ -556,6 +566,13 @@ const EVENT_ALGO_TYPE_ALIASES: Record<string, string> = {
   violence: 'fighting',
   fall_detected: 'fall',
   elderly_fall: 'fall',
+}
+/** [R6 P1-3 2026-09-12] 依赖 id ↔ 算法 id 匹配 (精确 → 双向尾段)。
+ *  原 useAlgoRuleSync.algoIdMatches 原语义收拢至此 (废除 composable 后唯一消费方 =
+ *  本组件: 规则计数/删除解绑/快捷停用): 兼容短名 'intrusion' ↔ 全名
+ *  'shield.algo.perimeter.intrusion' 两种存量形态 */
+function algoIdMatches(dep: string, algoId: string): boolean {
+  return dep === algoId || dep.endsWith('.' + algoId) || algoId.endsWith('.' + dep)
 }
 /** 事件类型 → 能产生它的算法 id。匹配链: 精确 alarm_type → 别名表归一后精确 →
  *  词形近似 (双向前缀, 短串≥4)。前缀命中多个取 alarm_type 最短者。无算法可产生返回 '' */
@@ -666,15 +683,9 @@ function validateAll(): boolean {
 }
 
 // ① 已配置算法行: algo_plugin 逗号分隔串拆分逐行 + 事件规则计数
-// [FIX 2026-09-01 一对一启停] 后端 ScheduledChannel 为通道级模型 (algo_plugin 串=启用集合,
-// 无 per-algo 开关) → 行开关改为: 启用=加入串 / 禁用=移出串, 禁用集合存 localStorage
-// (刷新/后端重启后仍显示禁用行并可一键恢复; 推理行为由串本身保证, 不依赖 localStorage)
-// [ALGO-RULE-SYNC 2026-09-03] 禁用集合/联动记忆/正反向同步已抽 composable useAlgoRuleSync
-// (LinkageRuleView 反向联动复用同一套 localStorage 键与串维护逻辑, 保持双页一致)
-const disabledListOf = (chId: string): string[] => {
-  const active = effectiveActiveIds(chId)
-  return (loadChannelDisabledMap()[chId] ?? []).filter((id) => !active.includes(id))
-}
+// [R6 P1-3 2026-09-12 算法页降视图] 原 localStorage 禁用记忆 (algo_disabled_by_channel)
+// 整体废除、不迁移 (接受一次性重收敛): 行展示仅保留「串内启用行 + 通道停用时的遗留串行」,
+// 重建入口 = 绑定事件规则流程; 调度真值唯一入口 = 规则 (reconciler 对账收敛)
 // [FIX 2026-09-02 关闭最后算法不同步] 后端 /schedule/stop (disableChannel) 只置 enabled=false,
 // algo_plugin 串保留作为重启调度记忆 → 串≠启用集合。通道停用时启用集合视为空,
 // 否则最后一行算法仍显示开启 / 重开时串内残留算法被连带带起
@@ -716,7 +727,7 @@ const algoRows = computed(() => {
   const leftoverIds = chDisabled
     ? String(sc?.algo_plugin || '').split(',').map((s) => s.trim()).filter(Boolean)
     : []
-  const disabledIds = Array.from(new Set([...disabledListOf(selected.value.channelId), ...leftoverIds]))
+  const disabledIds = Array.from(new Set(leftoverIds))
   // 串内=启用行; 禁用记忆/遗留串=禁用行; 按稳定顺序渲染 (原地启停不跳位)
   const all = stableAlgoOrder(selected.value.channelId, activeIds, disabledIds)
   // [FIX tsc 2026-09-07] 显式返回类型锁定 mode 联合字面量 (原推断放宽为 string,
@@ -768,64 +779,68 @@ function resetEditForm() {
   ElMessage.info('已重置')
 }
 
-/** [FIX 2026-09-01 一对一启停] 行内开关: 启用=算法加入调度串 / 禁用=移出串并记入禁用集合
- *  (串空 → 停整通道调度; 禁用行来自 localStorage 记忆, 可独立重新开启) */
-/** [FIX 2026-09-02] 左侧 ON 徽标与算法行开关同源: 直接判调度 enabled,
+/** [R6 P1-3 2026-09-12 算法页降视图] 行开关双向切换 → 单向快捷停用:
+ *  开方向入口 = 「+ 绑定事件规则」(绑定即启用, 调度态由规则经 reconciler 收敛)。
+ *  停用 = 将「绑定本通道且依赖该算法的启用规则」置 enabled=false; 算法失去全部
+ *  规则支撑后对账收敛停止调度 (规则重新启用 → 自动恢复调度), 本页不再维护调度串。 */
+/** [FIX 2026-09-02] 左侧 ON 徽标与算法行调度态同源: 直接判调度 enabled,
  *  避免 loadData 重建 channels 数组与 scheduledMap 更新时序差导致的双源不一致 */
 function isChInferenceOn(chId: string): boolean {
   const sc = scheduledMap.value.get(chId)
   return !!sc && sc.enabled !== false
 }
-/** [FIX 2026-09-02 开关一致性] 算法启停 → 关联事件规则 enabled 同步 (已迁 composable
- *  useAlgoRuleSync.syncRulesForAlgo, 反向 syncAlgosForRule 在 LinkageRuleView 挂钩) */
 
-const togglingId = ref('')
-async function toggleAlgoEnabled(row: { algoId: string; enabled: boolean }) {
+const disablingId = ref('')
+async function quickDisableAlgo(row: { algoId: string }) {
   const ch = selected.value
   if (!ch) return
-  if (togglingId.value) return  // 上一次切换进行中, 防连点错乱
-  const sc = scheduledMap.value.get(ch.channelId)
-  const deviceId = ch.deviceId || ch.parentDeviceId || ch.channelId
-  // [FIX 2026-09-02] 通道停用时串是遗留记忆, 启用集合从空重建 (避免遗留算法连带带起)
-  const activeIds = effectiveActiveIds(ch.channelId)
-  const dmap = loadChannelDisabledMap()
-  const dlist = new Set(dmap[ch.channelId] ?? [])
-  const next = !row.enabled
-  togglingId.value = row.algoId
+  if (disablingId.value) return  // 上一次停用进行中, 防连点
+  disablingId.value = row.algoId
   try {
-    let ids: string[]
-    if (next) {
-      if (!activeIds.includes(row.algoId)) activeIds.push(row.algoId)
-      dlist.delete(row.algoId)
-      ids = activeIds
-    } else {
-      ids = activeIds.filter((id) => id !== row.algoId)
-      dlist.add(row.algoId)
+    // 通道命中走 safeChannelHash 契约, GB 双流 _ch0 双形态 (与 loadRuleCounts 同构)
+    const chIdStr = ch.channelId
+    const baseId = chIdStr.replace(/_ch\d+$/, '')
+    const chHashes = new Set<number>([safeChannelHash(chIdStr)])
+    if (baseId && baseId !== chIdStr) chHashes.add(safeChannelHash(baseId))
+    const res = await linkageApi.getAllRules()
+    const items: LinkageRule[] = res.data?.data?.items ?? (res.data as any)?.items ?? []
+    let n = 0
+    for (const r of items) {
+      if (!r.enabled) continue
+      const src: any = (r as any).source_cond ?? {}
+      const chs: number[] = src.channel_ids ?? []
+      // 仅处理显式绑定本通道的规则: channel_ids 空 = 全通道通配, 停用会误伤其他通道
+      if (chs.length === 0 || !chs.some((h) => chHashes.has(h))) continue
+      // 依赖算法集口径与 loadRuleCounts/unbindRulesLostSupport 一致:
+      // algorithm_ids 经别名归一 / 纯 event_types 经 algoIdForEventType 反推
+      const deps = new Set<string>()
+      const aids = (src.algorithm_ids ?? []) as string[]
+      if (aids.length > 0) {
+        for (const a of aids) deps.add(a)
+      } else {
+        for (const t of (src.event_types ?? []) as string[]) {
+          const id = algoIdForEventType(t)
+          if (id) deps.add(id)
+        }
+      }
+      const hit = [...deps].some((d) =>
+        algoIdMatches(d, row.algoId) || algoIdMatches(EVENT_ALGO_TYPE_ALIASES[d] ?? d, row.algoId))
+      if (!hit) continue
+      try {
+        await linkageApi.updateRule(r.id, { enabled: false } as Partial<LinkageRule>)
+        n++
+      } catch (e) {
+        console.warn('[AlgoConfigView] 快捷停用规则失败', r.id, e)
+      }
     }
-    dmap[ch.channelId] = Array.from(dlist)
-    saveChannelDisabledMap(dmap)
-    if (ids.length === 0) {
-      await stopSchedule(ch.channelId)
-    } else {
-      await startSchedule(ch.channelId, deviceId, sc?.interval_ms ?? editForm.interval, ids.join(','),
-        { confidence: editForm.confidence, nmsThreshold: editForm.nms, inferenceMode: editForm.mode })
-    }
-    // [FIX 2026-09-02 开关一致性] 同步关联事件规则 enabled (失败不阻塞主流程)
-    let syncedRules = 0
-    try { syncedRules = await syncRulesForAlgo(ch.channelId, row.algoId, next) }
-    catch (e) { console.warn('[AlgoConfigView] 关联规则同步失败', e) }
-    // [ALGO-RULE-SYNC 2026-09-03] 手动开算法 → 清反向记忆中该算法条目:
-    // 用户接管算法状态, 旧「因规则关闭」记忆失效 (否则规则再关时误判已关过而跳过)
-    if (next) forgetAlgoInRuleMemory(ch.channelId, row.algoId)
-    const syncTxt = syncedRules > 0 ? `, 已同步${next ? '启用' : '停用'} ${syncedRules} 条关联事件规则` : ''
-    ElMessage.success(`「${algoNameOf(row.algoId)}」已${next ? '启用' : '禁用'}${syncTxt}`)
+    if (n > 0) ElMessage.success(`已停用 ${n} 条关联事件规则, 算法调度将随对账收敛停止`)
+    else ElMessage.info('该算法暂无绑定本通道的启用规则')
     await loadData()
     await loadRuleCounts()
   } catch (e: any) {
-    ElMessage.error(`切换失败: ${e?.message || e}`)
-    await loadData()
+    ElMessage.error(`停用失败: ${e?.message || e}`)
   } finally {
-    togglingId.value = ''
+    disablingId.value = ''
   }
 }
 
@@ -913,12 +928,8 @@ async function removeAlgo(row: { algoId: string; algoName: string }) {
       editForm.algoId = ''
       editForm.algoName = ''
     }
-    // 删除 = 彻底移除: 同步清掉禁用记忆 (与禁用区分)
-    const dmap = loadChannelDisabledMap()
-    if (dmap[ch.channelId]?.length) {
-      dmap[ch.channelId] = (dmap[ch.channelId] ?? []).filter((id) => id !== row.algoId)
-      saveChannelDisabledMap(dmap)
-    }
+    // [R6 P1-3 2026-09-12] 原「删除 = 清禁用记忆」已废除: localStorage 三键整体下线,
+    // 删除流程只保留调度串移除 + 失去支撑规则解绑 (下方 unbindRulesLostSupport)
     await loadData()
     // [FIX 2026-09-02e] 删除后联动解绑失去支撑的绑定规则 (先于 loadRuleCounts,
     // 计数与抽屉列表均反映解绑后的最新绑定关系)
@@ -940,6 +951,24 @@ const ruleTargetAlgo = ref('')
 const ruleFilter = ref('')
 const ruleSelected = ref<string[]>([])
 const ruleSaving = ref(false)
+// [R6 P1-4 2026-09-12] 事件选项三档标注 (doc §5.4): A=有算法 (AlgoStatus=normal) 正常;
+//   B=VLM 单帧研判兜底; C=预留位 (仍可选)。数据源 = /api/v1/test/event-coverage 的 tier
+//   字段 (与平台规则页/useLinkageOptions 同一后端口径); 端点不可用/旧后端时降级为无标注
+const ruleCoverageMap = ref<Record<string, { tier?: string; algo_id?: string | null; reason?: string }>>({})
+const ruleCoverageLoaded = ref(false)
+function coverageTierOf(key: string): string {
+  return ruleCoverageMap.value[key]?.tier ?? ''
+}
+async function loadRuleCoverage() {
+  try {
+    const res = await testApi.getEventCoverage()
+    const data = (res as any)?.data?.data
+    ruleCoverageMap.value = data?.coverage ?? {}
+    ruleCoverageLoaded.value = true
+  } catch (e) {
+    console.warn('[AlgoConfigView] event-coverage 加载失败, 三档标注降级为空', e)
+  }
+}
 
 const ruleTargetAlgoName = computed(() =>
   algoRows.value.find((r) => r.algoId === ruleTargetAlgo.value)?.algoName || ruleTargetAlgo.value)
@@ -995,6 +1024,8 @@ async function openAddRuleDialog(row: { algoId: string }) {
   ruleSelected.value = []
   ruleFilter.value = ''
   ruleDialogVisible.value = true
+  // [R6 P1-4 2026-09-12] 三档标注按需拉取 (不阻塞弹窗打开; 失败静默降级为无标注)
+  if (!ruleCoverageLoaded.value) void loadRuleCoverage()
   if (canonicalTypes.value.length === 0) {
     ruleTypesLoading.value = true
     try {
@@ -1209,7 +1240,7 @@ const currentAlgoIds = computed(() => {
 
 // 事件匹配用 safeChannelHash(channel_id_str) (FNV-1a 32位, LinkageEngine.cpp L98)。
 // 旧实现 Number("..._ch0")=NaN→0 → 绑出去 [0] 死值, 规则永不触发且「已绑定判定」永假 → 保存无反应
-// [ALGO-RULE-SYNC] safeChannelHash 实现已迁 composable useAlgoRuleSync (反向联动需同源哈希)
+// [R6 P1-3 2026-09-12] safeChannelHash 实现现居 utils/channelHash (原 useAlgoRuleSync 已删除)
 
 /** 通道哈希 → 通道名 (作用范围列显示名, 不暴露裸哈希) */
 const chNameByHash = computed(() => {
@@ -2098,6 +2129,9 @@ async function saveConfig() {
 .rule-check-wrap :deep(.el-checkbox-group) { display: flex; flex-wrap: wrap; gap: 2px 12px; }
 .rule-check-item { margin-right: 8px; }
 .rule-check-key { font-size: 11px; color: var(--text-secondary); margin-left: 4px; }
+/* [R6 P1-4 2026-09-12] 三档标注: B 档「AI 研判兜底」标签 / C 档「预留位」灰字 (仍可选) */
+.rule-tier-tag { margin-left: 4px; transform: scale(0.85); transform-origin: left center; }
+.rule-tier-hint { margin-left: 4px; font-size: 11px; color: var(--el-text-color-placeholder, #A8ABB2); }
 .rule-dialog-count { float: left; line-height: 32px; font-size: 12px; color: var(--text-secondary); }
 /* [任务3] 事件规则编辑抽屉: 右侧滑出全量表单, 不跳平台 */
 .rule-drawer-body { display: flex; flex-direction: column; gap: 14px; padding: 0 4px; }

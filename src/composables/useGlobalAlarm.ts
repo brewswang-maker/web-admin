@@ -11,8 +11,10 @@ import { ref, reactive } from 'vue'
 import { useAlarmStore } from '@/stores/alarm'
 import { settingsApi } from '@/api/settings'
 import { alarmApi } from '@/api/alarm'
-import { showAlarmPopup, pushLinkageLog, normalizeAlarmPayload, playAlarmSound, findMatchingRule } from './useAlarmPopup'
+import { showAlarmPopup, pushLinkageLog, normalizeAlarmPayload, playAlarmSound, findMatchingRule, ensureRulesLoaded, invalidateRuleCache } from './useAlarmPopup'
 import { useChannelStore } from '@/stores/channel'
+import { http } from '@/api/http'
+import type { AlarmEvent } from '@/types/alarm'
 
 // ── 单例状态（模块级，不随组件销毁） ──
 
@@ -55,6 +57,13 @@ let backfilling = false
 let popupDebounceMs = 30_000
 const lastPopupTime = new Map<string, number>()  // key: "channelId:alarmType" → timestamp
 
+// ── [SSOT R11 2026-09-12] 双帧弹窗去重 (操作门观测期防双弹) ──
+//   dispatch 线程推送顺序 linkage_alarm (callback 链联动触发) 先于 alarm.new
+//   (pushWithRetry); 双写期两帧同 alarm_id。linkage_alarm 走兜底链弹窗后,
+//   alarm.new 的 verdict.matched 路径不看本地防抖 → 同一告警双弹。此图按
+//   alarm_id 记录已弹告警, 窗口内复现 → 跳过 (弹窗打点记 'debounced')。
+const recentPopupAlarmIds = new Map<string, number>()  // alarm_id → timestamp
+
 async function loadAlarmConfig() {
   try {
     const { data: res } = await settingsApi.getAlarmPolicy()
@@ -64,6 +73,21 @@ async function loadAlarmConfig() {
       console.log('[useGlobalAlarm] popup debounce loaded:', d.dedupWindow, 's')
     }
   } catch { /* 使用默认值 */ }
+}
+
+// [SSOT R11] 双帧去重判定/记录 (窗口 = popupDebounceMs, 与兜底链同参;
+//   空 id / 窗口 <=0 不参与; 记录时顺带惰性清理过期条目)
+function wasPopupRecentlyPopped(alarmId: string, now: number): boolean {
+  if (!alarmId || popupDebounceMs <= 0) return false
+  const ts = recentPopupAlarmIds.get(alarmId) || 0
+  return now - ts < popupDebounceMs
+}
+function markPopupPopped(alarmId: string, now: number): void {
+  if (!alarmId) return
+  recentPopupAlarmIds.set(alarmId, now)
+  for (const [k, ts] of recentPopupAlarmIds) {
+    if (now - ts >= popupDebounceMs) recentPopupAlarmIds.delete(k)
+  }
 }
 
 // ── 告警类型中文映射 (镜像 alarm.ts ALARM_TYPE_CN, 用于 TTS 播报) ──
@@ -169,6 +193,17 @@ function doConnect() {
         window.dispatchEvent(new CustomEvent('linkage-ws-event', { detail: payload }))
       }
 
+      // [SSOT R2 2026-09-12] rules.changed 端到端 (P0-3): 后端规则增删改 → WS 广播
+      //   {reason, source, rule_ids, rules_version, ts} (pushSystemEvent → system.rules_changed,
+      //   兼容裸 rules.changed 类型)。失效本地规则缓存 (双写对比/兜底链同源), 并派发
+      //   rules-changed DOM 事件供算法页/规则页刷新。
+      if ((msg.type === 'rules.changed' || msg.type === 'system.rules_changed') && payload) {
+        invalidateRuleCache()
+        window.dispatchEvent(new CustomEvent('rules-changed', { detail: payload }))
+        console.log('[useGlobalAlarm] rules.changed:', payload.reason,
+          'source:', payload.source, 'version:', payload.rules_version)
+      }
+
       // [P1-CO2] 推理检测结果实时分发: 供 LiveView Canvas 叠加检测框
       // [P3-CO3] 端到端延迟监控: 计算后端推理 → 前端接收的传输延迟
       if (msg.type === 'detection_result' && payload) {
@@ -193,6 +228,11 @@ function doConnect() {
       }
 
       if (msg.type === 'system.linkage_action' && payload) {
+        // [SSOT R12] 降档帧 rule_id (doc §4.4 契约): 联调可观测 (规则溯源)
+        if (payload.rule_id) {
+          console.log('[useGlobalAlarm] linkage_action rule_id:', payload.rule_id,
+            '| action:', payload.action, '| alarm_id:', payload.alarm_id)
+        }
         pushLinkageLog({
           action: payload.action || '',
           status: payload.status || 'running',
@@ -273,6 +313,39 @@ function doConnect() {
   }
 }
 
+// ── [SSOT R2 2026-09-12] 双写期对比打点 (P0-2/§5.3) ──
+//   verdict 存在时并行跑本地兜底匹配, 仅比对 matched 语义 (不含 debounce);
+//   分歧 → POST /stats/alarm-funnel/report {counter:'verdict_diff', kind}。
+//   kind 语义: frontend_only=本地命中而后端未命中 (后端漏判) /
+//              backend_only=后端命中而本地未命中 (本地门槛失配)。
+//   fire-and-forget: 打点失败静默, 不阻塞/不影响弹窗主链; 本地规则拉取
+//   失败 (ensureRulesLoaded=false) 则跳过比对, 避免旧规则集产生假分歧。
+async function reportVerdictDiff(alarm: AlarmEvent): Promise<void> {
+  const backendMatched = alarm.linkageVerdict?.matched
+  if (typeof backendMatched !== 'boolean') return
+  if (!(await ensureRulesLoaded())) return
+  try {
+    const localMatched = !!(await findMatchingRule(alarm))
+    if (localMatched === backendMatched) return
+    const kind = localMatched ? 'frontend_only' : 'backend_only'
+    await http.post('/stats/alarm-funnel/report', { counter: 'verdict_diff', kind })
+    console.log('[useGlobalAlarm] verdict_diff reported:', kind,
+      'type:', alarm.type, 'ch:', alarm.channelId)
+  } catch { /* 打点失败静默 (观测不进主链) */ }
+}
+
+// ── [SSOT R3 2026-09-12] 弹窗三结果上报 (P0-6 前端接入, §6.1 popup 环节) ──
+//   POST /stats/alarm-funnel/report {counter:'popup', result} → 后端 AlarmFunnelCounters.popup
+//   shown            = 权威路径弹窗 (verdict.matched && !verdict.debounced)
+//   debounced        = 防抖吞掉 (后端 verdict.debounced 或兜底链窗口内复发)
+//   offline_fallback = verdict 缺失时走兜底链且本地规则匹配后弹窗 (降级态, 回退期观测)
+//   verdict !matched 整链静默不上报 (弹窗环节无动作, 与三态均不符; 后端 verdict 计数已覆盖)。
+//   fire-and-forget: 打点失败静默, 不阻塞/不影响弹窗主链。
+function reportPopupResult(result: 'shown' | 'debounced' | 'offline_fallback'): void {
+  http.post('/stats/alarm-funnel/report', { counter: 'popup', result })
+    .catch(() => { /* 打点失败静默 (观测不进主链) */ })
+}
+
 async function handleAlarm(alarm: any) {
   if (!alarm) {
     console.warn('[useGlobalAlarm] handleAlarm called with null payload')
@@ -316,35 +389,72 @@ async function handleAlarm(alarm: any) {
       } catch { /* pinia 未就绪等极端情况忽略 */ }
     }
 
-    // 3. 弹窗防抖: 同一通道+同一类型在 POPUP_DEBOUNCE_MS 内不重复弹窗
-    //    (参考: TP-LINK 30s / 海康可配置 / 小米 3-10min)
-    //    [规则驱动弹窗 2026-09-01] 弹窗前置联动规则门槛: findMatchingRule 与后端
-    //    LinkageEngine 同语义 (event_types/通道/severity/confidence/时间条件),
-    //    无命中规则 (场景未布防或告警类型未配规则) 则不弹 — 未创建事件规则的
-    //    告警不应触发报警弹窗 (无人值守未布防时 person_detected 持续弹窗扰民)。
-    //    告警仍入库/预热拉流; TTS 保持既有独立策略不动。
+    // 3. [SSOT R2 2026-09-12] 弹窗判定三态降级链 (P0-2):
+    //    a) verdict 存在 (新后端, verdict_push_enabled=true): 以 matchAndVerdict
+    //       单判定源为准 — matched&&!debounced → 弹窗(自动关闭秒取 verdict);
+    //       matched&&debounced → 不弹窗仅 TTS (后端防抖窗口内复发);
+    //       !matched → 整链静默 (不弹窗不 TTS, 与兜底链同语义)。
+    //    b) verdict 缺失 (旧后端 / verdict_push_enabled=false 回退态): 回落本地
+    //       兜底链 (findMatchingRule + 本地防抖), 保持现状零回归。
+    //    红线不变: 告警已全部落库/列表可见 (上方步骤), 判定只影响弹窗/TTS。
     const debounceKey = `${normalized.channelId || ''}:${normalized.type || ''}`
     const now = Date.now()
-    const lastTime = lastPopupTime.get(debounceKey) || 0
-    if (now - lastTime < popupDebounceMs) {
-      console.log('[useGlobalAlarm] popup debounced, key:', debounceKey,
-        'elapsed:', Math.round((now - lastTime) / 1000) + 's')
-    } else {
-      // [POPUP-AUTOCLOSE 2026-09-03] 透传规则 popup_auto_close_s: 0=永不自动关闭 (默认), >0=N 秒后关闭
-      //   详情入口不受此控制 (openAlarmDetailById 不传 options, 默认永不自关)
-      //   [FIX 2026-09-04] 单次调用: 原实现在条件与分支内各 await 一次 (双查询浪费, 若未来加副作用会双触发)
-      const matchedRule = await findMatchingRule(normalized)
-      if (matchedRule) {
-        lastPopupTime.set(debounceKey, now)
-        // [SOUND-ORIGIN 2026-09-11] WS 推送自动弹窗 → origin:'auto' 播放报警音
-        //   (手动入口默认 manual 静音, 见 useAlarmPopup.showAlarmPopup)
-        showAlarmPopup(normalized, { autoCloseSeconds: Number(matchedRule.popup_auto_close_s) || 0, origin: 'auto' })
-      } else {
-        console.log('[useGlobalAlarm] popup suppressed (no matching linkage rule), type:',
+    const verdict = normalized.linkageVerdict
+    if (verdict) {
+      // 3a-0. 双写期对比打点 (fire-and-forget): 本地兜底匹配并行比对 matched 语义
+      void reportVerdictDiff(normalized)
+      if (!verdict.matched) {
+        console.log('[useGlobalAlarm] popup suppressed by backend verdict (unmatched), type:',
           normalized.type, 'ch:', normalized.channelId)
-        // [规则驱动告警 2026-09-01] TTS 与弹窗同门槛: 未命中规则的告警整链静默
-        //   (不弹窗不播报) — 用户决策「这些都依赖事件规则」
         return
+      }
+      // matched 两态都更新本地防抖图 (与后端防抖图共识: 回退时兜底链窗口对齐)
+      lastPopupTime.set(debounceKey, now)
+      if (verdict.debounced) {
+        console.log('[useGlobalAlarm] popup debounced by backend verdict, key:', debounceKey)
+        reportPopupResult('debounced')
+      } else if (wasPopupRecentlyPopped(normalized.id, now)) {
+        // [SSOT R11] 双帧去重: linkage_alarm (先到, 兜底链) 已弹同 id 告警 → 跳过防双弹
+        console.log('[useGlobalAlarm] popup skipped (duplicate frame, same alarm_id), id:', normalized.id)
+        reportPopupResult('debounced')
+      } else {
+        // autoCloseSeconds 取 verdict.auto_close_s (主命中规则 popup_auto_close_s)
+        showAlarmPopup(normalized, { autoCloseSeconds: Number(verdict.auto_close_s) || 0, origin: 'auto' })
+        markPopupPopped(normalized.id, now)
+        reportPopupResult('shown')
+      }
+    } else {
+      // 3b. 兜底链 (与重构前逐字一致, 勿改): 本地防抖 → findMatchingRule → 弹窗/静默
+      const lastTime = lastPopupTime.get(debounceKey) || 0
+      if (now - lastTime < popupDebounceMs) {
+        console.log('[useGlobalAlarm] popup debounced, key:', debounceKey,
+          'elapsed:', Math.round((now - lastTime) / 1000) + 's')
+        reportPopupResult('debounced')
+      } else {
+        // [POPUP-AUTOCLOSE 2026-09-03] 透传规则 popup_auto_close_s: 0=永不自动关闭 (默认), >0=N 秒后关闭
+        //   详情入口不受此控制 (openAlarmDetailById 不传 options, 默认永不自关)
+        //   [FIX 2026-09-04] 单次调用: 原实现在条件与分支内各 await 一次 (双查询浪费, 若未来加副作用会双触发)
+        const matchedRule = await findMatchingRule(normalized)
+        if (matchedRule) {
+          lastPopupTime.set(debounceKey, now)
+          if (wasPopupRecentlyPopped(normalized.id, now)) {
+            // [SSOT R11] 双帧去重 (反向顺序补位: alarm.new Show 先弹 → linkage_alarm 后到)
+            console.log('[useGlobalAlarm] popup skipped (duplicate frame, same alarm_id), id:', normalized.id)
+            reportPopupResult('debounced')
+          } else {
+            // [SOUND-ORIGIN 2026-09-11] WS 推送自动弹窗 → origin:'auto' 播放报警音
+            //   (手动入口默认 manual 静音, 见 useAlarmPopup.showAlarmPopup)
+            showAlarmPopup(normalized, { autoCloseSeconds: Number(matchedRule.popup_auto_close_s) || 0, origin: 'auto' })
+            markPopupPopped(normalized.id, now)
+            reportPopupResult('offline_fallback')
+          }
+        } else {
+          console.log('[useGlobalAlarm] popup suppressed (no matching linkage rule), type:',
+            normalized.type, 'ch:', normalized.channelId)
+          // [规则驱动告警 2026-09-01] TTS 与弹窗同门槛: 未命中规则的告警整链静默
+          //   (不弹窗不播报) — 用户决策「这些都依赖事件规则」
+          return
+        }
       }
     }
 
@@ -485,4 +595,5 @@ export function stopGlobalAlarm() {
   }
   connected.value = false
   lastPopupTime.clear()
+  recentPopupAlarmIds.clear()  // [SSOT R11] 双帧去重图随会话重置（disconnect）
 }

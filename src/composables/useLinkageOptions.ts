@@ -14,6 +14,7 @@ import algorithmsApi from '@/api/algorithms'
 import eventTypesApi, { type CanonicalEventType, type EventTypeMetadataItem } from '@/api/eventTypes'
 import { channelApi } from '@/api/channel'
 import { deviceApi } from '@/api/device'
+import { testApi } from '@/api/test'
 import type { AlgorithmInfo } from '@/api/algorithms'
 import type { ChannelItem } from '@/types/device'
 
@@ -42,6 +43,12 @@ export interface EventTypeOption {
   severityCn?: string
   /** UI 分组: face / perimeter / behavior / fire / safety / traffic / device */
   uiGroup?: string
+  // ── [R6 P1-4 2026-09-12] event-coverage 三档标注 (doc §5.4) ──
+  /** 覆盖档位: A 有算法 (命中+AlgoStatus=normal) / B VLM 研判兜底 / C 预留位
+   *  (coverage 端点不可用或旧后端时缺省 — 渲染层按无标注降级) */
+  coverageTier?: 'A' | 'B' | 'C'
+  /** 该事件当前关联算法 id (coverage 端点口径; null=无关联算法) */
+  coverageAlgoId?: string | null
 }
 
 /** 通道选项 */
@@ -173,6 +180,46 @@ async function fetchAlgorithmOptions(): Promise<EventTypeOption[]> {
   if (algoCache) return algoCache
 
   algoCache = (async () => {
+    // [R6 P1-4 2026-09-12] 三级回退链产出选项后, 统一合并 event-coverage 三档标注
+    //   (A 有算法 / B VLM 兜底 / C 预留位; 端点不可用时静默跳过 — 选项功能零回归)
+    const options = await fetchEventTypeOptionsBase()
+    await mergeCoverageTiers(options)
+    return options
+  })()
+
+  return algoCache
+}
+
+/**
+ * [R6 P1-4 2026-09-12] event-coverage 三档标注合并 (doc §5.4):
+ *   档位由后端 event-coverage 端点下发 (tier 字段, 与 AlgoStatus 同源);
+ *   A 档 = coverage 命中且算法实态 normal, B 档 = VLM 单帧研判兜底,
+ *   C 档 = 预留位 (灰字提示仍可选 — 显式预期管理)。
+ */
+async function mergeCoverageTiers(options: EventTypeOption[]): Promise<void> {
+  if (options.length === 0) return
+  try {
+    const res = await testApi.getEventCoverage()
+    const data = (res as any)?.data?.data
+    const coverage: Record<string, any> = data?.coverage ?? {}
+    let annotated = 0
+    for (const opt of options) {
+      const item = coverage[opt.value]
+      if (!item) continue
+      if (item.tier === 'A' || item.tier === 'B' || item.tier === 'C') {
+        opt.coverageTier = item.tier
+        annotated++
+      }
+      opt.coverageAlgoId = item.algo_id ?? null
+    }
+    console.log('[useLinkageOptions] event-coverage tier merged:', annotated, '/', options.length)
+  } catch (e) {
+    console.warn('[useLinkageOptions] event-coverage unavailable, tier 标注降级为空', e)
+  }
+}
+
+/** 事件选项核心拉取: metadata → canonical → /algorithms 三级回退 (原链零回归) */
+async function fetchEventTypeOptionsBase(): Promise<EventTypeOption[]> {
     // v7.6: 优先用 SSOT metadata 端点 (含分类+严重等级), 回退到 canonical, 再回退到 /algorithms
     try {
       const res = await eventTypesApi.metadata()
@@ -219,9 +266,6 @@ async function fetchAlgorithmOptions(): Promise<EventTypeOption[]> {
     } catch {
       return []
     }
-  })()
-
-  return algoCache
 }
 
 async function fetchChannelOptions(): Promise<ChannelOption[]> {

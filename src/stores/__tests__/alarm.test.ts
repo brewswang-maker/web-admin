@@ -52,6 +52,10 @@ function makeAlarm(overrides: Partial<AlarmEvent> = {}): AlarmEvent {
     deviceId: 'dev-001',
     confidence: 0.92,
     status: 'unhandled',
+    // [SSOT R15 2026-09-12] raw 数字 severity 刻度 (现行契约 1-5 整数):
+    //   normalizeSeverityScale 仅解析数字 (字符串标签兜底为 2/low),
+    //   4 → severityNum 4 → level 'high' (与下方 level 展示字段一致)
+    severity: 4,
     metadata: {},
     createdAt: '2026-01-15T10:00:00Z',
     updatedAt: '2026-01-15T10:00:00Z',
@@ -164,7 +168,28 @@ describe('stores/alarm', () => {
       const store = useAlarmStore()
       await store.fetchAlarms()
 
-      expect(store.alarms).toEqual(items)
+      // [SSOT R15 2026-09-12] 期望改为「归一化输出契约显式快照」:
+      //   fetchAlarms → normalizeAlarmCore 白名单重建 (含 R1 origin 字段族 /
+      //   P2-2 review 字段族 / 默认值填充), 旧断言 toEqual(raw items) 为
+      //   源数据形态、未随实现演进 → 恒失败 (R11 登记的既存漂移, 本轮修准)
+      const expected = items.map(it => ({
+        id: it.id, type: 'intrusion', level: 'high', category: 'alarm',
+        description: '周界入侵检测', channelId: 'ch-001', channelName: '通道ch-001',
+        deviceId: 'dev-001', deviceName: '',
+        snapshotUrl: '', videoClipUrl: '', aiConclusion: '',
+        confidence: 0.92, status: 'unhandled',
+        reviewStatus: 'none', reviewSource: '', reviewSlaDueAt: 0,
+        reviewSlaRemainingMin: 0, location: '',
+        metadata: {
+          bbox: [], targetLabel: '', objectCategory: '',
+          targetLabelZh: '', targetLabelEn: '', categoryZh: '', categoryEn: '',
+          regionId: '', severityNum: 4, suggestedAction: '',
+          scene_url: '', enroll_photo_url: '', enroll_name: '',
+        },
+        createdAt: '2026-01-15T10:00:00Z', updatedAt: '2026-01-15T10:00:00Z',
+        handledBy: '', handledAt: '', handleNote: '', ticketId: '', appendLogs: [],
+      }))
+      expect(store.alarms).toEqual(expected)
       expect(store.total).toBe(2)
     })
 

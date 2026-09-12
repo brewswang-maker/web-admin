@@ -148,11 +148,44 @@ export interface AlarmEvent {
   /** [追加信息 2026-09-09] 已处置告警的追加记录列表 (后端独立表 alarm_append_logs
    *  按时间序回填 gov.append_logs, normalizeAlarmCore 解析透出; 弹窗只读区展示) */
   appendLogs?: AlarmAppendLog[]
+  /** [SSOT R1/R2 2026-09-12] 事件来源三值 (WS 帧顶层 origin, §4.6):
+   *  algo=本地算法 / device_native=GB28181 设备原生 / injected=REST 注入 */
+  origin?: string
+  /** [SSOT R1/R2 2026-09-12] 后端单判定源结果 (WS 帧 linkage_verdict, §5.1);
+   *  undefined = 旧后端 或 verdict_push_enabled=false 回退态 → 前端走本地兜底链 */
+  linkageVerdict?: LinkageVerdict
+}
+
+/** [SSOT R1/R2 2026-09-12] 后端判定结果 (LinkageEngine::matchAndVerdict 序列化形态).
+ *  字段保持后端 snake_case 原样 (零映射漂移 — 双写对比与 golden case 断言同源);
+ *  消费点: useGlobalAlarm.handleAlarm 三态降级链首分支 (matched/debounced/auto_close_s)。 */
+export interface LinkageVerdict {
+  matched: boolean
+  rule_id: string
+  rule_name: string
+  priority: number
+  /** enabled 动作子集 [{type,name,enabled}] (类型号与 LinkageActionType 枚举同源) */
+  actions: Array<{ type: number; name: string; enabled: boolean }>
+  /** 弹窗自动关闭秒数 (规则 popup_auto_close_s; 0=永不自动关闭) */
+  auto_close_s: number
+  severity: number
+  /** 判定时刻 epoch ms */
+  verdict_ts: number
+  /** 判定引擎版本 (排障口径, e.g. "v6.1.0") */
+  verdict_engine_ver: string
+  /** 判定时规则库版本 (addRule/updateRule 递增; 与 rules.changed 广播对账) */
+  rules_version: number
+  /** 后端弹窗防抖标记 (窗口内同 (channel:type) 复发; true=不弹窗仅 TTS) */
+  debounced: boolean
+  /** 全部命中规则 ID (priority 降序; 主命中在最前) */
+  matched_rule_ids: string[]
 }
 
 /** [AI 复核恢复 2026-09-10] VLM 二次复核结论 (metadata.ai_review 字段组归一化形态).
- *  后端 verdict 值域: 'confirmed' | 'retracted' | 'unverified'
- *  (review-sla 统计 SQL 同口径: json_extract($.ai_review.verdict)) */
+ *  后端 verdict 值域: 'confirmed' | 'retracted' | 'unverified' | 'false_alarm_automated'
+ *  (review-sla 统计 SQL 同口径: json_extract($.ai_review.verdict))
+ *  [P2-2 R7 2026-09-12] 'false_alarm_automated' = VLM 自动复核判误报 (非人工)
+ *  false_alarm; WS 事件与 status 列同值 (前端零消费, 语义兼容) */
 export interface AiReviewInfo {
   verdict: 'confirmed' | 'retracted' | 'unverified' | string
   confidence: number
@@ -167,8 +200,9 @@ export interface AiReviewInfo {
  *  review_status 优先级: retraction > feedback(false_positive) > vlm_verdict > none
  *  review_source: 对应来源标签 (retraction/vlm/feedback) */
 export interface AlarmReviewFields {
-  /** 复核状态 none=未复核, retracted=已撤, confirmed=已确认, false_alarm=人工标注误报, unverified=VLM 解析失败 */
-  reviewStatus: 'none' | 'retracted' | 'confirmed' | 'false_alarm' | 'unverified' | string
+  /** 复核状态 none=未复核, retracted=已撤, confirmed=已确认, false_alarm=人工标注误报,
+   *  false_alarm_automated=VLM 自动复核误报 (P2-2 R7), unverified=VLM 解析失败 */
+  reviewStatus: 'none' | 'retracted' | 'confirmed' | 'false_alarm' | 'false_alarm_automated' | 'unverified' | string
   /** 复核来源标签: 空=none, retraction=vlm撤警服务, vlm=vlm研判, feedback=人工反馈 */
   reviewSource: '' | 'retraction' | 'vlm' | 'feedback'
   /** SLA 期限 (timestamp+8000ms, ms) — 与后端 /alarms/review-sla p95 target 同口径 */
@@ -653,6 +687,35 @@ function parseAppendLogs(v: unknown): AlarmAppendLog[] {
     }))
 }
 
+/** [SSOT R1/R2 2026-09-12] WS 帧 linkage_verdict 归一化: 非法/缺失形态返回 undefined
+ *  (旧后端无此字段 / verdict_push_enabled=false 回退态 → 前端本地兜底链)。
+ *  matched 必须为布尔值 — 其余字段宽容收敛, 保真不丢判定语义。 */
+function parseLinkageVerdict(raw: unknown): LinkageVerdict | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined
+  const v = raw as Record<string, unknown>
+  if (typeof v.matched !== 'boolean') return undefined
+  return {
+    matched: v.matched,
+    rule_id: String(v.rule_id ?? ''),
+    rule_name: String(v.rule_name ?? ''),
+    priority: Number(v.priority ?? 0),
+    actions: Array.isArray(v.actions)
+      ? (v.actions as Array<Record<string, unknown>>).map((a) => ({
+          type: Number(a?.type ?? 0),
+          name: String(a?.name ?? ''),
+          enabled: a?.enabled !== false,
+        }))
+      : [],
+    auto_close_s: Number(v.auto_close_s ?? 0),
+    severity: Number(v.severity ?? 0),
+    verdict_ts: Number(v.verdict_ts ?? 0),
+    verdict_engine_ver: String(v.verdict_engine_ver ?? ''),
+    rules_version: Number(v.rules_version ?? 0),
+    debounced: v.debounced === true,
+    matched_rule_ids: Array.isArray(v.matched_rule_ids) ? v.matched_rule_ids.map(String) : [],
+  }
+}
+
 /** [AI 复核恢复 2026-09-10 P4 取数断层修复] metadata.ai_review 归一化解析.
  *  断层根因: 后端告警 API 只透出 metadata (无顶层 ai_conclusion/ai_analysis 列),
  *  原 aiConclusion 兜底链读不到 → 弹窗/列表 AI 复核恒空。此处从 metadata.ai_review
@@ -850,5 +913,11 @@ export function normalizeAlarmCore(raw: any): AlarmEvent {
     // [追加信息 2026-09-09] 独立追加表回填 gov.append_logs (数组; 兼容字符串
     //   JSON 形态), 弹窗只读区按时间序展示全部追加记录
     appendLogs: parseAppendLogs(gov.append_logs ?? raw.append_logs),
+    // [SSOT R1/R2 2026-09-12] WS 帧 origin/linkage_verdict 白名单透传:
+    //   origin 三值直收; verdict 经 parseLinkageVerdict 合法性校验 (缺失/非法
+    //   → undefined = 旧后端/回退态 → 前端本地兜底链, 零回归)
+    origin: typeof raw.origin === 'string' && raw.origin ? raw.origin : undefined,
+    linkageVerdict: parseLinkageVerdict(raw.linkage_verdict ?? raw.linkageVerdict),
   }
 }
+// [t3-tree-channel 2026-09-11 完成锚点] 三级树通道级服务端下钻(单值直传+多值 fan-out)批次 · 部署产物 entry=index-CvT0U9Nv4f.js tgz md5=07a2e26224ed93a40c47f987c04b7bb5

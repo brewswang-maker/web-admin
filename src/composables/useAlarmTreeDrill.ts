@@ -49,3 +49,5 @@ export async function fetchAlarmDrillFanout<T extends { id?: string; createdAt?:
   return Array.from(out.values()).sort((a, b) =>
     (new Date(b.createdAt ?? 0).getTime() || 0) - (new Date(a.createdAt ?? 0).getTime() || 0))
 }
+
+// [t3-tree-channel 2026-09-11 完成锚点] 三级树通道级服务端下钻(单值直传+多值 fan-out)批次 · 部署产物 entry=index-CvT0U9Nv4f.js tgz md5=07a2e26224ed93a40c47f987c04b7bb5

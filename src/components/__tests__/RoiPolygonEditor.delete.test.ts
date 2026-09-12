@@ -14,7 +14,7 @@ import { describe, it, expect, vi, beforeAll, beforeEach } from 'vitest'
 import { provide, computed } from 'vue'
 import { mount, type VueWrapper } from '@vue/test-utils'
 import RoiPolygonEditor from '@/components/RoiPolygonEditor.vue'
-import type { RoiData } from '@/composables/useRoiCanvas'
+import { RoiType, type RoiData } from '@/composables/useRoiCanvas'
 
 // element-plus 真包在 jsdom 下拖拽 popper 等副作用, mock 掉 (组件仅用 ElMessage)
 vi.mock('element-plus', () => ({ ElMessage: { success: vi.fn(), info: vi.fn(), warning: vi.fn(), error: vi.fn() } }))
@@ -91,7 +91,7 @@ function roi(partial: Partial<RoiData>): RoiData {
   return {
     roi_id: `roi_${Math.random().toString(36).slice(2)}`,
     roi_name: '检测区域',
-    roi_type: 'detection_zone',
+    roi_type: RoiType.DETECTION_ZONE,
     polygon: [100, 100, 800, 100, 800, 600, 100, 600],
     is_active: true,
     ...partial,
@@ -117,14 +117,14 @@ describe('RoiPolygonEditor 删除到 0 (用户报告: 删不掉最后 1 个)', (
     await w.findAll('.roi-list__item .el-button')[0]!.trigger('click')
     await w.vm.$nextTick()
     let emissions = w.emitted('update:modelValue')!
-    expect((emissions.at(-1)![0] as RoiData[]).length).toBe(1)
+    expect((emissions[emissions.length - 1]![0] as RoiData[]).length).toBe(1)
     expect(w.findAll('.roi-list__item').length).toBe(1)
 
     // 删最后 1 个 ← 用户断言「删不掉」的路径
     await w.findAll('.roi-list__item .el-button')[0]!.trigger('click')
     await w.vm.$nextTick()
     emissions = w.emitted('update:modelValue')!
-    expect((emissions.at(-1)![0] as RoiData[]).length).toBe(0)
+    expect((emissions[emissions.length - 1]![0] as RoiData[]).length).toBe(0)
     expect(w.find('.roi-list').exists()).toBe(false) // v-if="visibleRois.length > 0"
   })
 
@@ -135,7 +135,8 @@ describe('RoiPolygonEditor 删除到 0 (用户报告: 删不掉最后 1 个)', (
     expect(clearBtn.attributes('disabled')).toBeUndefined() // 非 disabled (visibleRois.length>0)
     await clearBtn.trigger('click')
     await w.vm.$nextTick()
-    const last = w.emitted('update:modelValue')!.at(-1)![0] as RoiData[]
+    const emsClear = w.emitted('update:modelValue')!
+    const last = emsClear[emsClear.length - 1]![0] as RoiData[]
     expect(last.length).toBe(0)
     expect(w.find('.roi-list').exists()).toBe(false)
   })
@@ -145,15 +146,16 @@ describe('RoiPolygonEditor 删除到 0 (用户报告: 删不掉最后 1 个)', (
     await w.find('.roi-list__item').trigger('click') // selectRoi(orig)
     await w.find('canvas').trigger('keydown.delete')
     await w.vm.$nextTick()
-    const last = w.emitted('update:modelValue')!.at(-1)![0] as RoiData[]
+    const emsKbd = w.emitted('update:modelValue')!
+    const last = emsKbd[emsKbd.length - 1]![0] as RoiData[]
     expect(last.length).toBe(0)
     expect(w.find('.roi-list').exists()).toBe(false)
   })
 
   it('跨类型: 检测+排除 逐 tab 删除 → 全空 (emits [1个] → [])', async () => {
     const w = mountEditor([
-      roi({ roi_id: 'det1', roi_type: 'detection_zone' }),
-      roi({ roi_id: 'excl1', roi_type: 'exclusion_zone' }),
+      roi({ roi_id: 'det1', roi_type: RoiType.DETECTION_ZONE }),
+      roi({ roi_id: 'excl1', roi_type: RoiType.EXCLUSION_ZONE }),
     ])
     // 当前 tab = detection_zone: 只见 1 个
     expect(w.findAll('.roi-list__item').length).toBe(1)
@@ -161,7 +163,8 @@ describe('RoiPolygonEditor 删除到 0 (用户报告: 删不掉最后 1 个)', (
     // 删检测区
     await w.findAll('.roi-list__item .el-button')[0]!.trigger('click')
     await w.vm.$nextTick()
-    let last = w.emitted('update:modelValue')!.at(-1)![0] as RoiData[]
+    const emsCross = w.emitted('update:modelValue')!
+    let last = emsCross[emsCross.length - 1]![0] as RoiData[]
     expect(last.length).toBe(1) // 剩排除区
 
     // 切到排除区 tab (radio stub → currentType)
@@ -172,7 +175,8 @@ describe('RoiPolygonEditor 删除到 0 (用户报告: 删不掉最后 1 个)', (
     // 删最后 1 个
     await w.findAll('.roi-list__item .el-button')[0]!.trigger('click')
     await w.vm.$nextTick()
-    last = w.emitted('update:modelValue')!.at(-1)![0] as RoiData[]
+    const emsFinal = w.emitted('update:modelValue')!
+    last = emsFinal[emsFinal.length - 1]![0] as RoiData[]
     expect(last.length).toBe(0)
     expect(w.find('.roi-list').exists()).toBe(false)
   })

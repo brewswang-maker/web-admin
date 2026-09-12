@@ -1044,6 +1044,12 @@ const enUS: MessageSchema = {
       // [P1-1 v2.1] Group click linkage from compose card (pass filter + event filter entry)
       viewGroupEvents: 'View events of this group',
       clearGroupFilter: 'Clear filter',
+      // [Group switches 2026-09-11] Six-group feature switches (compose table switch column)
+      colSwitch: 'Switch',
+      switchTip: 'When disabled, this group no longer generates alarms or pass events',
+      switchOnDone: '{group} group enabled',
+      switchOffDone: '{group} group disabled',
+      switchFailed: 'Failed to update switch, please retry',
     },
     common: {
       loadFailed: 'Failed to load data',

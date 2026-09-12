@@ -633,6 +633,9 @@
                             :title="et.severityCn || `${et.severityLevel}级`"
                           />
                           {{ et.label }}
+                          <!-- [R6 P1-4 2026-09-12] event-coverage 三档标注: B 档 VLM 兜底标签 / C 档预留位灰字提示 -->
+                          <el-tag v-if="et.coverageTier === 'B'" size="small" type="warning" effect="plain" class="tier-tag-b">AI 研判兜底</el-tag>
+                          <span v-else-if="et.coverageTier === 'C'" class="tier-hint-c">预留位·算法就绪后生效</span>
                         </span>
                       </el-checkbox>
                     </div>
@@ -641,6 +644,11 @@
                     <el-checkbox v-for="et in fallbackEventTypes" :key="et.value" :label="et.label" :value="et.value" size="small" />
                   </template>
                 </el-checkbox-group>
+                <!-- [R6 P1-4 2026-09-12] 预留位事件显式预期管理 (doc §5.4): 选中 C 档事件时
+                     告知「当前无算法支撑，规则将在算法可用后生效」— 空壳从静默失效变显式告知 -->
+                <el-alert v-if="selectedReservedEventLabels.length" type="warning" :closable="false" show-icon
+                  class="reserved-event-alert"
+                  :title="`含 ${selectedReservedEventLabels.length} 个预留位事件（当前无算法支撑，规则将在算法可用后生效）：${selectedReservedEventLabels.join('、')}`" />
                 <!-- [FIX 2026-09-02] 空类型语义修正: 未选择 = 不匹配任何事件 (对齐引擎新语义),
                      匹配所有事件的通配规则会放大 TPU/联动动作资源开销 → 必选阻断 (与简易模式 L237 一致) -->
                 <p v-if="form.conditions.eventType.config.types.length === 0" class="cond-hint" style="color: #E6A23C; margin-top: 4px">⚠ 事件类型为必选项，未选择 = 不匹配任何事件（无法保存）</p>
@@ -1434,8 +1442,9 @@ import { friendlyChannelLabelOf, channelFallbackLabel, narrowSnapshotChannels, f
 // [FIX area-cascade-label 2026-09-11] 目录反查 (fallback 四段降级中段; 首调懒加载目录)
 import { devNameOf, chNameOf } from '@/composables/useAlarmDeviceLabel'
 import { deviceApi } from '@/api/device'   // [AREA-CASCADE 2026-09-11] 级联树设备名解析
-// [FIX 2026-09-04 老规则通道反解] 编辑存量规则时哈希反解需要 (import 原仅 syncAlgosForRule)
-import { syncAlgosForRule, safeChannelHash } from '@/composables/useAlgoRuleSync'
+// [FIX 2026-09-04 老规则通道反解] 编辑存量规则时哈希反解需要
+// [R6 P1-3 2026-09-12] safeChannelHash 迁至 utils/channelHash (原 useAlgoRuleSync 随算法页降视图删除)
+import { safeChannelHash } from '@/utils/channelHash'
 // [FLOOR-MAP 2026-09-03] 适用平面图多选: 地图列表缓存 (与平面图页共用单例)
 import { useFloorMap } from '@/composables/useFloorMap'
 // [FLOOR-MAP 2026-09-04] 联动平面图动作面板: scene_tag 分组标签 + 只读预览画布
@@ -1500,6 +1509,15 @@ const TIME_PRESETS = [
 
 // 动态选项 (从后端加载)
 const { eventTypeOptions, eventTypeGrouped, severityColor, channelOptions: channelOptionsDynamic, locationOptions: locationOptionsDynamic, loading: optionsLoading, fetchOptions } = useLinkageOptions()
+
+// [R6 P1-4 2026-09-12] 预留位 (C 档) 选中集中文名 — 表单级显式预期管理提示
+//   (doc §5.4: 预留位仍可选, 但不再"静默空壳", 选中即告知算法就绪后生效)
+const selectedReservedEventLabels = computed(() => {
+  const sel = new Set(form.conditions.eventType.config.types)
+  return eventTypeOptions.value
+    .filter((o) => o.coverageTier === 'C' && sel.has(o.value))
+    .map((o) => o.label)
+})
 
 // [P1.3 2026-09-10 更名] 安保区域/位置远程实体 (独立管理页维护, 替代旧硬编码下拉)
 const deviceGroups = ref<SecurityArea[]>([])
@@ -2820,16 +2838,9 @@ async function fetchRules() {
 async function toggleRule(rule: LinkageRule) {
   try {
     await linkageApi.updateRule(rule.id, { enabled: rule.enabled })
+    // [R6 P1-3 2026-09-12] 反向联动 syncAlgosForRule 已废除: 调度态唯一入口 = 规则,
+    //   启停后算法部署由 AlgoDeploymentReconciler 对账收敛 (前端不再维护调度串)
     ElMessage.success(rule.enabled ? '已启用' : '已停用')
-    // [ALGO-RULE-SYNC 2026-09-03] 反向联动: 规则启停 → 明确绑定通道上的依赖算法行同步
-    // (通配规则/无依赖集在 composable 内豁免; 串维护等效算法页行开关; 失败不阻塞主流程)
-    try {
-      const synced = await syncAlgosForRule(rule.id, (rule as any).source_cond, rule.enabled)
-      if (synced > 0) ElMessage.success(`已同步${rule.enabled ? '启用' : '停用'} ${synced} 个关联算法`)
-    } catch (e) {
-      console.warn('[LinkageRuleView] 关联算法同步失败', e)
-      ElMessage.warning('关联算法同步失败, 请到算法配置页检查')
-    }
   } catch (e: any) {
     rule.enabled = !rule.enabled
     const msg = e?.response?.data?.message || '操作失败'
@@ -3612,18 +3623,8 @@ async function handleSave(): Promise<boolean> {
       await linkageApi.createRule({ id, ...payload })
     }
     ElMessage.success(editingRule.value ? '规则已更新' : '规则已创建')
-    // [ALGO-RULE-SYNC] 编辑保存后 enabled 翻转 → 反向联动算法行
-    // (新建无旧态基准不联动; 失败不阻塞保存主流程, 仅警告)
-    const beforeEnabled = editingRule.value?.enabled
-    if (editingRule.value && typeof beforeEnabled === 'boolean' && beforeEnabled !== payload.enabled) {
-      try {
-        const synced = await syncAlgosForRule(editingRule.value.id, payload.source_cond, payload.enabled)
-        if (synced > 0) ElMessage.success(`已同步${payload.enabled ? '启用' : '停用'} ${synced} 个关联算法`)
-      } catch (e) {
-        console.warn('[LinkageRuleView] 保存后关联算法同步失败', e)
-        ElMessage.warning('关联算法同步失败, 请到算法配置页检查')
-      }
-    }
+    // [R6 P1-3 2026-09-12] 保存后反向联动已废除 (同 toggleRule): enabled 翻转即
+    //   期望态变化, 算法行状态交 AlgoDeploymentReconciler 收敛
     drawerVisible.value = false
     fetchRules()
     return true
@@ -4490,6 +4491,13 @@ watch(mainTab, (tab) => {
 .event-type-label {
   display: inline-flex; align-items: center;
 }
+/* [R6 P1-4 2026-09-12] event-coverage 三档标注 (B VLM 兜底标签 / C 预留位灰字) */
+.tier-tag-b { margin-left: 4px; transform: scale(0.9); }
+.tier-hint-c {
+  margin-left: 4px; font-size: 11px;
+  color: var(--el-text-color-placeholder, #A8ABB2);
+}
+.reserved-event-alert { margin-top: 6px; }
 
 /* ── 动作 Tabs ── */
 .action-tabs { margin-top: 4px; }

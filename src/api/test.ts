@@ -54,6 +54,11 @@ export interface EventCoverageItem {
   test_mode: 'image' | 'synthesis'
   algo_id: string | null
   reason: string
+  /** [R6 P1-4 2026-09-12] 三档标注 (doc §5.4): A 有算法 / B VLM 兜底 / C 预留位
+   *  旧后端缺省 (前端按无标注优雅降级) */
+  tier?: 'A' | 'B' | 'C'
+  /** 该事件关联算法的实态 (normal/degraded/stub/routed, 口径同 /algorithms status) */
+  algo_status?: string
 }
 
 /** 事件可测性矩阵 */

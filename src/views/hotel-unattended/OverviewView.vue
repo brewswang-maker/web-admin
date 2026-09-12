@@ -150,6 +150,25 @@
                   <strong :style="row.today > 0 ? { color: row.color } : undefined">{{ row.today }}</strong>
                 </template>
               </el-table-column>
+              <!-- [分组开关 2026-09-11] 六分组功能开关: 逐分组人工启停 (告警/通行记录/推送),
+                   @click.stop 阻断行点击联动, 单飞期间全量禁用防连点 -->
+              <el-table-column width="92" align="center">
+                <template #header>
+                  <el-tooltip :content="t('hotel.person.switchTip')" placement="top">
+                    <span>{{ t('hotel.person.colSwitch') }}</span>
+                  </el-tooltip>
+                </template>
+                <template #default="{ row }">
+                  <el-switch
+                    :model-value="groupSwitches[row.key as PersonGroupKey]"
+                    :loading="groupSwitchSaving === row.key"
+                    :disabled="groupSwitchSaving !== ''"
+                    size="small"
+                    @click.stop
+                    @change="(val: string | number | boolean) => onGroupSwitchChange(row, val)"
+                  />
+                </template>
+              </el-table-column>
             </el-table>
           </el-card>
         </el-col>
@@ -242,6 +261,7 @@ import type { LinkageRule } from '@/api/linkage'
 import type { AlarmEvent } from '@/types/alarm'
 import type { FaceDatabaseStats, FacePassRecord } from '@/api/face'
 import { useRealtimeAlarmEvents } from '@/composables/useRealtimeAlarmEvents'
+import { useFaceGroupSwitches } from '@/composables/useFaceGroupSwitches'
 // [FIX realtime-push 2026-09-06] 场景页实时刷新: WS 告警到达去抖重拉 (零新增连接)
 useRealtimeAlarmEvents(() => fetchEvents())
 
@@ -259,6 +279,10 @@ const eventsLoading = ref(false)
 const faceStats = ref<FaceDatabaseStats | null>(null)
 const passRecords = ref<FacePassRecord[]>([])
 const passLoading = ref(false)
+
+// ── [分组开关 2026-09-11] 六分组功能开关 (人工启停: 关闭 → 该分组不产生告警/通行事件) ──
+const { switches: groupSwitches, savingKey: groupSwitchSaving,
+        load: loadGroupSwitches, toggle: toggleGroupSwitch } = useFaceGroupSwitches()
 
 // ── 派生统计 ──
 const corridorEvents = computed(() =>
@@ -311,6 +335,19 @@ function onGroupRowClick(row: { key?: string }) {
   selectedGroup.value = selectedGroup.value === k ? '' : k
 }
 
+/** [分组开关 2026-09-11] 切换分组功能开关: composable 负责乐观更新/失败回滚, 此处只 toast */
+async function onGroupSwitchChange(row: { key: PersonGroupKey; label?: string },
+                                   val: string | number | boolean) {
+  const next = val === true
+  const ok = await toggleGroupSwitch(row.key, next)
+  if (ok) {
+    ElMessage.success(t(next ? 'hotel.person.switchOnDone' : 'hotel.person.switchOffDone',
+                         { group: row.label ?? row.key }))
+  } else {
+    ElMessage.error(t('hotel.person.switchFailed'))
+  }
+}
+
 function groupRowClass({ row }: { row: { key?: string } }) {
   return selectedGroup.value && row?.key === selectedGroup.value ? 'group-row--active' : ''
 }
@@ -361,7 +398,7 @@ function tsToIso(ts: unknown): string {
 
 /** 六分类构成表合计行 (第一列为人脸库总人数 + 24h 通行合计) */
 function groupSummary() {
-  return [t('hotel.person.composeFooter', { n: faceStats.value?.total ?? 0, m: passTotal.value }), '', '']
+  return [t('hotel.person.composeFooter', { n: faceStats.value?.total ?? 0, m: passTotal.value }), '', '', '']
 }
 
 // ── 数据拉取 (主链路失败 → 错误态; 增强信息失败静默降级) ──
@@ -433,6 +470,7 @@ async function reload() {
   fetchEvents()
   fetchSsot()
   fetchFace()
+  loadGroupSwitches()
 }
 
 onMounted(() => { reload() })

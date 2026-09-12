@@ -23,7 +23,7 @@ import { ref, type Ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { linkageApi } from '@/api/linkage'
 import { regionApi } from '@/api/region'
-import { safeChannelHash } from '@/composables/useAlgoRuleSync'
+import { safeChannelHash } from '@/utils/channelHash'
 
 /** 叠加形状类型 (RoiType 全集; 渲染层五类区分色) */
 export type OverlayShapeType =

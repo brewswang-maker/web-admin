@@ -37,7 +37,7 @@ import type { AlarmEvent, AlarmAppendLog } from '@/types/alarm'
 import { normalizeAlarmCore, ALARM_CATEGORY } from '@/types/alarm'
 // [FIX 2026-09-05 弹窗不显示回归] 通道 hash 契约: 与后端 LinkageEngine.cpp/
 //   AlgoConfigView.loadRuleCounts 同源 (FNV-1a int32), GB 双流 _ch0 双形态参命中
-import { safeChannelHash } from './useAlgoRuleSync'
+import { safeChannelHash } from '@/utils/channelHash'
 
 // ── 联动动作 → Tab/按钮 映射 ──
 const WEB_SHOW_LIVE = ACTION_TYPE_MAP.WEB_SHOW_LIVE         // 210
@@ -74,6 +74,34 @@ let audioUnlockCleanup: (() => void) | null = null
 let cachedRules: LinkageRule[] | null = null
 let ruleCacheTime = 0
 const RULE_CACHE_TTL_MS = 30000
+
+/** [SSOT R2 2026-09-12] 规则缓存刷新 (抽自 findMatchingRule 内联拉取):
+ *  TTL 内直用缓存; 过期/无缓存时拉 /rules/all 全量端点。
+ *  @returns true=缓存可用 (命中或刚拉到); false=拉取失败 (旧缓存仍在但可能过期)
+ *  消费点: findMatchingRule 主路径 + handleAlarm 双写对比打点 (拉取失败跳过比对)。 */
+export async function ensureRulesLoaded(): Promise<boolean> {
+  const now = Date.now()
+  if (cachedRules && now - ruleCacheTime <= RULE_CACHE_TTL_MS) return true
+  try {
+    // [FIX F1 2026-09-11] getRules({pageSize:200}) 走分页端点, 后端 page_size
+    //   钳制上限 100 → 规则超 100 条时尾部规则永远不参与弹窗门槛 (漏弹;
+    //   8-31 事故同源)。改用 /rules/all 全量端点 (无分页, 字段同构)。
+    const { data: res } = await linkageApi.getAllRules()
+    cachedRules = ((res?.data?.items as LinkageRule[]) ?? res?.data ?? []) as LinkageRule[]
+    ruleCacheTime = now
+    return true
+  } catch (e) {
+    console.warn('[useAlarmPopup] ensureRulesLoaded failed:', e)
+    return false
+  }
+}
+
+/** [SSOT R2 2026-09-12] rules.changed 端到端 (P0-3): 规则变更 WS 广播 → 失效本地
+ *  规则缓存, 避免 30s TTL 窗口内双写对比/兜底链用旧规则产生假分歧。 */
+export function invalidateRuleCache(): void {
+  cachedRules = null
+  ruleCacheTime = 0
+}
 
 // ── WS 数据适配 (snake_case → camelCase) ──
 // 委派给 types/alarm.ts 的统一实现 normalizeAlarmCore,
@@ -140,13 +168,12 @@ const normMinConf = (mc: number) => (mc > 1 ? mc / 100 : mc)
 // [规则驱动弹窗 2026-09-01] 导出供 useGlobalAlarm 弹窗前置门槛复用
 export async function findMatchingRule(alarm: AlarmEvent): Promise<LinkageRule | null> {
   try {
-    const now = Date.now()
-    if (!cachedRules || now - ruleCacheTime > RULE_CACHE_TTL_MS) {
-      const { data: res } = await linkageApi.getRules({ pageSize: 200 })
-      cachedRules = (res?.data?.items ?? res?.data ?? []) as LinkageRule[]
-      ruleCacheTime = now
-    }
+    // [SSOT R2 2026-09-12] 缓存刷新抽为 ensureRulesLoaded (双写对比打点复用);
+    //   拉取失败且无缓存 → 走 catch 兜底 (与重构前行为一致)
+    const loaded = await ensureRulesLoaded()
+    if (!loaded && !cachedRules) return null
     const rules = cachedRules
+    if (!rules) return null
     const alarmType = alarm.type
     // [FIX 2026-09-05 弹窗不显示回归] 原 Number(alarm.channelId)||0 与规则库 hash 形态
     //   channel_ids 永不匹配 (GB 20 位→NaN→0, 数字通道→原值≠hash) → 带通道条件的
@@ -158,6 +185,13 @@ export async function findMatchingRule(alarm: AlarmEvent): Promise<LinkageRule |
     const baseId = chIdStr.replace(/_ch\d+$/, '')
     const chHashes = new Set<number>([safeChannelHash(chIdStr)])
     if (baseId && baseId !== chIdStr) chHashes.add(safeChannelHash(baseId))
+    // [FIX F2 2026-09-11] 补 device_ids 白名单检查: 后端 matchSourceCondition
+    //   是 device_ids 双形态 (d==device_id || d==channel_id_str), 前端门槛原
+    //   只查 channel_ids → 只选了 NVR 整机/同名设备独立通道的规则在前端永远
+    //   通过 (后端可能不通过), 弹窗与规则库状态错位。
+    const alarmDevIds = new Set<string>(
+      [String(alarm.deviceId || ''), chIdStr, baseId].filter(v => v && v !== 'null' && v !== 'undefined')
+    )
     const severity = (alarm.metadata?.severityNum as number) ?? 2
     const confidence = alarm.confidence
     // 按 priority 降序排列
@@ -178,6 +212,8 @@ export async function findMatchingRule(alarm: AlarmEvent): Promise<LinkageRule |
       }
       // 通道匹配 (hash 口径, 与后端 LinkageEngine 同源)
       if (src.channel_ids?.length && !src.channel_ids.some((h) => chHashes.has(h))) continue
+      // [FIX F2 2026-09-11] 设备白名单双形态匹配 (对齐后端 d==device_id || d==channel_id_str)
+      if (src.device_ids?.length && !src.device_ids.some((d) => alarmDevIds.has(String(d)))) continue
       // 严重度匹配
       if (severity < src.min_severity) continue
       // 置信度匹配 (刻度归一后比较)
@@ -204,6 +240,10 @@ export async function findMatchingRule(alarm: AlarmEvent): Promise<LinkageRule |
       if (baseId2 && baseId2 !== chIdStr2) chHashes2.add(safeChannelHash(baseId2))
       const severity = (alarm.metadata?.severityNum as number) ?? 2
       const confidence = alarm.confidence
+      // [FIX F2 2026-09-11] 回退路径同步: device_ids 双形态检查
+      const alarmDevIds2 = new Set<string>(
+        [String(alarm.deviceId || ''), chIdStr2, baseId2].filter(v => v && v !== 'null' && v !== 'undefined')
+      )
       const sorted = [...cachedRules]
         .filter(r => r.enabled)
         .sort((a, b) => b.priority - a.priority)
@@ -217,6 +257,8 @@ export async function findMatchingRule(alarm: AlarmEvent): Promise<LinkageRule |
         }
         // 通道匹配 (hash 口径, 同上)
         if (src.channel_ids?.length && !src.channel_ids.some((h) => chHashes2.has(h))) continue
+        // [FIX F2 2026-09-11] 回退路径同步: 设备白名单双形态检查
+        if (src.device_ids?.length && !src.device_ids.some((d) => alarmDevIds2.has(String(d)))) continue
         if (severity < src.min_severity) continue
         if (confidence < normMinConf(src.min_confidence)) continue
         if (!checkTimeCondition(rule)) continue

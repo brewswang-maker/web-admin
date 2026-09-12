@@ -82,7 +82,13 @@
           </el-form-item>
           <el-form-item label="触发事件类型" required>
             <el-select v-model="tune.eventTypes" multiple filterable placeholder="选择触发事件" style="width: 100%">
-              <el-option v-for="o in eventTypeOptions" :key="o.value" :label="o.label" :value="o.value" />
+              <!-- [R6 P1-4 2026-09-12] 事件选项三档标注 (doc §5.4): B=VLM 兜底 / C=预留位 (仍可选);
+                   A 档不标注 (正常选项); tier 由 useLinkageOptions 合并 event-coverage 下发 -->
+              <el-option v-for="o in eventTypeOptions" :key="o.value" :label="o.label" :value="o.value">
+                <span>{{ o.label }}</span>
+                <el-tag v-if="o.coverageTier === 'B'" size="small" type="warning" effect="plain" class="srd-tier-tag">AI 研判兜底</el-tag>
+                <span v-else-if="o.coverageTier === 'C'" class="srd-tier-hint">预留位</span>
+              </el-option>
             </el-select>
           </el-form-item>
           <el-form-item label="设备与通道">
@@ -468,5 +474,8 @@ function timePresetHint(p: 'day' | 'night'): string {
 .srd-map-link { display: flex; align-items: center; gap: 12px; width: 100%; flex-wrap: wrap; }
 .srd-map-select { max-width: 360px; }
 .srd-map-hint { margin-top: 6px; font-size: 12px; line-height: 1.6; color: var(--el-text-color-secondary); }
+/* [R6 P1-4 2026-09-12] 三档标注: B 档「AI 研判兜底」标签 / C 档「预留位」灰字 (仍可选) */
+.srd-tier-tag { margin-left: 6px; transform: scale(0.85); transform-origin: left center; }
+.srd-tier-hint { margin-left: 6px; font-size: 11px; color: var(--el-text-color-placeholder); }
 /* 平板 1024px 适配 */
 </style>

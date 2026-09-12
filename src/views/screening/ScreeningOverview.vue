@@ -41,6 +41,38 @@
       </el-col>
     </el-row>
 
+    <!-- ===== 人员分组功能开关 [分组开关 2026-09-11] 人工启停入口 ===== -->
+    <el-card shadow="never" class="block-card">
+      <template #header>
+        <div class="card-header">
+          <span class="card-title">人员分组开关
+            <span class="card-title-sub">黑名单/白名单/访客/VIP/员工/自定义 · 关闭后该分组不再产生告警与通行事件</span>
+          </span>
+          <el-button size="small" :loading="groupSwitchLoading" @click="loadGroupSwitches()">
+            <el-icon><Refresh /></el-icon>刷新
+          </el-button>
+        </div>
+      </template>
+      <el-row :gutter="12">
+        <el-col :span="4" v-for="g in groupSwitchRows" :key="g.key">
+          <div class="gs-tile" :class="{ 'gs-off': !groupSwitches[g.key] }">
+            <span class="gs-dot" :style="{ background: g.color }" />
+            <div class="gs-info">
+              <div class="gs-name">{{ g.label }}</div>
+              <div class="gs-state">{{ groupSwitches[g.key] ? '已启用' : '已禁用' }}</div>
+            </div>
+            <el-switch
+              :model-value="groupSwitches[g.key]"
+              :loading="groupSwitchSaving === g.key"
+              :disabled="groupSwitchSaving !== ''"
+              size="small"
+              @change="(val: string | number | boolean) => onGroupSwitchChange(g.key, g.label, val)"
+            />
+          </div>
+        </el-col>
+      </el-row>
+    </el-card>
+
     <!-- ===== 24h 趋势 (告警 vs 通行, 真实小时桶) ===== -->
     <el-card shadow="never" class="block-card">
       <template #header>
@@ -264,6 +296,8 @@ import { normalizeAlarmCore, type AlarmEvent, type AlarmLevel, type AlarmStatus 
 import { useAlarmRowActions } from '@/composables/useAlarmRowActions'
 import { ArrowDown } from '@element-plus/icons-vue'
 import { useRealtimeAlarmEvents } from '@/composables/useRealtimeAlarmEvents'
+import { useFaceGroupSwitches } from '@/composables/useFaceGroupSwitches'
+import type { FaceGroupTypeStr } from '@/api/face'
 // [FIX realtime-push 2026-09-06] 场景页实时刷新: WS 告警到达去抖静默重拉 (无 loading 遮罩闪烁)
 useRealtimeAlarmEvents(() => loadAll(true))
 
@@ -306,6 +340,33 @@ const listLimit = ref(20)
 //   无定义 → TS2339; 语义: 加载更多模式下表格只展示前 listLimit 条)
 const pagedEvents = computed(() => events.value.slice(0, listLimit.value))
 let refreshTimer: ReturnType<typeof setInterval> | null = null
+
+// ── [分组开关 2026-09-11] 六分组功能开关 (人工启停: 关闭 → 该分组不产生告警/通行事件) ──
+//    与无人值守总览共享 useFaceGroupSwitches (同一 REST 端点 + 设备级存储)
+const { switches: groupSwitches, loading: groupSwitchLoading, savingKey: groupSwitchSaving,
+        load: loadGroupSwitches, toggle: toggleGroupSwitch } = useFaceGroupSwitches()
+
+/** 六分组行 (key 与后端 FaceGroupType JSON 键 SSOT 对齐; 色板同无人值守页) */
+const groupSwitchRows = [
+  { key: 'blacklist' as const, label: '黑名单', color: '#f56c6c' },
+  { key: 'whitelist' as const, label: '白名单', color: '#67c23a' },
+  { key: 'visitor'   as const, label: '访客',   color: '#00b8a9' },
+  { key: 'vip'       as const, label: 'VIP',    color: '#e6a23c' },
+  { key: 'staff'     as const, label: '员工',   color: '#409eff' },
+  { key: 'custom'    as const, label: '自定义', color: '#909399' },
+]
+
+/** 切换分组开关: composable 负责乐观更新/失败回滚, 此处只 toast */
+async function onGroupSwitchChange(key: FaceGroupTypeStr, label: string,
+                                   val: string | number | boolean) {
+  const next = val === true
+  const ok = await toggleGroupSwitch(key, next)
+  if (ok) {
+    ElMessage.success(`${label} 分组功能已${next ? '开启' : '关闭'}`)
+  } else {
+    ElMessage.error('分组开关更新失败, 请重试')
+  }
+}
 
 // ── 事件类型名 (SSOT scene metadata) ──
 
@@ -626,6 +687,7 @@ async function loadSceneTypes() {
 onMounted(async () => {
   await loadSceneTypes()
   await loadAll()
+  loadGroupSwitches()
   refreshTimer = setInterval(() => loadAll(true), 30000)
 })
 onUnmounted(() => {
@@ -730,6 +792,18 @@ onUnmounted(() => {
 .rank-bar-wrap { height: 6px; background: #f0f2f5; border-radius: 3px; overflow: hidden; }
 .rank-bar { height: 100%; background: linear-gradient(90deg, #409eff, #79bbff); border-radius: 3px; transition: width 0.4s; }
 .rank-bar.bar-teal { background: linear-gradient(90deg, #14b8b8, #82dcdc); }
+
+/* ── 人员分组开关 [分组开关 2026-09-11] ── */
+.gs-tile {
+  display: flex; align-items: center; gap: 10px; padding: 10px 12px;
+  background: #fafbfc; border: 1px solid #ebeef5; border-radius: 8px;
+}
+.gs-tile.gs-off { background: #f4f4f5; }
+.gs-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
+.gs-info { flex: 1; min-width: 0; }
+.gs-name { font-weight: 600; color: #303133; font-size: 13px; }
+.gs-off .gs-name { color: #909399; }
+.gs-state { color: #909399; font-size: 11px; margin-top: 1px; }
 
 /* ── 事件表 ── */
 .type-cell { display: flex; flex-direction: column; }

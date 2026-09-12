@@ -166,6 +166,12 @@ export interface DeviceRecording {
   end_time: string
   type: string
   file_size: number
+  // [POPUP-3MIN 2026-09-11] 后端 (RestApiHandlers /recordings/query) 实际返回的扩展字段:
+  //   url    — ZLM 本地录像双层静态直链 (/record/record/rtp/...; GB28181 条目缺省)
+  //   duration — 片时长(秒); source — 'zlm' 盒子本地 / 'gb28181' NVR
+  url?: string
+  duration?: number
+  source?: string
 }
 
 /** 按设备/通道/时间范围查询 GB28181 录像 */

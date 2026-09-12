@@ -94,15 +94,20 @@
                 </div>
               </div>
 
-              <!-- 联动回放 -->
+              <!-- 联动回放: [POPUP-3MIN 2026-09-11] 事件前后各 1.5 分钟 (共 3 分钟) 自动连播,
+                   取代旧「找到 N 段录像, 点击播放」人工选片列表 (用户反馈要求) -->
               <div v-show="activePrimaryTab === 'playback'" class="alarm-popup__pane">
                 <div class="alarm-popup__playback-wrap">
                   <MiniPlayer
-                    v-if="currentAlarm.videoClipUrl"
-                    :key="`pb-${currentAlarm?.id || 'none'}-${currentAlarm.videoClipUrl}`"
-                    :src="currentAlarm.videoClipUrl" :channel-id="currentAlarm.channelId"
+                    v-if="playerSrc"
+                    :key="`pb-${currentAlarm?.id || 'none'}-${queueEpoch}-${playerSrc}`"
+                    :src="playerSrc" :channel-id="currentAlarm.channelId"
                     :src-fallbacks="playbackFallbackUrls"
+                    :seek-start="queueActive ? queueSeekStart : undefined"
+                    :stop-at="queueActive ? queueStopAt : undefined"
                     autoplay :show-controls="true"
+                    @ended="onPlaybackEnded"
+                    @error="onPlaybackError"
                   />
                   <div v-else-if="isRecordingInProgress" class="alarm-popup__recording-state">
                     <div class="alarm-popup__recording-indicator">
@@ -114,27 +119,15 @@
                     <el-icon class="is-loading" :size="20"><Loading /></el-icon>
                     <span style="margin-left:8px">加载录像中...</span>
                   </div>
-                  <div v-else-if="deviceRecordings.length === 0" class="alarm-popup__recording-state">
+                  <div v-else class="alarm-popup__recording-state">
                     <p><i class="iconfont1 icon1-luxianghuifang_" aria-hidden="true"></i> 录像回放</p>
                     <p class="alarm-popup__hint">该告警暂无录像片段</p>
                     <el-button type="primary" size="small" @click="loadPlayback">加载设备录像</el-button>
                   </div>
-                  <div v-else class="alarm-popup__recording-list">
-                    <div class="alarm-popup__recording-tip">找到 {{ deviceRecordings.length }} 段录像，点击播放：</div>
-                    <div
-                      v-for="rec in deviceRecordings" :key="rec.id"
-                      class="alarm-popup__rec-item"
-                      :class="{ 'alarm-popup__rec-item--active': selectedRecording?.id === rec.id }"
-                      @click="playSelectedRecording(rec)"
-                    >
-                      <span class="alarm-popup__rec-time">
-                        {{ rec.start_time?.split('T')[1]?.substring(0, 8) }} -
-                        {{ rec.end_time?.split('T')[1]?.substring(0, 8) }}
-                      </span>
-                      <span class="alarm-popup__rec-size">
-                        {{ rec.file_size ? (rec.file_size / 1048576).toFixed(1) + 'MB' : '' }}
-                      </span>
-                    </div>
+                  <!-- [POPUP-3MIN 2026-09-11] 连播进度: 已播段数 + 播完重播 (替代原人工选片列表) -->
+                  <div v-if="queueActive" class="alarm-popup__queue-tip">
+                    <span>{{ queueRangeLabel }} · 第 {{ Math.min(queueIndex + 1, playbackQueue.length) }}/{{ playbackQueue.length }} 段{{ queueFinished ? ' · 已播完' : '' }}{{ skippedSegments ? ' · 已跳过 ' + skippedSegments + ' 段' : '' }}</span>
+                    <span v-if="queueFinished" class="alarm-popup__queue-replay" @click="replayQueue">↻ 重播</span>
                   </div>
                   <div class="alarm-popup__timeline" aria-label="24 小时时间轴">
                     <div
@@ -706,6 +699,7 @@ function camLabelOf(b: CameraMapBinding): string {
   return b.label || ''
 }
 watch(currentAlarm, (a) => {
+  resetQueue()  // [POPUP-3MIN] 切告警重置连播队列 (播放源/进度清零, 由新告警 loadPlayback 重建)
   clearPreviewOverride()
   playbackFallbackUrls.value = []
   // [FIX rec-direct-layer 2026-09-11] 直显路径立即补层: 告警自带 video_clip_url 常为
@@ -831,12 +825,212 @@ async function confirmAppend() {
   }
 }
 
-// ── 设备录像列表 ──
+// ── [POPUP-3MIN 2026-09-11] 联动回放: 事件前后各 1.5 分钟 (共 3 分钟) 自动连播 ──
+//   规格 (用户反馈): 打开「联动回放」tab 直接播放 T-90s ~ T+90s, 取代 6 月引入的
+//   「找到 N 段录像, 点击播放」人工选片列表。设备 ZLM 录像为 60s 切片
+//   (mp4_max_second=60) → 3 分钟 = 3~4 片连播: 首片 seek 到 T-90s 片内偏移,
+//   片间由 MiniPlayer @ended 推进, 末片播到 T+90s 截止 (0.5s 容差内视为播全片)。
+const CLIP_HALF_MS = 90_000        // 事件前后各 1.5 分钟
+const CLIP_QUERY_PAD_MS = 150_000  // 查询窗口前后各 2.5 分钟 (含片边界余量)
+interface PlaybackQueueItem { url: string; seekStart: number; stopAt?: number; rec: DeviceRecording }
 const deviceRecordings = ref<DeviceRecording[]>([])
 const recordingsLoading = ref(false)
-const selectedRecording = ref<DeviceRecording | null>(null)
 // [POPUP-PLAYBACK 2026-09-11] 回放候选链的尾部回退 (MiniPlayer src 逐个尝试)
 const playbackFallbackUrls = ref<string[]>([])
+// [POPUP-3MIN] 连播状态机: queueSrc=当前段播放源, queueSeekStart/queueStopAt=当前段裁剪点;
+//   queueEpoch 在重播时自增, 强制 MiniPlayer 重建 (同 URL 重播也重新触发).
+const playbackQueue = ref<PlaybackQueueItem[]>([])
+const queueIndex = ref(0)
+const queueActive = ref(false)
+const queueFinished = ref(false)
+const queueSrc = ref('')
+const queueSeekStart = ref(0)
+const queueStopAt = ref<number | undefined>(undefined)
+const queueEpoch = ref(0)
+// [FIX pb-skip 2026-09-12] 失败段自动跳过计数 (onPlaybackError): 进度行提示
+//   「已跳过 N 段」; 新队列/重播/tab 重入时归零
+const skippedSegments = ref(0)
+// [POPUP-3MIN] 播放源优先级: 连播队列 > clip 直显; 且仅在「联动回放」tab 激活时输出 —
+//   避免弹窗打开 (默认联动预览 tab) 时后台空播, 切到回放 tab 才从头 (T-90s) 开始.
+const playerSrc = computed(() => {
+  if (activePrimaryTab.value !== 'playback') return ''
+  if (queueActive.value && queueSrc.value) return queueSrc.value
+  return currentAlarm.value?.videoClipUrl || ''
+})
+// [POPUP-3MIN] 回放区间提示 (播放器下方进度条): "HH:mm:ss ~ HH:mm:ss"
+const queueRangeLabel = computed(() => {
+  const a = currentAlarm.value
+  if (!a) return ''
+  const t = new Date(a.createdAt).getTime()
+  if (!Number.isFinite(t)) return ''
+  const f = (ms: number) => {
+    const d = new Date(ms), p = (n: number) => String(n).padStart(2, '0')
+    return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
+  }
+  return `${f(t - CLIP_HALF_MS)} ~ ${f(t + CLIP_HALF_MS)}`
+})
+
+function parseRecTime(s: string): number {
+  if (!s) return NaN
+  return new Date(String(s).replace(' ', 'T')).getTime()
+}
+// [POPUP-3MIN] ZLM 本地片直链 (后端口径: url 已是双层 /record/record/...; id 为磁盘
+//   绝对路径时转换同款双层); 非本地片 (GB28181 条目) 返回 '' 不参与连播.
+function recordingDirectUrl(rec: DeviceRecording): string {
+  const u = String(rec.url || '')
+  if (u.startsWith('/record/') || /^https?:\/\//.test(u)) return u
+  return recordingMp4DirectUrl(rec)
+}
+// [POPUP-3MIN] 构建 [T-90s, T+90s] 连播队列: 与窗口相交的直链片按时间升序 +
+//   首片 seekStart / 末片 stopAt 裁剪点.
+function buildPlaybackQueue(recs: DeviceRecording[]): PlaybackQueueItem[] {
+  const alarm = currentAlarm.value
+  if (!alarm) return []
+  const t = new Date(alarm.createdAt).getTime()
+  if (!Number.isFinite(t)) return []
+  const from = t - CLIP_HALF_MS, to = t + CLIP_HALF_MS
+  return recs
+    .map((r) => ({ r, url: recordingDirectUrl(r), rs: parseRecTime(r.start_time), re: parseRecTime(r.end_time) }))
+    .filter((x) => x.url && Number.isFinite(x.rs) && Number.isFinite(x.re) && x.rs < to && x.re > from)
+    .sort((a, b) => a.rs - b.rs)
+    .map((x) => {
+      const full = (x.re - x.rs) / 1000
+      const seekStart = Math.max(0, (from - x.rs) / 1000)
+      const stopRaw = Math.min(full, (to - x.rs) / 1000)
+      const stopAt = stopRaw < full - 0.5 ? Math.max(seekStart + 1, stopRaw) : undefined
+      return { url: x.url, seekStart, stopAt, rec: x.r }
+    })
+}
+// [POPUP-3MIN] GB28181 (NVR) 兜底: 无法多片连播时自动播覆盖事件时刻的那片
+function pickCoveringRecording(recs: DeviceRecording[], tMs: number): DeviceRecording | null {
+  if (!recs.length || !Number.isFinite(tMs)) return null
+  const scored = recs.map((r) => {
+    const rs = parseRecTime(r.start_time), re = parseRecTime(r.end_time)
+    if (!Number.isFinite(rs) || !Number.isFinite(re)) return { r, covers: 0, dist: Number.MAX_SAFE_INTEGER }
+    const covers = rs <= tMs && tMs < re ? 1 : 0
+    const dist = tMs < rs ? rs - tMs : (tMs >= re ? tMs - re : 0)
+    return { r, covers, dist }
+  }).sort((a, b) => (b.covers - a.covers) || (a.dist - b.dist))
+  return scored[0]?.r ?? null
+}
+function playQueueItem(i: number) {
+  const item = playbackQueue.value[i]
+  if (!item) return
+  queueIndex.value = i
+  const cands = recordUrlCandidates(item.url)
+  const src = cands[0] || item.url
+  playbackFallbackUrls.value = cands.slice(1)
+  queueSeekStart.value = item.seekStart
+  queueStopAt.value = item.stopAt
+  queueSrc.value = src
+}
+function startQueuePlayback(items: PlaybackQueueItem[]) {
+  playbackQueue.value = items
+  queueIndex.value = 0
+  queueFinished.value = false
+  queueActive.value = true
+  skippedSegments.value = 0
+  tailRefreshes = 0
+  playQueueItem(0)
+  stopRecordingPoll()  // 连播接管后无需再等 clip 回填
+}
+function replayQueue() {
+  if (!playbackQueue.value.length) return
+  queueEpoch.value++
+  queueFinished.value = false
+  skippedSegments.value = 0
+  tailRefreshes = 0
+  stopTailRefresh()
+  playQueueItem(0)
+}
+function onPlaybackEnded() {
+  if (!queueActive.value) return
+  const next = queueIndex.value + 1
+  if (next < playbackQueue.value.length) { playQueueItem(next); return }
+  queueFinished.value = true
+  maybeRefreshQueueTail()
+}
+// [FIX pb-skip 2026-09-12] 段播放失败兜底 (越界检测告警 014ee3e0 联动回放死局):
+//   播放 tab 原未监听 MiniPlayer @error — 任一段候选链全败 (显示「回放地址不
+//   可用 · 已尝试全部格式」) 后队列永久卡死: 不跳过坏段 / 不推进后续段 / 无重播
+//   入口, 用户只能关闭弹窗重开。现失败段自动跳过继续连播 (末段失败 → 同「已播
+//   完」态挂「重播」入口); 跳过计数在进度行提示, 失败段 URL 打 console 供取证。
+function onPlaybackError() {
+  if (!queueActive.value) return
+  const cur = playbackQueue.value[queueIndex.value]
+  console.warn('[AlarmPopup] segment playback failed, skip:', queueIndex.value + 1,
+    '/', playbackQueue.value.length, cur?.url)
+  skippedSegments.value++
+  const next = queueIndex.value + 1
+  if (next < playbackQueue.value.length) { playQueueItem(next); return }
+  queueFinished.value = true
+  maybeRefreshQueueTail()
+}
+// [POPUP-3MIN] 尾部补片: 告警新鲜时片仍在完成中 (实测新片最迟 T+92s 可见), 队列可能
+//   缺尾段; 播完现有段后每 8s 补查一次 (≤6 次且告警 5 分钟内), 补到即自动续播.
+let tailRefreshes = 0
+let tailTimer: ReturnType<typeof setTimeout> | null = null
+function stopTailRefresh() { if (tailTimer) { clearTimeout(tailTimer); tailTimer = null } }
+function resetQueue() {
+  playbackQueue.value = []
+  queueIndex.value = 0
+  queueActive.value = false
+  queueFinished.value = false
+  skippedSegments.value = 0
+  queueSrc.value = ''
+  queueSeekStart.value = 0
+  queueStopAt.value = undefined
+  tailRefreshes = 0
+  stopTailRefresh()
+}
+function maybeRefreshQueueTail() {
+  const alarm = currentAlarm.value
+  if (!alarm || tailRefreshes >= 6) return
+  const t = new Date(alarm.createdAt).getTime()
+  if (!Number.isFinite(t) || Date.now() > t + 300_000) return
+  const last = playbackQueue.value[playbackQueue.value.length - 1]
+  const coveredTo = last ? parseRecTime(last.rec.end_time) : NaN
+  if (Number.isFinite(coveredTo) && coveredTo >= t + CLIP_HALF_MS - 15_000) return
+  tailRefreshes++
+  stopTailRefresh()
+  tailTimer = setTimeout(() => { void refreshQueueTail() }, 8000)
+}
+async function refreshQueueTail() {
+  const alarm = currentAlarm.value
+  if (!alarm?.deviceId) return
+  const alarmId = alarm.id
+  const t = new Date(alarm.createdAt).getTime()
+  try {
+    const recs = await queryRecordings({
+      device_id: alarm.deviceId,
+      channel_id: alarm.channelId || undefined,
+      start_time: toLocalISOString(new Date(t - CLIP_QUERY_PAD_MS)),
+      end_time: toLocalISOString(new Date(t + CLIP_QUERY_PAD_MS)),
+    })
+    if (currentAlarm.value?.id !== alarmId) return  // 补查期间已切告警
+    const items = buildPlaybackQueue(recs)
+    const seen = new Set(playbackQueue.value.map((i) => i.url))
+    const fresh = items.filter((i) => !seen.has(i.url))
+    if (fresh.length) {
+      playbackQueue.value = [...playbackQueue.value, ...fresh]
+      if (queueFinished.value) {  // 播完等待中 → 补到的段直接续播
+        queueFinished.value = false
+        playQueueItem(playbackQueue.value.length - fresh.length)
+      }
+    }
+  } catch { /* 补片失败下轮再试 */ }
+  maybeRefreshQueueTail()
+}
+// [POPUP-3MIN] 切回「联动回放」tab → 从头 (T-90s) 重播, 保证完整回看 3 分钟.
+watch(activePrimaryTab, (t, prev) => {
+  if (t === 'playback' && prev !== 'playback' && queueActive.value && playbackQueue.value.length) {
+    queueFinished.value = false
+    skippedSegments.value = 0
+    playbackFallbackUrls.value = []
+    playQueueItem(0)
+  }
+})
+
 function loadPlayback() {
   if (!currentAlarm.value?.id) return
   recordingsLoading.value = true
@@ -846,21 +1040,37 @@ function loadPlayback() {
       // [FIX rec-layer 2026-09-11] 证据接口 video_clip.url 是单层 /record/rtp/... (实测
       //   播放恒 404）；经 recordUrlCandidates 补齐双层同源作首选，失败链兜底。
       const cands = recordUrlCandidates(ev.videoClipUrl)
-      playbackFallbackUrls.value = cands.slice(1)
+      // [FIX pb-fb-race 2026-09-12] 队列已接管时候选链归 playQueueItem 按当前段维护,
+      //   证据回调异步晚到不得覆盖 (原无条件覆盖会盖掉队列段的 :8088 兜底候选)
+      if (!queueActive.value) playbackFallbackUrls.value = cands.slice(1)
       currentAlarm.value!.videoClipUrl = cands[0]
     }
     if (ev?.snapshotUrl && !currentAlarm.value!.snapshotUrl) currentAlarm.value!.snapshotUrl = ev.snapshotUrl
   }).catch(() => {}).finally(() => { recordingsLoading.value = false })
   if (currentAlarm.value.deviceId) {
+    const alarmId = currentAlarm.value.id
     const t = new Date(currentAlarm.value.createdAt)
-    const start = new Date(t.getTime() - 3600_000)
-    const end = new Date(t.getTime() + 3600_000)
+    // [POPUP-3MIN] 查询窗口收紧为前后各 2.5 分钟 (原 ±1h): 只需覆盖 3 分钟回放区间
     queryRecordings({
       device_id: currentAlarm.value.deviceId,
       channel_id: currentAlarm.value.channelId || undefined,
-      start_time: toLocalISOString(start),
-      end_time: toLocalISOString(end),
-    }).then((recs) => { deviceRecordings.value = recs }).catch(() => {})
+      start_time: toLocalISOString(new Date(t.getTime() - CLIP_QUERY_PAD_MS)),
+      end_time: toLocalISOString(new Date(t.getTime() + CLIP_QUERY_PAD_MS)),
+    }).then((recs) => {
+      if (currentAlarm.value?.id !== alarmId) return  // 查询期间已切告警
+      deviceRecordings.value = recs
+      const items = buildPlaybackQueue(recs)
+      if (items.length) {
+        // [POPUP-3MIN] 有相交片 → 自动连播 3 分钟 (取代人工选片列表)
+        if (!queueActive.value) startQueuePlayback(items)
+        return
+      }
+      // 无本地片 → GB28181 兜底: 自动播覆盖事件时刻的那片 (NVR 场景无法多片连播)
+      const covering = pickCoveringRecording(recs, t.getTime())
+      if (covering && !currentAlarm.value!.videoClipUrl && !queueActive.value) {
+        void playSelectedRecording(covering, { silent: true })
+      }
+    }).catch(() => {})
   }
 }
 // [POPUP-PLAYBACK 2026-09-11] GB28181 设备录像 id 即磁盘绝对路径
@@ -879,8 +1089,8 @@ function recordingMp4DirectUrl(rec: DeviceRecording): string {
 //   现候选链委交 MiniPlayer src 模式: 统一归一化 + 逐候选回退:
 //   flv → hls → wsFlv → 录像文件直链 (mp4, 任何浏览器可走原生媒体栈);
 //   设备离线/回放流启动失败 (5002) 直接落直链, 无直链才明确报错。
-async function playSelectedRecording(rec: DeviceRecording) {
-  selectedRecording.value = rec
+async function playSelectedRecording(rec: DeviceRecording, opts?: { silent?: boolean }) {
+  const silent = opts?.silent === true  // [POPUP-3MIN] GB28181 兜底自动播放时不弹 toast
   playbackFallbackUrls.value = []
   const mp4Direct = recordingMp4DirectUrl(rec)
   // [FIX rec-play-url 2026-09-11] 磁盘路径 id (/data/shield/...) 无法拼 /play:
@@ -891,7 +1101,7 @@ async function playSelectedRecording(rec: DeviceRecording) {
     const cands = recordUrlCandidates(mp4Direct)
     playbackFallbackUrls.value = cands.slice(1)
     currentAlarm.value!.videoClipUrl = cands[0]
-    ElMessage.info('已切换到录像文件直链播放')
+    if (!silent) ElMessage.info('已切换到录像文件直链播放')
     return
   }
   try {
@@ -911,8 +1121,8 @@ async function playSelectedRecording(rec: DeviceRecording) {
       } else ElMessage.warning('无可用播放地址')
     } else if (mp4Direct) {
       currentAlarm.value!.videoClipUrl = mp4Direct
-      ElMessage.info('设备不支持回放流，已切换录像文件直链')
-    } else ElMessage.warning('设备不支持回放')
+      if (!silent) ElMessage.info('设备不支持回放流，已切换录像文件直链')
+    } else if (!silent) ElMessage.warning('设备不支持回放')
   } catch (e: any) {
     const body = e?.response?.data
     const msg: string = body?.message || body?.error || e?.message || ''
@@ -922,9 +1132,9 @@ async function playSelectedRecording(rec: DeviceRecording) {
       const cands = recordUrlCandidates(mp4Direct)
       playbackFallbackUrls.value = cands.slice(1)
       currentAlarm.value!.videoClipUrl = cands[0]
-      ElMessage.info('设备回放流不可用，已切换录像文件直链播放')
+      if (!silent) ElMessage.info('设备回放流不可用，已切换录像文件直链播放')
       console.warn('[AlarmPopup] /play 失败落直链:', msg)
-    } else {
+    } else if (!silent) {
       ElMessage.error('回放失败: ' + (msg || '设备可能离线'))
     }
   }
@@ -942,8 +1152,25 @@ function startRecordingPoll() {
   stopRecordingPoll()
   recordingPollTimer = setInterval(async () => {
     if (!isRecordingInProgress.value || !currentAlarm.value?.id) { stopRecordingPoll(); return }
+    if (queueActive.value) { stopRecordingPoll(); return }  // [POPUP-3MIN] 连播已接管
+    const alarmId = currentAlarm.value.id
     try {
-      const ev = await alarmApi.getEvidence(currentAlarm.value.id)
+      // [POPUP-3MIN 2026-09-11] 先探连播队列 (录像片就绪即接管 3 分钟回放), 再退 clip 直显
+      const alarm = currentAlarm.value
+      if (alarm.deviceId) {
+        const t = new Date(alarm.createdAt).getTime()
+        const recs = await queryRecordings({
+          device_id: alarm.deviceId,
+          channel_id: alarm.channelId || undefined,
+          start_time: toLocalISOString(new Date(t - CLIP_QUERY_PAD_MS)),
+          end_time: toLocalISOString(new Date(t + CLIP_QUERY_PAD_MS)),
+        })
+        if (currentAlarm.value?.id !== alarmId) return
+        const items = buildPlaybackQueue(recs)
+        if (items.length) { startQueuePlayback(items); return }
+      }
+      const ev = await alarmApi.getEvidence(alarmId)
+      if (currentAlarm.value?.id !== alarmId) return
       if (ev?.videoClipUrl) {
         playbackFallbackUrls.value = []
         currentAlarm.value.videoClipUrl = ev.videoClipUrl
@@ -1248,8 +1475,11 @@ function onAlarmClipUpdated(e: Event) {
   const detail = (e as CustomEvent).detail
   const cur = currentAlarm.value
   if (cur && cur.id === detail.alarmId && detail.videoClipUrl) {
-    cur.videoClipUrl = detail.videoClipUrl
-    if (activePrimaryTab.value === 'preview' || activePrimaryTab.value === 'image') activePrimaryTab.value = 'playback'
+    // [POPUP-3MIN 2026-09-11] 连播接管期间不切播放源 (队列已含覆盖片, 避免打断 3 分钟回看)
+    if (!queueActive.value) {
+      cur.videoClipUrl = detail.videoClipUrl
+      if (activePrimaryTab.value === 'preview' || activePrimaryTab.value === 'image') activePrimaryTab.value = 'playback'
+    }
     stopRecordingPoll()
   }
 }
@@ -1261,6 +1491,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKeydown)
   window.removeEventListener('alarm-clip-updated', onAlarmClipUpdated)
   stopAutoCloseCountdown(); stopRecordingPoll(); stopHeartbeat(); stopLiveFailTimer()
+  stopTailRefresh()  // [POPUP-3MIN] 连播尾段补片定时器
 })
 
 // 引用保留 (避免 tree-shake 报错)
@@ -1530,30 +1761,27 @@ void jumpToPlayback; void openImageTab
   animation: rec-blink 1s ease-in-out infinite;
 }
 @keyframes rec-blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
-.alarm-popup__recording-list {
-  flex: 1;
-  overflow-y: auto;
-  padding: 12px;
-}
-.alarm-popup__recording-tip {
-  color: #00E5FF; font-size: 12px; margin-bottom: 8px;
-}
-.alarm-popup__rec-item {
-  display: flex; justify-content: space-between;
-  padding: 8px 12px;
-  margin-bottom: 4px;
-  background: rgba(255, 255, 255, 0.04);
+/* [POPUP-3MIN 2026-09-11] 连播进度提示条 (替代原人工选片列表) */
+.alarm-popup__queue-tip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex: 0 0 auto;
+  margin-top: 8px;
+  padding: 5px 10px;
+  font-size: 12px;
+  color: #8B8FA3;
+  background: rgba(0, 229, 255, 0.06);
   border-radius: 4px;
+  font-variant-numeric: tabular-nums;
+}
+.alarm-popup__queue-replay {
+  color: #00E5FF;
   cursor: pointer;
-  transition: background 0.15s;
+  user-select: none;
 }
-.alarm-popup__rec-item:hover { background: rgba(0, 229, 255, 0.1); }
-.alarm-popup__rec-item--active {
-  background: rgba(0, 229, 255, 0.2);
-  border: 1px solid #00E5FF;
-}
-.alarm-popup__rec-time { color: #fff; font-size: 12px; font-variant-numeric: tabular-nums; }
-.alarm-popup__rec-size { color: #888; font-size: 11px; }
+.alarm-popup__queue-replay:hover { text-decoration: underline; }
 
 /* 24 小时时间轴 */
 .alarm-popup__timeline {
@@ -2230,15 +2458,12 @@ void jumpToPlayback; void openImageTab
 .alarm-popup__side-body :deep(.el-scrollbar__bar.is-vertical .el-scrollbar__thumb) {
   background: rgba(50, 148, 237, 0.4);
 }
-.alarm-popup__recording-list::-webkit-scrollbar,
 .alarm-popup__thumbs-track::-webkit-scrollbar {
   height: 6px; width: 6px;
 }
-.alarm-popup__recording-list::-webkit-scrollbar-thumb,
 .alarm-popup__thumbs-track::-webkit-scrollbar-thumb {
   background: rgba(0, 229, 255, 0.3); border-radius: 3px;
 }
-.alarm-popup__recording-list::-webkit-scrollbar-track,
 .alarm-popup__thumbs-track::-webkit-scrollbar-track {
   background: transparent;
 }

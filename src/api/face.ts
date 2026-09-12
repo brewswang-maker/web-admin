@@ -100,6 +100,22 @@ export interface PaginatedRecords {
   page_size: number
 }
 
+/**
+ * 六分组功能开关值 [分组开关 2026-09-11]
+ * key 与后端 JSON 键一致 (backend: FaceDatabase group_event_switches_,
+ * GET/PUT /api/v1/face/groups/switches); 关闭某分组 → 该分组识别命中
+ * 不再产生告警/通行事件 (无人值守/安检页面共用入口)
+ */
+export type FaceGroupSwitches = Record<FaceGroupTypeStr, boolean>
+
+/** 六分组开关接口响应 (GET: switches+description / PUT: switches+updated+message) */
+export interface FaceGroupSwitchesResponse {
+  switches: FaceGroupSwitches
+  description?: string
+  updated?: number
+  message?: string
+}
+
 const faceApi = {
   /**
    * 上传人脸图片
@@ -237,6 +253,20 @@ const faceApi = {
       '/face/database/pass-records',
       { params }
     )
+  },
+
+  /**
+   * 获取六分组功能开关 [分组开关 2026-09-11] (无人值守/安检页面共用)
+   */
+  getGroupSwitches() {
+    return http.get<FaceDatabaseResponse<FaceGroupSwitchesResponse>>('/face/groups/switches')
+  },
+
+  /**
+   * 更新六分组功能开关 (部分更新: 只传变更键, 其余保持当前值)
+   */
+  setGroupSwitches(patch: Partial<FaceGroupSwitches>) {
+    return http.put<FaceDatabaseResponse<FaceGroupSwitchesResponse>>('/face/groups/switches', patch)
   },
 
   /**

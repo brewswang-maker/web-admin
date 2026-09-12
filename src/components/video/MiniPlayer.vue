@@ -59,6 +59,12 @@ const props = withDefaults(defineProps<{
   /** [POPUP-PLAYBACK 2026-09-11] src 播放的候选回退列表：按序尝试，前一候选失敗
    *  (flv ERROR / hls fatal / video error / 8s 无首帧) 自动切下一个 */
   srcFallbacks?: string[]
+  /** [POPUP-3MIN 2026-09-11] 回放起始偏移(秒): mp4 直链 loadedmetadata 后 seek 到该位置
+   *  (告警弹窗「事件前后各 1.5 分钟」连播的首段从 T-90s 处开播); 流媒体格式忽略 */
+  seekStart?: number
+  /** [POPUP-3MIN 2026-09-11] 回放截止偏移(秒): mp4 播到该位置时暂停并 emit ended
+   *  (末段播到 T+90s 即停); undefined = 播到文件自然结束 */
+  stopAt?: number
   autoPlay?: boolean
   muted?: boolean
   aspectRatio?: string
@@ -78,6 +84,8 @@ const props = withDefaults(defineProps<{
   streamType: 'main',
   visible: true,
   srcFallbacks: () => [],
+  seekStart: undefined,
+  stopAt: undefined,
 })
 
 const emit = defineEmits<{
@@ -85,6 +93,8 @@ const emit = defineEmits<{
   /** fatal=true 表示确定性失败 (设备离线等), 重试无意义, 父组件可立即降级 */
   error: [msg: string, fatal?: boolean]
   snapshot: [blob: Blob]
+  /** [POPUP-3MIN 2026-09-11] mp4 播放结束 (自然结束或到达 stopAt): 父组件据此推进连播队列 */
+  ended: []
 }>()
 
 // ── [P0-4 2026-08-20] 流失败自动兜底: 指数退避重试 1s/3s/10s × 3 次 ──
@@ -188,6 +198,12 @@ function destroyPlayer() {
   if (video && srcVideoErrorHandler) {
     video.removeEventListener('error', srcVideoErrorHandler)
     srcVideoErrorHandler = null
+  }
+  // [POPUP-3MIN 2026-09-11] 连播监听 (seek/stopAt/ended) 随销毁移除, 防候选切换残留
+  if (video) {
+    if (srcLoadedMetaHandler) { video.removeEventListener('loadedmetadata', srcLoadedMetaHandler); srcLoadedMetaHandler = null }
+    if (srcTimeUpdateHandler) { video.removeEventListener('timeupdate', srcTimeUpdateHandler); srcTimeUpdateHandler = null }
+    if (srcEndedHandler) { video.removeEventListener('ended', srcEndedHandler); srcEndedHandler = null }
   }
   if (playerInstance) {
     try {
@@ -501,6 +517,11 @@ let srcCandidates: string[] = []
 let srcIndex = 0
 let srcMode = false
 let srcVideoErrorHandler: (() => void) | null = null
+// [POPUP-3MIN 2026-09-11] 回放连播: mp4 起点 seek / 截止暂停 / 结束转发 监听引用
+let srcLoadedMetaHandler: (() => void) | null = null
+let srcTimeUpdateHandler: (() => void) | null = null
+let srcEndedHandler: (() => void) | null = null
+let srcEndedFired = false
 
 function playSrc(url: string) {
   srcMode = true
@@ -529,6 +550,7 @@ function attachSrcPlayer(video: HTMLVideoElement, raw: string) {
   const isWs = /^wss?:\/\//i.test(raw)
   const url = isWs ? normalizeWsFlvUrl(raw) : normalizeStreamUrl(raw)
   const lower = url.toLowerCase()
+  srcEndedFired = false  // [POPUP-3MIN] 新候选重新计结束状态
   const failNext = (why: string) => {
     if (!srcMode) return
     console.warn(`[MiniPlayer src] ${why} (候选 ${srcIndex}/${srcCandidates.length}), url=${url}`)
@@ -595,6 +617,36 @@ function attachSrcPlayer(video: HTMLVideoElement, raw: string) {
     failNext('video error')
   }
   video.addEventListener('error', srcVideoErrorHandler)
+  // [POPUP-3MIN 2026-09-11] 连播支持 (仅 mp4 直链; flv/hls 流为直播语义无文件时间轴):
+  //   - seekStart: loadedmetadata 后 seek 到片内偏移 (首段从 T-90s 开播; moov 解析
+  //     出 duration 才可 seek, 越界收敛到 [0, duration-0.5])
+  //   - stopAt: timeupdate 采样到了即暂停并发 ended (末段 T+90s 截止; 0.2s 容差)
+  //   - ended: 自然播完转发 (单次触发防重; 与 stopAt 之和构成"片播完"单一信号)
+  if (currentFormat === 'mp4') {
+    srcLoadedMetaHandler = () => {
+      const seek = props.seekStart
+      if (seek && seek > 0.3 && isFinite(video.duration) && video.duration > 0) {
+        video.currentTime = Math.min(seek, Math.max(0, video.duration - 0.5))
+      }
+    }
+    srcTimeUpdateHandler = () => {
+      if (srcEndedFired) return
+      const stop = props.stopAt
+      if (stop != null && video.currentTime >= stop - 0.2) {
+        srcEndedFired = true
+        video.pause()
+        emit('ended')
+      }
+    }
+    srcEndedHandler = () => {
+      if (srcEndedFired) return
+      srcEndedFired = true
+      emit('ended')
+    }
+    video.addEventListener('loadedmetadata', srcLoadedMetaHandler)
+    video.addEventListener('timeupdate', srcTimeUpdateHandler)
+    video.addEventListener('ended', srcEndedHandler)
+  }
   watchFirstFrame()
 }
 
