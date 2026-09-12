@@ -13,7 +13,15 @@
     <!-- 下部信息区 -->
     <div class="alarm-card__body">
       <div class="alarm-card__row alarm-card__row--main">
-        <span class="alarm-card__type" :title="alarm.type">{{ typeZh }}</span>
+        <span class="alarm-card__type-cell">
+          <span class="alarm-card__type" :title="alarm.type">{{ typeZh }}</span>
+          <!-- [FIX-P1-2 2026-09-12] 长窗聚合合并计数: ×N (N>1 展示) -->
+          <span
+            v-if="mergedCount > 1"
+            class="alarm-card__merged"
+            :title="`长窗口内已合并 ${mergedCount} 条同类事件`"
+          >×{{ mergedCount }}</span>
+        </span>
         <el-tag class="alarm-card__status" size="small" :type="statusTone as any" effect="plain">{{ statusLabel }}</el-tag>
       </div>
       <div class="alarm-card__row alarm-card__row--meta">
@@ -62,6 +70,12 @@ const typeZh = computed(() => {
   const k = String(props.alarm.type || '')
   const z = zh(k)
   return z && z !== k ? z : k
+})
+
+/** [FIX-P1-2 2026-09-12] 长窗聚合合并计数 (normalizeAlarmCore 归一; N>1 才展示角标) */
+const mergedCount = computed(() => {
+  const n = Number((props.alarm as any).aggregatedCount ?? 1)
+  return Number.isFinite(n) && n > 1 ? n : 1
 })
 
 // ── 级别 (severity/level 兜底链) ──
@@ -168,6 +182,7 @@ const timeText = computed(() => {
 .alarm-card__body { padding: 10px 12px 12px; }
 .alarm-card__row { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .alarm-card__row--main { justify-content: space-between; }
+.alarm-card__type-cell { display: inline-flex; align-items: center; gap: 4px; min-width: 0; }
 .alarm-card__type {
   font-weight: 600;
   font-size: 14px;
@@ -175,6 +190,18 @@ const timeText = computed(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* [FIX-P1-2 2026-09-12] 合并计数角标 (长窗聚合 ×N) — 与列表页同款 */
+.alarm-card__merged {
+  flex-shrink: 0;
+  padding: 0 5px;
+  border-radius: 8px;
+  background: rgba(99, 102, 241, 0.12);
+  color: #6366F1;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 16px;
+  cursor: default;
 }
 .alarm-card__status { font-size: 14px; }
 .alarm-card__row--meta {

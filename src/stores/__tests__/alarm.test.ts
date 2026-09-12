@@ -188,6 +188,8 @@ describe('stores/alarm', () => {
         },
         createdAt: '2026-01-15T10:00:00Z', updatedAt: '2026-01-15T10:00:00Z',
         handledBy: '', handledAt: '', handleNote: '', ticketId: '', appendLogs: [],
+        // [FIX-P0-1/P1-1 2026-09-12] 目标轨迹 + 合并计数归一字段 (REST/WS 顶层下发)
+        trackId: -1, aggregatedCount: 1,
       }))
       expect(store.alarms).toEqual(expected)
       expect(store.total).toBe(2)

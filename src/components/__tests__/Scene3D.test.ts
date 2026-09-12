@@ -32,8 +32,14 @@ const { threeMock, rendererInstances } = vi.hoisted(() => {
       setPixelRatio: vi.fn(),
       render: vi.fn(),
       dispose: vi.fn(),
-      shadowMap: { enabled: false, type: 2 },
+      shadowMap: { enabled: false, type: 2, autoUpdate: true, needsUpdate: false },
       getPixelRatio: vi.fn(() => 1),
+      // [FIX P2-2 2026-09-12] Scene3D.vue 读取的 renderer 属性补全:
+      //   capabilities.getMaxAnisotropy (贴图各向异性) + info.memory/render (性能面板)
+      capabilities: { getMaxAnisotropy: vi.fn(() => 16) },
+      info: { memory: { geometries: 0, textures: 0 }, render: { calls: 0, triangles: 0 } },
+      toneMapping: 0,
+      toneMappingExposure: 1,
     }
     rendererInstances.push(r)
     return r
@@ -46,6 +52,23 @@ const { threeMock, rendererInstances } = vi.hoisted(() => {
       render: vi.fn(),
       domElement: el,
     }
+  }
+
+  /** [FIX P2-2 2026-09-12] 几何体 mock: 链式变换 API (rotateZ/translate/scale 返回自身) */
+  function createMockGeometry() {
+    const g: any = {
+      dispose: vi.fn(), setAttribute: vi.fn(), computeVertexNormals: vi.fn(),
+      setFromPoints: vi.fn(function () { return g }),
+      rotateX: vi.fn(function () { return g }),
+      rotateY: vi.fn(function () { return g }),
+      rotateZ: vi.fn(function () { return g }),
+      translate: vi.fn(function () { return g }),
+      translateX: vi.fn(function () { return g }),
+      translateY: vi.fn(function () { return g }),
+      translateZ: vi.fn(function () { return g }),
+      scale: vi.fn(function () { return g }),
+    }
+    return g
   }
 
   /** 创建完整 mock 的 Object3D — 包含 position/rotation/scale/translateY 等 */
@@ -85,17 +108,15 @@ const { threeMock, rendererInstances } = vi.hoisted(() => {
       }
     }),
     PointLight: vi.fn(function () { return { position: { set: vi.fn() } } }),
-    PlaneGeometry: vi.fn(function () { return {} }),
-    BoxGeometry: vi.fn(function () { return {} }),
-    CylinderGeometry: vi.fn(function () { return {} }),
-    SphereGeometry: vi.fn(function () { return {} }),
-    ConeGeometry: vi.fn(function () { return {} }),
-    RingGeometry: vi.fn(function () { return {} }),
-    EdgesGeometry: vi.fn(function () { return {} }),
-    WireframeGeometry: vi.fn(function () { return {} }),
-    BufferGeometry: vi.fn(function () {
-      return { setFromPoints: vi.fn(function (this: unknown) { return this }), dispose: vi.fn() }
-    }),
+    PlaneGeometry: vi.fn(function () { return createMockGeometry() }),
+    BoxGeometry: vi.fn(function () { return createMockGeometry() }),
+    CylinderGeometry: vi.fn(function () { return createMockGeometry() }),
+    SphereGeometry: vi.fn(function () { return createMockGeometry() }),
+    ConeGeometry: vi.fn(function () { return createMockGeometry() }),
+    RingGeometry: vi.fn(function () { return createMockGeometry() }),
+    EdgesGeometry: vi.fn(function () { return createMockGeometry() }),
+    WireframeGeometry: vi.fn(function () { return createMockGeometry() }),
+    BufferGeometry: vi.fn(function () { return createMockGeometry() }),
     GridHelper: vi.fn(function () { return {} }),
     MeshStandardMaterial: vi.fn(function () {
       return { dispose: vi.fn(), map: null, normalMap: null, roughnessMap: null, metalnessMap: null }
@@ -107,16 +128,41 @@ const { threeMock, rendererInstances } = vi.hoisted(() => {
     Mesh: vi.fn(function () { return createMockObject3D() }),
     LineSegments: vi.fn(function () { return createMockObject3D() }),
     Line: vi.fn(function () { return createMockObject3D() }),
+    Points: vi.fn(function () { return createMockObject3D() }),
+    Group: vi.fn(function () {
+      return { ...createMockObject3D(), add: vi.fn(), remove: vi.fn(), traverse: vi.fn(), children: [] as unknown[] }
+    }),
     Plane: vi.fn(function () { return { set: vi.fn() } }),
     Raycaster: vi.fn(function () {
       return { setFromCamera: vi.fn(), intersectObjects: vi.fn(() => []), ray: { intersectPlane: vi.fn(() => null) } }
     }),
     Vector2: vi.fn(function () { return { x: 0, y: 0 } }),
-    Vector3: vi.fn(function () { return { x: 0, y: 0, z: 0, set: vi.fn(), copy: vi.fn() } }),
+    Vector3: vi.fn(function () {
+      return { x: 0, y: 0, z: 0, set: vi.fn(), copy: vi.fn(), setFromSphericalCoords: vi.fn() }
+    }),
     Color: vi.fn(function () { return {} }),
     FogExp2: vi.fn(function () { return {} }),
     PCFShadowMap: 2,
+    PCFSoftShadowMap: 2,
     DoubleSide: 2,
+    // [FIX P2-2 2026-09-12] 补全 Scene3D.vue v1.7~v1.9 新增引用 (测试 mock 未同步):
+    //   Sky/PMREM(IBL) 环境光照 + 半球光 + 粒子系统 + 巡逻曲线/贴图加载器等
+    MathUtils: { degToRad: (d: number) => (d * Math.PI) / 180 },
+    HemisphereLight: vi.fn(function () { return { position: { set: vi.fn() } } }),
+    PMREMGenerator: vi.fn(function () {
+      return { fromScene: vi.fn(() => ({ texture: {} })), dispose: vi.fn() }
+    }),
+    CatmullRomCurve3: vi.fn(function () {
+      return { getPointAt: vi.fn(() => ({ x: 0, y: 0, z: 0 })), getPoints: vi.fn(() => []) }
+    }),
+    BufferAttribute: vi.fn(function () { return {} }),
+    PointsMaterial: vi.fn(function () { return { dispose: vi.fn() } }),
+    TextureLoader: vi.fn(function () { return { load: vi.fn(), setCrossOrigin: vi.fn() } }),
+    VideoTexture: vi.fn(function () {
+      return { dispose: vi.fn(), colorSpace: null, needsUpdate: false }
+    }),
+    SRGBColorSpace: 'srgb',
+    ACESFilmicToneMapping: 4,
   }
 
   return { threeMock, rendererInstances }
@@ -125,11 +171,41 @@ const { threeMock, rendererInstances } = vi.hoisted(() => {
 // ── Mock 模块声明（工厂引用 hoisted 对象） ──────────────────
 vi.mock('three', () => threeMock)
 
+// [FIX P2-2 2026-09-12] Scene3D.vue 新增 import (Sky IBL / GLTFLoader / BufferGeometryUtils)
+//   的真实模块依赖 three 做类继承 (class Sky extends Mesh), 与 vi.fn mock 不兼容,
+//   必须同步模块级 mock — 否则修好 THREE.Group 后此处会随即报错。
+vi.mock('three/examples/jsm/objects/Sky.js', () => ({
+  Sky: vi.fn(function () {
+    return {
+      scale: { setScalar: vi.fn() },
+      material: {
+        uniforms: {
+          turbidity: { value: 0 }, rayleigh: { value: 0 },
+          mieCoefficient: { value: 0 }, mieDirectionalG: { value: 0 },
+          sunPosition: { value: { copy: vi.fn() } },
+        },
+      },
+    }
+  }),
+}))
+vi.mock('three/examples/jsm/loaders/GLTFLoader.js', () => ({
+  GLTFLoader: vi.fn(function () {
+    return { load: vi.fn(), loadAsync: vi.fn(() => new Promise(() => {})) }
+  }),
+}))
+vi.mock('three/examples/jsm/utils/BufferGeometryUtils.js', () => ({
+  mergeGeometries: vi.fn(() => ({ dispose: vi.fn() })),
+}))
+
 vi.mock('three/examples/jsm/controls/OrbitControls.js', () => ({
   OrbitControls: vi.fn(function () {
     return {
       enableDamping: false, dampingFactor: 0, maxPolarAngle: 0,
       minDistance: 0, maxDistance: 0, target: { set: vi.fn() }, update: vi.fn(),
+      // [FIX P2-2 2026-09-12] v1.8.0 按需渲染: controls 'change' 事件监听
+      addEventListener: vi.fn(), removeEventListener: vi.fn(),
+      enabled: true, enablePan: true, enableRotate: true,
+      rotateSpeed: 1, zoomSpeed: 1,
     }
   }),
 }))

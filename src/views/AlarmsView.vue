@@ -314,7 +314,18 @@
         <!-- 告警类型 [P0-9 2026-09-04] 裸 key → canonical zh 名 (useEventTypeZh SSOT, 一处改名处处生效) -->
         <el-table-column prop="type" label="类型" width="130">
           <template #default="{ row }">
-            <span class="type-badge">{{ zh(row.type) }}</span>
+            <span class="type-cell">
+              <span class="type-badge">{{ zh(row.type) }}</span>
+              <!-- [FIX-P1-2 2026-09-12] 长窗聚合合并计数: ×N (N>1 展示, 同键 10min 合并) -->
+              <el-tooltip
+                v-if="mergedCountOf(row) > 1"
+                :content="`长窗口内已合并 ${mergedCountOf(row)} 条同类事件`"
+                placement="top"
+                :show-after="300"
+              >
+                <span class="merged-count-badge">×{{ mergedCountOf(row) }}</span>
+              </el-tooltip>
+            </span>
           </template>
         </el-table-column>
 
@@ -740,7 +751,7 @@ import { useWebSocket } from '@/composables/useWebSocket'
 // [P0-9/6/10 2026-09-04] canonical zh SSOT + 规范处警对话框
 import { useEventTypeZh } from '@/composables/useEventTypeZh'
 // [FIX dev-name-num 2026-09-11] 设备名称数字形态治理 (共享目录反查)
-import { alarmDevLabel, alarmChLabel } from '@/composables/useAlarmTableHelpers'  // [chan-col 2026-09-11] 展示口径 SSOT 单一源 (替代内联同款)
+import { alarmDevLabel, alarmChLabel, mergedCountOf } from '@/composables/useAlarmTableHelpers'  // [chan-col 2026-09-11] 展示口径 SSOT 单一源 (替代内联同款); [FIX-P1-2] mergedCountOf
 import DisposeDialog from '@/components/alarm/DisposeDialog.vue'
 // [P3 2026-09-10] 右侧设备树筛选面板 (安保区域→子区域→设备 多选)
 import AlarmDeviceTreePanel from '@/components/alarm/AlarmDeviceTreePanel.vue'
@@ -2176,10 +2187,27 @@ onUnmounted(() => {
 .sla-remaining.sla-overdue { color: #DC2626; font-weight: 600; }
 
 /* ── 类型徽章 ── */
+.type-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
 .type-badge {
     font-weight: bold;
   /*font-size: var(--text-sm, 13px);*/
   /*color: var(--app-text-secondary);*/
+}
+/* [FIX-P1-2 2026-09-12] 合并计数角标 (长窗聚合 ×N): 轻量胶囊, 不挤型列布局 */
+.merged-count-badge {
+  flex-shrink: 0;
+  padding: 0 5px;
+  border-radius: 8px;
+  background: rgba(99, 102, 241, 0.12);
+  color: #6366F1;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 16px;
+  cursor: default;
 }
 
 /* ── 设备单元格 ── */

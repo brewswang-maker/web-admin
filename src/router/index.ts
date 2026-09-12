@@ -410,7 +410,7 @@ export const asyncRoutes: RouteRecordRaw[] = [
         path: 'algo-config',
         name: 'AlgoConfig',
         component: AlgoConfigView,
-        meta: { title: '算法配置', icon: 'Setting', roles: ['admin'] }
+        meta: { title: '算法查看', icon: 'Setting', roles: ['admin'] }
       },
       {
         path: 'algo-quality',

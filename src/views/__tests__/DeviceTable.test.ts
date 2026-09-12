@@ -95,6 +95,25 @@ vi.mock('@/stores/device', () => ({
   useDeviceStore: vi.fn(() => mockStore),
 }))
 
+// ── Mock useWebSocket ──────────────────────────────────────
+// [FIX P2-2 2026-09-12] DevicesView 挂载时调用 useWebSocket('/ws') 即 new WebSocket,
+//   jsdom 无 WebSocket 构造器 → 'WebSocket is not a constructor' 炸 13 用例。
+//   此处 mock 连接层 (subscribe 返回退订函数)。异步工厂避免 vi.mock 提升引用问题。
+vi.mock('@/composables/useWebSocket', async () => {
+  const { ref } = await import('vue')
+  return {
+    useWebSocket: vi.fn(() => ({
+      connected: ref(false),
+      lastMessage: ref(null),
+      messages: ref([]),
+      error: ref(null),
+      send: vi.fn(),
+      disconnect: vi.fn(),
+      subscribe: vi.fn(() => vi.fn()),
+    })),
+  }
+})
+
 // ── Mock SIP config API (DevicesView.onMounted → fetchSipConfig) ──
 vi.mock('@/api/device', () => ({
   deviceApi: {

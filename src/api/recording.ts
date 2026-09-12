@@ -72,8 +72,10 @@ export function recordUrlCandidates(url: string): string[] {
   const m = url.match(/^[a-z][a-z0-9+.-]*:\/\/[^/]+(\/.*)$/i)
   const path = m ? m[1] : url
   if (!path.startsWith('/record/')) return [url]
-  // 双层为磁盘真实结构 (nginx 只有双层命中), 单层恒 404 已被实测排除
-  const double = path.startsWith('/record/record/')
+  // [P2-2 2026-09-12] export 裁剪产物磁盘在 /data/shield/record/export/ (无 record/
+  //   嵌套), 后端 download_url 单层 /record/export/... 即磁盘真实结构 → 不补层
+  //   (补层 /record/record/export/ 实测 404); 双层规则仅适用于录像原片 (rtp/live)。
+  const double = path.startsWith('/record/record/') || path.startsWith('/record/export/')
     ? path
     : '/record/record/' + path.slice('/record/'.length)
   const cands = [`${window.location.origin}${double}`]
@@ -85,31 +87,11 @@ export function recordUrlCandidates(url: string): string[] {
   return [...new Set(cands)]
 }
 
-/**
- * 下载录像
- * Phase 14 P0 修复 14.3: BE 返回 JSON {download_url, recording_id},前端解析 URL 后触发浏览器下载
- * [REC-DL 2026-09-06] id 为 ZLM 磁盘绝对路径 (含 '/', 不能作 path 参数) →
- *   改走 download-file?path=; 返回的 download_url 是 /record/ 静态直链, filename 为真实文件名。
- * [FIX rec-dl 2026-09-11] ① download_url 相对路径在 nginx 未配 /record/ 时 404 →
- *   沿 recordUrlCandidates 候选链回退; ② 旧实现 <a download> 直接指向跨域地址时
- *   download 属性被浏览器忽略 (同源限制) → 改 fetch→blob→objectURL (同源化) 强制落盘。
- */
-export async function downloadRecording(id: string): Promise<void> {
-  const resp = await recordingHttp.get<
-    ApiResponse<{ download_url: string; recording_id: string; filename?: string; file_size?: number }>
-  >('/download-file', { params: { path: id } })
-  const url = resp.data?.data?.download_url
-  if (!url) {
-    throw new Error('download_url not provided by backend')
-  }
-  // [FIX rec-dl 2026-09-11] 同 downloadSegment「合法直链才触发」校验: 仅 http(s):// 与
-  //   /record/ 静态路径视为合法; 磁盘绝对路径 (如 /data/shield/record/...) 直接抛错,
-  //   避免 a.href 被浏览器相对化 → 恒 404 且不弹新窗口验收项被破坏。
+/** [P2-2] blob 下载公共体: 候选链 fetch→objectURL→<a download> 强制落盘 (downloadRecording 同源化逻辑抽出) */
+export async function fetchAndDownload(url: string, filename: string): Promise<void> {
   if (!/^https?:\/\//.test(url) && !url.startsWith('/record/')) {
     throw new Error('后端未返回可用下载直链')
   }
-  const filename = resp.data?.data?.filename || `${Date.now()}.mp4`
-  // 候选链逐个尝试 fetch → blob (CORS: Drogon /record/ 返回 Access-Control-Allow-Origin: *)
   let blob: Blob | null = null
   for (const candidate of recordUrlCandidates(url)) {
     try {
@@ -136,6 +118,46 @@ export async function downloadRecording(id: string): Promise<void> {
   if (blob) {
     setTimeout(() => URL.revokeObjectURL(a.href), 60_000)
   }
+}
+
+/**
+ * 下载录像
+ * Phase 14 P0 修复 14.3: BE 返回 JSON {download_url, recording_id},前端解析 URL 后触发浏览器下载
+ * [REC-DL 2026-09-06] id 为 ZLM 磁盘绝对路径 (含 '/', 不能作 path 参数) →
+ *   改走 download-file?path=; 返回的 download_url 是 /record/ 静态直链, filename 为真实文件名。
+ * [FIX rec-dl 2026-09-11] ① download_url 相对路径在 nginx 未配 /record/ 时 404 →
+ *   沿 recordUrlCandidates 候选链回退; ② 旧实现 <a download> 直接指向跨域地址时
+ *   download 属性被浏览器忽略 (同源限制) → 改 fetch→blob→objectURL (同源化) 强制落盘。
+ */
+export async function downloadRecording(id: string): Promise<void> {
+  const resp = await recordingHttp.get<
+    ApiResponse<{ download_url: string; recording_id: string; filename?: string; file_size?: number }>
+  >('/download-file', { params: { path: id } })
+  const url = resp.data?.data?.download_url
+  if (!url) {
+    throw new Error('download_url not provided by backend')
+  }
+  const filename = resp.data?.data?.filename || `${Date.now()}.mp4`
+  await fetchAndDownload(url, filename)
+}
+
+/**
+ * [P2-2 2026-09-12] In/Out 区间裁剪导出: 后端按 [start_time, end_time] 扫描该通道覆盖的
+ *   ZLM MP4 切片, ffmpeg -c copy 裁剪/拼接后返回静态直链; 前端拿 download_url 落盘。
+ *   服务端执行 (同步, copy 级秒~十秒级), 区间上限由后端限制 (30 分钟)。
+ */
+export async function exportRangeRecording(params: {
+  device_id?: string
+  channel_id: string
+  start_time: string
+  end_time: string
+}): Promise<{ download_url: string; filename: string; file_size?: number; segments_used?: number }> {
+  const resp = await recordingHttp.post<
+    ApiResponse<{ download_url: string; filename: string; file_size?: number; segments_used?: number }>
+  >('/export-range', params)
+  const out = resp.data?.data
+  if (!out?.download_url) throw new Error(resp.data?.message || '后端未返回导出文件直链')
+  return out
 }
 
 /** 删除录像 */

@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { ref, onMounted, computed, watch, nextTick, onUnmounted } from 'vue'
+import { ref, reactive, onMounted, computed, watch, nextTick, onUnmounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { deviceHttp, recordingHttp } from '@/api/http'
 import { alarmApi } from '@/api/alarm'  // [P3-VP1] 时间轴告警标记
-import { getRecordings, playRecording, stopPlayback as stopRecordingPlayback, controlPlayback, downloadRecording, recordUrlCandidates, toLocalISOString, type RecordingSegment as ApiRecordingSeg } from '@/api/recording'
+import { getRecordings, playRecording, stopPlayback as stopRecordingPlayback, controlPlayback, downloadRecording, recordUrlCandidates, toLocalISOString, exportRangeRecording, fetchAndDownload, type RecordingSegment as ApiRecordingSeg } from '@/api/recording'
 import {
   getWatermark, updateWatermark,
   downloadSegment as downloadSegmentApi,
@@ -123,6 +123,18 @@ const FORMAT_OPTIONS: { value: PlaybackFormat; label: string }[] = [
 ]
 const playbackFormat = ref<PlaybackFormat>('flv')
 
+// [FIX rec-relurl 2026-09-12] 后端回放/播放 URLs 已相对化 (/rtp/...):
+//   http-flv/hls 相对路径 fetch 走同源 (dev vite /rtp 代理 / 生产 nginx /rtp 转发) 即可;
+//   ws-flv 需绝对 ws:// 地址 (new WebSocket 不接受相对路径)
+function absHttpUrl(u?: string): string {
+  return u && u.startsWith('/') ? window.location.origin + u : (u || '')
+}
+function absWsUrl(u?: string): string {
+  return u && u.startsWith('/')
+    ? `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}${u}`
+    : (u || '')
+}
+
 // [REC-SCHEDULE 2026-09-11] 录像计划管理已整体迁出 → SettingsView「录像计划」Tab (复用既有 4 个 CRUD API)
 
 // [P0-2] 水印配置状态
@@ -145,9 +157,19 @@ const channels = computed(() => {
 watch(selectedDeviceId, () => {
   selectedChannelId.value = ''
   recordings.value = []
+  nextTick(() => drawTimeline())  // [TL-VIEW] 清空后重绘, 避免时间轴残留旧段
 })
 
-watch(selectedDate, () => { recordings.value = [] })
+watch(selectedDate, () => {
+  recordings.value = []
+  tlResetView()                   // [TL-VIEW] 日期切换 → 视口重置为当天 24h 全览
+  // [P2-1] 从窗段缓存按日期失效 + 从窗停流 (主通道重播时 playSegment hook 会重建对齐)
+  syncSegsCache.clear()
+  syncStopAll()
+  // [P2-2] 选区随日期切换失效
+  tlRange.has = false
+  tlRange.dragging = false
+})
 
 // ── [UI 2026-09-11] 左侧通道目录树 (替代设备/通道双下拉, 与视频预览页同款) ──
 const recTreeRef = ref()
@@ -381,79 +403,399 @@ async function fetchRecordings() {
   }
 }
 
+// ── [TL-VIEW 2026-09-12] P0-2/P0-3/P0-4 时间轴视口模型与交互 ──
+// 对标行业(海康/大华/华为/Milestone/Axis): 时间轴支持滚轮缩放(鼠标位置为锚点)、
+// 拖拽平移、双击复位 24h; 点击任意时刻即定位播放(空档给就近段一键入口);
+// 悬停显示精确时间与所属录像块/告警。见 reports/recording-playback-benchmark-20260912.md §六。
+const TL_MIN_SPAN = 60 * 1000            // 最小视口 1 分钟
+const TL_MAX_SPAN = 24 * 3600 * 1000     // 最大视口 24 小时
+const TL_GAP_TOL = 30 * 1000             // [P0-1] 跨片段连续播放: 相邻段间隙容忍 (超过视为空档停止)
+const TL_SEEK_NEAR_MS = 60 * 1000        // [P0-3] 空档就近段一键跳转阈值
+const PLAYBACK_FPS = 25                  // [P0-5] 逐帧步进帧率(固定 25fps, 与录像编码主流一致)
+const tlView = reactive({ startMs: 0, spanMs: TL_MAX_SPAN })
+const continuousPlay = ref(true)         // [P0-1] 连播开关 (默认连播, 对齐行业)
+const tlHover = ref<{ x: number; ms: number } | null>(null)  // [P0-4] 悬停位置
+interface TlSeg { r: RecordingSegment; s: number; e: number }
+let tlDrag: { startX: number; startMs: number; moved: boolean } | null = null
+
+const clampN = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v))
+const p2 = (n: number) => String(n).padStart(2, '0')
+/** ms → 当地 HH:mm:ss (tooltip/刻度用) */
+function fmtClockMs(ms: number): string {
+  const d = new Date(ms)
+  return `${p2(d.getHours())}:${p2(d.getMinutes())}:${p2(d.getSeconds())}`
+}
+/** 当天 0 点 ms (selectedDate 本地时区基准) */
+function tlDayStartMs(): number {
+  return new Date(`${selectedDate.value}T00:00:00`).getTime()
+}
+
+/** 视口坐标: ms → [0,1] 相对位置 (timeToPercent 的视口化替代) */
+function msToX(ms: number): number {
+  return (ms - tlView.startMs) / tlView.spanMs
+}
+/** [px 相对 canvas] → ms */
+function pxToMs(px: number, width: number): number {
+  return tlView.startMs + (px / width) * tlView.spanMs
+}
+
+/** 归一段列表: filteredRecordings → {r,s,e} 按 start 升序 (doTimeSeek/连播/点击定位共用) */
+function buildSegs(): TlSeg[] {
+  return filteredRecordings.value
+    .map(r => ({ r, s: Date.parse(r.startTime || ''), e: Date.parse(r.endTime || '') }))
+    .filter(x => !isNaN(x.s))
+    .sort((a, b) => a.s - b.s)
+}
+
+/** [P0-3] 时刻→段 公共匹配 (复用 doTimeSeek 四级选择):
+ *  ① 本地段覆盖 ② 就近本地段 ③ 任意覆盖段 ④ 就近任意段。
+ *  hit=覆盖段可直接定位; near=仅就近段(不保证覆盖), 由调用方决定提示/跳转。 */
+function resolveSegmentAt(targetMs: number, segs?: TlSeg[]): { hit?: TlSeg; near?: TlSeg } {
+  const list = segs || buildSegs()
+  const covers = (x: TlSeg) => x.s <= targetMs && targetMs <= x.e + 5000
+  const dist = (x: TlSeg) => Math.min(Math.abs(x.s - targetMs), Math.abs(x.e - targetMs))
+  const locals = list.filter(x => x.r.url)
+  const hit = locals.find(covers)
+    || locals.filter(x => dist(x) <= TL_SEEK_NEAR_MS).sort((a, b) => dist(a) - dist(b))[0]
+    || list.find(covers)
+    || list.reduce<TlSeg | undefined>((best, cur) => (!best || dist(cur) < dist(best) ? cur : best), undefined)
+  if (!hit) return {}
+  return covers(hit) ? { hit } : { near: hit }
+}
+
+/** 视口起点统一钳制: 与当天交集 ≥ 半个视口 (头部最多提前 12h / 尾部最多滞后 12h) */
+function clampTlStart(startMs: number, spanMs: number): number {
+  const dayStart = tlDayStartMs()
+  const dayEnd = dayStart + TL_MAX_SPAN
+  return clampN(startMs, dayStart - TL_MAX_SPAN / 2, dayEnd - spanMs + TL_MAX_SPAN / 2)
+}
+
+/** 重置视口为当天 24h 全览 */
+function tlResetView() {
+  tlView.startMs = tlDayStartMs()
+  tlView.spanMs = TL_MAX_SPAN
+  drawTimeline()
+}
+
+/** 以 centerMs 为锚点缩放 (锚点时间不动) */
+function zoomAt(centerMs: number, factor: number) {
+  const newSpan = clampN(tlView.spanMs * factor, TL_MIN_SPAN, TL_MAX_SPAN)
+  const newStart = centerMs - (centerMs - tlView.startMs) * (newSpan / tlView.spanMs)
+  tlView.startMs = clampTlStart(newStart, newSpan)
+  tlView.spanMs = newSpan
+  drawTimeline()
+}
+function onTlWheel(e: WheelEvent) {
+  const canvas = canvasRef.value
+  if (!canvas) return
+  const rect = canvas.getBoundingClientRect()
+  zoomAt(pxToMs(e.clientX - rect.left, rect.width), e.deltaY > 0 ? 1.25 : 0.8)
+}
+function tlZoomIn() { zoomAt(tlView.startMs + tlView.spanMs / 2, 0.8) }
+function tlZoomOut() { zoomAt(tlView.startMs + tlView.spanMs / 2, 1.25) }
+
+// [P2-2 2026-09-12] In/Out 区间选区导出: 工具条开启「区间选择」后, 拖拽替代平移绘制选区,
+//   选区高亮 + 导出/清除; 导出走后端 ffmpeg -c copy 裁剪 (POST /recordings/export-range)。
+const tlRange = reactive({ mode: false, has: false, dragging: false, startMs: 0, endMs: 0 })
+const tlExporting = ref(false)
+const tlRangeLabel = computed(() => {
+  if (!tlRange.has) return ''
+  const lo = Math.min(tlRange.startMs, tlRange.endMs)
+  const hi = Math.max(tlRange.startMs, tlRange.endMs)
+  const dur = hi - lo
+  const s = Math.round(dur / 1000)
+  const hh = Math.floor(s / 3600), mm = Math.floor((s % 3600) / 60), ss = s % 60
+  return `${fmtClockMs(lo)} ~ ${fmtClockMs(hi)} (${hh > 0 ? hh + ':' : ''}${p2(mm)}:${p2(ss)})`
+})
+function tlToggleRangeMode() {
+  tlRange.mode = !tlRange.mode
+  if (!tlRange.mode) { tlRange.has = false; tlRange.dragging = false; drawTimeline() }
+}
+function tlRangeClear() {
+  tlRange.has = false
+  drawTimeline()
+}
+/** [P2-2] 导出当前选区: 后端裁剪拼接 → 静态直链 → blob 落盘 (同 downloadRecording 同源化链) */
+async function tlRangeExport() {
+  if (!tlRange.has || !selectedChannelId.value) {
+    ElMessage.warning('请先框选时间区间')
+    return
+  }
+  const lo = Math.min(tlRange.startMs, tlRange.endMs)
+  const hi = Math.max(tlRange.startMs, tlRange.endMs)
+  if (hi - lo < 1000) {
+    ElMessage.warning('选区过短 (至少 1 秒)')
+    return
+  }
+  tlExporting.value = true
+  try {
+    const out = await exportRangeRecording({
+      device_id: selectedDeviceId.value || undefined,
+      channel_id: String(selectedChannelId.value),
+      start_time: toLocalISOString(new Date(lo)),
+      end_time: toLocalISOString(new Date(hi)),
+    })
+    await fetchAndDownload(out.download_url, out.filename || 'export.mp4')
+    ElMessage.success(`区间导出完成${out.segments_used ? ` (拼接 ${out.segments_used} 个切片)` : ''}`)
+  } catch (e: any) {
+    ElMessage.error('区间导出失败: ' + (e?.response?.data?.message || e?.message || ''))
+  } finally {
+    tlExporting.value = false
+  }
+}
+
+function onTlMouseDown(e: MouseEvent) {
+  const canvas = canvasRef.value
+  if (!canvas) return
+  const rect = canvas.getBoundingClientRect()
+  if (tlRange.mode) {
+    // [P2-2] 选区模式: 按下即开始拖选 (不启动平移)
+    tlRange.dragging = true
+    tlRange.has = false
+    tlRange.startMs = pxToMs(e.clientX - rect.left, rect.width)
+    tlRange.endMs = tlRange.startMs
+    return
+  }
+  tlDrag = { startX: e.clientX, startMs: tlView.startMs, moved: false }
+}
+function onTlMouseMove(e: MouseEvent) {
+  const canvas = canvasRef.value
+  if (!canvas) return
+  const rect = canvas.getBoundingClientRect()
+  if (tlRange.dragging) {
+    // [P2-2] 拖选中: 实时更新选区终点并重绘高亮
+    tlRange.endMs = pxToMs(e.clientX - rect.left, rect.width)
+    tlRange.has = true
+    drawTimeline()
+    tlHover.value = null
+    return
+  }
+  if (tlDrag) {
+    const dx = e.clientX - tlDrag.startX
+    if (Math.abs(dx) > 3) tlDrag.moved = true
+    if (tlDrag.moved) {
+      // 平移视口 (与真实拖拽方向一致: 向左拖=时间前移), 同一钳制与缩放共用
+      const newStart = tlDrag.startMs - (dx / rect.width) * tlView.spanMs
+      tlView.startMs = clampTlStart(newStart, tlView.spanMs)
+      drawTimeline()
+    }
+    tlHover.value = null
+    return
+  }
+  // [P0-4] 悬停: 记录位置 → tooltip 显示 + 所属块高亮重绘
+  tlHover.value = { x: e.clientX - rect.left, ms: pxToMs(e.clientX - rect.left, rect.width) }
+  drawTimeline()
+}
+function onTlMouseUp(e: MouseEvent) {
+  const canvas = canvasRef.value
+  if (tlRange.dragging) {
+    // [P2-2] 拖选完成: 归一化选区 (拖动距离 < 4px 视为误触取消)
+    tlRange.dragging = false
+    const rect = canvas?.getBoundingClientRect()
+    if (rect && Math.abs(tlRange.endMs - tlRange.startMs) * rect.width / tlView.spanMs < 4) {
+      tlRange.has = false
+    }
+    drawTimeline()
+    return
+  }
+  const drag = tlDrag
+  tlDrag = null
+  if (!canvas || !drag || drag.moved) return
+  const rect = canvas.getBoundingClientRect()
+  activateTimeline(pxToMs(e.clientX - rect.left, rect.width), rect.width)
+}
+function onTlMouseLeave() {
+  tlRange.dragging = false
+  tlDrag = null
+  if (tlHover.value) { tlHover.value = null; drawTimeline() }
+}
+
+/** [P0-3] 点击(未拖动)时间轴任意点: 告警命中→跳告警; 覆盖段→定位播放; 空档→就近一键/提示 */
+async function activateTimeline(clickedMs: number, width: number) {
+  // 告警标记命中 (容差 12px, 视口化换算为 ms 距离)
+  const toleranceMs = (12 / width) * tlView.spanMs
+  for (const a of timelineAlarms.value) {
+    if (Math.abs(a.timestamp - clickedMs) <= toleranceMs) {
+      const ts = a.timestamp
+      const d = new Date(ts)
+      // [FIX rec-jump 2026-09-11] 与 jumpToTime 同源换算 (原「当天 0 点秒数」对分段文件越界)
+      if (playingUrl.value && videoRef.value) {
+        await jumpToTime(ts)
+        ElMessage.success(`已跳转到告警: ${a.alarm_type} @ ${d.toLocaleTimeString('zh-CN')}`)
+      } else {
+        pendingJumpMs.value = ts
+        ElMessage.info(`已记录跳转目标: ${d.toLocaleString('zh-CN')}，请先加载录像`)
+      }
+      return
+    }
+  }
+  const { hit, near } = resolveSegmentAt(clickedMs)
+  if (hit) {
+    await playSegment(hit.r, { startAtMs: clickedMs })
+    ElMessage.success(`已从 ${fmtClockMs(clickedMs)} 开始播放`)
+    return
+  }
+  if (!hit && near && Math.abs(near.s - clickedMs) <= TL_SEEK_NEAR_MS) {
+    // 空档但 60s 内有就近段 → 一键跳转入口 (对齐大华「点击任意时间点回放」的空档语义)
+    try {
+      await ElMessageBox.confirm(
+        `${fmtClockMs(clickedMs)} 无录像，就近录像段从 ${fmtClockMs(near.s)} 开始，是否跳转？`,
+        '该时刻无录像',
+        { confirmButtonText: '跳最近录像', cancelButtonText: '取消', type: 'info' },
+      )
+      await playSegment(near.r, { startAtMs: near.s })
+    } catch { /* 用户取消 */ }
+    return
+  }
+  ElMessage.info(`点击时间: ${fmtClockMs(clickedMs)}（该时刻无录像）`)
+}
+
+// [P0-4] tooltip 文案: 精确时间 + 所属录像块/告警
+const tlHoverLabel = computed(() => {
+  if (!tlHover.value) return ''
+  const d = new Date(tlHover.value.ms)
+  return `${selectedDate.value} ${fmtClockMs(tlHover.value.ms)} ${['周日','周一','周二','周三','周四','周五','周六'][d.getDay()]}`
+})
+const tlHoverInfo = computed(() => {
+  if (!tlHover.value) return ''
+  const ms = tlHover.value.ms
+  for (const a of timelineAlarms.value) {
+    if (Math.abs(a.timestamp - ms) <= 2000) return `告警: ${a.alarm_type} @ ${fmtClockMs(a.timestamp)}`
+  }
+  const hit = buildSegs().find(x => x.s <= ms && ms <= x.e + 5000)
+  return hit ? `录像 ${fmtClockMs(hit.s)} - ${fmtClockMs(hit.e)} · ${hit.r.source === 'zlm' ? '中心储存' : '设备存储'}` : '无录像'
+})
+// 视口跨度可读标签 (工具条)
+const tlSpanLabel = computed(() => {
+  const s = tlView.spanMs
+  if (s >= 3600e3) return `${(s / 3600e3).toFixed(s % 3600e3 ? 1 : 0)} 小时`
+  if (s >= 60e3) return `${Math.round(s / 60e3)} 分钟`
+  return `${Math.round(s / 1000)} 秒`
+})
+
 function drawTimeline() {
   const canvas = canvasRef.value
   if (!canvas) return
   const ctx = canvas.getContext('2d')
   if (!ctx) return
+  if (!tlView.spanMs) tlResetView()
   const W = canvas.width = canvas.offsetWidth * 2
   const H = canvas.height = 80
+  if (W <= 0) return  // [FIX tl-narrow 2026-09-12] 窄视口挤压时 offsetWidth=0, 避免无效绘制
   ctx.clearRect(0, 0, W, H)
+
+  // 视口初始化守卫 (首次绘制/日期未同步时对齐当天 24h)
+  if (!tlView.spanMs || !tlView.startMs) {
+    tlView.startMs = tlDayStartMs()
+    tlView.spanMs = TL_MAX_SPAN
+  }
 
   // 背景
   ctx.fillStyle = '#1a1a2e'
   ctx.fillRect(0, 0, W, H)
 
-  // 时间刻度
-  ctx.fillStyle = '#666'
+  const X = (ms: number) => msToX(ms) * W
+
+  // 时间刻度: 按视口跨度自适应分级 (对齐华为「滚轮缩放时间颗粒度」)
   ctx.font = '20px monospace'
-  for (let h = 0; h <= 24; h++) {
-    const x = (h / 24) * W
+  const span = tlView.spanMs
+  const [stepMs, withSec] = span >= 6 * 3600e3 ? [3600e3, false]
+    : span >= 30 * 60e3 ? [600e3, false]
+    : span >= 5 * 60e3 ? [60e3, false]
+    : [10e3, true]
+  for (let ms = Math.ceil(tlView.startMs / stepMs) * stepMs; ms <= tlView.startMs + span; ms += stepMs) {
+    const d = new Date(ms)
+    const x = X(ms)
     ctx.fillStyle = '#444'
     ctx.fillRect(x, 0, 1, H)
     ctx.fillStyle = '#888'
-    ctx.fillText(`${h}:00`, x + 4, H - 8)
+    ctx.fillText(withSec ? fmtClockMs(ms) : `${p2(d.getHours())}:${p2(d.getMinutes())}`, x + 4, H - 8)
   }
 
-  // 录像段
-  ctx.fillStyle = '#3b82f6'
-  for (const rec of recordings.value) {
-    const start = timeToPercent(rec.startTime)
-    const end = timeToPercent(rec.endTime)
-    ctx.fillRect(start * W, 10, (end - start) * W, H - 30)
-  }
-
-  // [P3-VP1] 告警事件标记 (红色三角形/方块) — 可点击跳转
-  if (timelineAlarms.value.length > 0) {
-    for (const a of timelineAlarms.value) {
-      const pct = alarmToPercent(a.timestamp)
-      if (pct < 0 || pct > 1) continue
-      const x = pct * W
-      const level = a.level || 'low'
-      const color = level === 'critical' ? '#FF3D71'
-        : level === 'high' ? '#FF6B35'
-        : level === 'medium' ? '#FFB800'
-        : '#00D4AA'
-      ctx.fillStyle = color
-      // 告警事件：底部三角形标记
-      ctx.beginPath()
-      ctx.moveTo(x, 0)
-      ctx.lineTo(x - 5, 10)
-      ctx.lineTo(x + 5, 10)
-      ctx.closePath()
-      ctx.fill()
-      // 竖线
-      ctx.fillRect(x - 1, 10, 2, H - 24)
+  // 录像段 (视口裁剪绘制; hover 所属块描边高亮 [P0-4])
+  for (const x of buildSegs()) {
+    const x1 = Math.max(0, X(x.s))
+    const x2 = Math.min(W, X(x.e))
+    if (x2 <= 0 || x1 >= W) continue
+    // [P1-3] 来源颜色编码: 中心储存(zlm)=绿 / 设备存储(gb28181)=蓝, 与列表标签同色系
+    ctx.fillStyle = x.r.source === 'zlm' ? '#67c23a' : '#409eff'
+    ctx.fillRect(x1, 10, x2 - x1, H - 30)
+    if (tlHover.value && x.s <= tlHover.value.ms && tlHover.value.ms <= x.e + 5000) {
+      ctx.strokeStyle = '#ffffff'
+      ctx.lineWidth = 3
+      ctx.strokeRect(x1 + 1, 11, Math.max(2, x2 - x1 - 2), H - 32)
     }
   }
 
-  // 当前时间线
+  // [P3-VP1] 告警事件标记 (视口内) — 可点击跳转
+  for (const a of timelineAlarms.value) {
+    const x = X(a.timestamp)
+    if (x < -10 || x > W + 10) continue
+    const level = a.level || 'low'
+    ctx.fillStyle = level === 'critical' ? '#FF3D71'
+      : level === 'high' ? '#FF6B35'
+      : level === 'medium' ? '#FFB800'
+      : '#00D4AA'
+    ctx.beginPath()
+    ctx.moveTo(x, 0)
+    ctx.lineTo(x - 5, 10)
+    ctx.lineTo(x + 5, 10)
+    ctx.closePath()
+    ctx.fill()
+    ctx.fillRect(x - 1, 10, 2, H - 24)
+  }
+
+  // [P2-2] In/Out 选区高亮: 半透明黄绿遮罩 + 双边界竖线 + 区间标签
+  if (tlRange.has) {
+    const lo = Math.min(tlRange.startMs, tlRange.endMs)
+    const hi = Math.max(tlRange.startMs, tlRange.endMs)
+    const x1 = clampN(X(lo), 0, W)
+    const x2 = clampN(X(hi), 0, W)
+    if (x2 > x1) {
+      ctx.fillStyle = 'rgba(250, 219, 20, 0.28)'
+      ctx.fillRect(x1, 0, x2 - x1, H)
+      ctx.strokeStyle = '#fadb14'
+      ctx.lineWidth = 2
+      ctx.beginPath()
+      ctx.moveTo(x1, 0); ctx.lineTo(x1, H)
+      ctx.moveTo(x2, 0); ctx.lineTo(x2, H)
+      ctx.stroke()
+      if (x2 - x1 > 140) {
+        ctx.fillStyle = '#fadb14'
+        ctx.font = '18px monospace'
+        ctx.fillText(`IN ${fmtClockMs(lo)}`, x1 + 6, H - 32)
+        ctx.fillText(`OUT ${fmtClockMs(hi)}`, x2 - 118, 14)
+      }
+    }
+  }
+
+  // 当前播放位置指针 (绿色, 视口内)
+  if (isPlaying.value && currentSegmentStartMs.value) {
+    const px = X(currentSegmentStartMs.value + currentTime.value * 1000)
+    if (px >= 0 && px <= W) {
+      ctx.strokeStyle = '#00D4AA'
+      ctx.lineWidth = 2
+      ctx.beginPath()
+      ctx.moveTo(px, 6)
+      ctx.lineTo(px, H)
+      ctx.stroke()
+    }
+  }
+
+  // 当天实时时间线 (仅查看今天时)
   const now = new Date()
   if (selectedDate.value === now.toISOString().split('T')[0]) {
-    const nowPct = (now.getHours() + now.getMinutes() / 60) / 24
-    ctx.strokeStyle = '#ef4444'
-    ctx.lineWidth = 2
-    ctx.beginPath()
-    ctx.moveTo(nowPct * W, 0)
-    ctx.lineTo(nowPct * W, H)
-    ctx.stroke()
+    const nowMs = tlDayStartMs() + (now.getHours() * 3600 + now.getMinutes() * 60 + now.getSeconds()) * 1000
+    const nx = X(nowMs)
+    if (nx >= 0 && nx <= W) {
+      ctx.strokeStyle = '#ef4444'
+      ctx.lineWidth = 2
+      ctx.beginPath()
+      ctx.moveTo(nx, 0)
+      ctx.lineTo(nx, H)
+      ctx.stroke()
+    }
   }
-}
-
-function timeToPercent(timeStr: string): number {
-  const parts = timeStr.match(/(\d{2}):(\d{2}):(\d{2})/)
-  if (!parts) return 0
-  return (parseInt(parts[1]) + parseInt(parts[2]) / 60 + parseInt(parts[3]) / 3600) / 24
 }
 
 async function playSegment(rec: RecordingSegment, opts?: { startAtMs?: number }) {
@@ -494,6 +836,8 @@ async function playSegment(rec: RecordingSegment, opts?: { startAtMs?: number })
       video.src = cands[candIdx]
       video.play().catch(() => {})
       if (opts?.startAtMs) await jumpToTime(opts.startAtMs)
+      // [P2-1] 主通道定位 → 同步驱动从窗 (无 startAtMs 时对齐段起点)
+      void syncTo(opts?.startAtMs || Date.parse(rec.startTime) || 0)
       return
     }
 
@@ -533,9 +877,9 @@ async function playSegment(rec: RecordingSegment, opts?: { startAtMs?: number })
     // 按选定格式播放，不可用时降级
     const fmt = playbackFormat.value
     const urlMap: Record<string, string> = {
-      'flv': urls.flv,
-      'ws-flv': urls.wsFlv,
-      'hls': urls.hls,
+      'flv': absHttpUrl(urls.flv),
+      'ws-flv': absWsUrl(urls.wsFlv),
+      'hls': absHttpUrl(urls.hls),
     }
 
     let playUrl = urlMap[fmt] || ''
@@ -584,6 +928,8 @@ async function playSegment(rec: RecordingSegment, opts?: { startAtMs?: number })
   } catch (e: any) {
     ElMessage.error('回放失败: ' + (e.message || ''))
   }
+  // [P2-1] GB28181 会话链路 (未提前 return) 同样同步从窗
+  void syncTo(opts?.startAtMs || Date.parse(rec.startTime) || 0)
 }
 
 function attachHls(hlsUrl: string) {
@@ -632,11 +978,16 @@ const qpChannelLabel = computed(() => {
   return ch ? (ch.name || ch.id) : '未选择通道'
 })
 
-/** 存储位置过滤 (设计图「全部录像 / 中心储存」下拉): zlm=中心存储 MP4 / gb28181=设备端录像 */
+/** 存储位置过滤 (设计图「全部录像 / 中心储存」下拉): zlm=中心存储 MP4 / gb28181=设备端录像
+ *  [FIX rec-sort 2026-09-12] 输出按 start 升序 (验收发现后端返回未排序, 列表末行出现短段错位,
+ *  且 navSegment 的「上一段/下一段」依赖时间序) */
 const filteredRecordings = computed(() => {
-  if (recordTypeFilter.value === 'zlm') return recordings.value.filter(r => r.source === 'zlm')
-  if (recordTypeFilter.value === 'gb28181') return recordings.value.filter(r => r.source !== 'zlm')
-  return recordings.value
+  const list = recordTypeFilter.value === 'zlm'
+    ? recordings.value.filter(r => r.source === 'zlm')
+    : recordTypeFilter.value === 'gb28181'
+      ? recordings.value.filter(r => r.source !== 'zlm')
+      : recordings.value
+  return [...list].sort((a, b) => (Date.parse(a.startTime || '') || 0) - (Date.parse(b.startTime || '') || 0))
 })
 
 /** 回放钟 (设计图控制条时间框): 段起点 + 播放进度 → 绝对时刻 */
@@ -647,12 +998,6 @@ const playbackClockLabel = computed(() => {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
 })
 
-function timeOnly(s: string): string {
-  return s?.split('T')[1]?.substring(0, 8) || s || '--'
-}
-function segRangeLabel(rec: RecordingSegment): string {
-  return `${timeOnly(rec.startTime)} - ${timeOnly(rec.endTime)}`
-}
 
 /** 控制条「上一段/下一段」 (设计图控制条导航) */
 function navSegment(dir: -1 | 1) {
@@ -666,6 +1011,25 @@ function navSegment(dir: -1 | 1) {
 }
 function playPrevSegment() { navSegment(-1) }
 function playNextSegment() { navSegment(1) }
+
+/** [P0-5] 跳当日第一段/最后一段起点 (对齐 Milestone「数据库第一个/最后一个片段」) */
+function navToEdge(edge: 'first' | 'last') {
+  const list = buildSegs()
+  if (!list.length) return
+  const target = edge === 'first' ? list[0].r : list[list.length - 1].r
+  playSegment(target, { startAtMs: Date.parse(target.startTime) || 0 })
+}
+
+/** [P0-5] 逐帧步进 (暂停态): currentTime 对齐帧网格后 ±1 帧
+ *  (仅 ZLM MP4 直链可精准 seek; GB28181 推流无 Range 定位不支持)。公式:
+ *  currentTime = (round(currentTime × FPS) + dir) / FPS */
+function stepFrame(dir: 1 | -1) {
+  const video = videoRef.value
+  if (!video || currentSessionId.value) return
+  if (!video.paused) { video.pause(); isPaused.value = true }
+  video.currentTime = (Math.round(video.currentTime * PLAYBACK_FPS) + dir) / PLAYBACK_FPS
+  currentTime.value = video.currentTime  // 暂停态 timeupdate 不触发, 手动同步进度条
+}
 
 /** 批量下载 (设计图「录像下载」入口): 逐段 fetch→blob→objectURL 强制落盘 */
 async function batchDownload() {
@@ -737,6 +1101,7 @@ async function changeSpeed(speed: number) {
 }
 
 async function stopPlay() {
+  syncStopAll()  // [P2-1] 主通道停止 → 全部从窗一并停止 (下次播放按 syncChannels 自动重建)
   if (currentSessionId.value) {
     try { await recordingHttp.post(`/${currentSessionId.value}/stop`) } catch { /* ignore */ }
   }
@@ -756,6 +1121,238 @@ async function stopPlay() {
   currentTime.value = 0
   duration.value = 0
   seekValue.value = 0
+}
+
+// [P0-1] 跨片段连续播放: @ended 后在时间轴上找相邻下一段自动衔接 (间隙 ≤ TL_GAP_TOL=30s),
+//   消除「播完一段即停」的片段维度体感 (对齐 Milestone/华为时间轴连续回放体感)。
+//   说明: ZLM MP4 直链 (HTTP Range) 为主要连播场景; GB28181 推流自然结束通常不触发
+//   ended 事件, 该场景仍需手动导航 (后续可由后端会话结束事件补齐)。
+async function onSegmentEnded() {
+  if (!continuousPlay.value) { stopPlay(); return }
+  const list = buildSegs().filter(x => !isNaN(x.e))
+  if (!list.length) { stopPlay(); return }
+  let idx = list.findIndex(x => String(x.r.id) === String(currentRecId.value))
+  if (idx < 0 && currentSegmentStartMs.value) {
+    idx = list.findIndex(x => x.s <= currentSegmentStartMs.value && currentSegmentStartMs.value <= x.e + 5000)
+  }
+  if (idx < 0) { stopPlay(); return }
+  const next = list[idx + 1]
+  if (next && next.s - list[idx].e <= TL_GAP_TOL) {
+    await playSegment(next.r, { startAtMs: next.s })
+    return
+  }
+  stopPlay()
+  ElMessage.success('当日录像播放完毕')
+}
+
+// ── [P2-1 2026-09-12] 多通道同步回放 (≤4 路: 主通道 + 最多 3 路从窗) ──
+// 对标海康 iVMS-4200/大华 SmartPSS 同步回放: 主通道任何定位 (点击时间轴/时间点/连播/
+// 逐帧跳段/告警跳转) 同步驱动从窗; ZLM 直链窗段内仅 currentTime seek, 跨段重开会话;
+// GB28181 从窗为独立回放会话 (从目标时刻起推流, 无 Range 不支持段内 seek)。
+interface SyncWinState {
+  deviceId: string
+  chId: string
+  label: string
+  recId: string        // 当前段 id (换源判重)
+  startMs: number      // 当前段基准 (seek 换算)
+  sessionId: string    // GB28181 回放会话
+  source: string       // zlm / gb28181
+  url: string          // ZLM 直链 (候选链首个)
+  player: any          // flv.js / hls.js 实例 (GB 会话)
+  pendingSeekMs: number // ZLM 换源后待 loadedmetadata 补设的 offset (ms 相对段起点)
+}
+const syncWins = ref<SyncWinState[]>([])
+const syncVideos = new Map<string, HTMLVideoElement>()
+const syncSegsCache = new Map<string, TlSeg[]>()  // 多路从窗各自缓存 (key=deviceId|chId|date)
+const SYNC_MAX_AUX = 3   // 从窗上限 (主通道 + 3 = 4 路)
+const syncDialogVisible = ref(false)
+const syncPick = ref<string[]>([])  // 弹窗临时选择 (通道 id, 含设备前缀)
+const syncChannels = ref<{ deviceId: string; chId: string; label: string }[]>([])
+
+function setSyncVideo(chId: string, el: unknown) {
+  if (el) syncVideos.set(chId, el as HTMLVideoElement)
+  else syncVideos.delete(chId)
+}
+function onSyncLoadedMeta(w: SyncWinState, e: Event) {
+  const v = e.target as HTMLVideoElement
+  if (w.pendingSeekMs > 0 && isFinite(v.duration)) {
+    v.currentTime = Math.max(0, w.pendingSeekMs / 1000)
+  }
+  w.pendingSeekMs = 0
+}
+
+/** 弹窗可选通道: 所有设备的全部通道 (label 设备/通道), 排除主通道 */
+const syncOptions = computed(() =>
+  devices.value.flatMap(d => (d.channels || []).map(c => ({
+    key: `${d.id}|${c.id}`,
+    label: `${d.name || d.id} / ${c.name || c.id}`,
+    deviceId: String(d.id),
+    chId: String(c.id),
+  }))).filter(x => x.chId !== String(selectedChannelId.value)),
+)
+function openSyncDialog() {
+  syncPick.value = syncChannels.value.map(w => `${w.deviceId}|${w.chId}`)
+  syncDialogVisible.value = true
+}
+function applySyncDialog() {
+  if (syncPick.value.length > SYNC_MAX_AUX) {
+    ElMessage.warning(`同步通道最多 ${SYNC_MAX_AUX} 路 (加主通道共 ${SYNC_MAX_AUX + 1} 路)`)
+    return
+  }
+  syncChannels.value = syncPick.value.map(key => {
+    const old = syncChannels.value.find(w => `${w.deviceId}|${w.chId}` === key)
+    if (old) return old
+    const opt = syncOptions.value.find(x => x.key === key)
+    return { deviceId: opt?.deviceId || '', chId: opt?.chId || '', label: opt?.label || key }
+  })
+  syncDialogVisible.value = false
+  // 立即补齐/收缩从窗列 (空选即收起 rail; 未播放时先呈"待同步"空态)
+  ensureSyncWins()
+  // 正在播放时立即对齐到主通道当前绝对时刻
+  if (isPlaying.value) syncTo(currentAbsMs())
+}
+function clearSyncChannels() {
+  syncStopAll()
+  syncChannels.value = []
+}
+
+/** 主通道当前绝对时刻 (段起点 + 进度) */
+function currentAbsMs(): number {
+  return currentSegmentStartMs.value
+    ? currentSegmentStartMs.value + currentTime.value * 1000
+    : 0
+}
+
+/** 按 syncChannels 补齐从窗 (保留已存在窗状态; 移除已取消通道的窗) */
+function ensureSyncWins() {
+  syncWins.value = syncChannels.value.map(ch =>
+    syncWins.value.find(w => w.chId === ch.chId) || {
+      deviceId: ch.deviceId, chId: ch.chId, label: ch.label,
+      recId: '', startMs: 0, sessionId: '', source: '', url: '', player: null, pendingSeekMs: 0,
+    })
+}
+
+function syncStopWin(w: SyncWinState, remove = true) {
+  if (w.sessionId) {
+    recordingHttp.post(`/${w.sessionId}/stop`).catch(() => { /* ignore */ })
+  }
+  if (w.player) {
+    if ('destroy' in w.player) w.player.destroy()
+    w.player = null
+  }
+  const v = syncVideos.get(w.chId)
+  if (v) { v.pause(); v.removeAttribute('src'); v.load() }
+  w.sessionId = ''
+  w.recId = ''
+  w.startMs = 0
+  w.url = ''
+  w.pendingSeekMs = 0
+  if (remove) syncWins.value = syncWins.value.filter(x => x !== w)
+}
+function syncStopAll() {
+  for (const w of [...syncWins.value]) syncStopWin(w, false)
+  syncWins.value = []
+}
+
+/** 从窗当天段列表 (Map 缓存: 同通道同日期复用查询) */
+async function ensureSyncSegs(w: SyncWinState): Promise<TlSeg[]> {
+  const key = `${w.deviceId}|${w.chId}|${selectedDate.value}`
+  const cached = syncSegsCache.get(key)
+  if (cached) return cached
+  const { data } = await recordingHttp.post('/query', {
+    device_id: w.deviceId,
+    channel_id: w.chId,
+    start_time: selectedDate.value + 'T00:00:00',
+    end_time: selectedDate.value + 'T23:59:59',
+  })
+  const rawList: Array<Record<string, unknown>> = data?.data?.recordings || data?.data || []
+  const segs = rawList.map(normalizeDeviceRecording)
+    .map(r => ({ r, s: Date.parse(r.startTime || ''), e: Date.parse(r.endTime || '') }))
+    .filter(x => !isNaN(x.s))
+    .sort((a, b) => a.s - b.s)
+  syncSegsCache.set(key, segs)
+  return segs
+}
+
+/** 从窗对齐到绝对时刻 ms: 段内 (ZLM) 仅 seek / 跨段重开 / GB28181 重开会话 */
+async function syncPlayWinAt(w: SyncWinState, ms: number) {
+  const segs = await ensureSyncSegs(w)
+  const { hit, near } = resolveSegmentAt(ms, segs)
+  const chosen = hit || near
+  if (!chosen) { syncStopWin(w, false); return }
+  const r = chosen.r
+  if (r.url) {
+    const absStart = Date.parse(r.startTime)
+    // 同段内: 直接 currentTime 定位 (MP4 Range 天然支持)
+    if (w.recId === String(r.id) && w.startMs) {
+      const offMs = ms - w.startMs
+      const v = syncVideos.get(w.chId)
+      if (!v) return
+      if (v.readyState >= 1 && isFinite(v.duration)) v.currentTime = Math.max(0, offMs / 1000)
+      else w.pendingSeekMs = offMs
+      return
+    }
+    // 跨段: 换源重开
+    syncStopWin(w, false)
+    w.recId = String(r.id)
+    w.startMs = absStart
+    w.source = r.source || 'zlm'
+    w.url = recordUrlCandidates(r.url)[0] || ''
+    w.pendingSeekMs = Math.max(0, ms - absStart)
+    await nextTick()
+    const v = syncVideos.get(w.chId)
+    if (!v || !w.url) return
+    v.src = w.url
+    v.play().catch(() => { /* 自动播放策略: 静默 */ })
+    return
+  }
+  // GB28181 设备端录像: 独立回放会话从 ms 起推流 (同段已在播则不重复起会话)
+  if (w.recId === String(r.id) && w.sessionId) return
+  syncStopWin(w, false)
+  const { data } = await recordingHttp.post('/0/play', {
+    id: r.id,
+    device_id: w.deviceId,
+    channel_id: w.chId,
+    start_time: toLocalISOString(new Date(ms)),
+    end_time: r.endTime,
+  })
+  const result = data?.data || data
+  if (!result?.urls) return
+  w.sessionId = result.call_id || ''
+  w.recId = String(r.id)
+  w.startMs = ms
+  w.source = 'gb28181'
+  const playUrl = absHttpUrl(result.urls.flv) || absWsUrl(result.urls.wsFlv) || absHttpUrl(result.urls.hls) || ''
+  if (!playUrl) return
+  await nextTick()
+  const v = syncVideos.get(w.chId)
+  if (!v) return
+  if (playUrl.endsWith('.flv') && flvjs.isSupported()) {
+    const player = flvjs.createPlayer({
+      type: 'flv', url: playUrl, isLive: false, hasAudio: true, hasVideo: true,
+    }, { enableStashBuffer: false })
+    player.attachMediaElement(v)
+    player.load()
+    player.play()
+    w.player = player
+  } else if (playUrl.includes('.m3u8') && Hls.isSupported()) {
+    const hls = new Hls({ enableWorker: true })
+    hls.loadSource(playUrl)
+    hls.attachMedia(v)
+    w.player = hls
+  } else {
+    v.src = playUrl
+    v.play().catch(() => { /* ignore */ })
+  }
+}
+
+/** 主通道定位动作 → 同步驱动全部从窗 (并行, 互不阻塞) */
+function syncTo(ms: number) {
+  if (!ms || !syncChannels.value.length) return
+  ensureSyncWins()
+  for (const w of syncWins.value) {
+    syncPlayWinAt(w, ms).catch(() => { /* 单路失败不影响其它路 */ })
+  }
 }
 
 // [V4-X4 2026-07-08] 进度条事件回调
@@ -814,6 +1411,14 @@ function handleKeydown(e: KeyboardEvent) {
       if (isFinite(duration.value))
         videoRef.value.currentTime = Math.min(duration.value, videoRef.value.currentTime + (e.shiftKey ? 30 : 5))
       break
+    case ',':
+      e.preventDefault()
+      stepFrame(-1)  // [P0-5] 上一帧
+      break
+    case '.':
+      e.preventDefault()
+      stepFrame(1)   // [P0-5] 下一帧
+      break
     case 'Escape':
       if (isFullscreen.value) toggleFullscreen()
       break
@@ -841,57 +1446,8 @@ function onFullscreenChange() {
   isFullscreen.value = !!(document.fullscreenElement || (document as any).webkitFullscreenElement)
 }
 
-async function handleTimelineClick(e: MouseEvent) {
-  const canvas = canvasRef.value
-  if (!canvas) return
-  const rect = canvas.getBoundingClientRect()
-  const x = e.clientX - rect.left
-  const pct = x / rect.width
-
-  // [P3-VP1] 检测是否点击了告警标记 (容差 12px ≈ 0.5h)
-  const tolerance = 12 / rect.width
-  for (const a of timelineAlarms.value) {
-    if (Math.abs(alarmToPercent(a.timestamp) - pct) < tolerance) {
-      const ts = a.timestamp
-      const d = new Date(ts)
-      // [FIX rec-jump 2026-09-11] 与 jumpToTime 同源换算 (原「当天 0 点秒数」对分段文件越界)
-      if (playingUrl.value && videoRef.value) {
-        await jumpToTime(ts)
-        ElMessage.success(`已跳转到告警: ${a.alarm_type} @ ${d.toLocaleTimeString('zh-CN')}`)
-      } else {
-        pendingJumpMs.value = ts
-        ElMessage.info(`已记录跳转目标: ${d.toLocaleString('zh-CN')}，请先加载录像`)
-      }
-      return
-    }
-  }
-
-  // [REC-UI 2026-09-11] 设计图: 点击时间轴蓝色录像块 → 从点击时刻开始回放
-  const dayStartMs = new Date(`${selectedDate.value}T00:00:00`).getTime()
-  const clickedMs = dayStartMs + pct * 24 * 3600 * 1000
-  const segs = recordings.value
-    .map(x => ({ r: x, s: Date.parse(x.startTime || ''), e: Date.parse(x.endTime || '') }))
-    .filter(x => !isNaN(x.s))
-    .sort((a, b) => a.s - b.s)
-  const hit = segs.find(x => x.s <= clickedMs && clickedMs <= x.e + 5000)
-  if (hit) {
-    await playSegment(hit.r, { startAtMs: clickedMs })
-    ElMessage.success(`已从 ${new Date(clickedMs).toLocaleTimeString('zh-CN')} 开始播放`)
-    return
-  }
-
-  const hours = pct * 24
-  const h = Math.floor(hours)
-  const m = Math.floor((hours - h) * 60)
-  ElMessage.info(`点击时间: ${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`)
-}
-
-// [P3-VP1] 告警时间戳 → 时间轴百分比
-function alarmToPercent(ts: number): number {
-  const d = new Date(ts)
-  const dayStart = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0).getTime()
-  return (ts - dayStart) / (24 * 3600 * 1000)
-}
+// [TL-VIEW 2026-09-12] 原 handleTimelineClick/alarmToPercent 已由视口化 activateTimeline/
+//   resolveSegmentAt (上方) 替代: 点击/拖动任意点即定位, 告警命中按 ms 距离判定
 
 // [P3-VP1] 加载通道当天的告警事件用于时间轴标记
 async function fetchTimelineAlarms() {
@@ -1354,6 +1910,8 @@ async function jumpToTime(ms: number) {
     video.currentTime = Math.max(0, seconds)
     video.play().catch(() => {})
     ElMessage.success(`已跳转到 ${d.toLocaleTimeString('zh-CN')}`)
+    // [P2-1] 主通道段内 seek → 从窗同步对齐 (段内仅 currentTime, 跨段重开)
+    void syncTo(ms)
   } catch (e: any) {
     ElMessage.error('跳转失败: ' + (e?.message || ''))
   }
@@ -1461,6 +2019,24 @@ function openTimeSeek() {
   timeSeekVisible.value = true
 }
 
+// [P1-1] 时间轴常驻定位控件: 日期取当前查询日期, 复用 doTimeSeek 全链路
+//   (含四级段匹配/日期同步重查), 对齐 Milestone Web Client「时间选择器常驻」交互。
+//   回放钟 (pc-clock) 点击也走 openTimeSeek 弹窗 (对齐华为「点击当前播放时间弹窗」)。
+const tlSeekTime = ref('14:30:25')
+async function tlSeekGo() {
+  if (!selectedDeviceId.value || !selectedChannelId.value) {
+    ElMessage.warning('请先选择设备和通道')
+    return
+  }
+  if (!tlSeekTime.value) {
+    ElMessage.warning('请选择时间点')
+    return
+  }
+  timeSeekDate.value = selectedDate.value
+  timeSeekTime.value = tlSeekTime.value
+  await doTimeSeek()
+}
+
 async function doTimeSeek() {
   if (!selectedDeviceId.value || !selectedChannelId.value) {
     ElMessage.warning('请先选择设备和通道')
@@ -1485,37 +2061,20 @@ async function doTimeSeek() {
       ElMessage.error('时间格式无效')
       return
     }
-    // 3. 段选择: 本地片 (带 url, 可 Range seek 精准定位) 优先, GB28181 段兜底
-    //    [FIX rec-tseek 2026-09-11] 原「sort 后取首个覆盖段」在两源合并 (rec-merge)
-    //    后会先命中跨度大的 GB28181 段 (整段录像), 其回放走设备推流 (无 Range 精准定位);
-    //    注: "固件死路"系误判, 真因是本端 SDP t= 用 NTP 基准, 已修 pb-t 2026-09-12。
-    //    本地 ZLM 片直链可精准定位。分层选择:
-    //    ① 本地片覆盖目标 (end 容差 +5s);
-    //    ② 就近本地片 (≤60s) — 事件片常从目标后数秒起步, 从头播即可覆盖目标时段;
-    //    ③ 任意覆盖段 — GB28181 语义兜底;
-    //    ④ 就近任意段 — 无覆盖时最后兜底。
-    const segs = recordings.value
-      .map(r => ({ r, s: Date.parse(r.startTime || ''), e: Date.parse(r.endTime || '') }))
-      .filter(x => !isNaN(x.s))
-      .sort((a, b) => a.s - b.s)
-    type Seg = (typeof segs)[number]
-    const covers = (x: { s: number; e: number }) => x.s <= targetMs && targetMs <= x.e + 5000
-    const dist = (x: { s: number; e: number }) =>
-      Math.min(Math.abs(x.s - targetMs), Math.abs(x.e - targetMs))
-    const locals = segs.filter(x => x.r.url)
-    let hit: Seg | undefined = locals.find(covers)
-      || locals.filter(x => dist(x) <= 60_000).sort((a, b) => dist(a) - dist(b))[0]
-      || segs.find(covers)
-      || segs.reduce<Seg | undefined>((best, cur) => (!best || dist(cur) < dist(best) ? cur : best), undefined)
-    if (hit && !covers(hit)) {
+    // 3. 段选择: [TL-VIEW 2026-09-12] 复用 resolveSegmentAt 四级匹配 (与时间轴点击同源):
+    //    ① 本地片覆盖 (end 容差 +5s) ② 就近本地片 (≤60s) ③ 任意覆盖段 ④ 就近任意段。
+    //    hit=覆盖段可直接定位; near=仅就近段, 提示后仍从目标时刻开播。
+    const { hit, near } = resolveSegmentAt(targetMs)
+    const chosen = hit || near
+    if (near && !hit) {
       ElMessage.info('无精确覆盖段，已定位到最近录像段')
     }
-    if (!hit) {
+    if (!chosen) {
       ElMessage.warning('该时间段无录像记录')
       return
     }
     // 4. 播放 + 精确定位 (ZLM: loadedmetadata 后 Range seek; GB28181: 设备从目标时刻开播)
-    await playSegment(hit.r, { startAtMs: targetMs })
+    await playSegment(chosen.r, { startAtMs: targetMs })
     timeSeekVisible.value = false
   } catch (e: any) {
     ElMessage.error('时间点定位失败: ' + (e?.message || ''))
@@ -1535,6 +2094,10 @@ onMounted(() => {
   window.addEventListener('keydown', handleKeydown)
   document.addEventListener('fullscreenchange', onFullscreenChange)
   document.addEventListener('webkitfullscreenchange', onFullscreenChange)
+  // [TL-VIEW 2026-09-12] 首次进入页面即绘制时间轴刻度 + 窗口尺寸变化重绘
+  //  (验收 A 项发现: 原先仅查询后才 drawTimeline, 初始 canvas 空白)
+  nextTick(() => drawTimeline())
+  window.addEventListener('resize', drawTimeline)
   // [FIX 2026-07-15] 从告警自动跳转: 在设备加载后应用路由参数, 并自动触发录像查询
   watch(devices, async () => {
     if (route.query.channelId || route.query.deviceId || route.query.time || route.query.alarmId) {
@@ -1560,6 +2123,7 @@ onUnmounted(() => {
   window.removeEventListener('keydown', handleKeydown)
   document.removeEventListener('fullscreenchange', onFullscreenChange)
   document.removeEventListener('webkitfullscreenchange', onFullscreenChange)
+  window.removeEventListener('resize', drawTimeline)  // [TL-VIEW 2026-09-12]
 })
 </script>
 
@@ -1650,11 +2214,19 @@ onUnmounted(() => {
                 <el-select v-if="recordingSource === 'device'" v-model="playbackFormat" size="small" style="width:110px">
                   <el-option v-for="f in FORMAT_OPTIONS" :key="f.value" :label="f.label" :value="f.value" />
                 </el-select>
+                <!-- [P2-1] 多通道同步回放入口 (badge 显示当前从窗路数) -->
+                <el-badge :value="syncWins.length" :hidden="!syncWins.length" type="primary">
+                  <el-button size="small" :type="syncChannels.length ? 'primary' : 'default'" @click="openSyncDialog">
+                    多路同步
+                  </el-button>
+                </el-badge>
+                <el-button v-if="syncChannels.length" size="small" text type="danger" @click="clearSyncChannels">清除同步</el-button>
                 <el-button size="small" :icon="Search" @click="smartDrawerVisible = true">AI 智能检索</el-button>
               </div>
             </div>
           </template>
-          <!-- [V4-X4] 全屏容器 + 进度条 + 时间轴 + 控制条 -->
+          <!-- [V4-X4] 全屏容器 + 进度条 + 时间轴 + 控制条; [P2-1] 外包并列行以容纳从窗列 -->
+          <div class="player-main-row">
           <div ref="videoContainerRef" class="video-container">
             <video
               ref="videoRef"
@@ -1662,11 +2234,11 @@ onUnmounted(() => {
               class="player-video"
               @loadedmetadata="onLoadedMetadata"
               @timeupdate="onTimeUpdate"
-              @ended="stopPlay"
+              @ended="onSegmentEnded"
             />
             <div v-if="!isPlaying" class="player-empty">
               <div>请选择左侧通道并点击「查询」</div>
-              <div style="font-size:12px;margin-top:4px">点击片段列表或时间轴上的蓝色录像块开始回放</div>
+              <div style="font-size:12px;margin-top:4px">点击时间轴上的蓝色录像块开始回放</div>
             </div>
             <!-- 进度条 + 时间显示 -->
             <div class="player-progress-row" v-if="isPlaying">
@@ -1684,16 +2256,84 @@ onUnmounted(() => {
               />
               <span class="player-time">{{ formatHMS(duration) }}</span>
             </div>
-            <!-- 24小时时间轴 (设计图: 播放器底部; 蓝色块=录像段, 可点击选段) -->
-            <canvas v-if="recordingSource === 'device'" ref="canvasRef" class="player-timeline" @click="handleTimelineClick" />
+            <!-- [TL-VIEW 2026-09-12] 可缩放时间轴: 滚轮缩放/拖拽平移/双击复位;
+                 点击任意点定位播放 (空档给就近段一键入口); 悬停显示时间与所属块 -->
+            <div v-if="recordingSource === 'device'" class="tl-wrap">
+              <div class="tl-toolbar">
+                <span class="tl-toolbar-title">时间轴</span>
+                <el-button-group size="small" class="tl-zoom-btns">
+                  <el-button title="放大时间颗粒度" @click="tlZoomIn">＋</el-button>
+                  <el-button title="缩小时间颗粒度" @click="tlZoomOut">−</el-button>
+                  <el-button title="恢复 24 小时全览 (双击时间轴同效)" @click="tlResetView">24h</el-button>
+                </el-button-group>
+                <span class="tl-span-label" title="当前视口跨度">{{ tlSpanLabel }}</span>
+                <!-- [P1-3] 来源颜色图例 -->
+                <span class="tl-legend" title="录像来源颜色标识 (可用查询面板「存储位置」过滤)">
+                  <i class="lg-dot lg-zlm" />中心储存
+                  <i class="lg-dot lg-gb" />设备存储
+                </span>
+                <!-- [P2-2] 区间选区导出: 开关 + 选区信息 + 导出/清除 -->
+                <el-button
+                  size="small"
+                  :type="tlRange.mode ? 'warning' : 'default'"
+                  :plain="!tlRange.mode"
+                  title="开启后拖拽时间轴框选 In/Out 区间 (替代平移)"
+                  @click="tlToggleRangeMode"
+                >区间选择</el-button>
+                <template v-if="tlRange.has">
+                  <span class="tl-range-label" :title="tlRangeLabel">{{ tlRangeLabel }}</span>
+                  <el-button size="small" type="primary" :loading="tlExporting" @click="tlRangeExport">导出选区</el-button>
+                  <el-button size="small" text @click="tlRangeClear">清除</el-button>
+                </template>
+                <span class="tl-hint">{{ tlRange.mode ? '拖拽框选区间导出' : '滚轮缩放 · 拖拽平移 · 双击复位' }}</span>
+              </div>
+              <!-- [P1-1] 常驻时间定位控件 (对齐 Milestone Web Client 时间选择器常驻): 不离回放视图直接定位 -->
+              <div class="tl-seek-row">
+                <el-time-picker
+                  v-model="tlSeekTime"
+                  value-format="HH:mm:ss" format="HH:mm:ss"
+                  placeholder="HH:mm:ss"
+                  size="small"
+                  class="tl-seek-time"
+                />
+                <el-button size="small" type="primary" plain @click="tlSeekGo">定位</el-button>
+              </div>
+              <div class="tl-canvas-wrap">
+                <canvas
+                  ref="canvasRef"
+                  class="player-timeline"
+                  @wheel.prevent="onTlWheel"
+                  @mousedown="onTlMouseDown"
+                  @mousemove="onTlMouseMove"
+                  @mouseup="onTlMouseUp"
+                  @mouseleave="onTlMouseLeave"
+                  @dblclick="tlResetView"
+                />
+                <!-- [P0-4] 悬停时间提示 (跟随鼠标; 附所属录像块/告警) -->
+                <div v-if="tlHover" class="tl-tooltip" :style="{ left: tlHover.x + 'px' }">
+                  <div class="tl-tooltip-time">{{ tlHoverLabel }}</div>
+                  <div class="tl-tooltip-info">{{ tlHoverInfo }}</div>
+                </div>
+              </div>
+            </div>
             <!-- 控制条 (设计图: 上一段/播放暂停/下一段 + 回放钟 + 倍速 + 停止/全屏) -->
             <div v-if="isPlaying" class="player-controls">
               <div class="pc-group">
+                <el-button size="small" text title="第一段" @click="navToEdge('first')">首段</el-button>
                 <el-button size="small" :icon="DArrowLeft" text title="上一段" @click="playPrevSegment" />
                 <el-button size="small" :icon="isPaused ? VideoPlay : VideoPause" type="primary" circle title="暂停/恢复" @click="togglePause" />
                 <el-button size="small" :icon="DArrowRight" text title="下一段" @click="playNextSegment" />
+                <el-button size="small" text title="最后一段" @click="navToEdge('last')">末段</el-button>
               </div>
-              <div class="pc-clock" title="回放钟 (段起点+进度)">{{ playbackClockLabel }}</div>
+              <div class="pc-group">
+                <el-button size="small" text :disabled="!!currentSessionId" title="上一帧 (暂停态; 快捷键 ,)" @click="stepFrame(-1)">上一帧</el-button>
+                <el-button size="small" text :disabled="!!currentSessionId" title="下一帧 (暂停态; 快捷键 .)" @click="stepFrame(1)">下一帧</el-button>
+              </div>
+              <div class="pc-clock pc-clock-click" title="回放钟 (段起点+进度) — 点击打开按时间点观看" @click="openTimeSeek">{{ playbackClockLabel }}</div>
+              <div class="pc-group pc-continuous" title="段播完自动衔接相邻下一段 (间隙 ≤ 30s)">
+                <el-switch v-model="continuousPlay" size="small" />
+                <span class="pc-switch-label">连播</span>
+              </div>
               <div class="pc-group">
                 <el-button-group size="small" class="speed-btn-group">
                   <el-button v-for="spd in [0.5, 1, 2, 4, 8, 16]" :key="spd"
@@ -1709,41 +2349,24 @@ onUnmounted(() => {
               </div>
             </div>
           </div>
+          <!-- [P2-1] 从窗列 (主通道定位动作自动同步; ZLM 直链/GB28181 会话双链路) -->
+          <div v-if="syncWins.length" class="sync-rail">
+            <div v-for="w in syncWins" :key="w.chId" class="sync-cell">
+              <video
+                :ref="(el) => setSyncVideo(w.chId, el)"
+                autoplay muted playsinline
+                class="sync-video"
+                @loadedmetadata="onSyncLoadedMeta(w, $event)"
+              />
+              <div v-if="!w.url && !w.sessionId" class="sync-empty">待同步</div>
+              <span class="sync-label" :title="w.label">{{ w.label }}</span>
+            </div>
+          </div>
+          </div>
           <!-- 快捷键提示 -->
           <div class="player-hint">
-            💡 快捷键: <kbd>空格</kbd> 暂停/播放 · <kbd>←/→</kbd> 快退/快进 5s · <kbd>Shift+←/→</kbd> 30s
+            💡 快捷键: <kbd>空格</kbd> 暂停/播放 · <kbd>←/→</kbd> 快退/快进 5s · <kbd>Shift+←/→</kbd> 30s · <kbd>,</kbd>/<kbd>.</kbd> 逐帧 · 时间轴滚轮缩放/拖拽
           </div>
-        </el-card>
-
-        <!-- 片段列表 (设计图时间轴录像块明细; 紧凑行卡片替代 6 列表格) -->
-        <el-card v-if="recordingSource === 'device'" shadow="never" class="seg-list-card">
-          <template #header>
-            <div style="display:flex;justify-content:space-between;align-items:center">
-              <span>录像片段 ({{ filteredRecordings.length }})</span>
-              <el-button size="small" type="primary" plain :disabled="!filteredRecordings.length" @click="batchDownload">批量下载</el-button>
-            </div>
-          </template>
-          <el-scrollbar class="seg-scroll">
-            <div
-              v-for="rec in filteredRecordings"
-              :key="rec.id"
-              class="seg-row"
-              :class="{ active: rec.id === currentRecId }"
-              @click="playSegment(rec)"
-            >
-              <span class="seg-range">{{ segRangeLabel(rec) }}</span>
-              <span class="seg-meta">{{ formatDuration(rec.duration) }}</span>
-              <span class="seg-meta">{{ formatSize(rec.fileSize) }}</span>
-              <span class="seg-tag" :class="rec.source === 'zlm' ? 'seg-tag-center' : 'seg-tag-device'">
-                {{ rec.source === 'zlm' ? '中心储存' : '设备存储' }}
-              </span>
-              <span class="seg-actions" @click.stop>
-                <el-button size="small" type="primary" @click="playSegment(rec)">播放</el-button>
-                <el-button size="small" @click="downloadSegment(rec)">下载</el-button>
-              </span>
-            </div>
-            <el-empty v-if="!filteredRecordings.length && !loading" description="暂无录像片段" :image-size="60" />
-          </el-scrollbar>
         </el-card>
 
         <!-- 本地录像片段列表 -->
@@ -1786,6 +2409,20 @@ onUnmounted(() => {
     </div>
 
     <!-- [REC-SCHEDULE 2026-09-11] 录像计划编辑弹窗已迁出 → SettingsView「录像计划」Tab -->
+
+    <!-- [P2-1] 多路同步通道选择弹窗 -->
+    <el-dialog v-model="syncDialogVisible" title="多通道同步回放" width="520px">
+      <div class="sync-dialog-tip">
+        主通道为左侧当前选中通道; 另选最多 {{ SYNC_MAX_AUX }} 路从窗, 主通道的播放/定位/连播/逐段切换将同步驱动从窗。
+      </div>
+      <el-select v-model="syncPick" multiple filterable placeholder="选择同步通道 (最多 3 路)" style="width:100%" :multiple-limit="SYNC_MAX_AUX">
+        <el-option v-for="opt in syncOptions" :key="opt.key" :label="opt.label" :value="opt.key" />
+      </el-select>
+      <template #footer>
+        <el-button @click="syncDialogVisible = false">取消</el-button>
+        <el-button type="primary" @click="applySyncDialog">确定</el-button>
+      </template>
+    </el-dialog>
 
     <!-- [P0-2] 水印配置弹窗 -->
     <el-dialog v-model="watermarkDialogVisible" title="录像水印配置" width="480px">
@@ -1967,7 +2604,6 @@ onUnmounted(() => {
  :deep(.el-card__header) { padding: 10px; }
  :deep(.el-card__header) { padding: 10px; }
  :deep(.el-card__body) { padding: 10px; }
- .seg-list-card :deep(.el-card__body) { padding: 0; }
 /* AI 智能检索表单 */
 .smart-search-form { display: flex; flex-direction: column; gap: 12px; }
 .smart-form-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
@@ -2068,9 +2704,60 @@ onUnmounted(() => {
   position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
   color: #fff; font-size: 14px; background: rgba(0, 0, 0, 0.9); pointer-events: none; text-align: center;
 }
-.player-timeline { width: 100%; height: 40px; display: block; cursor: pointer; margin-top: 8px; }
-.recording-main-content { flex: 1; display: flex; flex-direction: row; gap: 12px; min-width: 0; min-height: 0; height: 100%; }
-.player-card { flex: 1 1 auto; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+/* ── [TL-VIEW 2026-09-12] 可缩放时间轴: 工具条/悬停提示 ── */
+.tl-wrap { margin-top: 8px; }
+.tl-toolbar { display: flex; align-items: center; gap: 8px; padding: 0 2px 4px; }
+.tl-toolbar-title { color: #909399; font-size: 12px; }
+.tl-zoom-btns .el-button { padding: 3px 8px; }
+.tl-span-label { color: #00D4AA; font-size: 12px; font-family: monospace; }
+.tl-hint { margin-left: auto; color: #606266; font-size: 11px; }
+/* [P1-3] 来源图例 (与时间轴块/列表标签同色系) */
+.tl-legend { display: inline-flex; align-items: center; gap: 4px; color: #909399; font-size: 11px; }
+.tl-legend .lg-dot { display: inline-block; width: 12px; height: 8px; border-radius: 2px; margin: 0 2px 0 8px; }
+.tl-legend .lg-zlm { background: #67c23a; }
+.tl-legend .lg-gb { background: #409eff; }
+/* [P1-1] 常驻时间定位控件行 */
+.tl-seek-row { display: flex; align-items: center; gap: 6px; padding: 2px 2px 4px; }
+.tl-seek-time { width: 120px; }
+.tl-canvas-wrap { position: relative; }
+.player-timeline { width: 100%; height: 40px; display: block; cursor: grab; }
+.player-timeline:active { cursor: grabbing; }
+.tl-tooltip {
+  position: absolute; bottom: 46px; transform: translateX(-50%);
+  background: rgba(17, 24, 39, 0.95); border: 1px solid #374151; border-radius: 4px;
+  padding: 4px 8px; pointer-events: none; white-space: nowrap; z-index: 10;
+}
+.tl-tooltip-time { color: #fff; font-size: 12px; font-family: monospace; }
+.tl-tooltip-info { color: #00D4AA; font-size: 11px; }
+.pc-switch-label { color: #d1d5db; font-size: 12px; }
+/* ── [P2-2 2026-09-12] 区间选区导出 ── */
+.tl-range-label {
+  color: #fadb14; font-size: 11px; font-family: monospace;
+  max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* ── [P2-1 2026-09-12] 多通道同步回放: 主区 + 从窗列 ── */
+.player-main-row { display: flex; gap: 8px; align-items: stretch; flex: 1; min-height: 420px; }
+.player-main-row .video-container { flex: 1; min-width: 0; }
+.sync-rail {
+  width: 220px; flex: 0 0 220px; display: flex; flex-direction: column; gap: 4px;
+  background: #0b1220; border-radius: 4px; padding: 4px; overflow-y: auto;
+}
+.sync-cell { position: relative; flex: 1; min-height: 100px; background: #000; border-radius: 3px; overflow: hidden; }
+.sync-video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #000; }
+.sync-label {
+  position: absolute; left: 4px; top: 4px; right: 4px;
+  color: #fff; font-size: 11px; background: rgba(0, 0, 0, 0.55);
+  padding: 1px 6px; border-radius: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  pointer-events: none; z-index: 2;
+}
+.sync-empty {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  color: #64748b; font-size: 12px; pointer-events: none;
+}
+.sync-dialog-tip { color: #909399; font-size: 12px; margin-bottom: 10px; line-height: 1.5; }
+.recording-main-content { flex: 1; display: flex; flex-direction: row; gap: 12px; min-width: 0; min-height: 0; height: 100%; overflow-x: auto; }
+/* [FIX tl-narrow 2026-09-12] 窄视口下播放器列曾被右列挤压至 0 宽 (时间轴画不出) → 保底宽度, 溢出走横向滚动 */
+.player-card { flex: 1 1 auto; min-width: 460px; min-height: 0; display: flex; flex-direction: column; }
 .player-card :deep(.el-card__body) { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .player-controls { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 12px; background: #111827; }
 .player-controls .el-button { height: 28px; padding: 4px 10px; color: #d1d5db; background: transparent; border-color: transparent; }
@@ -2078,25 +2765,12 @@ onUnmounted(() => {
 .player-controls .el-button.is-circle { width: 28px; padding: 0; }
 .pc-group { display: flex; align-items: center; gap: 6px; }
 .pc-clock { color: #00D4AA; font-family: monospace; font-size: 14px; user-select: none; white-space: nowrap; }
+.pc-clock-click { cursor: pointer; }
+.pc-clock-click:hover { text-decoration: underline; }
 .speed-btn-group .el-button { min-width: 34px; padding: 3px 7px; color: #cbd5e1; background: #1f2937; border-color: #374151; }
 .speed-btn-group .el-button:hover,
 .speed-btn-group .el-button.is-plain:hover { color: #fff; background: #374151; }
 .speed-btn-group .el-button.is-primary { color: #fff; background: #2563eb; border-color: #2563eb; }
-
-/* 片段列表 (设计图时间轴录像块明细紧凑行) */
-.seg-list-card { flex: 0 0 320px; width: 320px; min-width: 320px; display: flex; flex-direction: column; overflow: hidden; }
-.seg-list-card :deep(.el-card__body) { flex: 1; display: flex; flex-direction: column; overflow: hidden; padding: 0; }
-.seg-scroll { flex: 1; min-height: 120px; }
-.seg-row { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; padding: 8px 12px; border-bottom: 1px solid var(--el-border-color-lighter); cursor: pointer; font-size: 12px; }
-.seg-row:hover { background: var(--el-fill-color-light); }
-.seg-row.active { background: var(--el-color-primary-light-9); box-shadow: inset 3px 0 0 var(--el-color-primary); }
-.seg-range { min-width: 0;   white-space: normal; overflow-wrap: anywhere; line-height: 1.4; }
-.seg-meta { color: var(--el-text-color-secondary); width: auto; min-width: 54px; text-align: right; }
-.seg-tag { font-size: 11px; padding: 0 6px; border-radius: 3px; flex-shrink: 0; }
-.seg-tag-center { color: #67c23a; background: rgba(103, 194, 58, 0.12); }
-.seg-tag-device { color: #409eff; background: rgba(64, 158, 255, 0.12); }
-.seg-actions { display: flex; gap: 6px; flex-shrink: 0; margin-left: auto; }
-.seg-actions :deep(.el-button) { padding: 4px 8px; }
 
 /* AI 智能检索抽屉 */
 .smart-drawer-body { display: flex; flex-direction: column; gap: 12px; }

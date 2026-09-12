@@ -141,6 +141,7 @@ declare module 'vue' {
     Refresh: typeof import('@element-plus/icons-vue')['Refresh']
     RefreshRight: typeof import('@element-plus/icons-vue')['RefreshRight']
     RoiPolygonEditor: typeof import('./components/RoiPolygonEditor.vue')['default']
+    RoiViewer: typeof import('./components/RoiViewer.vue')['default']
     RouterLink: typeof import('vue-router')['RouterLink']
     RouterView: typeof import('vue-router')['RouterView']
     RuleGuiEditor: typeof import('./components/RuleGuiEditor.vue')['default']

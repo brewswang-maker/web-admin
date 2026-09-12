@@ -66,7 +66,18 @@
       <!-- 告警类型 [P0-9] canonical zh 名 (useEventTypeZh SSOT) -->
       <el-table-column prop="type" label="类型" width="130">
         <template #default="{ row }">
-          <span class="type-badge">{{ zh(row.type) }}</span>
+          <span class="type-cell">
+            <span class="type-badge">{{ zh(row.type) }}</span>
+            <!-- [FIX-P1-2 2026-09-12] 长窗聚合合并计数: ×N (N>1 展示, 同键 10min 合并) -->
+            <el-tooltip
+              v-if="mergedCountOf(row) > 1"
+              :content="`长窗口内已合并 ${mergedCountOf(row)} 条同类事件`"
+              placement="top"
+              :show-after="300"
+            >
+              <span class="merged-count-badge">×{{ mergedCountOf(row) }}</span>
+            </el-tooltip>
+          </span>
         </template>
       </el-table-column>
 
@@ -431,6 +442,7 @@ import {
   slaRemainingClass, slaRemainingText,
   confidenceColor, confPct, formatTime,
   getSnapshotUrl, alarmDevLabel, alarmChLabel, isDisposeEditable, isRowClickInteractive,
+  mergedCountOf,
 } from '@/composables/useAlarmTableHelpers'
 import { ensureAlarmGroups, groupNameOf } from '@/composables/useAlarmGroups'
 import { useAlarmLifecycle } from '@/composables/useAlarmLifecycle'
@@ -563,9 +575,26 @@ onMounted(() => {
 .sla-remaining.sla-overdue { color: #DC2626; font-weight: 600; }
 
 /* 类型徽章 */
+.type-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
 .type-badge {
   font-size: var(--text-sm, 13px);
   color: var(--app-text-secondary);
+}
+/* [FIX-P1-2 2026-09-12] 合并计数角标 (长窗聚合 ×N) — 与 AlarmsView 同款 */
+.merged-count-badge {
+  flex-shrink: 0;
+  padding: 0 5px;
+  border-radius: 8px;
+  background: rgba(99, 102, 241, 0.12);
+  color: #6366F1;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 16px;
+  cursor: default;
 }
 
 /* 设备单元格 */

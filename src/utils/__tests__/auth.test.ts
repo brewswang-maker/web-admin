@@ -33,10 +33,10 @@ import Cookies from 'js-cookie'
 
 describe('utils/auth', () => {
   beforeEach(() => {
-    // 清除所有 cookie
-    vi.clearAllMocks()
-    // 重置 mock store — 通过 removeAuthToken 清理
+    // [FIX P2-2 2026-09-12] 顺序修正: 先 removeAuthToken 清 mock store, 再 clearAllMocks
+    //   清计数 — 原顺序反过来会把本次清理调用计入下一用例 (重复移除用例 1+2=3 次失败)
     removeAuthToken()
+    vi.clearAllMocks()
   })
 
   // ========================================================================

@@ -312,6 +312,16 @@
                       <span class="alarm-popup__detail-key">告警类型:</span>
                       <span class="alarm-popup__detail-val">{{ alarmTypeLabel }}</span>
                     </div>
+                    <!-- [FIX-P1-2 2026-09-12] 长窗聚合合并计数 (后端 aggregated_count > 1 展示) -->
+                    <div v-if="mergedCount > 1" class="alarm-popup__detail-row">
+                      <span class="alarm-popup__detail-key">合并计数:</span>
+                      <span class="alarm-popup__detail-val">×{{ mergedCount }} 条（同类事件已合并）</span>
+                    </div>
+                    <!-- [FIX-P0-1 2026-09-12] 目标轨迹 (后端 track_id >= 0 展示, 供追溯) -->
+                    <div v-if="currentTrackId >= 0" class="alarm-popup__detail-row">
+                      <span class="alarm-popup__detail-key">目标轨迹:</span>
+                      <span class="alarm-popup__detail-val">#{{ currentTrackId }}</span>
+                    </div>
                     <div class="alarm-popup__detail-row">
                       <span class="alarm-popup__detail-key">设备名称:</span>
                       <!-- [FIX align 2026-09-07] 移除装饰性摄像头小图标: 设备名称值与告警类型/
@@ -1320,6 +1330,16 @@ const resolvedDeviceName = computed(() => {
   const a = currentAlarm.value
   if (!a) return ''
   return resolveAlarmDeviceName(a.deviceName, a.deviceId, a.channelId)
+})
+// [FIX-P0-1/P1-2 2026-09-12] 目标轨迹 + 合并计数 (后端 track_id/aggregated_count,
+//   归一化于 AlarmEvent): track>=0 才展示轨迹行; 计数 >1 才展示合并行
+const mergedCount = computed(() => {
+  const n = Number(currentAlarm.value?.aggregatedCount ?? 1)
+  return Number.isFinite(n) && n > 1 ? n : 1
+})
+const currentTrackId = computed(() => {
+  const n = Number(currentAlarm.value?.trackId ?? -1)
+  return Number.isFinite(n) ? n : -1
 })
 const alarmTypeLabel = computed(() => {
   const t = currentAlarm.value?.type || ''

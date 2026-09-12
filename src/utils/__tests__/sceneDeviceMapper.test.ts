@@ -194,8 +194,11 @@ describe('mapDevicesToScene', () => {
     expect(b.z).toBeCloseTo(38)
     // 告警设备 y 抬高
     expect(b.y).toBe(5)
-    // 无坐标设备 c 在周界上（不与其他重叠在中心）
-    expect(Math.abs(c.x)).toBeGreaterThan(0)
+    // [FIX P2-2 2026-09-12] v1.9.5 设计变更: 无坐标设备兜底从「周界矩形分布」
+    //   改为「馆内南侧场边线」(southPerimeterPoint, 真机无坐标统一朝北安装)。
+    //   单个无坐标设备时 x=0 居中于南侧 (z=20>0), 不再满足旧的 x≠0 断言。
+    //   设计意图是「不与中心重叠」— 改断言偏南侧。
+    expect(c.z).toBeGreaterThan(0)
   })
 
   it('全部无坐标时沿周界均匀分布（不重叠在中心）', () => {

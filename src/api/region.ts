@@ -41,7 +41,10 @@ export const regionApi = {
   // [FIX 2026-09-08 通道×算法一对一] + channel_id_str: GB 20 位编码 str 主查
   //   (后端已支持, 对齐 regions 演进), int32 仅老部署兼容。
   // [FIX tw-toggle 2026-09-08] + include_disabled: 算法配置页拉含停用线全量。
-  listTripwires(params: { channel_id: number; algo_id?: string; channel_id_str?: string; include_disabled?: boolean } = { channel_id: 0 }) {
+  // [FIX tw-route 2026-09-12] channel_id 改可选: 无参调用 = 全量 (后端无参
+  //   getAllTripwires 语义) — 规则保存的残留绊线清理需跨通道全库扫描。
+  //   显式传 channel_id 的老调用语义不变 (滤 str 已绑定记录)。
+  listTripwires(params: { channel_id?: number; algo_id?: string; channel_id_str?: string; include_disabled?: boolean } = {}) {
     return http.get<{ tripwires: TripwireDef[] }>('/algos/tripwires', { params })
   },
   createTripwire(body: Omit<TripwireDef, 'id' | 'created_at' | 'updated_at'>) {

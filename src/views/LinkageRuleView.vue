@@ -462,9 +462,8 @@
                     </div>
                     <el-alert v-if="hasUnguarded" type="warning" :closable="false" style="margin-top:4px">
                       <template #title>
-                        标红通道无任何启用的检测区/绊线 — 周界类算法(入侵/攀爬/越界)不会产生告警 (未布防=不触发, 对标海康/大华语义); 可在算法配置中一键满屏布防后再叠加排除区
+                        标红通道无任何启用的检测区/绊线 — 周界类算法(入侵/攀爬/越界)不会产生告警 (未布防=不触发, 对标海康/大华语义); 可在上方画板点「⛶ 满屏」一键布防后再叠加排除区
                       </template>
-                      <el-button size="small" type="primary" style="margin-top:6px" @click="goAlgoConfig">前往算法配置检测区</el-button>
                     </el-alert>
                   </div>
                 </el-form-item>
@@ -501,12 +500,12 @@
                   <!-- [FIX 2026-09-02] 形状范式 (对标海康 iVMS/大华 DSS 联动规则编辑器);
                        绘制提示在画布下方状态栏 (画布内零提示文字)。
                        多边形/矩形进 roi_polygon+roi_shapes_json 由后端 pointInPolygon 判定
-                       (矩形按 4 顶点多边形退化); 绊线保存时自动镜像到算法绊线库并关联
+                       (矩形按 4 顶点多边形退化); 绊线保存时自动镜像到算法库并关联
                        tripwire_id。
-                       [FIX algo-roi-effective 2026-09-09] types 收紧 legalRoiTypes:
-                       面类恒合法 (规则自带空间过滤); 绊线仅越界事件规则可画 (镜像
-                       固定归属 tripwire 库, 其他事件画了不起作用); 关注点 (point)
-                       仅回显不参与判定 — 入口移除, 存量随 modelValue 全量保留不丢。 -->
+                       [algo-view-readonly 2026-09-12 绘制收敛] 算法页绘制已整体下线,
+                       全部 ROI 绘制收敛到本画板: 绊线按消费算法集放行 (4 插件,
+                       写库 algo_id 跟随消费算法); 关注点 (point) 仅回显不参与判定
+                       — 入口移除, 存量随 modelValue 全量保留不丢。 -->
                   <RoiPolygonEditor
                     v-model="form.conditions.region.config.roiPolygon"
                     :background-image-url="roiBackgroundUrl"
@@ -524,20 +523,20 @@
                     </el-radio-group>
                   </div>
                 </el-form-item>
-                <!-- [FIX 2026-08-27 P0-PERIMETER v3] 越界 (Tripwire) 联动
-                     [FIX algo-roi-effective 2026-09-09] 同契约 gate: 越界绊线/方向
-                     仅 tripwire 事件规则显示 — 其他事件选绊线 id 不参与判定
-                     (Browser 验证发现非 tripwire 规则表单仍泄漏此二字段)。 -->
-                <el-form-item v-if="isTripwireRule" label="越界绊线" label-position="top" class="cond-form-item">
-                  <el-select v-model="form.conditions.region.config.tripwireId" placeholder="选择越界绊线 (不选=不限)" clearable style="width: 100%" @focus="loadTripwireOptions" v-loading="tripwireLoading">
+                <!-- [FIX 2026-08-27 P0-PERIMETER v3] 绊线 (Tripwire) 联动
+                     [FIX tw-route 2026-09-12] 同契约 gate: 绊线/方向按消费算法集显示
+                     (tripwire/boundary/客流/违停 4 类事件; 其余事件选绊线 id 不参与
+                     判定) — 画板画的绊线保存时按消费算法写库。 -->
+                <el-form-item v-if="isTripwireRule" label="绊线" label-position="top" class="cond-form-item">
+                  <el-select v-model="form.conditions.region.config.tripwireId" placeholder="选择已有绊线 (不选=不限)" clearable style="width: 100%" @focus="loadTripwireOptions" v-loading="tripwireLoading">
                     <template v-if="tripwireOptions.length > 0">
                       <el-option v-for="t in tripwireOptions" :key="t.id" :label="t.label" :value="t.id" />
                     </template>
                     <template #empty><span class="text-secondary">{{ tripwireEmptyHint }}</span></template>
                   </el-select>
-                  <p class="cond-hint">可在上方画板直接画绊线（选"绊线"类型，点击两点后点「确认添加」，保存规则时自动同步到算法配置并关联）；或选择已有绊线（AI智能→算法配置页绘制）</p>
+                  <p class="cond-hint">可在上方画板直接画绊线（选"绊线"类型，点击两点后点「确认添加」，保存规则时自动同步到算法库并关联）；或从下方下拉选择本通道已保存的绊线</p>
                 </el-form-item>
-                <el-form-item v-if="isTripwireRule" label="越界方向" label-position="top" class="cond-form-item">
+                <el-form-item v-if="isTripwireRule" label="绊线方向" label-position="top" class="cond-form-item">
                   <el-radio-group v-model="form.conditions.region.config.direction">
                     <el-radio value="">不限</el-radio>
                     <el-radio value="A_TO_B">A → B</el-radio>
@@ -545,8 +544,48 @@
                     <el-radio value="BOTH">双向</el-radio>
                   </el-radio-group>
                   <p class="cond-hint" style="margin-top:4px">
-                    💡 仅选择越界绊线后, 方向过滤才生效; 仅选择方向则任意绊线的该方向都会触发。
+                    💡 仅选择绊线后, 方向过滤才生效; 仅选择方向则任意绊线的该方向都会触发。
                   </p>
+                </el-form-item>
+                <!-- [pw-in-rule 2026-09-12 绘制收敛] 尾随通道绘制并入规则页: 算法查看页
+                     PassagewayEditor 下线 → 本表单承接绘制 (直写通道库, 实时生效);
+                     已保存列表带开关/删除。显示层过滤 _ch0 结尾为防御 (通道库无
+                     自动镜像机制: upsertPassageway 单条写入, 与绊线
+                     createTripwireWithMirror 不同), 过滤仅兼容存量/未来形态。 -->
+                <el-form-item v-if="isTailgatingRule" label="尾随通道" label-position="top" class="cond-form-item">
+                  <div style="width: 100%">
+                    <p class="cond-hint" style="margin: 0 0 8px">
+                      通道多边形供尾随判定消费: 点击 ≥3 个顶点围成通行区后点「确认添加」；删除/停用立即生效, 不随规则保存/丢弃。
+                    </p>
+                    <PassagewayEditor
+                      v-if="form.conditions.region.config.channelId"
+                      :key="`pw_${form.conditions.region.config.channelId}`"
+                      :image-url="roiBackgroundUrl"
+                      :saved="displayPassageways"
+                      @confirm="onPassagewayConfirm"
+                    />
+                    <el-empty v-else description="请先选择上面的「关联通道(快照背景)」" :image-size="60" />
+                    <div v-if="displayPassageways.length" class="pw-list">
+                      <div v-for="pw in displayPassageways" :key="pw.id" class="pw-list__item">
+                        <span>
+                          <el-switch
+                            :model-value="pw.enabled !== false"
+                            size="small"
+                            style="margin-right: 8px"
+                            :title="pw.enabled === false ? '已停用 (检测不生效)' : '生效中'"
+                            @change="(v: any) => toggleRulePassagewayEnabled(pw, !!v)"
+                          />
+                          {{ pw.name }}
+                          (sens={{ pw.sensitivity }}, {{ pw.direction_in ? '进入' : '离开' }} {{ pw.suppress_mode }}<template v-if="pw.migrated_from_tripwire">, 迁移自绊线#{{ pw.migrated_from_tripwire }}</template>)
+                        </span>
+                        <el-button text size="small" type="danger" @click="deleteRulePassageway(pw)">删除</el-button>
+                      </div>
+                    </div>
+                    <div class="pw-toolbar-row">
+                      <el-button size="small" @click="migrateTripwiresToPassageways">老绊线迁移</el-button>
+                      <span class="pw-mig-hint">绊线→矩形通道 (幂等, detector 首帧自动执行)</span>
+                    </div>
+                  </div>
                 </el-form-item>
                 <el-form-item label="安保区域" label-position="top" class="cond-form-item">
                   <!-- [P1 2026-09-10 更名] 远程区域列表 (替代旧硬编码); 选中后展示覆盖设备/通道数;
@@ -1429,7 +1468,7 @@
 
 <script setup lang="ts">
 import { ref, computed, reactive, onMounted, onUnmounted, watch, nextTick } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { FormInstance, FormRules } from 'element-plus'
 import { Search, Plus, Document, Link, Bell, Setting, ArrowDown, Download, Upload, Refresh, WarningFilled, DataLine } from '@element-plus/icons-vue'
@@ -1452,6 +1491,9 @@ import { sceneTagLabel, type FloorMapWithCameras } from '@/types/floorMap'
 import FloorMapCanvas from '@/components/map/FloorMapCanvas.vue'
 import { validateTemplateImport } from '@/api/templateSchema'
 import RoiPolygonEditor from '@/components/RoiPolygonEditor.vue'
+// [pw-in-rule 2026-09-12 绘制收敛] 尾随通道绘制并入规则页 (算法查看页只读化后承接)
+import PassagewayEditor from '@/components/PassagewayEditor.vue'
+import type { PassagewayDef, SuppressMode } from '@/types/region'
 import TimeTemplateEditor from '@/components/TimeTemplateEditor.vue'
 import EventTestDrawer from '@/components/EventTestDrawer.vue'
 import { testApi } from '@/api/test'
@@ -1834,7 +1876,6 @@ const boundChannelOptions = computed<ChannelOption[]>(() => {
 })
 
 // ── [FEAT guard-badge 2026-09-10] 绑定通道插件层布防状态 (区域库查询) ──
-const router = useRouter()
 interface GuardState {
   channel: string
   label: string
@@ -1892,10 +1933,6 @@ async function refreshGuardStates() {
 //   getter 访问 form → form 在后文声明 → TDZ ReferenceError → /linkage 白屏。
 //   已投至 form 声明之后 (advancedCollapse 前)。
 
-function goAlgoConfig() {
-  router.push({ name: 'AlgoConfig' })
-}
-
 /// 选完通道联动预览: 无快照背景时取第一个摄像头通道加载 ROI 背景
 /// [FIX cam-ch 2026-09-07] 背景快照仅摄像头 (IPCamera) 通道有快照语义 —
 ///   非盲取 ids[0] (绑定通道允许勾选 NVR/DVR 子通道, 但它们不能做背景)
@@ -1940,19 +1977,52 @@ const roiBackgroundUrl = ref('')
 //   空间判定 (契约文档化, 对标海康检测区+排除区组合 / DeepStream ROI-Filter)。
 //   提为组件级常量: combine 选择器显隐 + handleSave 兼容字段同源引用。
 const AREA_ROI_TYPES = ['detection_zone', 'exclusion_zone', 'rectangle']
+// [FIX tw-route 2026-09-12 绘制收敛] 绊线库按算法隔离 (一算法一份库, 全仓 4 插件
+//   实锚 — 与算法查看页 ALGO_EXCLUSIVE_RES 同源): 规则画板画绊线时按本规则事件
+//   的消费算法写库 (原固定写 tripwire 库 → boundary/客流/违停规则画了不起作用)。
+const TRIPWIRE_CONSUMER_BY_KEY: Record<string, string> = {
+  tripwire: 'shield.algo.perimeter.tripwire',
+  boundary: 'shield.algo.perimeter.boundary',
+  people_count: 'shield.algo.metric.people_count',
+  parking_violation: 'shield.algo.traffic.parking_violation',
+}
+const TRIPWIRE_CONSUMER_ALGOS = new Set(Object.values(TRIPWIRE_CONSUMER_BY_KEY))
+/** 事件类型 → 是否绊线消费 (覆盖率矩阵 algo_id 优先; 未就绪短名兜底)。
+ *  覆盖率条目 algo_id 非消费集时如实排除 (防无关事件误放行)。 */
+function isTripwireConsumerEvent(t: string): boolean {
+  const c = eventCoverageMap.value[t]
+  if (c?.algo_id) return TRIPWIRE_CONSUMER_ALGOS.has(String(c.algo_id))
+  const seg = String(t).split('.').pop() || String(t)
+  return seg in TRIPWIRE_CONSUMER_BY_KEY
+}
+/** 本规则绊线写库 algo_id 推导 (与区域镜像同口径: 覆盖率优先 → 短名兜底)。
+ *  未命中返回 '' —— 调用方必须已按 isTripwireRule 门控。原 fallback 回落
+ *  tripwire 库是幽灵绊线写库根因: 不可画绊线的事件 (intrusion 等) 画板残留
+ *  形状被写进越界库 → 未启用的越界检测持续报警 ([FIX tw-route 2026-09-12])。 */
+function deriveTripwireAlgoId(): string {
+  for (const et of form.conditions.eventType.config.types) {
+    const c = eventCoverageMap.value[String(et)]
+    if (c?.algo_id && TRIPWIRE_CONSUMER_ALGOS.has(String(c.algo_id))) return String(c.algo_id)
+  }
+  for (const et of form.conditions.eventType.config.types) {
+    const seg = String(et).split('.').pop() || ''
+    if (TRIPWIRE_CONSUMER_BY_KEY[seg]) return TRIPWIRE_CONSUMER_BY_KEY[seg]
+  }
+  return ''
+}
 // [FIX algo-roi-effective 2026-09-09] ROI 形态按规则事件类型收紧 (用户铁律:
 //   只显示真正被消费、绘制后实际起作用的形态 — 禁止「画了不起作用」入口):
 //   面类 (检测/排除/矩形) 进规则 roi_polygon 由 AlarmCheckPlugin pointInPolygon
-//   判定 (L232/L262 实锚) — 任何事件合法; 绊线仅越界 (tripwire) 事件规则可画:
-//   保存镜像固定归属 tripwire 库 (L2791/L2835), boundary/客流/违停事件规则画
-//   绊线会进 tripwire 库而本算法查不到 = 伪入口; point (关注点) 仅回显不判定
-//   — 移除。事件类型存短名 (id 末段, L2113) 或全 id, 两种都匹配。
+//   判定 (L232/L262 实锚) — 任何事件合法; 绊线按消费算法集放行 (4 插件,
+//   [FIX tw-route 2026-09-12] 原仅越界事件可画 → 扩至 boundary/客流/违停);
+//   point (关注点) 仅回显不判定 — 移除。事件类型存短名 (id 末段, L2113) 或
+//   全 id, 两种都匹配。
 const legalRoiTypes = computed<string[]>(() => {
   const evTypes = (form.conditions.eventType?.config?.types ?? []).map(t => String(t).trim())
-  const hasTw = evTypes.some(t => t === 'tripwire' || t.endsWith('.perimeter.tripwire'))
+  const hasTw = evTypes.some(isTripwireConsumerEvent)
   return hasTw ? [...AREA_ROI_TYPES, 'tripwire'] : [...AREA_ROI_TYPES]
 })
-// 同判定复用: 越界绊线/方向两个表单字段也仅在 tripwire 事件规则下显示
+// 同判定复用: 绊线/方向两个表单字段仅在绊线消费算法集事件下显示
 const isTripwireRule = computed(() => legalRoiTypes.value.includes('tripwire'))
 // 激活区域类形状数 ≥2 时展示「并集/交集」组合选择器 (单形状无组合语义)
 const activeAreaRoiCount = computed(() =>
@@ -2025,7 +2095,7 @@ async function loadTripwireOptions() {
       direction: dirToUpper(t.direction),
       channelIdStr: t.channel_id_str || '',
     }))
-    tripwireEmptyHint.value = tripwireOptions.value.length === 0 ? '暂无越界绊线, 请先到算法配置创建' : ''
+    tripwireEmptyHint.value = tripwireOptions.value.length === 0 ? '本通道暂无已保存绊线 — 可直接在上方画板绘制, 保存规则后自动同步' : ''
   } catch (e: any) {
     tripwireEmptyHint.value = `加载失败: ${e?.message || '未知错误'}`
     tripwireOptions.value = []
@@ -2566,6 +2636,118 @@ async function loadEventCoverage() {
     }
   } catch {
     // 静默失败，不影响主页面
+  }
+}
+
+// ── [pw-in-rule 2026-09-12 绘制收敛] 尾随通道绘制并入规则页 ──
+//   算法查看页已整体只读化 (PassagewayEditor 下线) → 全部绘制收敛到事件规则:
+//   尾随 (tailgating) 事件的规则表单内嵌 PassagewayEditor + 已保存列表 (开关/
+//   删除), 直写通道库 (algo_id 固定尾随插件 id, 与插件 getAlgoId() 全等闭环);
+//   实时生效语义 (同算法页先例): 画/删/停立即落库, 不随规则保存/丢弃。
+//   注: 本块置于 loadEventCoverage 之后 — watch 建立即同步取 source 初值,
+//   前文 (eventCoverageMap/form 未就绪) 引用会 TDZ 崩溃 (本文件 09-10 先例)。
+const TAILGATING_ALGO_ID = 'shield.algo.perimeter.tailgating'
+const TAILGATING_EVENT_KEYS = new Set(['tailgating', 'tailgate', 'face_tailgate'])
+/** 事件类型 → 是否尾随消费 (覆盖率矩阵优先; 未就绪短名/别名兑底) */
+function isTailgatingEvent(t: string): boolean {
+  const c = eventCoverageMap.value[t]
+  if (c?.algo_id) return String(c.algo_id) === TAILGATING_ALGO_ID
+  const seg = String(t).split('.').pop() || String(t)
+  return TAILGATING_EVENT_KEYS.has(seg)
+}
+const isTailgatingRule = computed(() =>
+  (form.conditions.eventType?.config?.types ?? []).some(t => isTailgatingEvent(String(t).trim())))
+
+const rulePassageways = ref<PassagewayDef[]>([])
+/** 显示层过滤 _ch0 结尾 (防御存量形态; 通道库无自动镜像机制 — 见模板注释。
+ *  toggle 的镜像同步翻转仍基于全量 rulePassageways, 不随显示过滤丢失) */
+const displayPassageways = computed(() =>
+  rulePassageways.value.filter((p) => !String(p.channel_id_str || '').endsWith('_ch0')))
+async function loadRulePassageways() {
+  const chStr = String(form.conditions.region.config.channelId || '').replace(/_ch\d+$/, '')
+  if (!chStr) { rulePassageways.value = []; return }
+  try {
+    const res = await regionApi.listPassageways({ channel_id_str: chStr, algo_id: TAILGATING_ALGO_ID, include_disabled: true })
+    rulePassageways.value = ((res.data as any)?.data?.passageways ?? (res.data as any)?.passageways ?? [])
+      .filter((p: any) => String(p.channel_id_str || '').replace(/_ch\d+$/, '') === chStr)
+  } catch { rulePassageways.value = [] }
+}
+// 关联通道切换 → 重载已保存通道 (画布底图由既有 @change=loadChannelSnapshot 链负责)
+watch(() => form.conditions.region.config.channelId, (v) => {
+  if (v && isTailgatingRule.value) loadRulePassageways()
+  else rulePassageways.value = []
+})
+// 事件类型切换 → 进入/退出尾随上下文时刷新
+watch(isTailgatingRule, (on) => { if (on) loadRulePassageways() })
+
+async function onPassagewayConfirm(payload: {
+  transit_polygon: [number, number][]
+  direction_in: boolean
+  sensitivity: number
+  suppress_mode: SuppressMode
+  cooldown_sec: number
+}) {
+  const chIdStr = String(form.conditions.region.config.channelId || '')
+  if (!chIdStr) { ElMessage.warning('请先选择"关联通道(快照背景)"再绘制通道'); return }
+  const chIdNum = Number(chIdStr)
+  try {
+    await regionApi.upsertPassageway({
+      channel_id: Number.isFinite(chIdNum) && Number.isSafeInteger(chIdNum) ? chIdNum : 0,
+      // 剥 _ch0 后缀: 插件 getPassagewaysByChannelStr 精确匹配此键
+      channel_id_str: chIdStr.replace(/_ch\d+$/, ''),
+      algo_id: TAILGATING_ALGO_ID,
+      name: `pw_${Date.now() % 10000}`,
+      transit_polygon: payload.transit_polygon,
+      direction_in: payload.direction_in,
+      sensitivity: payload.sensitivity,
+      suppress_mode: payload.suppress_mode,
+      cooldown_sec: payload.cooldown_sec,
+      enabled: true,
+    })
+    ElMessage.success('通道已添加')
+    await loadRulePassageways()
+  } catch (e: any) {
+    ElMessage.error(`添加通道失败: ${e?.message ?? e}`)
+  }
+}
+
+async function deleteRulePassageway(pw: PassagewayDef) {
+  try {
+    await ElMessageBox.confirm(`确定删除通道「${pw.name}」? 删除立即生效, 不随规则保存/丢弃。`, '删除确认', { type: 'warning' })
+    await regionApi.deletePassageway(pw.id)
+    ElMessage.success('已删除')
+    await loadRulePassageways()
+  } catch (e: any) {
+    if (e !== 'cancel') ElMessage.error(`删除失败: ${e?.message ?? e}`)
+  }
+}
+
+// [FIX tw-toggle 先例] 开关: upsert 按 id 只翻 enabled。镜像 (_ch0) 同步翻转为
+//   防御性保留: 通道库无自动镜像机制 (upsertPassageway 单条写入, 与绊线
+//   createTripwireWithMirror 不同) — 若存量/未来出现镜像行, 显示层虽已过滤,
+//   仍随主形态同步翻转, 避免隐形镜像状态漂移。
+async function toggleRulePassagewayEnabled(pw: PassagewayDef, enabled: boolean) {
+  try {
+    const mirror = rulePassageways.value.find(
+      (p) => (p.channel_id_str || '') === `${pw.channel_id_str || ''}_ch0`)
+    const bodies = [{ ...pw, enabled }, ...(mirror ? [{ ...mirror, enabled }] : [])]
+    await Promise.all(bodies.map((b) => regionApi.upsertPassageway(b as PassagewayDef)))
+    ElMessage.success(enabled ? '通道已启用' : '通道已停用 (检测不再触发)')
+    await loadRulePassageways()
+  } catch (e: any) {
+    ElMessage.error(`操作失败: ${e?.message ?? e}`)
+    await loadRulePassageways()
+  }
+}
+
+async function migrateTripwiresToPassageways() {
+  try {
+    const res = await regionApi.migratePassageways(TAILGATING_ALGO_ID)
+    const n = (res.data as any)?.data?.migrated ?? (res.data as any)?.migrated ?? 0
+    ElMessage.success(n > 0 ? `已迁移 ${n} 条老绊线为通道` : '无可迁移的老绊线 (或已全部迁移)')
+    await loadRulePassageways()
+  } catch (e: any) {
+    ElMessage.error(`迁移失败: ${e?.message ?? e}`)
   }
 }
 
@@ -3231,6 +3413,10 @@ async function handleSave(): Promise<boolean> {
 
   saving.value = true
   try {
+    // [FIX tw-route 2026-09-12] 覆盖率矩阵前置加载 (幂等有缓存): isTripwireRule /
+    //   deriveTripwireAlgoId 在多处同源消费, 就绪后 'crowd'(algo=people_count)
+    //   等覆盖率形态不被短名兑底误判。
+    await loadEventCoverage()
     // 构建 conditions: 内部 6 条件 → 后端 4 条件
     const tc = form.conditions.time
     const time_cond = tc.enabled ? {
@@ -3246,10 +3432,14 @@ async function handleSave(): Promise<boolean> {
     //   未选且画板恰一条绊线时回退其自身方向; 多条绊线不回退 (各线方向独立,
     //   统一回退首条会误伤其他方向的事件 — [FIX tw-mirror-sync 2026-09-09])。
     //   供 spatial_cond.direction 两处复用, 避免漂移。
-    const activeTwRois = rc.config.roiPolygon.filter(r => r.is_active && r.roi_type === 'tripwire')
+    const activeTwRoisAll = rc.config.roiPolygon.filter(r => r.is_active && r.roi_type === 'tripwire')
+    // [FIX tw-route 2026-09-12] 绊线态按事件类型门控: 画板存量残留形状不得参与
+    //   非绊线消费规则的同步/方向/关联 (幽灵绊线写库根因)。
+    const activeTwRois = isTripwireRule.value ? activeTwRoisAll : []
     const activeTwRoi = activeTwRois.length === 1 ? activeTwRois[0] : undefined
-    const dirUpper = rc.config.direction
-      || (activeTwRoi?.direction ? String(activeTwRoi.direction).toUpperCase() : '')
+    const dirUpper = isTripwireRule.value
+      ? (rc.config.direction || (activeTwRoi?.direction ? String(activeTwRoi.direction).toUpperCase() : ''))
+      : ''
     // [FIX tw-mirror-sync 2026-09-09] 画板绊线 → 算法绊线库全量同步重写 — 修三缺陷:
     //   ① 原只镜像 drawnTripwires[0] 第一条: 画 2 条只入库 1 条 (实锚 09-09
     //      夜间周界入侵规则: 画板 2 条, 库只有 id=161 一条, 第 2 条告警无绊线可触发);
@@ -3266,22 +3456,59 @@ async function handleSave(): Promise<boolean> {
     //   存量兼容: 回显的 tripwireId (上次保存残留) 不再阻断同步 — 画板有绊线
     //   即同步 (否则老规则永久失同步, 实锚夜间周界入侵 tw=161); 同步后按
     //   新几何重新决策关联。仅画板无绊线时才保留显式选择不动。
-    let effectiveTripwireId = rc.config.tripwireId || ''
+    let effectiveTripwireId = isTripwireRule.value ? (rc.config.tripwireId || '') : ''
+    // [FIX tw-route 2026-09-12] 非绊线消费事件: 不写库 + 全库清理历史残留
+    //   (namePrefix 匹配, 含本规则旧名; 删除级联镜像对)。设备实锚: 「周界禁区
+    //   闯入」(intrusion) 画板残留 2 条绊线形状被旧 fallback 写进越界库 →
+    //   越界检测持续报警 (系统未启用任何越界规则)。
+    if (!isTripwireRule.value) {
+      const prefixes = new Set<string>([`${form.name || '规则'}_绊线`])
+      // 编辑态且已改名: 清旧名残留 (新建态 lastEditSource 可能残留上次编辑值, 需 editRuleId 门控)
+      if (editRuleId.value && lastEditSource?.name && String(lastEditSource.name) !== form.name) {
+        prefixes.add(`${String(lastEditSource.name)}_绊线`)
+      }
+      try {
+        const res = await regionApi.listTripwires({})
+        const allTw: any[] = ((res.data as any)?.data?.tripwires ?? (res.data as any)?.tripwires ?? [])
+        const seen = new Set<string>()
+        let cleaned = 0
+        for (const t of allTw) {
+          const nm = String(t.name || '')
+          if (![...prefixes].some(p => nm === p || nm.startsWith(p + '_'))) continue
+          const key = `${nm}|${String(t.algo_id || '')}|${String(t.channel_id_str || '').replace(/_ch\d+$/, '')}`
+          if (seen.has(key)) continue
+          seen.add(key)
+          try { await regionApi.deleteTripwire(Number(t.id)); cleaned++ } catch { /* 单条失败不阻断保存主链 */ }
+        }
+        if (cleaned > 0) {
+          ElMessage.info(`已清理 ${cleaned} 条历史残留绊线 (本规则事件类型不使用绊线, 防越界误报)`)
+        }
+      } catch { /* 清理失败不阻断保存主链 */ }
+    }
     const drawnTripwires = activeTwRois
     if (drawnTripwires.length > 0) {
       const chStr = (rc.config.channelId || '').replace(/_ch\d+$/, '')
       if (!chStr) {
-        ElMessage.warning('画了绊线但未选"关联通道", 绊线未同步到算法配置; 请选择通道后重新保存')
+        ElMessage.warning('画了绊线但未选"关联通道", 绊线未同步到算法库; 请选择通道后重新保存')
       } else {
-        // 防重查询: 本通道全部绊线 (含镜像/停用), 主镜像按 base 分组
+        // [FIX tw-route 2026-09-12] 写库 algo_id 按本规则事件消费算法推导 (与区域
+        //   镜像同口径): boundary/客流/违停规则画的绊线进各自算法库, 插件才查得到;
+        //   覆盖率未就绪短名兑底 (均未命中不回落 — 上游 isTripwireRule 门控已
+        //   保证本分支必为绊线消费事件, derive 必非空)。
+        await loadEventCoverage()
+        const twAlgoId = deriveTripwireAlgoId()
+        // [FIX tw-route 2026-09-12] 防重查询改全量 + 本地过滤 (本通道+本算法库):
+        //   原查询带 algo_id 过滤, 无法覆盖 diff 清理扫描域 (含其他算法库残留)。
         let allTw: any[] = []
         try {
-          const res = await regionApi.listTripwires({ channel_id: 0, channel_id_str: chStr, algo_id: 'shield.algo.perimeter.tripwire', include_disabled: true })
+          const res = await regionApi.listTripwires({})
           allTw = ((res.data as any)?.data?.tripwires ?? (res.data as any)?.tripwires ?? [])
-            .filter((t: any) => String(t.channel_id_str || '').replace(/_ch\d+$/, '') === chStr)
         } catch { /* 查询失败按全新建 */ }
         const mirrorOf = (mainId: any) => allTw.find((t: any) =>
-          String(t.channel_id_str || '').endsWith('_ch0') && String(t.name) === String(allTw.find((m: any) => String(m.id) === String(mainId))?.name ?? '###'))
+          String(t.channel_id_str || '').endsWith('_ch0')
+          && String(t.channel_id_str || '').replace(/_ch\d+$/, '') === chStr
+          && String(t.algo_id || '') === twAlgoId
+          && String(t.name) === String(allTw.find((m: any) => String(m.id) === String(mainId))?.name ?? '###'))
         const normPt1920 = (arr: number[]): [number, number] =>
           [arr[0] > 1.5 ? arr[0] / 1920 : arr[0], arr[1] > 1.5 ? arr[1] / 1080 : arr[1]]
         const namePrefix = `${form.name || '规则'}_绊线`
@@ -3298,6 +3525,8 @@ async function handleSave(): Promise<boolean> {
           const direction = dirLower === 'a_to_b' ? 'a_to_b' : dirLower === 'b_to_a' ? 'b_to_a' : 'both'
           // name 防重: 老形态首条无序号, 新形态带序号 (画板列表顺序稳定)
           const cand = allTw.find((t: any) => !String(t.channel_id_str || '').endsWith('_ch0')
+            && String(t.channel_id_str || '').replace(/_ch\d+$/, '') === chStr
+            && String(t.algo_id || '') === twAlgoId
             && (t.name === (i === 0 ? namePrefix : `${namePrefix}_${i + 1}`) || t.name === `${namePrefix}_${i + 1}`))
           if (cand) {
             const oldA = normPt1920(Array.isArray(cand.point_a) ? cand.point_a : [0, 0])
@@ -3314,13 +3543,14 @@ async function handleSave(): Promise<boolean> {
               synced++; idByIndex[i] = String(cand.id)
             } catch (e: any) {
               ElMessage.error(`绊线「${r.roi_name || i + 1}」同步失败: ${e?.message ?? e}`)
+              idByIndex[i] = String(cand.id)  // [FIX tw-route] 同步失败不误清理 (画板意图保留)
             }
           } else {
             try {
               const newId = await regionApi.createTripwireWithMirror({
                 channel_id: 0,
                 channel_id_str: chStr,
-                algo_id: 'shield.algo.perimeter.tripwire',
+                algo_id: twAlgoId,
                 name: drawnTripwires.length === 1 ? namePrefix : `${namePrefix}_${i + 1}`,
                 point_a: pa,
                 point_b: pb,
@@ -3333,14 +3563,42 @@ async function handleSave(): Promise<boolean> {
             }
           }
         }
+        // [FIX tw-route 2026-09-12] 画板 → 库 diff 清理: 本规则 namePrefix 名下
+        //   未出现在本次同步集合的残留删除 (画板删线/改名旧名/改绑通道旧通道),
+        //   级联镜像对。算法页手工线名字不带规则名前缀, 不受影响。
+        {
+          const usedIds = new Set(idByIndex.filter(Boolean).map(String))
+          const stalePfxs = new Set<string>([namePrefix])
+          if (editRuleId.value && lastEditSource?.name && String(lastEditSource.name) !== form.name) {
+            stalePfxs.add(`${String(lastEditSource.name)}_绊线`)
+          }
+          const mainByName = new Map<string, any>()
+          for (const t of allTw) {
+            if (String(t.channel_id_str || '').endsWith('_ch0')) continue
+            mainByName.set(`${String(t.name)}|${String(t.algo_id || '')}|${String(t.channel_id_str || '').replace(/_ch\d+$/, '')}`, t)
+          }
+          const seen = new Set<string>()
+          let cleanedTw = 0
+          for (const t of allTw) {
+            const nm = String(t.name || '')
+            if (![...stalePfxs].some(p => nm === p || nm.startsWith(p + '_'))) continue
+            const key = `${nm}|${String(t.algo_id || '')}|${String(t.channel_id_str || '').replace(/_ch\d+$/, '')}`
+            if (seen.has(key)) continue
+            const main = mainByName.get(key)
+            if (main && usedIds.has(String(main.id))) continue  // 画板在用, 保留
+            seen.add(key)
+            try { await regionApi.deleteTripwire(Number(t.id)); cleanedTw++ } catch { /* 单条失败不阻断 */ }
+          }
+          if (cleanedTw > 0) ElMessage.info(`已清理 ${cleanedTw} 条画板外残留绊线`)
+        }
         // tripwire_id 关联: 恰 1 条关联该条; 多条留空 (不限绊线, 任一触发)
         if (drawnTripwires.length === 1 && idByIndex[0]) {
           effectiveTripwireId = idByIndex[0]
         } else if (drawnTripwires.length > 1) {
           effectiveTripwireId = ''
-          ElMessage.info(`已同步 ${synced} 条绊线到算法配置 (共 ${drawnTripwires.length} 条, 规则不限具体绊线, 任一触发)`)
+          ElMessage.info(`已同步 ${synced} 条绊线 (共 ${drawnTripwires.length} 条, 规则不限具体绊线, 任一触发)`)
         } else if (synced > 0) {
-          ElMessage.success('绊线已同步到算法配置 (插件最多 5 分钟自动加载)')
+          ElMessage.success('绊线已同步到算法库 (插件最多 5 分钟自动加载)')
         }
         if (skipped > 0 && synced === 0 && drawnTripwires.length > 1) {
           ElMessage.info(`${skipped} 条绊线无变化, 未重复同步`)
@@ -3368,7 +3626,7 @@ async function handleSave(): Promise<boolean> {
       //   防误删: 仅清理规则镜像形态 (algo_id 精确等值), 算法页手工画的其他
       //   算法区域不动; 停用残留不查 (include_disabled 默认 false) 边界留待后续。
       if (drawnAreas.length > 0 && !areaChStr) {
-        ElMessage.warning('画了区域但未选"关联通道", 区域未同步到算法配置; 请选择通道后重新保存')
+        ElMessage.warning('画了区域但未选"关联通道", 区域未同步到算法库; 请选择通道后重新保存')
       } else if (areaChStr) {
           // algo_id 推导: 覆盖率矩阵优先, 兜底事件类型裸短 id (与区域库存量形态一致,
           //   插件 getEffectiveRegions 兜底链两种形态均已兼容)
@@ -3423,11 +3681,11 @@ async function handleSave(): Promise<boolean> {
                 } catch { /* 单个清理失败不阻断同步主链 */ }
               }
             }
-            if (synced > 0 && cleaned > 0) ElMessage.success(`区域已同步到算法配置 (${synced} 更新, ${cleaned} 清理, 插件判定同几何)`)
+            if (synced > 0 && cleaned > 0) ElMessage.success(`区域已同步 (${synced} 更新, ${cleaned} 清理, 插件判定同几何)`)
             else if (cleaned > 0) ElMessage.success(`已同步清理 ${cleaned} 个画板已删除的区域`)
-            else if (synced > 0) ElMessage.success(`区域已同步到算法配置 (${synced} 个, 插件判定同几何)`)
+            else if (synced > 0) ElMessage.success(`区域已同步 (${synced} 个, 插件判定同几何)`)
           } catch (e: any) {
-            ElMessage.error(`区域同步失败: ${e?.message ?? e} (规则仍会保存, 算法配置区未更新)`)
+            ElMessage.error(`区域同步失败: ${e?.message ?? e} (规则仍会保存, 算法库未更新)`)
           }
       }
     }
@@ -3482,7 +3740,10 @@ async function handleSave(): Promise<boolean> {
       // [FIX 2026-09-02] 兼容字段: 第一个激活区域类形状 (归一化); 多形状并集见 roi_shapes_json
       roi_polygon: firstActiveArea ? buildNormPoints(firstActiveArea.polygon) : [] as number[],
       // [FIX 2026-09-02] 画板全量形状快照 (多形状并集判定 + 编辑回显 SSOT)
-      roi_shapes_json: buildRoiShapesJson(rc.config.roiPolygon),
+      // [FIX tw-route 2026-09-12] 非绊线消费事件剔除绊线残留形状 (快照自净:
+      //   库内已清理, 快照保留会让下次保存"复活"上库)。
+      roi_shapes_json: buildRoiShapesJson(rc.config.roiPolygon.filter(
+        r => isTripwireRule.value || r.roi_type !== 'tripwire')),
       // [FIX 2026-08-27 P0-PERIMETER v3] tripwire 越界联动
       //   tripwireId 与 direction 都空 = 不启用 tripwire 过滤
       //   否则仅匹配的 tripwire + direction 才触发动作
@@ -4530,4 +4791,10 @@ watch(mainTab, (tab) => {
 .debug-stat { text-align: center; }
 .debug-stat-val { font-size: 28px; font-weight: 700; line-height: 1.2; }
 .debug-stat-label { font-size: 12px; color: #909399; margin-top: 4px; }
+
+/* ── [pw-in-rule 2026-09-12] 尾随通道: 已保存列表 + 迁移行 ── */
+.pw-list { margin-top: 10px; display: flex; flex-direction: column; gap: 4px; max-height: 150px; overflow-y: auto; }
+.pw-list__item { display: flex; align-items: center; justify-content: space-between; padding: 6px 10px; background: var(--el-fill-color-light, #f5f7fa); border-radius: 4px; }
+.pw-toolbar-row { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
+.pw-mig-hint { font-size: 12px; color: #909399; }
 </style>

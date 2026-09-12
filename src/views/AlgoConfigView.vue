@@ -1,12 +1,15 @@
 <template>
   <div class="algo-config-view">
     <div class="page-header">
-      <h2 class="page-title">{{ $t('algoConfig', '算法配置') }}</h2>
-      <span class="page-desc">{{ $t('algoConfigDesc', '为每个通道配置推理算法、参数及检测区域') }}</span>
+      <h2 class="page-title">{{ $t('algoConfig', '算法查看') }}</h2>
+      <span class="page-desc">{{ $t('algoConfigDesc', '查看各通道已绑定的推理算法、调度状态与 ROI 资源 — 本页仅供查看, 全部配置与绘制请前往「事件规则」') }}</span>
     </div>
 
     <div class="layout-body">
-      <!-- Left: Channel List -->
+      <!-- Left: 通道树 (区域 → 设备 → 通道三级, 对齐告警列表页 AlarmDeviceTreePanel 结构)
+           [algo-view-readonly 2026-09-12] 原设备伪分组列表 (分组01/02) → 真实三级树:
+           数据源 securityAreaApi.listAreas → buildAreaTree → areaTreeToElTreeData,
+           点击通道叶子选中查看 (RecordingView recTree 同构: 单击选中+高亮+搜索过滤) -->
       <el-card class="panel-left" shadow="never">
         <template #header>
           <div class="panel-title">
@@ -16,38 +19,42 @@
             </el-button>
           </div>
         </template>
-        <!-- [UX 2026-09-01 对齐效果图] 搜索框 + 设备分组折叠树 + 双行通道项 + ON 徽标 -->
         <div class="ch-toolbar">
-          <el-input v-model="chSearch" size="small" clearable placeholder="输入设备名称搜索" class="ch-search">
+          <el-input v-model="treeFilter" size="small" clearable placeholder="搜索区域 / 设备 / 通道" class="ch-search">
             <template #prefix><el-icon><Search /></el-icon></template>
           </el-input>
-          <el-button size="small" text @click="loadData" :loading="loading">
-            <el-icon><Refresh /></el-icon>
-          </el-button>
         </div>
-        <div class="ch-group-list" v-loading="loading">
-          <div v-for="g in channelGroups" :key="g.key" class="ch-group">
-            <div class="ch-group-head" @click="toggleGroup(g.key)">
-              <el-icon class="ch-group-arrow" :class="{ collapsed: collapsedGroups[g.key] }"><CaretBottom /></el-icon>
-              <span>{{ g.label }}</span>
-            </div>
-            <template v-if="!collapsedGroups[g.key]">
-              <div v-for="c in g.items" :key="c.channelId" class="ch-item"
-                :class="{ active: selected?.channelId === c.channelId }" @click="onChannelSelect(c)">
-                <div class="ch-item-info">
-                  <div class="ch-item-name">{{ c.name }}</div>
-                  <div class="ch-item-no">通道号: {{ c.channelId }}</div>
-                </div>
-                <el-tag v-if="isChInferenceOn(c.channelId)" class="ch-item-on" size="small" effect="dark" type="success">ON</el-tag>
-              </div>
+        <div class="ch-tree-wrap" v-loading="loading">
+          <el-tree
+            ref="treeRef"
+            :key="treeKey"
+            :data="channelTreeData"
+            node-key="key"
+            :props="{ label: 'label', children: 'children' }"
+            :filter-node-method="filterTreeNode"
+            default-expand-all
+            highlight-current
+            :expand-on-click-node="false"
+            class="ch-tree"
+            @node-click="onTreeNodeClick"
+          >
+            <template #default="{ data }">
+              <span class="ch-tree-node" :class="`ch-tree-node--${data.type}`">
+                <el-icon v-if="data.type === 'area' || data.type === 'ungrouped'" class="ch-tree-icon"><Location /></el-icon>
+                <el-icon v-else-if="data.type === 'device'" class="ch-tree-icon"><Monitor /></el-icon>
+                <el-icon v-else class="ch-tree-icon"><VideoCamera /></el-icon>
+                <span class="ch-tree-label" :title="data.label">{{ data.label }}</span>
+                <span v-if="data.type === 'channel'" class="ch-tree-no">#{{ data.channelId }}</span>
+                <el-tag v-if="data.type === 'channel' && isChInferenceOn(data.channelId)" class="ch-item-on" size="small" effect="dark" type="success">ON</el-tag>
+              </span>
             </template>
-          </div>
-          <el-empty v-if="!loading && channelGroups.length === 0" description="暂无通道" :image-size="60" />
+          </el-tree>
+          <el-empty v-if="!loading && channelTreeData.length === 0" description="暂无通道" :image-size="60" />
         </div>
       </el-card>
 
-      <!-- Middle: 已配置算法列表 (独立栏, 三栏布局: 通道列表 | 算法列表 | 编辑区;
-          结构与左侧通道列表一致 — 表格化/可滚动/单行高亮; 数据源调度 algo_plugin 拆分) -->
+      <!-- Middle: 已配置算法列表 (只读; [algo-view-readonly 2026-09-12] 行开关/快捷停用/
+           删除/绑定按钮全部下线 — 调度真值唯一入口 = 事件规则, 本页只呈现绑定结果) -->
       <el-card shadow="never" class="panel-mid algo-card">
         <template #header>
           <div class="algo-mid-head">
@@ -55,35 +62,21 @@
               <div>已配置算法</div>
               <div v-if="selected" class="algo-mid-channel">{{ selected.name }}</div>
             </div>
-            <!-- [UX 2026-09-01] 主入口「+ 绑定事件规则」: 弹出未绑定规则列表抽屉。
-                 裸算法入口已移除: 无规则订阅时推理不启动/告警被抑制,
-                 裸算法无法触发弹窗/语音播报/事件快照/事件录像 (全在规则 actions 上) -->
-            <el-button v-if="selected" type="primary" size="small" class="algo-add-btn"
-              :title="$t('bindRuleHint', '推荐使用事件规则, 因其包含完整的事件类型、动作、冷却等可运行配置')"
-              @click="openBindRuleDrawer">+ 绑定事件规则</el-button>
-            <el-button v-else type="primary" link size="small" disabled>+ 绑定事件规则</el-button>
           </div>
         </template>
         <el-table v-if="selected" :data="algoRows" size="small" class="algo-table" height="100%"
-          row-key="algoId"
-          highlight-current-row :row-class-name="algoRowClassName"
-          @row-click="selectAlgoRow"
-          empty-text="该通道尚未配置算法 — 请点击「+ 绑定事件规则」为通道添加算法">
+          row-key="algoId" empty-text="该通道尚未绑定算法 — 新建事件规则后将自动绑定">
           <el-table-column label="算法" min-width="110">
             <template #default="{ row }">
               <div class="algo-name-cell">
-                <!-- [docx#5 P1-5 2026-09-05 大华/宇视实践] 规则订阅状态可视化:
-                     算法不独立产生告警动作, 弹窗/播报/快照/录像全在联动规则 actions 上;
-                     ruleCount=0 时显式警示, 让「算法↔规则」耦合关系对用户可读 -->
                 <div class="algo-name-line">
                   <el-tag size="small" type="primary" :title="isAlgoFallback(row.algoId) ? '该算法未注册中文名' : ''">{{ row.algoName }}</el-tag>
                   <el-tooltip v-if="row.enabled && row.ruleCount === 0" placement="top"
-                    content="未绑定事件规则: 告警不触发弹窗/联动 — 请点右上角「+ 绑定事件规则」">
+                    content="未绑定事件规则: 告警不触发弹窗/联动 — 请在「事件规则」中新建或启用规则">
                     <el-icon class="algo-norule-warn"><WarningFilled /></el-icon>
                   </el-tooltip>
                   <el-tag v-else-if="row.ruleCount > 0" size="small" type="info" effect="plain" class="algo-rule-count">规则×{{ row.ruleCount }}</el-tag>
                 </div>
-                <!-- [UX 2026-09-01] 中文名与裸 id 混杂难辨识: 主名下附小字 algo_id (仅当两者不同) -->
                 <span v-if="row.algoName !== row.algoId" class="algo-id-sub">{{ row.algoId }}</span>
               </div>
             </template>
@@ -91,9 +84,6 @@
           <el-table-column label="模式" width="62" align="center">
             <template #default="{ row }">{{ row.mode === 'streaming' ? '连续' : '抓拍' }}</template>
           </el-table-column>
-          <!-- [R6 P1-3 2026-09-12 算法页降视图] 行开关 → 调度态只读徽标:
-               调度真值 = 规则 (绑定即启用, 启停经 AlgoDeploymentReconciler 对账收敛),
-               本页不再双写调度串; 开启入口 = 右上「+ 绑定事件规则」 -->
           <el-table-column label="调度态" width="82" align="center">
             <template #default="{ row }">
               <el-tag size="small" :type="row.enabled ? 'success' : 'info'" effect="plain">
@@ -101,464 +91,146 @@
               </el-tag>
             </template>
           </el-table-column>
-          <el-table-column label="操作" width="104" align="center">
+          <!-- [algo-view-readonly 2026-09-12] 操作列 (停用/删除) 移除; 保留「查看 ROI」只读入口:
+               仅有 ROI 资源的算法 (8 区域消费 + 4 绊线消费 + 尾随) 显示, 其余显示占位 -->
+          <el-table-column label="ROI" width="76" align="center">
             <template #default="{ row }">
-              <!-- 单向快捷停用: 停用绑定本通道且依赖该算法的启用规则 → 算法失去规则支撑,
-                   对账收敛停止调度 (规则再启用即自动恢复) -->
-              <el-button v-if="row.enabled" size="small" type="warning" link
-                title="快捷停用: 停用绑定本通道且依赖该算法的启用规则 (算法调度随对账收敛停止)"
-                :loading="disablingId === row.algoId" :disabled="disablingId === row.algoId"
-                @click.stop="quickDisableAlgo(row)">停用</el-button>
-              <el-button size="small" type="danger" link title="删除该算法" @click.stop="removeAlgo(row)">
-                <el-icon><Delete /></el-icon>
-              </el-button>
+              <el-button v-if="algoHasRoi(row.algoId)" size="small" type="primary" link
+                title="查看该算法已保存的 ROI (只读; 绘制请前往事件规则)" @click.stop="openRoiViewer(row)">查看</el-button>
+              <span v-else class="text-muted">—</span>
             </template>
           </el-table-column>
         </el-table>
-        <el-empty v-else :description="$t('selectChannelHint', '请先选择通道查看已配置算法')" :image-size="80" />
+        <el-empty v-else :description="$t('selectChannelHint', '请先从左侧通道树选择一个通道')" :image-size="80" />
       </el-card>
-
-      <!-- Right: 编辑区 (算法参数编辑 + ROI 绘制区, 与算法列表分栏) -->
-      <div class="panel-right">
-        <el-card v-if="!selected" shadow="never" class="empty-state">
-          <el-empty :description="$t('selectChannelHint', '请从左侧选择一个通道进行配置')" />
-        </el-card>
-
-        <template v-else>
-          <!-- [FIX tw-res-vis 2026-09-09] 拆双卡后三卡总高实测 2023px (编辑卡 446 +
-               检测区域 269 + 通道资源 1288), 「通道资源」卡 top=735 首屏仅露卡头 —
-               用户反馈「绊线/通道/计数区没有了」实为视口外不可见 (非渲染/数据故障)。
-               右栏改三视图 tab: 一屏一卡零滚动, 归属语义上移到视图名。组件在原
-               四合一 tab 时代即兼容 el-tab-pane 的 v-show 隐藏态切换, 嵌套无新风险。 -->
-          <el-tabs v-model="rightViewTab" class="right-view-tabs">
-            <el-tab-pane name="params" :label="$t('algoParams', '算法参数')">
-          <!-- ② 算法参数编辑 (仅当前选中算法; 字段序: 算法→模式→间隔→置信度→NMS;
-              校验: 置信度/NMS 0~1, 间隔 ≥100ms, 未通过字段下红提示且不触发保存) -->
-          <el-card ref="editCardRef" shadow="never" class="edit-card">
-            <template #header>
-              <div class="config-header">
-                <span>算法参数编辑</span>
-                <el-tag v-if="editForm.algoId" size="small" type="primary" :title="isAlgoFallback(editForm.algoId) ? '该算法未注册中文名' : ''">{{ editForm.algoName }}</el-tag>
-              </div>
-            </template>
-            <!-- [docx#5 P1-5 2026-09-05] 规则关系显式化: 选中算法无规则订阅时, 编辑卡顶部常驻警示
-                [FIX 2026-09-05b 文案语义修正] InferenceScheduler 不消费联动规则 (inference/ 零引用),
-                推理照调度运行 — 原文案「推理不会启动」不准确; 真实缺失的是告警消费者 (弹窗/联动动作) -->
-            <el-alert v-if="editForm.algoId && currentAlgoRuleCount === 0" type="warning" :closable="false" show-icon
-              class="edit-norule-alert"
-              title="该算法未绑定事件规则 — 告警不会触发弹窗/联动"
-              description="推理仍按调度运行, 但弹窗 / 语音播报 / 事件快照 / 事件录像均由联动规则 actions 驱动, 无订阅则告警仅落库无动作; 请点中栏右上角「+ 绑定事件规则」完成订阅。" />
-            <el-form :model="editForm" label-width="92px" size="default" class="edit-form" @submit.prevent>
-              <el-form-item label="算法">
-                <template v-if="editForm.algoId">
-                  <el-tag type="primary" size="small" :title="isAlgoFallback(editForm.algoId) ? '该算法未注册中文名' : ''">{{ editForm.algoName }}</el-tag>
-                  <span class="algo-id-text">{{ editForm.algoId }}</span>
-                </template>
-                <!-- [UX 2026-09-01] 裸算法下拉已移除: 新增算法统一走「+ 绑定事件规则」 -->
-                <span v-else class="text-muted">该通道暂无算法 — 请点击「+ 绑定事件规则」添加</span>
-              </el-form-item>
-              <el-row :gutter="16">
-                <el-col :span="9">
-                  <el-form-item :label="$t('inferenceMode', '推理模式')">
-                    <el-radio-group v-model="editForm.mode" size="small">
-                      <el-radio value="snapshot">抓拍</el-radio>
-                      <el-radio value="streaming">连续</el-radio>
-                    </el-radio-group>
-                  </el-form-item>
-                </el-col>
-                <el-col :span="9">
-                  <el-form-item :label="$t('inferenceInterval', '检测间隔')" :error="formErrors.interval">
-                    <el-input-number v-model="editForm.interval" :min="100" :max="10000" :step="100" size="small"
-                      controls-position="right" style="width: 100%" @change="validateEditField('interval')" />
-                  </el-form-item>
-                </el-col>
-              </el-row>
-              <el-row :gutter="16">
-                <el-col :span="12">
-                  <!-- [2026-09-01] 滑块+数字输入并排 (替代 show-input): 行高 56→38, 单屏预算关键项 -->
-                  <el-form-item :label="$t('confidenceThreshold', '置信度阈值')" :error="formErrors.confidence">
-                    <div class="slider-row">
-                      <el-slider v-model="editForm.confidence" :min="0" :max="1" :step="0.05" class="slider-main"
-                        @input="validateEditField('confidence')" />
-                      <el-input-number v-model="editForm.confidence" :min="0" :max="1" :step="0.05" size="small"
-                        controls-position="right" class="slider-num" @change="validateEditField('confidence')" />
-                    </div>
-                  </el-form-item>
-                </el-col>
-                <el-col :span="12">
-                  <el-form-item :label="$t('nmsThreshold', 'NMS 阈值')" :error="formErrors.nms">
-                    <div class="slider-row">
-                      <el-slider v-model="editForm.nms" :min="0" :max="1" :step="0.05" class="slider-main"
-                        @input="validateEditField('nms')" />
-                      <el-input-number v-model="editForm.nms" :min="0" :max="1" :step="0.05" size="small"
-                        controls-position="right" class="slider-num" @change="validateEditField('nms')" />
-                    </div>
-                  </el-form-item>
-                </el-col>
-              </el-row>
-            </el-form>
-            <div class="edit-actions">
-              <el-button @click="resetEditForm">{{ $t('reset', '重置') }}</el-button>
-              <el-button type="primary" :loading="saving" :disabled="!editForm.algoId" @click="saveConfig">{{ $t('save', '保存配置') }}</el-button>
-            </div>
-          </el-card>
-            </el-tab-pane>
-            <!-- [FIX algo-roi-effective 2026-09-09] 检测区域视图按算法能力门控:
-                 仅真正消费 getRegions 的 8 个算法显示 (REGION_ALGOS 实锚), 绊线类
-                 4 算法/尾随/人脸等非区域消费算法下不再出现「画了不起作用」的
-                 检测区域入口 — 对标华为/海康「每个智能事件只配自己消费的 ROI」。 -->
-            <el-tab-pane v-if="isRegionAlgo" name="roi" :label="$t('detectionZone', '检测区域') + ' · 本算法'">
-
-          <!-- [FIX tw-res-split 2026-09-09 方向2 / algo-bind-roi 演进] ROI 卡按归属
-               语义拆分后, 2026-09-09 用户拍板全部算法绑定: 检测区域与专属资源
-               (绊线/通道/计数区) 均跟随当前选中算法 (getRegions(ch, algo_id)
-               精确隔离 + ALGO_EXCLUSIVE_RES 动态显隐)。原四合一 tab 挂在算法
-               行下让用户误以为「徘徊检测也在用绊线」(设备实锚), 对标海康
-               Smart 事件「每个智能事件独立配置自己的 ROI」的行业惯例。 -->
-          <el-card shadow="never" class="roi-card">
-            <template #header>
-              <div class="config-header">
-                <span>ROI {{ $t('detectionZone', '检测区域') }}
-                  <el-tag size="small" type="success" effect="plain" style="margin-left: 8px">仅当前算法生效</el-tag>
-                </span>
-                <el-button type="primary" text size="small" @click="loadRegions">{{ $t('refresh', '刷新') }}</el-button>
-              </div>
-            </template>
-            <!-- [FIX 2026-09-03 问题1] :key 含通道+当前算法: 切算法/切通道时重挂载编辑器,
-                 画布草稿(顶点/绊线/撤消栈)随上下文重置清零, 再由 loadRegions 按新算法回填 -->
-            <RoiPolygonEditor
-              v-if="selected"
-              :key="`roi_${selected.channelId}_${currentAlgoId}`"
-              :model-value="regions"
-              :background-image-url="roiBackgroundUrl"
-              :canvas-width="720" :canvas-height="405"
-              :types="['detection_zone', 'exclusion_zone']"
-              @update:model-value="onRegionsChange"
-            />
-          </el-card>
-            </el-tab-pane>
-            <!-- [FIX algo-bind-roi 2026-09-09] ROI 绘制全部与算法绑定 (用户拍板,
-                 废除「通道级共享」概念): 绊线/通道/计数区在数据层本就各归属固定
-                 判定插件 (loadRegions 查询与创建同口径), UI 按当前选中算法动态
-                 显隐 — 徘徊等非判定算法下不再出现绊线, 「共享」歧义根除。 -->
-            <el-tab-pane v-if="exclusiveRes" name="channelRes"
-              :label="exclusiveRes ? ($t(exclusiveRes.key, exclusiveRes.fallback) + ' · 本算法') : ''">
-
-          <el-card shadow="never" class="roi-card">
-            <template #header>
-              <div class="config-header">
-                <span>{{ exclusiveRes ? $t(exclusiveRes.key, exclusiveRes.fallback) : '' }}
-                  <el-tag size="small" type="success" effect="plain" style="margin-left: 8px">仅当前算法生效</el-tag>
-                </span>
-                <el-button type="primary" text size="small" @click="loadRegions">{{ $t('refresh', '刷新') }}</el-button>
-              </div>
-            </template>
-            <template v-if="exclusiveRes?.tab === 'tripwire'">
-                <p class="pw-mig-hint" style="margin: 0 0 8px">{{ exclusiveRes?.desc }}</p>
-                <!-- [FIX 2026-09-03 问题1] :key 重挂载: TripwireEditor 草稿 points(A/B 两点)
-                     为组件内部状态, 之前切算法行不清零 → 上一算法画的绊线残留在画布上;
-                     配合 selectAlgoRow 重置 editingTripwire, 编辑会话与草稿一并归零,
-                     loadRegions 重新拉取本通道已保存绊线回显 -->
-                <TripwireEditor
-                  v-if="selected"
-                  :key="`tw_${selected.channelId}_${currentAlgoId}`"
-                  :image-url="roiBackgroundUrl"
-                  :saved="tripwires.filter(t => !(t.channel_id_str || '').endsWith('_ch0') && t.enabled !== false)"
-                  :editing="editingTripwire ? { point_a: editingTripwire.point_a, point_b: editingTripwire.point_b, direction: editingTripwire.direction, name: editingTripwire.name } : null"
-                  @confirm="onTripwireConfirm"
-                />
-                <div v-if="editingTripwire" class="pw-mig-hint" style="margin-top: 4px">
-                  正在编辑「{{ editingTripwire.name }}」— 画布已载入旧线，确认后替换保存；
-                  <el-button text size="small" @click="editingTripwire = null">取消编辑</el-button>
-                </div>
-                <div v-if="tripwires.length" class="tripwire-list">
-                  <div v-for="tw in tripwires" :key="tw.id" class="tripwire-list__item">
-                    <span>
-                      <!-- [FIX tw-toggle 2026-09-08] 启用/停用开关 (替代状态 tag):
-                           后端 upsert 按 id 只翻 enabled, 主形态+_ch0 镜像同步 —
-                           插件按 _ch0 形态查询, 只切主形态检测不生效。镜像行不带
-                           开关 (随主行同步), 停用后 REST 默认查询即隐身, 检测/标注
-                           消费方语义不变。 -->
-                      <el-switch
-                        v-if="!(tw.channel_id_str || '').endsWith('_ch0')"
-                        :model-value="tw.enabled !== false"
-                        size="small"
-                        style="margin-right: 8px"
-                        :title="tw.enabled === false ? '已停用 (检测不生效)' : '生效中'"
-                        @change="(v: any) => toggleTripwireEnabled(tw, !!v)"
-                      />
-                      <el-tag v-else :type="tw.enabled === false ? 'info' : 'success'" size="small" style="margin-right: 6px">
-                        {{ tw.enabled === false ? '已停用' : '生效中' }}
-                      </el-tag>
-                      {{ tw.name }}{{ (tw.channel_id_str || '').endsWith('_ch0') ? ' (镜像)' : '' }} ({{ tw.direction }})
-                    </span>
-                    <span v-if="!(tw.channel_id_str || '').endsWith('_ch0')">
-                      <el-button text size="small" type="primary" @click="editingTripwire = tw">
-                        {{ $t('edit', '编辑') }}
-                      </el-button>
-                      <el-button text size="small" type="danger" @click="deleteTripwire(tw.id)">
-                        {{ $t('delete', '删除') }}
-                      </el-button>
-                    </span>
-                  </div>
-                </div>
-            </template>
-            <template v-else-if="exclusiveRes?.tab === 'passageway'">
-                <p class="pw-mig-hint" style="margin: 0 0 8px">{{ exclusiveRes?.desc }}</p>
-                <div class="pw-toolbar-row">
-                  <el-button size="small" @click="migrateTripwires">老绊线迁移</el-button>
-                  <span class="pw-mig-hint">绊线→矩形通道 (幂等, detector 首帧自动执行)</span>
-                </div>
-                <PassagewayEditor
-                  v-if="selected"
-                  :key="`pw_${selected.channelId}_${currentAlgoId}`"
-                  :image-url="roiBackgroundUrl"
-                  :saved="passageways"
-                  @confirm="onPassagewayConfirm"
-                />
-                <div v-if="passageways.length" class="tripwire-list">
-                  <div v-for="pw in passageways" :key="pw.id" class="tripwire-list__item">
-                    <span>
-                      <!-- [FIX tw-toggle 2026-09-08] 通道开关同绊线先例: 主形态带
-                           开关 (_ch0 镜像随主同步, 若存在); 停用后半透明虚线回显,
-                           tailgating 检测立即跳过 (getPassagewaysByChannelStr 默认
-                           只回启用)。 -->
-                      <el-switch
-                        v-if="!(pw.channel_id_str || '').endsWith('_ch0')"
-                        :model-value="pw.enabled !== false"
-                        size="small"
-                        style="margin-right: 8px"
-                        :title="pw.enabled === false ? '已停用 (检测不生效)' : '生效中'"
-                        @change="(v: any) => togglePassagewayEnabled(pw, !!v)"
-                      />
-                      {{ pw.name }}
-                      (sens={{ pw.sensitivity }}, {{ pw.direction_in ? '进入' : '离开' }}
-                      {{ pw.suppress_mode }}
-                      <template v-if="pw.migrated_from_tripwire">, 迁移自绊线#{{ pw.migrated_from_tripwire }}</template>)
-                    </span>
-                    <el-button text size="small" type="danger" @click="deletePassageway(pw.id)">
-                      {{ $t('delete', '删除') }}
-                    </el-button>
-                  </div>
-                </div>
-            </template>
-            <!-- [FIX algo-roi-effective 2026-09-09] 计数区分支移除: RegionStore.h
-                 [B6 2026-09-07] 实锚「预留未消费 — 有 CRUD + 前端渲染, 但无任何
-                 插件调用 getCountingZones 做计数判定」; 设备算法目录 (90+ 项) 亦无
-                 shield.algo.perimeter.counting。按用户铁律「画了不起作用的入口
-                 必须移除」, ALGO_EXCLUSIVE_RES 删 counting 条目后本分支永不可达,
-                 连同编辑器/列表/开关/创建链路整体下线。存量计数区数据不删
-                 (RegionStore CRUD 保留), 计数插件落地后恢复本分支与映射即可。 -->
-          </el-card>
-            </el-tab-pane>
-          </el-tabs>
-        </template>
-      </div>
     </div>
 
-    <!-- ④ 单设备算法事件规则: 添加 dialog (事件类型 SSOT /event-types/canonical 多选,
-        逐条 POST /linkage/rules, payload 含 channel_id/device_id/algo_id/event_type) -->
-    <el-dialog v-model="ruleDialogVisible" title="添加事件规则" width="560px" class="rule-dialog">
-      <div class="rule-dialog-target">
-        算法 <el-tag size="small" type="primary" :title="isAlgoFallback(ruleTargetAlgo) ? '该算法未注册中文名' : ''">{{ ruleTargetAlgoName }}</el-tag>
-        <span class="rule-dialog-sub">通道: {{ selected?.name ?? '-' }} (device_id: {{ selected?.deviceId || selected?.parentDeviceId || '-' }})</span>
-      </div>
-      <el-input v-model="ruleFilter" placeholder="搜索事件类型 (中文名 / key)" clearable size="small" class="rule-filter" />
-      <div class="rule-check-wrap" v-loading="ruleTypesLoading">
-        <el-checkbox-group v-model="ruleSelected">
-          <el-checkbox v-for="t in filteredEventTypes" :key="t.key" :value="t.key" :label="t.key" class="rule-check-item">
-            {{ t.name_zh }}
-            <span class="rule-check-key">{{ t.key }}</span>
-            <!-- [R6 P1-4 2026-09-12] 三档标注 (doc §5.4): B=VLM 兜底 / C=预留位 (仍可选) -->
-            <el-tag v-if="coverageTierOf(t.key) === 'B'" size="small" type="warning" effect="plain" class="rule-tier-tag">AI 研判兜底</el-tag>
-            <span v-else-if="coverageTierOf(t.key) === 'C'" class="rule-tier-hint">预留位</span>
-          </el-checkbox>
-        </el-checkbox-group>
-        <el-empty v-if="!ruleTypesLoading && filteredEventTypes.length === 0" description="无匹配事件类型" :image-size="60" />
+    <!-- 查看 ROI 弹窗 (只读): [algo-view-readonly 2026-09-12] 右栏编辑区 (参数编辑卡 +
+         检测区域/绊线/通道三编辑器) 整体移除, 只保留「查看已画 ROI」入口 — 全部绘制
+         已收敛到事件规则页; 本弹窗按当前算法展示已保存的 ROI (只读画布 + 只读列表)。 -->
+    <el-dialog v-model="roiViewerVisible" :title="roiViewerTitle" width="860px"
+      class="roi-viewer-dialog" destroy-on-close>
+      <div v-if="roiViewerRow" class="roi-viewer-body" v-loading="roiViewerLoading">
+        <el-tabs v-model="roiViewerTab" class="roi-viewer-tabs">
+          <el-tab-pane v-if="roiViewerIsRegionAlgo" name="roi" :label="$t('detectionZone', '检测区域')">
+            <RoiViewer :background-image-url="roiBackgroundUrl" :shapes="regionViewShapes" />
+            <div v-if="regions.length" class="tripwire-list">
+              <div v-for="r in regions" :key="r.roi_id" class="tripwire-list__item">
+                <span>
+                  <el-tag :type="r.roi_type === 'exclusion_zone' ? 'danger' : 'success'" size="small" class="roi-type-tag">
+                    {{ r.roi_type === 'exclusion_zone' ? '排除区' : '检测区' }}
+                  </el-tag>
+                  {{ r.roi_name || '未命名' }}
+                  <span v-if="r.is_active === false" class="text-muted">（已停用）</span>
+                </span>
+              </div>
+            </div>
+          </el-tab-pane>
+          <el-tab-pane v-if="roiViewerRes?.tab === 'tripwire'" name="tripwire" :label="$t('tripwire', '绊线')">
+            <p class="roi-viewer-desc">{{ roiViewerRes?.desc }}</p>
+            <RoiViewer :background-image-url="roiBackgroundUrl" :shapes="tripwireViewShapes" />
+            <div v-if="tripwires.length" class="tripwire-list">
+              <div v-for="tw in tripwires" :key="tw.id" class="tripwire-list__item">
+                <span>
+                  <el-tag :type="tw.enabled === false ? 'info' : 'success'" size="small" class="roi-type-tag">
+                    {{ tw.enabled === false ? '已停用' : '生效中' }}
+                  </el-tag>
+                  {{ tw.name }}{{ (tw.channel_id_str || '').endsWith('_ch0') ? ' (镜像)' : '' }} ({{ tw.direction }})
+                </span>
+              </div>
+            </div>
+          </el-tab-pane>
+          <el-tab-pane v-if="roiViewerRes?.tab === 'passageway'" name="passageway" :label="$t('passageway', '通道')">
+            <p class="roi-viewer-desc">{{ roiViewerRes?.desc }}</p>
+            <RoiViewer :background-image-url="roiBackgroundUrl" :shapes="passagewayViewShapes" />
+            <div v-if="passageways.length" class="tripwire-list">
+              <div v-for="pw in passageways" :key="pw.id" class="tripwire-list__item">
+                <span>
+                  <el-tag :type="pw.enabled === false ? 'info' : 'success'" size="small" class="roi-type-tag">
+                    {{ pw.enabled === false ? '已停用' : '生效中' }}
+                  </el-tag>
+                  {{ pw.name }} (sens={{ pw.sensitivity }}, {{ pw.direction_in ? '进入' : '离开' }}
+                  {{ pw.suppress_mode }}<template v-if="pw.migrated_from_tripwire">, 迁移自绊线#{{ pw.migrated_from_tripwire }}</template>)
+                </span>
+              </div>
+            </div>
+          </el-tab-pane>
+        </el-tabs>
       </div>
       <template #footer>
-        <span class="rule-dialog-count">已勾选 {{ ruleSelected.length }} 项</span>
-        <el-button @click="ruleDialogVisible = false">取消</el-button>
-        <el-button type="primary" :disabled="ruleSelected.length === 0" :loading="ruleSaving" @click="confirmAddRules">保存</el-button>
+        <span class="roi-viewer-hint">本页仅供查看 — ROI 绘制 / 修改请前往「事件规则」</span>
+        <el-button size="small" @click="roiViewerVisible = false">关闭</el-button>
+        <el-button size="small" type="primary" :loading="roiViewerLoading" @click="loadRoiViewerData">刷新</el-button>
       </template>
     </el-dialog>
-
-    <!-- ③ 任务3: 事件规则抽屉 (展示本算法已绑定规则; 行内「编辑」跳平台 /linkage?editRuleId=) -->
-    <el-drawer v-model="ruleDrawerVisible" direction="rtl" size="540px"
-      :with-header="true" :show-close="true" :close-on-click-modal="false"
-      class="rule-drawer" :title="`事件规则编辑 — ${ruleDrawerAlgoName}`">
-      <div class="rule-drawer-body" v-loading="ruleDrawerLoading">
-        <div class="rule-drawer-meta">
-          <el-tag size="small" type="primary">{{ ruleDrawerAlgoName }}</el-tag>
-          <span class="rule-drawer-sub">通道 {{ selected?.name ?? '-' }} · 设备 {{ selected?.deviceId || selected?.parentDeviceId || '-' }}</span>
-        </div>
-
-        <el-empty v-if="!ruleDrawerLoading && ruleDrawerItems.length === 0"
-          description="该算法下暂无事件规则 — 请使用添加按钮新建" :image-size="60" />
-
-        <div v-for="r in ruleDrawerItems" :key="r.id" class="rule-drawer-item">
-          <div class="rule-drawer-item-head">
-            <span class="rule-drawer-item-name">{{ r.name }}</span>
-            <el-tag v-if="isSceneDefaultRule(r)" size="small" type="warning" effect="dark">场景默认</el-tag>
-            <el-tag :type="r.enabled ? 'success' : 'info'" size="small" effect="plain">
-              {{ r.enabled ? '已启用' : '已停用' }}
-            </el-tag>
-            <el-button size="small" type="danger" link title="删除该规则" @click="removeSingleRule(r)">
-              <el-icon><Delete /></el-icon>
-            </el-button>
-          </div>
-          <!-- [SIMPLE-EDIT 2026-09-03] 内联字段子集表单 → 摘要行 + 简易抽屉编辑
-               (与各场景 RulesView / 平台行内编辑统一入口, 不再单独维护字段子集) -->
-          <div class="rule-drawer-item-summary">
-            <span>事件 {{ (r.source_cond?.event_types ?? []).length }} 类</span>
-            <span class="rule-drawer-sep">·</span>
-            <span>动作 {{ (r.actions || []).filter((a: any) => a.enabled).length }}/{{ (r.actions || []).length }} 项</span>
-            <span class="rule-drawer-sep">·</span>
-            <span>{{ ruleTimeSummary(r) }}</span>
-            <el-button size="small" type="primary" link @click="openRuleEdit(r)">编辑</el-button>
-          </div>
-        </div>
-      </div>
-      <template #footer>
-        <el-button @click="ruleDrawerVisible = false">关闭</el-button>
-        <el-button type="primary" :loading="ruleDrawerLoading" @click="reloadRuleDrawer">刷新</el-button>
-      </template>
-    </el-drawer>
-
-    <!-- [SCENE-EDIT-INPLACE 2026-09-03] 就地编辑: 内嵌平台 LinkageRuleView 嵌入模式
-         (embedEditRuleId, 同一编辑器单一来源: choice → vp6 全功能表单), 不再跳转
-         /linkage; 编辑抽屉链关闭 (edit-closed) 后卸载并刷新规则绑定缓存 -->
-    <LinkageRuleView v-if="editEmbedVisible" :embed-edit-rule-id="editEmbedRuleId" @edit-closed="onEditEmbedClosed" />
-
-    <!-- ⑥ 绑定事件规则抽屉: 从全量规则中筛「未绑定本通道」条目 → 勾选 → 补齐
-         source_cond (channel_ids/device_ids 空则填本通道) → PUT /linkage/rules/{id} -->
-    <!-- [FIX 2026-09-02] destroy-on-close: 关闭即销毁表格, 清除 reserve-selection 对已绑定规则的
-         勾选记忆 — 否则重开抽屉后 selection 残留已绑定项, 再次绑定会连带重复提交且计数不符 -->
-    <el-drawer v-model="bindRuleVisible" direction="rtl" size="720px" destroy-on-close
-      :with-header="true" :show-close="true" :close-on-click-modal="false"
-      class="bind-rule-drawer" :title="`绑定事件规则 — ${selected?.name ?? ''}`">
-      <div class="bind-rule-body" v-loading="bindRuleLoading">
-        <el-input v-model="bindRuleFilter" clearable size="small" class="bind-rule-search"
-          :placeholder="$t('bindRuleSearch', '搜索规则名 / 事件类型 / 算法名')">
-          <template #prefix><el-icon><Search /></el-icon></template>
-        </el-input>
-        <el-table v-if="bindRuleFiltered.length > 0" :data="bindRulePageItems" size="small" row-key="id"
-          class="bind-rule-table" empty-text="无匹配规则" @selection-change="onBindSelectionChange">
-          <el-table-column type="selection" width="38" reserve-selection />
-          <el-table-column :label="$t('ruleName', '规则名称')" min-width="130" show-overflow-tooltip prop="name" />
-          <el-table-column :label="$t('eventType', '事件类型')" min-width="120">
-            <template #default="{ row }">
-              <span :title="((row.source_cond?.event_types ?? []) as string[]).map(eventTypeZh).join('、')">{{ bindEventTypesOf(row) }}</span>
-            </template>
-          </el-table-column>
-          <el-table-column :label="$t('algo', '所属算法')" min-width="120">
-            <template #default="{ row }">
-              <span :title="((row.source_cond?.algorithm_ids ?? []) as string[]).join('、')">{{ bindAlgosOf(row) }}</span>
-            </template>
-          </el-table-column>
-          <el-table-column :label="$t('priority', '优先级')" width="58" align="center" prop="priority" />
-          <el-table-column :label="$t('status', '状态')" width="62" align="center">
-            <template #default="{ row }">
-              <el-tag :type="row.enabled ? 'success' : 'info'" size="small" effect="plain">
-                {{ row.enabled ? '启用' : '停用' }}
-              </el-tag>
-            </template>
-          </el-table-column>
-          <el-table-column :label="$t('scope', '作用范围')" min-width="110">
-            <template #default="{ row }">{{ bindScopeOf(row) }}</template>
-          </el-table-column>
-        </el-table>
-        <el-empty v-if="!bindRuleLoading && bindRuleFiltered.length === 0"
-          :description="bindRuleAll.length === 0 ? '暂无可绑定的事件规则' : '该摄像头已绑定全部可用事件规则'" :image-size="70">
-          <el-button type="primary" size="small" @click="gotoLinkageView">前往联动规则管理新建</el-button>
-        </el-empty>
-        <div v-if="bindRuleFiltered.length > bindPageSize" class="bind-rule-page">
-          <el-pagination v-model:current-page="bindPage" :page-size="bindPageSize"
-            :total="bindRuleFiltered.length" layout="total, prev, pager, next" small background />
-        </div>
-      </div>
-      <template #footer>
-        <span class="bind-rule-count">已勾选 {{ bindSelection.length }} 项</span>
-        <el-button size="small" @click="bindRuleVisible = false">取消</el-button>
-        <el-button size="small" type="primary" :disabled="bindSelection.length === 0"
-          :loading="bindSaving" @click="confirmBindRules">
-          绑定到本通道 ({{ bindSelection.length }})
-        </el-button>
-      </template>
-    </el-drawer>
   </div>
 </template>
 
 <script setup lang="ts">
 /**
- * AlgoConfigView.vue — 算法配置页面
+ * AlgoConfigView.vue — 算法查看页面 (原「算法配置」)
  *
- * 对接后端 API 实现：
- * 1. 从 GET /channels 加载通道列表
- * 2. 从 GET /inference/channels 加载已绑定算法的推理状态
- * 3. 保存时调用 POST /inference/schedule/start 或 /stop 控制后端推理调度
+ * [algo-view-readonly 2026-09-12] 全面只读化 (用户拍板, 方案 B 完成态):
+ *   调度真值唯一入口 = 事件规则 — 页面仅保留「查看已绑定算法」展示能力:
+ *   1. 不允许编辑 (参数编辑卡/保存/重置 已移除);
+ *   2. 不允许开启/关闭 (启停开关/快捷停用 已移除, 调度态只读徽标);
+ *   3. 不允许删除 (删除入口已移除);
+ *   4. 全部绘制收敛到事件规则页 — 本页仅保留「查看 ROI」只读弹窗
+ *      (RoiViewer 只读画布 + 只读列表);
+ *   5. 通道列表改三级树 (区域 → 设备 → 通道, 对齐告警列表页结构)。
+ *   接口保留: GET /channels、GET /inference/channels、GET /algorithms、
+ *   GET /linkage/rules (规则计数徽标)、GET /algos/regions|tripwires|passageways。
  */
-import { ref, reactive, computed, watch, onMounted, nextTick } from 'vue'
-import { useRouter } from 'vue-router'
-import { ElMessage, ElMessageBox } from 'element-plus'
-import { Refresh, Plus, Delete, Edit, Search, CaretBottom, WarningFilled } from '@element-plus/icons-vue'
+import { ref, computed, watch, onMounted, nextTick } from 'vue'
+import { ElMessage } from 'element-plus'
+import { Refresh, Search, WarningFilled, Location, Monitor, VideoCamera } from '@element-plus/icons-vue'
 import { channelApi } from '@/api/channel'
-import { startSchedule, stopSchedule, getInferenceChannels } from '@/api/inference'
+import { getInferenceChannels } from '@/api/inference'
 import type { ScheduledChannel } from '@/api/inference'
 import algorithmsApi from '@/api/algorithms'
-import type { AlgorithmInfo } from '@/api/algorithms'
-import eventTypesApi, { type CanonicalEventType } from '@/api/eventTypes'
+import { securityAreaApi } from '@/api/securityAreas'
+import type { SecurityArea } from '@/api/securityAreas'
+import { buildAreaTree, areaTreeToElTreeData } from '@/utils/areaTree'
+import { devNameOf, alarmDirReady } from '@/composables/useAlarmDeviceLabel'
 import { useEventTypeZh } from '@/composables/useEventTypeZh'
 // [R6 P1-3 2026-09-12 算法页降视图] useAlgoRuleSync 已废除 (与规则页的双向联动链
 //   及 localStorage 三键整体下线): safeChannelHash 契约迁 utils/channelHash;
-//   algoIdMatches 收拢为本组件局部函数 (原唯一消费方); 行开关改单向快捷停用
+//   algoIdMatches 收拢为本组件局部函数
 import { safeChannelHash } from '@/utils/channelHash'
-import { testApi } from '@/api/test'
 import { linkageApi, type LinkageRule } from '@/api/linkage'
 import { regionApi } from '@/api/region'
-import type { TripwireDef, PassagewayDef, SuppressMode } from '@/types/region'
-import RoiPolygonEditor from '@/components/RoiPolygonEditor.vue'
-// [SCENE-EDIT-INPLACE 2026-09-03] 就地编辑: 内嵌平台编辑器 (嵌入模式, 编辑器单一来源)
-import LinkageRuleView from '@/views/LinkageRuleView.vue'
-import TripwireEditor from '@/components/TripwireEditor.vue'
-import PassagewayEditor from '@/components/PassagewayEditor.vue'
+import type { TripwireDef, PassagewayDef } from '@/types/region'
+import RoiViewer from '@/components/RoiViewer.vue'
 
-
-/** 通道项（合并通道信息 + 推理调度状态） */
+/** 通道项 (只读视图消费: 树分桶/选中展示; [algo-view-readonly 2026-09-12]
+ *  原调度镜像字段 online/algoPlugin/confidence/interval 等全部删减 —
+ *  调度态统一经 scheduledMap 现取, 不在通道对象上冗余快照) */
 interface ChannelItem {
   channelId: string
   name: string
   deviceId: string
   parentDeviceId: string
-  online: boolean
-  algoPlugin: string
-  inferenceEnabled: boolean
-  confidence: number
-  nmsThreshold: number
-  interval: number
-  inferenceMode: 'snapshot' | 'streaming'
-  totalInferences: number
-  totalDetections: number
-  running: boolean
+}
+
+/** 通道树节点 (区域 → 设备 → 通道 三级 + 未分组兜底; 索引签名兼容 areaTree 工具泛型) */
+interface TreeNode {
+  key: string
+  label: string
+  type: 'area' | 'device' | 'channel' | 'ungrouped'
+  channelId?: string
+  children?: TreeNode[]
+  [k: string]: unknown
 }
 
 const channels = ref<ChannelItem[]>([])
 const algorithmOptions = ref<{ label: string; value: string }[]>([])
 // [FIX 2026-09-01] 全量 id→显示名映射 (不过滤 enabled): 算法列表显示名解析源
 const algoNameMap = ref<Map<string, string>>(new Map())
-// [FIX 2026-09-02c] 事件类型 → 算法 id 反推映射 (数据源 /algorithms 的 alarm_type 字段):
-//   规则只声明 event_types (algorithm_ids 空, 周界模板规则多属此类) 时, 告警仍须由
-//   某个算法产生 (引擎 matchSourceCondition 只消费算法告警), 绑定时按此映射联动启用
-const algoEventMap = ref<Map<string, string>>(new Map())
-// [FIX 2026-09-02f] 事件类型中文名 SSOT 单例 (useEventTypeZh, /event-types/canonical
-//   113 类): 目录外事件型插件 id (如 person_detected) 的算法名兜底数据源。
-//   ensure 预热 + zh 同步读缓存 (ref 响应式, 到达后相关 computed 自动重算)
+// [FIX 2026-09-02f] 事件类型中文名 SSOT 单例 (目录外事件型插件 id 的算法名兜底数据源)
 const { ensure: ensureEventTypeZh, zh: eventTypeZhSSOT } = useEventTypeZh()
 ensureEventTypeZh()
 // [FIX 2026-09-02d] 事件名 → 算法 alarm_type 的别名兑底 (对齐后端 EventTypeAliases.h SSOT
-//   的关键别名对)。词形前缀近似覆盖不了非前缀关系的命名对 — 实锤: tailgate vs
-//   tailgating 第 8 字符 e/i 分叉, startsWith 恒 false → 反推失败 → 绑定后算法不启用。
-//   权威依据: 后端 aliases {"tailgate": [..., "tailgating"]} / {"fight": [..., "fighting"]} 等
+//   的关键别名对)。实锤: tailgate vs tailgating 第 8 字符 e/i 分叉, startsWith 恒 false
 const EVENT_ALGO_TYPE_ALIASES: Record<string, string> = {
   tailgate: 'tailgating',
   face_tailgate: 'tailgating',
@@ -568,35 +240,9 @@ const EVENT_ALGO_TYPE_ALIASES: Record<string, string> = {
   elderly_fall: 'fall',
 }
 /** [R6 P1-3 2026-09-12] 依赖 id ↔ 算法 id 匹配 (精确 → 双向尾段)。
- *  原 useAlgoRuleSync.algoIdMatches 原语义收拢至此 (废除 composable 后唯一消费方 =
- *  本组件: 规则计数/删除解绑/快捷停用): 兼容短名 'intrusion' ↔ 全名
- *  'shield.algo.perimeter.intrusion' 两种存量形态 */
+ *  兼容短名 'intrusion' ↔ 全名 'shield.algo.perimeter.intrusion' 两种存量形态 */
 function algoIdMatches(dep: string, algoId: string): boolean {
   return dep === algoId || dep.endsWith('.' + algoId) || algoId.endsWith('.' + dep)
-}
-/** 事件类型 → 能产生它的算法 id。匹配链: 精确 alarm_type → 别名表归一后精确 →
- *  词形近似 (双向前缀, 短串≥4)。前缀命中多个取 alarm_type 最短者。无算法可产生返回 '' */
-function algoIdForEventType(t: string): string {
-  if (!t) return ''
-  const evMap = algoEventMap.value
-  const norm = EVENT_ALGO_TYPE_ALIASES[t] ?? t
-  const hit = evMap.get(norm) ?? evMap.get(t)
-  if (hit) return hit
-  let best = ''
-  let bestLen = Infinity
-  for (const [at, id] of evMap) {
-    const shortLen = Math.min(at.length, norm.length)
-    if (shortLen >= 4 && (at.startsWith(norm) || norm.startsWith(at)) && at.length < bestLen) {
-      best = id
-      bestLen = at.length
-    }
-  }
-  if (best) return best
-  // [FIX 2026-09-02d] 匹配链末环: 目录外事件型插件 — /algorithms 目录只收录模型型
-  //   算法, 事件型插件不入目录但设备插件库实测可用 (FALLBACK_ALGO_NAMES 表即实测
-  //   证据源, 如 object_removal 物品移除 / queue_length 排队长度), 事件类型本身即
-  //   插件 id, 启用自身。实测用户规则库 12 类事件经全链 12/12 可反推
-  return FALLBACK_ALGO_NAMES[t] ? t : ''
 }
 // [FIX 2026-09-01] 目录缺失 id 的显示兜底: 设备 algo_plugin 实测 13 项中 5 项不在
 //   /algorithms 目录 (事件型插件/模型型 id 未入目录) → 中文名对齐 EventTypeAliases SSOT
@@ -610,14 +256,11 @@ const FALLBACK_ALGO_NAMES: Record<string, string> = {
 }
 
 /** [FIX 2026-09-01] 统一中文名解析函数: 目录全量映射 → SSOT 兑底表 → 事件类型
- *  SSOT 中文名 → options (enabled) → 裸 id。任务 1 要求: 所有算法名展示统一走该函数 */
+ *  SSOT 中文名 → options (enabled) → 裸 id */
 function algoNameOf(id: string | null | undefined): string {
   if (!id) return ''
   const hit = algoNameMap.value.get(id) || FALLBACK_ALGO_NAMES[id]
   if (hit) return hit
-  // [FIX 2026-09-02f] 目录外事件型插件裸 id (如设备串里的 person_detected —
-  // 不在 /algorithms 目录且旧 FALLBACK 表未登记): 取 SSOT 事件类型中文名。
-  // zh() 无命中返回原 key, 判异后再收, 不截断后续 options 兑底
   const zhName = eventTypeZhSSOT(id)
   if (zhName && zhName !== id) return zhName
   return algorithmOptions.value.find((a) => a.value === id)?.label || id
@@ -626,66 +269,90 @@ function algoNameOf(id: string | null | undefined): string {
 function isAlgoFallback(id: string | null | undefined): boolean {
   return !!id && algoNameOf(id) === id
 }
-// [UX 2026-09-01 对齐效果图] 左栏: 搜索过滤 + 按设备分组折叠 (组名 分组0N) + 双行通道项
-const chSearch = ref('')
-const collapsedGroups = reactive<Record<string, boolean>>({})
-const channelGroups = computed(() => {
-  const kw = chSearch.value.trim().toLowerCase()
-  const filtered = kw
-    ? channels.value.filter((c) => c.name.toLowerCase().includes(kw) || c.channelId.toLowerCase().includes(kw))
-    : channels.value
-  const groups = new Map<string, ChannelItem[]>()
-  for (const c of filtered) {
-    const gkey = c.parentDeviceId || c.deviceId || 'default'
-    if (!groups.has(gkey)) groups.set(gkey, [])
-    groups.get(gkey)!.push(c)
-  }
-  return Array.from(groups.entries()).map(([key, items], i) => ({ key, label: `分组0${i + 1}`, items }))
-})
-function toggleGroup(key: string) {
-  collapsedGroups[key] = !collapsedGroups[key]
+
+// ─── 通道树 (区域 → 设备 → 通道, 对齐告警列表页 AlarmDeviceTreePanel) ──────────
+const treeRef = ref()
+const treeFilter = ref('')
+const treeKey = ref(0)
+const areaRoots = ref<ReturnType<typeof buildAreaTree>>([])
+// 设备名目录异步就绪 → key 重建刷新 label (AlarmDeviceTreePanel 同构)
+const dirReady = alarmDirReady()
+watch(dirReady, () => { treeKey.value++ })
+
+async function loadAreaTree() {
+  try {
+    const res = await securityAreaApi.listAreas() as any
+    // [FIX 2026-09-10 真机 同 AlarmDeviceTreePanel] 解包链补 .items 分支 + 数组守卫
+    const rawList = res?.data?.data?.areas ?? res?.data?.data?.items ?? res?.data?.data ?? res?.data ?? []
+    const list: SecurityArea[] = Array.isArray(rawList) ? rawList : []
+    areaRoots.value = buildAreaTree(list)
+    treeKey.value++
+  } catch { console.error('[AlgoConfigView] 加载安保区域树失败') }
 }
 
+/** 设备 → 通道分桶 (parentDeviceId 优先, 与旧分组逻辑同源) */
+const channelTreeData = computed<TreeNode[]>(() => {
+  const byDev = new Map<string, ChannelItem[]>()
+  const noDev: ChannelItem[] = []
+  for (const c of channels.value) {
+    const key = String(c.parentDeviceId || c.deviceId || '')
+    if (!key) { noDev.push(c); continue }
+    if (!byDev.has(key)) byDev.set(key, [])
+    byDev.get(key)!.push(c)
+  }
+  const chanNode = (c: ChannelItem): TreeNode => ({
+    key: `ch:${c.channelId}`, label: c.name, type: 'channel', channelId: c.channelId,
+  })
+  const claimed = new Set<string>()
+  const roots = areaTreeToElTreeData(areaRoots.value, (n) =>
+    (n.area.device_ids || []).map((d): TreeNode => {
+      const dev = String(d)
+      claimed.add(dev)
+      return {
+        key: `dev:${dev}`,
+        label: devNameOf(dev) || dev,
+        type: 'device',
+        children: (byDev.get(dev) ?? []).map(chanNode),
+      }
+    })) as TreeNode[]
+  // 未分组兜底: 无区域认领设备下的通道 + 无设备通道 (RecordingView __ungrouped__ 同构)
+  const orphan: ChannelItem[] = [...noDev]
+  for (const [dev, list] of byDev) if (!claimed.has(dev)) orphan.push(...list)
+  if (orphan.length > 0) {
+    roots.push({ key: '__ungrouped__', label: '未分组', type: 'ungrouped', children: orphan.map(chanNode) })
+  }
+  return roots
+})
+
+watch(treeFilter, (v) => { treeRef.value?.filter(v) })
+function filterTreeNode(value: string, data: any): boolean {
+  if (!value) return true
+  const kw = value.toLowerCase()
+  return String(data.label || '').toLowerCase().includes(kw)
+    || String(data.channelId || '').toLowerCase().includes(kw)
+}
+function onTreeNodeClick(data: TreeNode) {
+  if (data.type !== 'channel' || !data.channelId) return
+  const hit = channels.value.find((c) => c.channelId === data.channelId)
+  if (hit) onChannelSelect(hit)
+}
+
+// ─── 算法行数据 (调度串拆分 + 规则计数) ────────────────────────────────────────
 const scheduledMap = ref<Map<string, ScheduledChannel>>(new Map())
 const selected = ref<ChannelItem | null>(null)
 const loading = ref(false)
-const saving = ref(false)
-const editCardRef = ref()
-const currentAlgoId = ref('')
 
-// [2026-09-01] 编辑区模型: 仅当前选中算法; 参数为通道级调度共享
-// (后端 ScheduledChannel 无独立 per-algo 参数; 保存时 algo_plugin 保留原完整串不破坏多算法配置)
-const editForm = reactive({
-  algoId: '',
-  algoName: '',
-  mode: 'snapshot' as 'snapshot' | 'streaming',
-  interval: 1000,
-  confidence: 0.5,
-  nms: 0.45,
+// 选中通道变化 → 树节点高亮跟随 (树重建/程序化选中时恢复)
+// [FIX 2026-09-12 TDZ] watch 建立即同步执行 source getter (经 baseWatchOptions.call
+//   包装) — 此前置于 selected 声明之前, ReferenceError 被 Vue callWithErrorHandling
+//   静默吞掉 (页面残存但初值失效; 控制台留红) — 移至声明后消除
+watch(() => selected.value?.channelId, (id) => {
+  nextTick(() => {
+    if (id) treeRef.value?.setCurrentKey(`ch:${id}`)
+    else treeRef.value?.setCurrentKey(null)
+  })
 })
-const formErrors = reactive({ interval: '', confidence: '', nms: '' })
 
-function validateEditField(field: 'interval' | 'confidence' | 'nms') {
-  if (field === 'interval') {
-    formErrors.interval = !(editForm.interval >= 100 && editForm.interval <= 100000)
-      ? '检测间隔必须 ≥ 100ms' : ''
-  } else if (field === 'confidence') {
-    const v = Number(editForm.confidence)
-    formErrors.confidence = !(v >= 0 && v <= 1) ? '置信度必须在 0 ~ 1 之间' : ''
-  } else {
-    const v = Number(editForm.nms)
-    formErrors.nms = !(v >= 0 && v <= 1) ? 'NMS 阈值必须在 0 ~ 1 之间' : ''
-  }
-}
-function validateAll(): boolean {
-  validateEditField('interval'); validateEditField('confidence'); validateEditField('nms')
-  return !formErrors.interval && !formErrors.confidence && !formErrors.nms
-}
-
-// ① 已配置算法行: algo_plugin 逗号分隔串拆分逐行 + 事件规则计数
-// [R6 P1-3 2026-09-12 算法页降视图] 原 localStorage 禁用记忆 (algo_disabled_by_channel)
-// 整体废除、不迁移 (接受一次性重收敛): 行展示仅保留「串内启用行 + 通道停用时的遗留串行」,
-// 重建入口 = 绑定事件规则流程; 调度真值唯一入口 = 规则 (reconciler 对账收敛)
 // [FIX 2026-09-02 关闭最后算法不同步] 后端 /schedule/stop (disableChannel) 只置 enabled=false,
 // algo_plugin 串保留作为重启调度记忆 → 串≠启用集合。通道停用时启用集合视为空,
 // 否则最后一行算法仍显示开启 / 重开时串内残留算法被连带带起
@@ -694,95 +361,33 @@ function effectiveActiveIds(chId: string): string[] {
   if (!sc || sc.enabled === false) return []
   return String(sc.algo_plugin || '').split(',').map((s) => s.trim()).filter(Boolean)
 }
-// [FIX 2026-09-01 稳定行序] 显示顺序持久化: 禁用/启用行原地保留不跳位
-// (否则禁用行后接到底部 → 后续行上移, 连续点击时"点上行动下行"错位感)
-const ALGO_ORDER_KEY = 'algo_order_by_channel'
-function loadOrderMap(): Record<string, string[]> {
-  try { return JSON.parse(localStorage.getItem(ALGO_ORDER_KEY) || '{}') } catch { return {} }
-}
-function saveOrderMap(m: Record<string, string[]>) {
-  try { localStorage.setItem(ALGO_ORDER_KEY, JSON.stringify(m)) } catch { /* ignore */ }
-}
-/** 合并显示顺序: 已知顺序优先保留, 新出现 id 按串序追加尾部, 已删除 id 自动剔除 */
-function stableAlgoOrder(chId: string, activeIds: string[], disabledIds: string[]): string[] {
-  const orderMap = loadOrderMap()
-  const known = orderMap[chId] ?? []
-  const keep = new Set([...activeIds, ...disabledIds])
-  const merged = known.filter((id) => keep.has(id))
-  for (const id of [...activeIds, ...disabledIds]) if (!merged.includes(id)) merged.push(id)
-  if (merged.join(',') !== known.join(',')) {
-    orderMap[chId] = merged
-    saveOrderMap(orderMap)
-  }
-  return merged
-}
+// [algo-view-readonly 2026-09-12] 行序持久化 (algo_order_by_channel) 已随
+//   只读化移除: 本页不再有启停操作触发串变化, 行序 = 调度串序 (后端持久,
+//   规则页/reconciler 变更后自然反映); computed 中写 localStorage 的副作用
+//   一并消除 (只读页零本地写)。
 
+/** 已配置算法行 (只读): algo_plugin 串拆分逐行 + 调度态徽标 + 规则计数;
+ *  通道停用时遗留串并入禁用行 (调度态只读徽标「已停止」) — 换浏览器/清缓存
+ *  也能看到全部算法行, 不至于行消失无从查看 */
 const algoRows = computed(() => {
   if (!selected.value) return []
   const sc = scheduledMap.value.get(selected.value.channelId)
   const activeIds = effectiveActiveIds(selected.value.channelId)
-  // [FIX 2026-09-02] 通道停用时遗留串并入禁用行: 换浏览器/清缓存(无禁用记忆)也能看到
-  // 全部算法行并重新启用, 不至于行消失无从操作
   const chDisabled = !sc || sc.enabled === false
-  const leftoverIds = chDisabled
-    ? String(sc?.algo_plugin || '').split(',').map((s) => s.trim()).filter(Boolean)
-    : []
-  const disabledIds = Array.from(new Set(leftoverIds))
-  // 串内=启用行; 禁用记忆/遗留串=禁用行; 按稳定顺序渲染 (原地启停不跳位)
-  const all = stableAlgoOrder(selected.value.channelId, activeIds, disabledIds)
-  // [FIX tsc 2026-09-07] 显式返回类型锁定 mode 联合字面量 (原推断放宽为 string,
-  //   selectAlgoRow 入参/editForm.mode 赋值两处报 TS2345/TS2322)
-  type AlgoRow = { algoId: string; algoName: string; mode: 'snapshot' | 'streaming'; interval: number; enabled: boolean; running: boolean; ruleCount: number }
+  const all = chDisabled
+    ? Array.from(new Set(String(sc?.algo_plugin || '').split(',').map((s) => s.trim()).filter(Boolean)))
+    : activeIds
+  type AlgoRow = { algoId: string; algoName: string; mode: 'snapshot' | 'streaming'; enabled: boolean; ruleCount: number }
   return all.map((id): AlgoRow => ({
     algoId: id,
-    // [FIX 2026-09-01] 解析链: 统一走 algoNameOf (目录全量映射 → SSOT 兑底表 → options → 裸 id)
+    // 解析链: 统一走 algoNameOf (目录全量映射 → SSOT 兑底表 → options → 裸 id)
     algoName: algoNameOf(id),
     mode: (sc as any)?.inference_mode === 'streaming' ? 'streaming' : 'snapshot',
-    interval: sc?.interval_ms ?? 1000,
     enabled: activeIds.includes(id),
-    running: sc?.running ?? false,
     ruleCount: algoRuleCounts.value.get(id) ?? 0,
   }))
 })
 
-/** [docx#5 P1-5] 当前选中算法的规则订阅数 (0 = 无规则, 推理不启动/告警被抑制) */
-const currentAlgoRuleCount = computed(() =>
-  algoRows.value.find((r) => r.algoId === currentAlgoId.value)?.ruleCount ?? 0)
-
-function algoRowClassName({ row }: { row: { algoId: string } }) {
-  return currentAlgoId.value === row.algoId ? 'current-algo-row' : ''
-}
-
-/** 点击列表行/编辑 → 高亮 + 填充编辑表单 + 滚动定位到编辑卡 */
-function selectAlgoRow(row: { algoId: string; algoName: string; mode: 'snapshot' | 'streaming'; interval: number }) {
-  currentAlgoId.value = row.algoId
-  editForm.algoId = row.algoId
-  editForm.algoName = row.algoName
-  editForm.mode = row.mode
-  editForm.interval = row.interval
-  formErrors.interval = ''; formErrors.confidence = ''; formErrors.nms = ''
-  // [FIX 2026-09-03 问题1] 切换算法行 → 绊线编辑会话一并重置:
-  //   editingTripwire 残留会让新算法下仍提示「正在编辑旧绊线」且画布载入旧线;
-  //   画布草稿 (A/B 两点) 由 TripwireEditor 的 :key 重挂载清零 (见模板)。
-  editingTripwire.value = null
-  // [FIX 2026-09-01] 切换算法行 → 重载该算法的检测区域 (按 algo_id 隔离展示)
-  loadRegions()
-  nextTick(() => editCardRef.value?.$el?.scrollIntoView?.({ behavior: 'smooth', block: 'center' }))
-}
-
-function resetEditForm() {
-  if (currentAlgoId.value) {
-    const row = algoRows.value.find((r) => r.algoId === currentAlgoId.value)
-    if (row) { selectAlgoRow(row); ElMessage.info('已重置为当前配置'); return }
-  }
-  formErrors.interval = ''; formErrors.confidence = ''; formErrors.nms = ''
-  ElMessage.info('已重置')
-}
-
-/** [R6 P1-3 2026-09-12 算法页降视图] 行开关双向切换 → 单向快捷停用:
- *  开方向入口 = 「+ 绑定事件规则」(绑定即启用, 调度态由规则经 reconciler 收敛)。
- *  停用 = 将「绑定本通道且依赖该算法的启用规则」置 enabled=false; 算法失去全部
- *  规则支撑后对账收敛停止调度 (规则重新启用 → 自动恢复调度), 本页不再维护调度串。 */
 /** [FIX 2026-09-02] 左侧 ON 徽标与算法行调度态同源: 直接判调度 enabled,
  *  避免 loadData 重建 channels 数组与 scheduledMap 更新时序差导致的双源不一致 */
 function isChInferenceOn(chId: string): boolean {
@@ -790,210 +395,21 @@ function isChInferenceOn(chId: string): boolean {
   return !!sc && sc.enabled !== false
 }
 
-const disablingId = ref('')
-async function quickDisableAlgo(row: { algoId: string }) {
-  const ch = selected.value
-  if (!ch) return
-  if (disablingId.value) return  // 上一次停用进行中, 防连点
-  disablingId.value = row.algoId
-  try {
-    // 通道命中走 safeChannelHash 契约, GB 双流 _ch0 双形态 (与 loadRuleCounts 同构)
-    const chIdStr = ch.channelId
-    const baseId = chIdStr.replace(/_ch\d+$/, '')
-    const chHashes = new Set<number>([safeChannelHash(chIdStr)])
-    if (baseId && baseId !== chIdStr) chHashes.add(safeChannelHash(baseId))
-    const res = await linkageApi.getAllRules()
-    const items: LinkageRule[] = res.data?.data?.items ?? (res.data as any)?.items ?? []
-    let n = 0
-    for (const r of items) {
-      if (!r.enabled) continue
-      const src: any = (r as any).source_cond ?? {}
-      const chs: number[] = src.channel_ids ?? []
-      // 仅处理显式绑定本通道的规则: channel_ids 空 = 全通道通配, 停用会误伤其他通道
-      if (chs.length === 0 || !chs.some((h) => chHashes.has(h))) continue
-      // 依赖算法集口径与 loadRuleCounts/unbindRulesLostSupport 一致:
-      // algorithm_ids 经别名归一 / 纯 event_types 经 algoIdForEventType 反推
-      const deps = new Set<string>()
-      const aids = (src.algorithm_ids ?? []) as string[]
-      if (aids.length > 0) {
-        for (const a of aids) deps.add(a)
-      } else {
-        for (const t of (src.event_types ?? []) as string[]) {
-          const id = algoIdForEventType(t)
-          if (id) deps.add(id)
-        }
-      }
-      const hit = [...deps].some((d) =>
-        algoIdMatches(d, row.algoId) || algoIdMatches(EVENT_ALGO_TYPE_ALIASES[d] ?? d, row.algoId))
-      if (!hit) continue
-      try {
-        await linkageApi.updateRule(r.id, { enabled: false } as Partial<LinkageRule>)
-        n++
-      } catch (e) {
-        console.warn('[AlgoConfigView] 快捷停用规则失败', r.id, e)
-      }
-    }
-    if (n > 0) ElMessage.success(`已停用 ${n} 条关联事件规则, 算法调度将随对账收敛停止`)
-    else ElMessage.info('该算法暂无绑定本通道的启用规则')
-    await loadData()
-    await loadRuleCounts()
-  } catch (e: any) {
-    ElMessage.error(`停用失败: ${e?.message || e}`)
-  } finally {
-    disablingId.value = ''
-  }
-}
-
-/** [FIX 2026-09-02e] 删除算法联动解绑: 绑定 = 规则×通道×算法支撑 (绑定即启用算法)。
- *  删除算法后, 在本通道失去全部算法支撑的绑定规则自动解除绑定 (channel_ids 移除
- *  本通道哈希 + device_ids 移除本设备, 与绑定写入对称), 规则重新出现在「绑定事件
- *  规则」可添加列表可再次绑定; 仍有多算法支撑的规则保持绑定 (部分算法仍在跑,
- *  规则在本通道仍可触发, 解绑反而丢失触发)。依赖算法集与绑定收集口径一致:
- *  algorithm_ids 归一 / 纯 event_types 反推 (algoIdForEventType) */
-async function unbindRulesLostSupport(
-  ch: { channelId: string; deviceId?: string; parentDeviceId?: string },
-  remainingIds: string[]
-) {
-  try {
-    const res = await linkageApi.getAllRules()
-    const items: LinkageRule[] = res.data?.data?.items ?? (res.data as any)?.items ?? []
-    const chHash = safeChannelHash(ch.channelId)
-    const devId = ch.deviceId || ch.parentDeviceId || ''
-    const remain = new Set(remainingIds)
-    let n = 0
-    for (const r of items) {
-      const src: any = (r as any).source_cond ?? {}
-      const chs: number[] = src.channel_ids ?? []
-      if (!chs.includes(chHash)) continue // 未绑定本通道
-      const deps = new Set<string>()
-      const aids = (src.algorithm_ids ?? []) as string[]
-      if (aids.length > 0) {
-        for (const a of aids) {
-          deps.add(algorithmOptions.value.find((o) => o.value === a || o.value.endsWith('.' + a))?.value ?? a)
-        }
-      } else {
-        for (const t of (src.event_types ?? []) as string[]) {
-          const id = algoIdForEventType(t)
-          if (id) deps.add(id)
-        }
-      }
-      // 仍有任一支撑算法在通道串 → 保持绑定。兼容短名 id (历史规则 algorithm_ids
-      // 存短名如 'intrusion', 目录/串里是全名): 双向 endsWith 匹配兑底, 防误解绑
-      const supported = (d: string) =>
-        remain.has(d) || [...remain].some((x) => x === d || x.endsWith('.' + d) || d.endsWith('.' + x))
-      if ([...deps].some(supported)) continue
-      const src2: any = { ...src }
-      src2.channel_ids = chs.filter((x) => x !== chHash)
-      if (devId) src2.device_ids = ((src.device_ids ?? []) as string[]).filter((d) => d !== devId)
-      try {
-        await linkageApi.updateRule(r.id, { ...r, source_cond: src2 } as Partial<LinkageRule>)
-        n++
-      } catch (e) {
-        console.warn('[AlgoConfigView] 解绑规则失败', r.id, e)
-      }
-    }
-    if (n > 0) ElMessage.info(`已解绑 ${n} 条失去算法支撑的事件规则, 可重新绑定`)
-  } catch (e) {
-    console.warn('[AlgoConfigView] 删除后解绑联动失败', e)
-  }
-}
-
-/** [UX 对齐效果图] 删除单算法: 从调度 algo_plugin 串移除该 id 后重启 (串空 → 停调度) */
-async function removeAlgo(row: { algoId: string; algoName: string }) {
-  const ch = selected.value
-  if (!ch) return
-  try {
-    await ElMessageBox.confirm(
-      `将从通道「${ch.name}」移除算法「${row.algoName}」。`,
-      '删除算法',
-      { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' }
-    )
-  } catch { return }
-  const sc = scheduledMap.value.get(ch.channelId)
-  // [FIX 2026-09-02] 同 toggleAlgoEnabled: 通道停用时串是遗留, 删除行直接从记忆移除
-  const ids = effectiveActiveIds(ch.channelId)
-  const next = ids.filter((id) => id !== row.algoId)
-  try {
-    if (next.length === 0) {
-      await stopSchedule(ch.channelId)
-      ElMessage.success('算法已移除, 通道推理调度已停止')
-    } else {
-      const deviceId = ch.deviceId || ch.parentDeviceId || ch.channelId
-      await startSchedule(ch.channelId, deviceId, sc?.interval_ms ?? editForm.interval, next.join(','),
-        { confidence: editForm.confidence, nmsThreshold: editForm.nms, inferenceMode: editForm.mode })
-      ElMessage.success(`已移除「${row.algoName}」`)
-    }
-    if (currentAlgoId.value === row.algoId) {
-      currentAlgoId.value = ''
-      editForm.algoId = ''
-      editForm.algoName = ''
-    }
-    // [R6 P1-3 2026-09-12] 原「删除 = 清禁用记忆」已废除: localStorage 三键整体下线,
-    // 删除流程只保留调度串移除 + 失去支撑规则解绑 (下方 unbindRulesLostSupport)
-    await loadData()
-    // [FIX 2026-09-02e] 删除后联动解绑失去支撑的绑定规则 (先于 loadRuleCounts,
-    // 计数与抽屉列表均反映解绑后的最新绑定关系)
-    await unbindRulesLostSupport(ch, next)
-    await loadRuleCounts()
-  } catch (e: any) {
-    ElMessage.error(`删除失败: ${e?.message || e}`)
-    await loadData()
-  }
-}
-
-// ④ 单设备算法事件规则: badge 计数 + 添加 dialog + 删除二次确认
+// ─── 事件规则计数 (算法行「规则×N」徽标, 只读) ──────────────────────────────────
 const algoRuleCounts = ref<Map<string, number>>(new Map())
-const channelRules = ref<LinkageRule[]>([])
-const canonicalTypes = ref<CanonicalEventType[]>([])
-const ruleTypesLoading = ref(false)
-const ruleDialogVisible = ref(false)
-const ruleTargetAlgo = ref('')
-const ruleFilter = ref('')
-const ruleSelected = ref<string[]>([])
-const ruleSaving = ref(false)
-// [R6 P1-4 2026-09-12] 事件选项三档标注 (doc §5.4): A=有算法 (AlgoStatus=normal) 正常;
-//   B=VLM 单帧研判兜底; C=预留位 (仍可选)。数据源 = /api/v1/test/event-coverage 的 tier
-//   字段 (与平台规则页/useLinkageOptions 同一后端口径); 端点不可用/旧后端时降级为无标注
-const ruleCoverageMap = ref<Record<string, { tier?: string; algo_id?: string | null; reason?: string }>>({})
-const ruleCoverageLoaded = ref(false)
-function coverageTierOf(key: string): string {
-  return ruleCoverageMap.value[key]?.tier ?? ''
-}
-async function loadRuleCoverage() {
-  try {
-    const res = await testApi.getEventCoverage()
-    const data = (res as any)?.data?.data
-    ruleCoverageMap.value = data?.coverage ?? {}
-    ruleCoverageLoaded.value = true
-  } catch (e) {
-    console.warn('[AlgoConfigView] event-coverage 加载失败, 三档标注降级为空', e)
-  }
-}
-
-const ruleTargetAlgoName = computed(() =>
-  algoRows.value.find((r) => r.algoId === ruleTargetAlgo.value)?.algoName || ruleTargetAlgo.value)
-const filteredEventTypes = computed(() => {
-  const kw = ruleFilter.value.trim().toLowerCase()
-  if (!kw) return canonicalTypes.value
-  return canonicalTypes.value.filter((t) =>
-    t.name_zh.toLowerCase().includes(kw) || t.key.toLowerCase().includes(kw))
-})
-
-/** 拉取当前通道全部联动规则 → 按算法计数 (badge) 并缓存规则列表供删除用 */
+/** 拉取当前通道全部联动规则 → 按算法计数 */
 async function loadRuleCounts() {
   if (!selected.value) return
   try {
     const res = await linkageApi.getAllRules()
     const items: LinkageRule[] = res.data?.data?.items ?? (res.data as any)?.items ?? []
-    channelRules.value = items
     const chIdStr = selected.value.channelId
     const sc = scheduledMap.value.get(chIdStr)
     const algoIds = String(sc?.algo_plugin || '').split(',').map((s) => s.trim()).filter(Boolean)
     // [FIX 2026-09-05 两边没同步] 通道命中必须走 safeChannelHash 契约 (FNV-1a int32,
-    //   LinkageEngine.cpp 同源): 原 Number(chIdStr) 对 GB 通道 ('34020000001320000002_ch0'
-    //   → NaN → 0) 及数字通道均与规则库 hash 形态 channel_ids 永不匹配 → 已启用规则全被
-    //   continue 跳过 → 计数恒 0 → 算法页误报「未绑定事件规则 / 推理不会启动」。
-    //   GB 双流 _ch0 双形态 hash 都参与命中 (与 LinkageRuleView 反解注册同构)。
+    //   LinkageEngine.cpp 同源): 原 Number(chIdStr) 对 GB 通道及数字通道均与规则库
+    //   hash 形态 channel_ids 永不匹配 → 已启用规则全被跳过 → 计数恒 0。
+    //   GB 双流 _ch0 双形态 hash 都参与命中 (与 LinkageRuleView 反解注册同构)
     const baseId = chIdStr.replace(/_ch\d+$/, '')
     const chHashes = new Set<number>([safeChannelHash(chIdStr)])
     if (baseId && baseId !== chIdStr) chHashes.add(safeChannelHash(baseId))
@@ -1005,8 +421,6 @@ async function loadRuleCounts() {
       if (!chHit) continue
       for (const a of (src.algorithm_ids ?? []) as string[]) {
         // [FIX 2026-09-05b 第三洞] 短名先过别名归一再双向尾段匹配: tailgate→tailgating
-        //   这类非前缀命名对 (第 8 字符 e/i 分叉) algoIdMatches 覆盖不了,
-        //   实测修复后 tailgating 计数仍 0 — 复用本组件 EVENT_ALGO_TYPE_ALIASES 同源归一
         const normA = EVENT_ALGO_TYPE_ALIASES[a] ?? a
         for (const id of algoIds) {
           if (algoIdMatches(a, id) || algoIdMatches(normA, id)) counts.set(id, (counts.get(id) ?? 0) + 1)
@@ -1019,454 +433,17 @@ async function loadRuleCounts() {
   }
 }
 
-async function openAddRuleDialog(row: { algoId: string }) {
-  ruleTargetAlgo.value = row.algoId
-  ruleSelected.value = []
-  ruleFilter.value = ''
-  ruleDialogVisible.value = true
-  // [R6 P1-4 2026-09-12] 三档标注按需拉取 (不阻塞弹窗打开; 失败静默降级为无标注)
-  if (!ruleCoverageLoaded.value) void loadRuleCoverage()
-  if (canonicalTypes.value.length === 0) {
-    ruleTypesLoading.value = true
-    try {
-      const r = await eventTypesApi.list()
-      canonicalTypes.value = r.data?.data?.types ?? (r.data as any)?.types ?? []
-    } catch (e: any) {
-      ElMessage.error(`事件类型加载失败: ${e?.message ?? e}`)
-    } finally {
-      ruleTypesLoading.value = false
-    }
-  }
-}
-
-async function confirmAddRules() {
-  if (!selected.value || ruleSelected.value.length === 0) return
-  ruleSaving.value = true
-  try {
-    const chIdStr = selected.value.channelId
-    const chNum = Number(chIdStr)
-    const chId = Number.isFinite(chNum) && Number.isSafeInteger(chNum) ? chNum : 0
-    const deviceId = selected.value.deviceId || selected.value.parentDeviceId || ''
-    let ok = 0
-    for (const key of ruleSelected.value) {
-      const typeName = canonicalTypes.value.find((t) => t.key === key)?.name_zh || key
-      try {
-        await linkageApi.createRule({
-          id: `evt_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-          name: `${typeName}_${chIdStr.slice(-4)}`,
-          description: `算法配置页单设备事件规则: 通道 ${selected.value.name} × 算法 ${ruleTargetAlgo.value}`,
-          enabled: true,
-          priority: 50,
-          cooldown_ms: 5000,
-          source_cond: {
-            channel_ids: [chId],
-            device_ids: deviceId ? [deviceId] : [],
-            event_types: [key],
-            algorithm_ids: [ruleTargetAlgo.value],
-            min_severity: 0,
-            min_confidence: 0,
-          },
-          actions: [{
-            // 后端 LinkageEngine 要求 actions 非空 (empty → 业务码 1001 拒绝):
-            // 默认挂 CLIENT_SHOW_LIVE 弹出实时视频 (告警弹窗标准动作)
-            type: 100, target: 0, name: '弹出实时视频', enabled: true,
-            channel_id: chIdStr, device_id: deviceId, delay_ms: 0,
-          }],
-          tags: ['algo-config'],
-          created_by: 'admin',
-        } as any)
-        ok++
-      } catch (e: any) {
-        console.warn('[AlgoConfigView] 创建事件规则失败', key, e)
-      }
-    }
-    if (ok > 0) ElMessage.success(`已添加 ${ok} 条事件规则 (设备 ${deviceId || '-'})`)
-    if (ok < ruleSelected.value.length) ElMessage.warning(`${ruleSelected.value.length - ok} 条添加失败, 详见控制台`)
-    ruleDialogVisible.value = false
-    await loadRuleCounts()
-  } finally {
-    ruleSaving.value = false
-  }
-}
-
-async function removeAlgoRules(row: { algoId: string; algoName: string; ruleCount: number }) {
-  if (!row.ruleCount) return
-  const ids = channelRules.value
-    .filter((r) => ((r as any).source_cond?.algorithm_ids ?? []).includes(row.algoId))
-    .map((r) => r.id)
-  if (ids.length === 0) { await loadRuleCounts(); return }
-  try {
-    await ElMessageBox.confirm(
-      `将删除算法「${row.algoName}」绑定的 ${ids.length} 条事件规则, 删除后不可恢复。`,
-      '删除事件规则',
-      { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' }
-    )
-  } catch { return } // 用户取消
-  let ok = 0
-  for (const id of ids) {
-    try { await linkageApi.deleteRule(id); ok++ } catch (e) { console.warn('[AlgoConfigView] 删除规则失败', id, e) }
-  }
-  ElMessage.success(ok > 0 ? `已删除 ${ok} 条事件规则` : '删除失败, 详见控制台')
-  await loadRuleCounts()
-}
-
-// ─── 任务3: 事件规则抽屉 (列表展示 + 行内编辑跳平台) ─────────────────────
-// drawer 状态: 当前算法 / 规则列表 / 加载中
-const ruleDrawerVisible = ref(false)
-const ruleDrawerLoading = ref(false)
-const ruleDrawerAlgo = ref('')
-const ruleDrawerAlgoName = computed(() => algoNameOf(ruleDrawerAlgo.value) || ruleDrawerAlgo.value)
-const ruleDrawerItems = ref<LinkageRule[]>([])
-// ─── [SCENE-EDIT-INPLACE 2026-09-03] 单条规则就地编辑: 内嵌平台 LinkageRuleView 嵌入模式
-//     (embedEditRuleId → choice 三卡片 → 简易/高级卡片 → vp6 全功能表单), 与平台行内编辑
-//     同组件同表单同链路 — 编辑器单一来源且不跳转 (用户停留在算法页) ──
-const editEmbedVisible = ref(false)
-const editEmbedRuleId = ref('')
-function openRuleEdit(rule: LinkageRule) {
-  ruleDrawerVisible.value = false // 规则抽屉让位全屏编辑链
-  editEmbedRuleId.value = rule.id
-  editEmbedVisible.value = true
-}
-function onEditEmbedClosed() {
-  editEmbedVisible.value = false
-  // 编辑可能改了规则 (名称/算法/通道): 刷新绑定缓存, 重开抽屉时 reloadRuleDrawer 取新数据
-  loadRuleCounts()
-}
-
-/** [任务3] 打开规则编辑抽屉: 在当前页右侧滑出完整表单,
- *  不跳转到「联动规则管理」页 */
-async function openRuleDrawer(row: { algoId: string; algoName: string; ruleCount: number }) {
-  ruleDrawerAlgo.value = row.algoId
-  ruleDrawerVisible.value = true
-  await reloadRuleDrawer()
-}
-
-/** [任务3] 刷新抽屉内的规则列表: 按当前选中算法过滤 channelRules */
-async function reloadRuleDrawer() {
-  if (!selected.value || !ruleDrawerAlgo.value) return
-  ruleDrawerLoading.value = true
-  try {
-    // 确保 channelRules 最新
-    if (channelRules.value.length === 0) await loadRuleCounts()
-    // 过滤: 算法命中
-    const algoId = ruleDrawerAlgo.value
-    ruleDrawerItems.value = channelRules.value
-      .filter((r) => ((r as any).source_cond?.algorithm_ids ?? []).includes(algoId))
-      .map((r) => {
-        const src = (r.source_cond || {}) as any
-        if (!src.event_types) src.event_types = []
-        if (!src.device_ids) src.device_ids = []
-        if (!src.algorithm_ids) src.algorithm_ids = [algoId]
-        return r
-      })
-    // 加载 SSOT 事件类型 (用于 ruleDialog 添加规则搜索)
-    if (canonicalTypes.value.length === 0) {
-      try {
-        const r = await eventTypesApi.list()
-        canonicalTypes.value = r.data?.data?.types ?? (r.data as any)?.types ?? []
-      } catch (e) { console.warn('[AlgoConfigView] 抽屉事件类型加载失败', e) }
-    }
-  } finally {
-    ruleDrawerLoading.value = false
-  }
-}
-
-/** [任务3] 判断是否为场景默认规则: tags 含 'scene-default' 或 'scene' + 'default' */
-function isSceneDefaultRule(r: LinkageRule): boolean {
-  const tags = ((r as any).tags || []) as string[]
-  if (tags.includes('scene-default')) return true
-  if (tags.includes('scene_template')) return true
-  if ((r as any).scene_tag || (r as any).sceneTag) return true
-  return false
-}
-
-/** [SIMPLE-EDIT 2026-09-03] 摘要行时段文案 (全天候 / HH:mm~HH:mm + 星期);
- *  编辑保存统一走 SimpleRuleDrawer 简易抽屉 (useSimpleRuleEdit), 原内联表单/快照重置已删 */
-const WEEKDAY_ZH = ['一', '二', '三', '四', '五', '六', '日']
-function ruleTimeSummary(r: LinkageRule): string {
-  const tc = (r.time_cond || {}) as any
-  if (!tc.time_start && !tc.time_end) return '全天候'
-  const wd = (tc.weekdays || []) as number[]
-  const days = wd.length === 7 ? '每天'
-    : wd.length ? `周${wd.map((n) => WEEKDAY_ZH[n - 1] || n).join('')}` : ''
-  return `${tc.time_start}~${tc.time_end}${days ? ` (${days})` : ''}`
-}
-
-/** [任务3] 删除单条规则 (二次确认) */
-async function removeSingleRule(r: LinkageRule) {
-  try {
-    await ElMessageBox.confirm(
-      `将删除规则「${r.name}」, 删除后不可恢复。`,
-      '删除规则',
-      { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' }
-    )
-  } catch { return }
-  try {
-    await linkageApi.deleteRule(r.id)
-    ElMessage.success('规则已删除')
-    await reloadRuleDrawer()
-    await loadRuleCounts()
-  } catch (e: any) {
-    ElMessage.error(`删除失败: ${e?.message ?? e}`)
-  }
-}
-
-// ─── 绑定事件规则抽屉 (原「新增算法」主入口 → 事件规则绑定) ────────────
-// 未绑定判定 (口径对齐 loadRuleCounts: 空数组=全部命中):
-//   chHit  = channel_ids 为空 或 含本通道
-//   devHit = device_ids 为空 或 含本设备
-//   algoHit= algorithm_ids 与本通道已配置算法有交集
-//   已绑定 = chHit && devHit && algoHit (排除); 其余均可绑定
-const bindRuleVisible = ref(false)
-const bindRuleLoading = ref(false)
-const bindRuleAll = ref<LinkageRule[]>([])
-const bindRuleFilter = ref('')
-const bindPage = ref(1)
-const bindPageSize = 20
-const bindSelection = ref<LinkageRule[]>([])
-const bindSaving = ref(false)
-const router = useRouter()
-
-const currentChId = computed(() => selected.value?.channelId ?? '')
-// [FIX 2026-09-02 绑定保存无效] 后端 SourceCondition.channel_ids 是 int32 (LinkageEngine.h L145),
-// 事件匹配用 safeChannelHash(channel_id_str) (FNV-1a 32位, LinkageEngine.cpp L98)。
-// 旧实现 Number("..._ch0")=NaN→0 → 绑出去 [0] 死值, 规则永不触发且「已绑定判定」永假 → 保存无反应
-const currentChHash = computed(() => safeChannelHash(currentChId.value))
-const currentDeviceId = computed(() => selected.value?.deviceId || selected.value?.parentDeviceId || '')
-const currentAlgoIds = computed(() => {
-  const sc = selected.value ? scheduledMap.value.get(selected.value.channelId) : undefined
-  return String(sc?.algo_plugin || '').split(',').map((s) => s.trim()).filter(Boolean)
-})
-
-// 事件匹配用 safeChannelHash(channel_id_str) (FNV-1a 32位, LinkageEngine.cpp L98)。
-// 旧实现 Number("..._ch0")=NaN→0 → 绑出去 [0] 死值, 规则永不触发且「已绑定判定」永假 → 保存无反应
-// [R6 P1-3 2026-09-12] safeChannelHash 实现现居 utils/channelHash (原 useAlgoRuleSync 已删除)
-
-/** 通道哈希 → 通道名 (作用范围列显示名, 不暴露裸哈希) */
-const chNameByHash = computed(() => {
-  const m = new Map<number, string>()
-  for (const c of channels.value) m.set(safeChannelHash(c.channelId), c.name)
-  return m
-})
-
-/** 可绑定规则 = 未绑定本通道 (见区块头判定) + 搜索过滤 (规则名/事件类型中英文/算法名) */
-const bindRuleFiltered = computed(() => {
-  const chHash = currentChHash.value
-  const devId = currentDeviceId.value
-  const algoIds = currentAlgoIds.value
-  const kw = bindRuleFilter.value.trim().toLowerCase()
-  return bindRuleAll.value.filter((r) => {
-    const src: any = (r as any).source_cond ?? {}
-    // [FIX 2026-09-02] 与后端契约及绑定写入语义对齐: channel_ids/device_ids 存哈希/设备串,
-    // 「已绑定本通道」= 非空且含本通道哈希。空=通配规则 (匹配所有通道, 尚未收窄) — 旧判定
-    // 「空=命中」把通配规则误判为已绑定而藏起, 用户永远绑不上
-    const chIds: number[] = src.channel_ids ?? []
-    const devIds: string[] = src.device_ids ?? []
-    const chHit = chIds.length > 0 && chIds.includes(chHash)
-    const devHit = devIds.length > 0 && devIds.includes(devId)
-    // [FIX 2026-09-02b] 「已绑定」= 绑定动作写入的两字段均已落 (chHit + devHit)。
-    // 移除旧判定的 algoHit: 空算法规则 (algos=[] 通配, 周界模板规则多属此类) 绑定后
-    // algoHit 恒 false → 永不消失 → 用户重复绑定仍「在列表」= 感知「加不上」。
-    // 算法匹配性由绑定弹窗 (绑定并启用算法) 保证, 不属于「是否已绑定」的判定范畴
-    if (chHit && (devIds.length === 0 || devHit)) return false
-    if (!kw) return true
-    const types = ((src.event_types ?? []) as string[])
-      .map((k) => `${eventTypeZh(k)} ${k}`).join(' ')
-    const algos = ((src.algorithm_ids ?? []) as string[]).map((a) => algoNameOf(a)).join(' ')
-    return `${r.name ?? ''} ${types} ${algos}`.toLowerCase().includes(kw)
-  })
-})
-const bindRulePageItems = computed(() => {
-  const start = (bindPage.value - 1) * bindPageSize
-  return bindRuleFiltered.value.slice(start, start + bindPageSize)
-})
-
-function eventTypeZh(key: string): string {
-  return canonicalTypes.value.find((t) => t.key === key)?.name_zh || key
-}
-function bindEventTypesOf(r: LinkageRule): string {
-  const list = ((r as any).source_cond?.event_types ?? []) as string[]
-  if (!list.length) return '-'
-  const zh = list.map(eventTypeZh).join('、')
-  return zh.length > 16 ? `${zh.slice(0, 16)}…` : zh
-}
-function bindAlgosOf(r: LinkageRule): string {
-  const list = ((r as any).source_cond?.algorithm_ids ?? []) as string[]
-  if (!list.length) return '-'
-  const names = list.map((a) => algoNameOf(a)).join('、')
-  return names.length > 16 ? `${names.slice(0, 16)}…` : names
-}
-function bindScopeOf(r: LinkageRule): string {
-  const src: any = (r as any).source_cond ?? {}
-  const chs = (src.channel_ids ?? []) as number[]
-  const devs = (src.device_ids ?? []) as string[]
-  // [FIX 2026-09-02] 通道哈希反查通道名显示, 不暴露裸哈希/ID
-  const chLabels = chs.map((h) => chNameByHash.value.get(h) ?? `#${h}`)
-  const parts = [chLabels.length === 0 ? '全部通道' : `通道 ${chLabels.join(',')}`]
-  parts.push(devs.length === 0 ? '全部设备' : `设备 ${devs.length} 个`)
-  return parts.join(' · ')
-}
-
-/** 打开绑定抽屉: 拉全量规则 + SSOT 事件类型 (中文名展示用) */
-async function openBindRuleDrawer() {
-  if (!selected.value) return
-  bindRuleVisible.value = true
-  bindRuleFilter.value = ''
-  bindPage.value = 1
-  bindSelection.value = []
-  await reloadBindRules()
-}
-async function reloadBindRules() {
-  bindRuleLoading.value = true
-  try {
-    const res = await linkageApi.getAllRules()
-    bindRuleAll.value = res.data?.data?.items ?? (res.data as any)?.items ?? []
-    if (canonicalTypes.value.length === 0) {
-      try {
-        const r = await eventTypesApi.list()
-        canonicalTypes.value = r.data?.data?.types ?? (r.data as any)?.types ?? []
-      } catch (e) { console.warn('[AlgoConfigView] 绑定抽屉事件类型加载失败', e) }
-    }
-  } catch (e: any) {
-    ElMessage.error(`规则列表加载失败: ${e?.message || e}`)
-  } finally {
-    bindRuleLoading.value = false
-  }
-}
-function onBindSelectionChange(rows: LinkageRule[]) {
-  bindSelection.value = rows
-}
-
-/** 绑定动作: 遍历勾选项补齐 source_cond 后 PUT; 算法不一致的一次性预检跳过 + warning */
-async function confirmBindRules() {
-  const ch = selected.value
-  if (!ch) return
-  // [FIX 2026-09-02] 防御: 理论上按钮 disabled 挡住空勾选, 但 selection 时序异常时
-  // 会静默 return → 用户点按钮无任何反馈/无请求 → 给出明确提示
-  if (bindSelection.value.length === 0) {
-    ElMessage.warning('请先在列表中勾选要绑定的事件规则')
-    return
-  }
-  const chId = currentChId.value
-  const chHash = currentChHash.value
-  const devId = currentDeviceId.value
-  // ── [产品决策 2026-09-02 绑定=算法必然出现] 用户明确要求: 绑定事件规则后算法列表
-  // 必须出现对应算法, 「是否启用」不是需要询问的问题。交互演进存档:
-  //   v1 静默跳过不一致规则(零请求) → v2 确认弹窗(可拒绝启用, 拒绝则算法不出现)
-  //   → v3 直接绑定并启用。空态文案「绑定事件规则=为通道添加算法」从此无条件成立
-  const activeNow = effectiveActiveIds(ch.channelId)
-  const wanted = new Set<string>()
-  for (const r of bindSelection.value) {
-    const ruleAlgos = ((r as any).source_cond?.algorithm_ids ?? []) as string[]
-    for (const a of ruleAlgos) {
-      const full = algorithmOptions.value.find((o) => o.value === a || o.value.endsWith('.' + a))?.value ?? a
-      if (!activeNow.includes(full)) wanted.add(full)
-    }
-    // [FIX 2026-09-02c] 仅声明 event_types 的规则 (algorithm_ids 空 — 周界模板规则多属
-    // 此类, 如「周界踩点徘徊预警」只有 loitering): 按目录 alarm_type 反推对应算法,
-    // 绑定即启用 → 算法列表必然出现 (反推不到的如实跳过, 如 object_removal 无算法)
-    if (ruleAlgos.length === 0) {
-      for (const t of (((r as any).source_cond?.event_types ?? []) as string[])) {
-        const algoId = algoIdForEventType(t)
-        if (algoId && !activeNow.includes(algoId)) wanted.add(algoId)
-      }
-    }
-  }
-  const toEnable = Array.from(wanted)
-  const enableAlgos = toEnable.length > 0
-  const targets: LinkageRule[] = [...bindSelection.value]
-  bindSaving.value = true
-  let ok = 0
-  try {
-    for (const r of targets) {
-      // 浅拷贝 source_cond; 「绑定到本通道」= channel_ids 追加本通道哈希 (保留其他绑定,
-      // 清除历史脏值 0/负值) + device_ids 追加本设备 → 规则在本通道可触发
-      const src: any = { ...((r as any).source_cond ?? {}) }
-      const chs: number[] = (src.channel_ids ?? []).filter(
-        (n: number) => Number.isFinite(n) && n > 0 && n !== chHash
-      )
-      src.channel_ids = [chHash, ...chs]
-      const devs: string[] = (src.device_ids ?? []).filter((d: string) => d && d !== devId)
-      if (devId) src.device_ids = [devId, ...devs]
-      try {
-        await linkageApi.updateRule(r.id, { ...r, source_cond: src } as Partial<LinkageRule>)
-        ok++
-      } catch (e) {
-        console.warn('[AlgoConfigView] 绑定规则失败', r.id, e)
-      }
-    }
-    if (ok > 0) ElMessage.success(`已绑定 ${ok} 条事件规则到通道「${ch.name}」`)
-    // ── 联动启用算法 (弹窗已确认; 失败不回滚绑定, 提示手动开启)
-    if (ok > 0 && enableAlgos && toEnable.length > 0) {
-      try {
-        const sc = scheduledMap.value.get(ch.channelId)
-        const deviceId2 = ch.deviceId || ch.parentDeviceId || ch.channelId
-        await startSchedule(ch.channelId, deviceId2, sc?.interval_ms ?? editForm.interval,
-          Array.from(new Set([...activeNow, ...toEnable])).join(','))
-        ElMessage.success(`已启用算法: ${toEnable.map((a) => algoNameOf(a)).join('、')}`)
-      } catch (e) {
-        console.warn('[AlgoConfigView] 关联算法启用失败', e)
-        ElMessage.warning('关联算法启用失败, 可在算法列表手动开启')
-      }
-    }
-    if (targets.length > 0 && ok < targets.length) {
-      ElMessage.error(`${targets.length - ok} 条绑定失败, 详见控制台`)
-    }
-    bindSelection.value = []
-    if (ok > 0) {
-      await reloadBindRules()
-      await loadRuleCounts()
-      // [FIX 2026-09-02] 联动启用算法后必须刷新算法面板: scheduledMap/algoRows 数据源在
-      // loadData, 不刷新则后端 algo_plugin 已新增而面板仍显旧串 → 用户看「算法没出现」
-      await loadData()
-    }
-  } finally {
-    bindSaving.value = false
-  }
-}
-
-/** 空态快捷跳转: 前往联动规则管理新建 */
-function gotoLinkageView() {
-  bindRuleVisible.value = false
-  router.push('/linkage')
-}
-
-const form = reactive({
-  enabled: false,
-  algorithm: '',
-  confidence: 0.5,
-  nmsThreshold: 0.45,
-  interval: 3000,
-  inferenceMode: 'snapshot' as 'snapshot' | 'streaming',
-})
-
-// 🆕 v7.1 (28 算法补齐 P0-A5): 区域/绊线/计数区持久化
-// 🆕 v5.0 (尾随区域版): + 通道 (passageway)
-// [FIX tw-res-vis 2026-09-09] 右栏三视图 tab: 拆双卡后三卡总高 2023px 远超视口,
-// 「通道资源」卡首屏仅露卡头被用户判为「消失」— 改一屏一卡切换, 零滚动可达
-const rightViewTab = ref<'params' | 'roi' | 'channelRes'>('params')
-// [FIX algo-bind-roi 2026-09-09] ROI 绘制全部与算法绑定 (用户拍板, 废除
-// 「通道级共享」): 绊线/通道/计数区数据层本就各归属固定判定插件 (查询与创建
-// 同口径), UI 按当前选中算法动态显隐专属资源视图; 徘徊等非判定算法不再出现
-// 绊线, 根除「徘徊检测也在用绊线」歧义 (设备实锚)。
+// ─── 查看 ROI (只读弹窗) ──────────────────────────────────────────────────────
+// [FIX algo-bind-roi2 2026-09-09] 绊线判定消费方全仓 4 插件 (grep 实锚) + 尾随通道
+//   (tripwire/boundary/people_count 按己 id 查 + parking_violation 空 id 容差)
 const ALGO_EXCLUSIVE_RES: Record<string, { tab: 'tripwire' | 'passageway'; key: string; fallback: string; desc: string }> = {
-  // [FIX algo-bind-roi2 2026-09-09] 绊线判定消费方全仓 4 插件 (grep 实锚):
-  //   tripwire(按己 id 查+裸短名容差) / boundary(按己 id 查) /
-  //   people_count(绊线作计数线, 按己 id 查) / parking_violation(空 id 全量查)。
-  //   各开绊线视图 + 查询/创建 algo_id 跟随当前算法 — 一算法一份绊线库。
   'shield.algo.perimeter.tripwire': { tab: 'tripwire', key: 'tripwire', fallback: '绊线', desc: '绊线由本算法判定生效；在事件规则页画的越线绊线也会自动同步到这里。' },
   'shield.algo.perimeter.boundary': { tab: 'tripwire', key: 'tripwire', fallback: '绊线', desc: '绊线由本算法（边界判定）消费生效，独立于越线算法的绊线库。' },
   'shield.algo.metric.people_count': { tab: 'tripwire', key: 'tripwire', fallback: '绊线', desc: '绊线作为本算法的计数线（目标穿越即计数）。' },
-  'shield.algo.traffic.parking_violation': { tab: 'tripwire', key: 'tripwire', fallback: '绊线', desc: '车辆停在通道内任意绊线附近即触发本算法；此处维护本算法的绊线。' },
+  'shield.algo.traffic.parking_violation': { tab: 'tripwire', key: 'tripwire', fallback: '绊线', desc: '车辆停在通道内任意绊线附近即触发本算法；此处查看本算法的绊线 (绘制请前往事件规则页)。' },
   'shield.algo.perimeter.tailgating': { tab: 'passageway', key: 'passageway', fallback: '通道 (尾随 v5)', desc: '矩形通道由本算法（尾随判定）消费生效。' },
-  // [FIX algo-roi-effective 2026-09-09] counting 条目删除: 零插件消费
-  //   (RegionStore.h [B6 2026-09-07] 预留未消费; 设备算法目录无该 id)。
-  //   计数插件落地后恢复: 映射条目 + channelRes 模板 counting 分支 +
-  //   loadRegions listCountingZones + onCountingZonesChange 等链路
-  //   (git 历史可整段找回)。
 }
-const exclusiveRes = computed(() => ALGO_EXCLUSIVE_RES[(editForm.algoId || '').split(',')[0].trim()] ?? null)
-// [FIX algo-roi-effective 2026-09-09] 检测区域视图同样按算法能力门控: 仅 8 个
+// [FIX algo-roi-effective 2026-09-09] 检测区域视图按算法能力门控: 仅 8 个
 //   真正消费 getRegions 的算法显示 (绊线类 4 算法/尾随不消费区域 — 画了不起作用)。
 const REGION_ALGOS = new Set([
   'shield.algo.perimeter.intrusion',         // getRegions + ByChannelStr
@@ -1478,92 +455,76 @@ const REGION_ALGOS = new Set([
   'shield.algo.fire.blocked_exit',           // getRegions(int32)
   'shield.algo.object.personal_item',        // getRegionsByChannelStr
 ])
-const isRegionAlgo = computed(() => REGION_ALGOS.has((editForm.algoId || '').split(',')[0].trim()))
-// 算法切换后视图合法性回落: 停在专属资源/检测区域视图而新算法无对应消费时,
-// 回落到仍合法的视图 (检测区域→专属资源→参数)
-watch([exclusiveRes, isRegionAlgo], ([v, regionOk]) => {
-  if (rightViewTab.value === 'channelRes' && !v) rightViewTab.value = regionOk ? 'roi' : 'params'
-  else if (rightViewTab.value === 'roi' && !regionOk) rightViewTab.value = v ? 'channelRes' : 'params'
+
+/** 算法 id 首段归一 (行内 id 为单值, 兼容历史逗号串形态) */
+function baseAlgoId(id: string | null | undefined): string {
+  return String(id || '').split(',')[0].trim()
+}
+/** 该算法是否有可查看的 ROI 资源 (8 区域消费 + 4 绊线消费 + 尾随通道) */
+function algoHasRoi(algoId: string | null | undefined): boolean {
+  const base = baseAlgoId(algoId)
+  return REGION_ALGOS.has(base) || !!ALGO_EXCLUSIVE_RES[base]
+}
+
+const roiViewerVisible = ref(false)
+const roiViewerLoading = ref(false)
+const roiViewerRow = ref<{ algoId: string; algoName: string } | null>(null)
+const roiViewerTab = ref('roi')
+const roiViewerRes = computed(() => ALGO_EXCLUSIVE_RES[baseAlgoId(roiViewerRow.value?.algoId)] ?? null)
+const roiViewerIsRegionAlgo = computed(() => REGION_ALGOS.has(baseAlgoId(roiViewerRow.value?.algoId)))
+const roiViewerTitle = computed(() => {
+  const name = roiViewerRow.value?.algoName || baseAlgoId(roiViewerRow.value?.algoId)
+  const ch = selected.value?.name ? ` · ${selected.value.name}` : ''
+  return `查看 ROI — ${name}${ch}`
 })
-// [FIX 2026-09-01] 存编辑器 RoiData 映射 (含 roi_id/backend_id), 非后端 RegionDef 原始结构
+
 const regions = ref<any[]>([])
-// [FIX 2026-09-01] 载入快照: 编辑器 emit 的是全量列表, 需与最近一次后端载入
-// 结果 diff (新增 → create / 被移除 → delete)
-const lastLoadedRegions = ref<any[]>([])
 const tripwires = ref<TripwireDef[]>([])
 const passageways = ref<PassagewayDef[]>([])
 
-// [FIX algo-roi-effective 2026-09-09] 计数区状态整体下线 (见 ALGO_EXCLUSIVE_RES 注释)
+function openRoiViewer(row: { algoId: string; algoName: string }) {
+  roiViewerRow.value = row
+  const base = baseAlgoId(row.algoId)
+  roiViewerTab.value = REGION_ALGOS.has(base) ? 'roi' : (ALGO_EXCLUSIVE_RES[base]?.tab ?? 'roi')
+  roiViewerVisible.value = true
+  void loadRoiViewerData()
+}
 
-async function loadRegions() {
-  if (!selected.value) return
-  // GB28181 完整编码可能是超大数, int32 查询降级为 0 (passageway 走 string 主路径)
-  const chIdStr = selected.value.channelId
+/** 拉取当前算法已保存的 ROI (只读; 与旧编辑页 loadRegions 同查询口径:
+ *  区域按 algo_id 隔离 + include_disabled, 绊线/通道按 channel_id_str 主键) */
+async function loadRoiViewerData() {
+  const ch = selected.value
+  const row = roiViewerRow.value
+  if (!ch || !row) return
+  roiViewerLoading.value = true
+  const chIdStr = ch.channelId
   const chIdNum = Number(chIdStr)
   const chId = Number.isFinite(chIdNum) && Number.isSafeInteger(chIdNum) ? chIdNum : 0
-  // 插件侧 (AlgoConfig.channel_id_str) 用不带 _ch0 子码的 GB 完整编码查询
-  // (getTripwiresByChannelStr 精确匹配), 前后端统一在此对齐。
   const chStrNoSuffix = stripChSuffix(chIdStr)
+  const curAlgo = baseAlgoId(row.algoId)
   try {
-    // [FIX 2026-09-01] 检测区域按当前选中算法隔离 (后端 getRegions(ch, algo_id) 支持,
-    // 插件消费即按单 ID 精确查询): 未选中算法时载入空列表, 杜绝 "画一个区域所有算法都有" 观感
-    const curAlgo = (editForm.algoId || '').split(',')[0].trim()
     const [rRes, tRes, pRes] = await Promise.all([
-      regionApi.listRegions(curAlgo ? { channel_id: chId, algo_id: curAlgo, channel_id_str: chStrNoSuffix, include_disabled: true } : { channel_id: chId, channel_id_str: chStrNoSuffix, include_disabled: true }),
-      // [FIX 2026-09-08 通道×算法一对一 / algo-bind-roi2 2026-09-09 跟随归属]
-      //   绊线双维度查询: 原只传 int32 chId (GB 20 位编码降级 0) → 后端
-      //   getTripwires(0) 返回全库 GB 绊线 (int32 全 0)。现传 str 主查 +
-      //   algo_id 跟随当前算法 (绊线视图仅在 4 消费方算法下出现, 见
-      //   ALGO_EXCLUSIVE_RES — 各插件 getAlgoId() 精确命中自己那份库);
-      //   curAlgo 空兑底固定越线 id 保持老行为。
+      regionApi.listRegions(curAlgo
+        ? { channel_id: chId, algo_id: curAlgo, channel_id_str: chStrNoSuffix, include_disabled: true }
+        : { channel_id: chId, channel_id_str: chStrNoSuffix, include_disabled: true }),
       regionApi.listTripwires({ channel_id: chId, channel_id_str: chStrNoSuffix, algo_id: curAlgo || 'shield.algo.perimeter.tripwire', include_disabled: true }),
-      // 🆕 v5.0: 通道主路径 channel_id_str (GB28181 完整编码)
-      // [FIX 2026-09-03 问题2] algo_id 固定尾随插件 id: 创建侧 (onPassagewayConfirm)
-      //   固定写 'shield.algo.perimeter.tailgating', 而旧查询用当前选中算法 id 过滤
-      //   → 选中非尾随算法时 getPassagewaysByChannelStr 按 algo 精确匹配恒空
-      //   → 「通道已添加」后 loadRegions 回填空列表, 所画多边形从画布/列表消失。
-      //   数据约定: passageway 归属固定为尾随判定插件, 与用户当前选中哪个算法行无关。
-      regionApi.listPassageways({
-        channel_id_str: chStrNoSuffix,
-        algo_id: 'shield.algo.perimeter.tailgating',
-        include_disabled: true,
-      }),
-      // [FIX algo-roi-effective 2026-09-09] listCountingZones 请求移除 (零消费,
-      //   专属资源视图无 counting 分支后无任何渲染方; 省 1 次/加载无效请求)
+      regionApi.listPassageways({ channel_id_str: chStrNoSuffix, algo_id: 'shield.algo.perimeter.tailgating', include_disabled: true }),
     ])
-    // [FIX 2026-09-01] http 封装不剥业务壳 (拦截器 return response):
-    // res.data = {code, data:{...}, message} → 必须取 res.data.data.xxx
-    // 载入映射: 后端 RegionDef {id,name,polygon:[[x,y]...],enabled} →
-    // 编辑器 RoiData {roi_id,roi_name,roi_type,polygon:number[]一维,is_active} —
-    // 之前直接透传二维结构, 编辑器按一维消费 → 已保存区域渲染错乱/不显示,
-    // 且 roi_id undefined → 新画区域与存量无法区分。
     const rawRegions: any[] = curAlgo ? ((rRes.data as any)?.data?.regions ?? (rRes.data as any)?.regions ?? []) : []
-    // [FIX region-delete-strict 2026-09-11] 同名堆积显形: 历史残留同通道同算法
-    //   同名多行 (改名/重画逐次 INSERT 所致) 在列表里完全同名, 用户删掉一条后
-    //   另一条同名顶上 = 「删除成功但还在」体感根因之一。同名行显示名追加
-    //   #id 后缀让堆积一眼可辨 (仅显示层; 快照 lastLoadedRegions 用原名
-    //   生成, 确保 ② 更新分支 upsert 的 name 键不受显示后缀污染)。
+    // [region-delete-strict 2026-09-11 显示层] 同名堆积显示名追加 #id (历史残留同名多行可辨)
     const nameCount = new Map<string, number>()
     for (const r of rawRegions) nameCount.set(r.name ?? '', (nameCount.get(r.name ?? '') ?? 0) + 1)
     regions.value = rawRegions.map((r: any) => ({
       roi_id: `reg_${r.id}`,
       roi_name: (nameCount.get(r.name ?? '') ?? 0) > 1 ? `${r.name} #${r.id}` : r.name,
-      roi_type: 'detection_zone',
-      polygon: (r.polygon ?? []).flat(),
-      is_active: r.enabled,
-      backend_id: r.id,
-    }))
-    // 快照用 DB 原名 (非显示后缀名) — ② 更新分支 upsert 按 prev.roi_name 落库
-    lastLoadedRegions.value = rawRegions.map((r: any) => ({
-      roi_id: `reg_${r.id}`,
-      roi_name: r.name,
-      roi_type: 'detection_zone',
+      // 后端序列化 region_type (detection_zone/exclusion_zone) — 查看层按真实类型着色
+      roi_type: String(r.region_type || 'detection_zone'),
       polygon: (r.polygon ?? []).flat(),
       is_active: r.enabled,
       backend_id: r.id,
     }))
     // GET /algos/tripwires 后端仅支持 int32 channel_id (GB 超大数全部存 0),
-    // 会混出其他通道的绊线 → 本地按 channel_id_str 过滤
+    // 会混出其他通道的绊线 → 本地按 channel_id_str 过滤 (剥后缀双形态同命中)
     tripwires.value = ((tRes.data as any)?.data?.tripwires ?? (tRes.data as any)?.tripwires ?? []).filter(
       (t: any) => stripChSuffix(t.channel_id_str || '') === chStrNoSuffix
     )
@@ -1571,104 +532,51 @@ async function loadRegions() {
       (p: any) => stripChSuffix(p.channel_id_str || '') === chStrNoSuffix
     )
   } catch (e: any) {
-    ElMessage.warning(`加载区域失败: ${e?.message ?? e}`)
+    console.warn('[AlgoConfigView] ROI 查看数据加载失败', e)
+    ElMessage.warning(`加载 ROI 失败: ${e?.message ?? e}`)
+  } finally {
+    roiViewerLoading.value = false
   }
 }
 
-async function onRegionsChange(updated: any[]) {
-  // [FIX 2026-09-01] 保存链路重写 — 之前三重断裂导致画完区域无法保存:
-  //   ① 条件 `if (!r.id && r.algo_id)` 恒 false: 编辑器 RoiData 无 id/algo_id
-  //      字段 → createRegion 从未被调用 (保存无效根因);
-  //   ② polygon 格式: 编辑器产一维 [x1,y1,...], 后端要二维 [[x,y]...],
-  //      旧代码 map(p => [p[0],p[1]]) 对 number 取下标 → 全 undefined → 400;
-  //   ③ 删除未同步: 编辑器 removeRoi 也走本回调, 旧代码无 delete 分支。
-  // 坐标系: 编辑器 canvasToNormalized 输出 1920×1080 尺度, 与计数区同链路
-  // (createCountingZone 真机验证一致), 后端 RegionStore 原样存储。
-  if (!selected.value) return
-  const chIdStr = selected.value.channelId
-  const chIdNum = Number(chIdStr)
-  const chId = Number.isFinite(chIdNum) && Number.isSafeInteger(chIdNum) ? chIdNum : 0
-  // [FIX 2026-09-07 B5] 区域保存补传 channel_id_str (剥 _ch0 后缀, 同绊线
-  //   createTripwireWithMirror 先例) — 之前没传 → 落库空串 → intrusion 主查询
-  //   getRegionsByChannelStr 永远查不到, 绘制/检测/弹窗标注通道键三张皮。
-  const chStrNoSuffix = stripChSuffix(chIdStr)
-  // [FIX 2026-09-01] algo_id 必须是当前选中算法的单个 ID:
-  // 之前 form.algorithm 是调度完整串 (onChannelSelect 赋值 algo_plugin 整串),
-  // 整串写入 region.algo_id → 插件按单 ID 精确匹配永远失败 (区域对所有算法无效)
-  const algoId = (editForm.algoId || form.algorithm || 'yolov8n').split(',')[0].trim()
-  const prevIds = new Set(lastLoadedRegions.value.map((r) => r.roi_id))
-  const nextIds = new Set(updated.map((r) => String(r.roi_id || '')))
-  let changed = 0
-  // ① 删除: 载入快照中有、新列表没有 → deleteRegion
-  for (const prev of lastLoadedRegions.value) {
-    if (!nextIds.has(prev.roi_id) && prev.backend_id) {
-      try {
-        await regionApi.deleteRegion(prev.backend_id)
-        changed++
-      } catch (e: any) {
-        console.warn('[AlgoConfigView] deleteRegion failed', e)
-        ElMessage.error(`删除区域失败: ${e?.message ?? e}`)
-      }
-    }
-  }
-  // ② 更新: [FIX tw-toggle 2026-09-08] 既有区域 is_active 翻转 (编辑器列表
-  //   开关) 持久化 — 之前只有删除/新建分支, 停用开关静默不保存。upsert 按
-  //   backend_id 走 UPDATE, 几何/名称不动, 只落 enabled; 同名 roi_id 快照
-  //   比对 is_active 变化才发请求。
-  for (const r of updated) {
-    const rid = String(r.roi_id || '')
-    const prev = lastLoadedRegions.value.find((p) => p.roi_id === rid)
-    if (!prev || !prev.backend_id) continue
-    if ((r.is_active ?? true) === (prev.is_active ?? true)) continue
-    const pts = prev.polygon ?? []
-    const polygon: [number, number][] = []
-    for (let i = 0; i + 1 < pts.length; i += 2) polygon.push([pts[i], pts[i + 1]])
-    try {
-      await regionApi.createRegion({
-        id: prev.backend_id,
-        channel_id: chId,
-        channel_id_str: chStrNoSuffix,
-        algo_id: algoId,
-        name: prev.roi_name ?? '检测区域',
-        region_type: (prev as any).roi_type === 'exclusion_zone' ? 'exclusion_zone' : 'detection_zone',
-        polygon,
-        enabled: r.is_active ?? true,
-      })
-      changed++
-    } catch (e: any) {
-      console.warn('[AlgoConfigView] upsertRegion failed', e)
-      ElMessage.error(`保存区域状态失败: ${e?.message ?? e}`)
-    }
-  }
-  // ③ 新建: roi_id 非 reg_ 前缀 (编辑器新生成 roi_<ts>) → createRegion
-  for (const r of updated) {
-    const rid = String(r.roi_id || '')
-    if (rid.startsWith('reg_') || rid.startsWith('cz_') || prevIds.has(rid)) continue
-    const pts = r.polygon ?? []
-    if (pts.length < 6) continue // 至少 3 点 (一维 6 个数)
-    const polygon: [number, number][] = []
-    for (let i = 0; i + 1 < pts.length; i += 2) polygon.push([pts[i], pts[i + 1]])
-    try {
-      await regionApi.createRegion({
-        channel_id: chId,
-        channel_id_str: chStrNoSuffix,
-        algo_id: algoId,
-        name: r.roi_name ?? '检测区域',
-        region_type: r.roi_type === 'exclusion_zone' ? 'exclusion_zone' : 'detection_zone',
-        polygon,
-        enabled: r.is_active ?? true,
-      })
-      changed++
-    } catch (e: any) {
-      console.warn('[AlgoConfigView] createRegion failed', e)
-      ElMessage.error(`保存检测区域失败: ${e?.message ?? e}`)
-    }
-  }
-  if (changed > 0) {
-    ElMessage.success(changed === 1 ? '检测区域已保存' : `已保存 ${changed} 处检测区域变更`)
-  }
-  await loadRegions()
-}
+/** 检测区域只读图形: 检测区绿 / 排除区红 (与 RoiPolygonEditor typeColor 同源) */
+const regionViewShapes = computed(() =>
+  regions.value
+    .filter((r) => (r.polygon ?? []).length >= 6)
+    .map((r) => ({
+      kind: 'polygon' as const,
+      points: r.polygon as number[],
+      color: r.roi_type === 'exclusion_zone' ? '#F44336' : '#0F9D58',
+      fill: r.roi_type === 'exclusion_zone' ? 'rgba(244,67,54,0.15)' : '#0F9D5826',
+      label: r.roi_type === 'exclusion_zone' ? '排除区' : '检测区',
+    }))
+)
+
+/** 绊线只读图形: 过滤 _ch0 镜像 (同几何双份), 只画主形态; 方向转小写 (后端大写下发) */
+const tripwireViewShapes = computed(() =>
+  tripwires.value
+    .filter((t) => !String(t.channel_id_str || '').endsWith('_ch0'))
+    .map((t) => ({
+      kind: 'line' as const,
+      points: [...(t.point_a ?? []), ...(t.point_b ?? [])],
+      color: '#FF6D00',
+      direction: String(t.direction || 'both').toLowerCase(),
+      label: t.name,
+    }))
+)
+
+/** 通道只读图形: 尾随通行区多边形 (transit_polygon 2D → 一维), 过滤 _ch0 镜像 */
+const passagewayViewShapes = computed(() =>
+  passageways.value
+    .filter((p) => !String(p.channel_id_str || '').endsWith('_ch0'))
+    .map((p) => ({
+      kind: 'polygon' as const,
+      points: ((p.transit_polygon ?? []) as any[]).flat(),
+      color: '#00897B',
+      fill: '#00897B26',
+      label: p.name,
+    }))
+)
 
 /** 剥离 GB28181 通道编码的 _ch0/_ch1 子码后缀 — 与后端插件查询串对齐
  *  (InferenceScheduler 传给插件的 channel_id_str 不带子码后缀) */
@@ -1676,175 +584,7 @@ function stripChSuffix(chId: string): string {
   return chId.replace(/_ch\d+$/, '')
 }
 
-// [FIX 2026-08-28] 替换式编辑: 编辑按钮只载入画布, 确认时先删旧 (主+镜像) 再建新
-const editingTripwire = ref<TripwireDef | null>(null)
-
-async function onTripwireConfirm(payload: {
-  point_a: [number, number]
-  point_b: [number, number]
-  direction: 'both' | 'a_to_b' | 'b_to_a'
-}) {
-  if (!selected.value) return
-  const chIdStr = selected.value.channelId
-  const chIdNum = Number(chIdStr)
-  const chId = Number.isFinite(chIdNum) && Number.isSafeInteger(chIdNum) ? chIdNum : 0
-  // [FIX 2026-08-28 → algo-bind-roi2 2026-09-09] 创建归属跟随当前算法:
-  //   历史坑 — 任意算法名存库会与消费插件 getAlgoId() 不一致 → 查库恒空
-  //   → 判定退回内置默认线 (绊线加了不弹窗根因之一)。现绊线视图仅在
-  //   4 个绊线消费方算法下可达 (ALGO_EXCLUSIVE_RES), 此处取到的算法 id
-  //   必为消费方完整 id, 与插件查询全等闭环; 空值兑底固定越线 id 防御。
-  //   事件规则页(LinkageRuleView)创建仍固定越线 id (越线事件语义)。
-  const algoId = (editForm.algoId || '').split(',')[0].trim() || 'shield.algo.perimeter.tripwire'
-  const isReplace = !!editingTripwire.value
-  try {
-    // 替换式编辑: 先删旧绊线 (主形态 + _ch0 镜像), 确保不残留旧线
-    if (editingTripwire.value) {
-      const old = editingTripwire.value
-      const mirror = tripwires.value.find(
-        (t) => (t.channel_id_str || '') === `${old.channel_id_str || ''}_ch0`
-      )
-      const ids = [old.id, ...(mirror ? [mirror.id] : [])]
-      await Promise.all(ids.map((id) => regionApi.deleteTripwire(id).catch(() => null)))
-      editingTripwire.value = null
-    }
-    // [FIX 2026-08-28] 双镜像创建: 主形态 + _ch0 镜像各一条 —
-    //   只建主形态时子码流实例永远查不到 (GATE-MISS 半失效)
-    await regionApi.createTripwireWithMirror({
-      channel_id: chId,
-      // [FIX 2026-08-28] 补传 channel_id_str (GB 完整编码, 剥 _ch0 后缀):
-      //   后端 upsert 原样落库, 插件 getTripwiresByChannelStr 精确匹配此键;
-      //   之前没传 → 落库空串 → 插件永远查不到 (GATE-MISS 静默失效)。
-      channel_id_str: stripChSuffix(chIdStr),
-      algo_id: algoId,
-      name: `${algoId.split('.').pop()}_${Date.now() % 10000}`,
-      point_a: payload.point_a,
-      point_b: payload.point_b,
-      direction: payload.direction,
-      enabled: true
-    })
-    ElMessage.success(isReplace ? '绊线已更新' : '绊线已添加')
-    await loadRegions()
-  } catch (e: any) {
-    ElMessage.error(`保存绊线失败: ${e?.message ?? e}`)
-  }
-}
-
-async function deleteTripwire(id: number) {
-  try {
-    await regionApi.deleteTripwire(id)
-    ElMessage.success('已删除')
-    await loadRegions()
-  } catch (e: any) {
-    ElMessage.error(`删除失败: ${e?.message ?? e}`)
-  }
-}
-
-// [FIX tw-toggle 2026-09-08] 启用/停用开关: upsert 按 id 只翻 enabled, 几何/方向/
-//   名称不动; 主形态 + _ch0 镜像同步翻转 (插件按 _ch0 形态查询, 只切主形态
-//   检测不生效 — 同名级联删除的同源考量)。停用后画布回显消失、检测立即跳过。
-async function toggleTripwireEnabled(tw: TripwireDef, enabled: boolean) {
-  try {
-    const mirror = tripwires.value.find(
-      (t) => (t.channel_id_str || '') === `${tw.channel_id_str || ''}_ch0`
-    )
-    const bodies = [
-      { ...tw, enabled },
-      ...(mirror ? [{ ...mirror, enabled }] : []),
-    ]
-    await Promise.all(bodies.map((b) => regionApi.upsertTripwire(b as TripwireDef)))
-    ElMessage.success(enabled ? '绊线已启用' : '绊线已停用 (检测不再触发)')
-    await loadRegions()
-  } catch (e: any) {
-    ElMessage.error(`操作失败: ${e?.message ?? e}`)
-    await loadRegions()
-  }
-}
-
-// 🆕 v5.0: 通道 (多边形通行区) 添加/删除/老绊线迁移
-async function onPassagewayConfirm(payload: {
-  transit_polygon: [number, number][]
-  direction_in: boolean
-  sensitivity: number
-  suppress_mode: SuppressMode
-  cooldown_sec: number
-}) {
-  if (!selected.value) return
-  const chIdStr = selected.value.channelId
-  const chIdNum = Number(chIdStr)
-  // [FIX 2026-08-28] algo_id 固定为尾随判定插件 id — 用户所选算法(form.algorithm)
-  // 存进去会与 tailgating_detector.getAlgoId() 不一致 → 插件按算法精确查库恒空
-  // → 永远 fallback 预置闸机线 (通道多边形从不生效根因)。存量错 algo_id
-  // 数据由插件端空 algo 查询兼容 (refreshPassageways [FIX 2026-08-28])。
-  const algoId = 'shield.algo.perimeter.tailgating'
-  try {
-    await regionApi.upsertPassageway({
-      channel_id: Number.isFinite(chIdNum) && Number.isSafeInteger(chIdNum) ? chIdNum : 0,
-      // [FIX 2026-08-28] 剥 _ch0 后缀: 插件 getPassagewaysByChannelStr 精确匹配
-      channel_id_str: stripChSuffix(chIdStr),
-      algo_id: algoId,
-      name: `pw_${Date.now() % 10000}`,
-      transit_polygon: payload.transit_polygon,
-      direction_in: payload.direction_in,
-      sensitivity: payload.sensitivity,
-      suppress_mode: payload.suppress_mode,
-      cooldown_sec: payload.cooldown_sec,
-      enabled: true
-    })
-    ElMessage.success('通道已添加')
-    await loadRegions()
-  } catch (e: any) {
-    ElMessage.error(`添加通道失败: ${e?.message ?? e}`)
-  }
-}
-
-async function deletePassageway(id: number) {
-  try {
-    await regionApi.deletePassageway(id)
-    ElMessage.success('已删除')
-    await loadRegions()
-  } catch (e: any) {
-    ElMessage.error(`删除失败: ${e?.message ?? e}`)
-  }
-}
-
-// [FIX tw-toggle 2026-09-08] 通道开关同绊线先例: upsert 按 id 只翻 enabled;
-//   _ch0 镜像 (若存在, 含老绊线迁移双写) 防御式同步 — tailgating 插件按
-//   子码流形态查询, 只切主形态检测不生效。
-async function togglePassagewayEnabled(pw: PassagewayDef, enabled: boolean) {
-  try {
-    const mirror = passageways.value.find(
-      (p) => (p.channel_id_str || '') === `${pw.channel_id_str || ''}_ch0`
-    )
-    const bodies = [
-      { ...pw, enabled },
-      ...(mirror ? [{ ...mirror, enabled }] : []),
-    ]
-    await Promise.all(bodies.map((b) => regionApi.upsertPassageway(b as PassagewayDef)))
-    ElMessage.success(enabled ? '通道已启用' : '通道已停用 (检测不再触发)')
-    await loadRegions()
-  } catch (e: any) {
-    ElMessage.error(`操作失败: ${e?.message ?? e}`)
-    await loadRegions()
-  }
-}
-
-async function migrateTripwires() {
-  // [FIX 2026-08-28] 同 createPassageway: 迁移目标算法固定为尾随插件 id
-  const algoId = 'shield.algo.perimeter.tailgating'
-  try {
-    const res = await regionApi.migratePassageways(algoId)
-    const n = (res.data as any)?.data?.migrated ?? (res.data as any)?.migrated ?? 0
-    ElMessage.success(n > 0 ? `已迁移 ${n} 条老绊线为通道` : '无可迁移的老绊线 (或已全部迁移)')
-    await loadRegions()
-  } catch (e: any) {
-    ElMessage.error(`迁移失败: ${e?.message ?? e}`)
-  }
-}
-
-onMounted(() => {
-  loadData()
-})
-
+// ─── 数据加载 (通道列表 + 推理调度 + 算法目录) ──────────────────────────────────
 /** 加载通道列表 + 推理状态 + 算法列表 */
 async function loadData() {
   loading.value = true
@@ -1855,14 +595,12 @@ async function loadData() {
       algorithmsApi.list(),
     ])
 
-    // 解析推理调度通道（建立 channel_id → ScheduledChannel 映射）
+    // 解析推理调度通道 (建立 channel_id → ScheduledChannel 映射)
     const sm = new Map<string, ScheduledChannel>()
     if (inferRes.status === 'fulfilled') {
       const raw = inferRes.value?.data as any
       const list: ScheduledChannel[] = raw?.data?.channels ?? raw?.channels ?? []
-      for (const sc of list) {
-        sm.set(sc.channel_id, sc)
-      }
+      for (const sc of list) sm.set(sc.channel_id, sc)
     }
     scheduledMap.value = sm
 
@@ -1873,22 +611,11 @@ async function loadData() {
       const items: any[] = raw?.data?.items ?? raw?.data ?? raw?.items ?? []
       for (const ch of items) {
         const id = String(ch.channel_id ?? ch.channelId ?? ch.id ?? '')
-        const scheduled = sm.get(id)
         channelList.push({
           channelId: id,
           name: ch.channel_name ?? ch.name ?? ch.channelName ?? id,
           deviceId: String(ch.device_id ?? ch.deviceId ?? ''),
           parentDeviceId: String(ch.parent_device_id ?? ch.parentDeviceId ?? ''),
-          online: ch.online ?? true,
-          algoPlugin: scheduled?.algo_plugin ?? '',
-          inferenceEnabled: scheduled?.enabled ?? false,
-          confidence: 0.5,
-          nmsThreshold: 0.45,
-          interval: scheduled?.interval_ms ?? 3000,
-          inferenceMode: 'snapshot',
-          totalInferences: scheduled?.total_inferences ?? 0,
-          totalDetections: scheduled?.total_detections ?? 0,
-          running: scheduled?.running ?? false,
         })
       }
     }
@@ -1900,16 +627,6 @@ async function loadData() {
           name: sc.channel_id,
           deviceId: sc.device_id,
           parentDeviceId: '',
-          online: true,
-          algoPlugin: sc.algo_plugin,
-          inferenceEnabled: sc.enabled,
-          confidence: 0.5,
-          nmsThreshold: 0.45,
-          interval: sc.interval_ms,
-          inferenceMode: 'snapshot',
-          totalInferences: sc.total_inferences,
-          totalDetections: sc.total_detections,
-          running: sc.running,
         })
       }
     }
@@ -1926,15 +643,6 @@ async function loadData() {
           String(a.name_zh || a.name_en || a.name || a.algo_id || a.id || ''),
         ])
       )
-      // [FIX 2026-09-02c] alarm_type → algo_id 映射: 绑定仅声明 event_types 的规则时
-      // 反推需联动启用的算法 (见 algoIdForEventType)
-      const evMap = new Map<string, string>()
-      for (const a of algos) {
-        const at = String(a.alarm_type ?? '').trim()
-        const id = String(a.algo_id ?? a.id ?? '')
-        if (at && id && !evMap.has(at)) evMap.set(at, id)
-      }
-      algoEventMap.value = evMap
       algorithmOptions.value = algos
         .filter((a: any) => a.enabled)
         .map((a: any) => ({
@@ -1950,7 +658,7 @@ async function loadData() {
       ]
     }
   } catch (e: any) {
-    console.warn('[AlgoConfig] 数据加载失败:', e?.message || e)
+    console.warn('[AlgoConfigView] 数据加载失败:', e?.message || e)
   } finally {
     loading.value = false
   }
@@ -1958,37 +666,17 @@ async function loadData() {
 
 function onChannelSelect(row: ChannelItem | null) {
   selected.value = row
-  currentAlgoId.value = ''
-  editForm.algoId = ''; editForm.algoName = ''
-  // [FIX 2026-09-03 问题1] 切通道同样清绊线编辑会话 (旧通道的编辑对象在新通道无意义)
-  editingTripwire.value = null
   if (row) {
-    form.enabled = row.inferenceEnabled
-    form.algorithm = row.algoPlugin || ''
-    form.confidence = row.confidence
-    form.nmsThreshold = row.nmsThreshold
-    form.interval = row.interval
-    // 编辑区默认首行算法 (无调度记录则保持空 → 下拉新配置)
-    const first = algoRows.value[0]
-    if (first) {
-      currentAlgoId.value = first.algoId
-      editForm.algoId = first.algoId
-      editForm.algoName = first.algoName
-      editForm.mode = first.mode
-      editForm.interval = first.interval
-    }
-    // 🆕 v7.1: 加载该通道的 ROI/绊线/计数区
-    loadRegions()
-    // [FIX 2026-08-28] 加载通道快照作绘制背景 (与联动规则页同链路)
+    // [FIX 2026-08-28] 加载通道快照作查看背景 (与联动规则页同链路)
     loadChannelSnapshot(row.channelId)
-    // ④ 事件规则计数 (badge)
+    // 事件规则计数 (算法行「规则×N」徽标)
     loadRuleCounts()
   } else {
     roiBackgroundUrl.value = ''
   }
 }
 
-// [FIX 2026-08-28] ROI/绊线/通行区绘制背景: 通道快照 — 与 LinkageRuleView 同链路。
+// [FIX 2026-08-28] ROI 查看背景: 通道快照 — 与 LinkageRuleView 同链路。
 // 后端 /snapshot 返回 JSON {data:{url}} (nginx alias /snapshots/);
 // ZLM 偶发 0 字节 JPEG, preload 校验失败重试一次。
 const roiBackgroundUrl = ref('')
@@ -2019,171 +707,69 @@ async function loadChannelSnapshot(channelId: string) {
   } catch { roiBackgroundUrl.value = '' }
 }
 
-/** 保存配置: 校验 → 启用推理调度 (仅编辑既有算法串; 新增算法走「+ 绑定事件规则」, 停用走行内开关) */
-async function saveConfig() {
-  if (!selected.value) return
-  if (!validateAll()) {
-    ElMessage.warning('参数校验未通过, 请修正红色提示项')
-    return
-  }
-  saving.value = true
-
-  const ch = selected.value
-  try {
-    const sc = scheduledMap.value.get(ch.channelId)
-    // [UX 2026-09-01] 保存即启用: 保留原多算法串 (裸算法新增模式已移除 —
-    // 无规则订阅时推理不启动/告警被抑制, 裸算法无法产生任何联动效果)
-    let algoPluginStr = sc?.algo_plugin || ''
-    if (!algoPluginStr) {
-      ElMessage.warning('该通道暂无算法, 请通过「+ 绑定事件规则」添加 (事件规则含完整可运行配置)')
-      saving.value = false
-      return
-    }
-    const deviceId = ch.deviceId || ch.parentDeviceId || ch.channelId
-    await startSchedule(
-      ch.channelId,
-      deviceId,
-      editForm.interval,
-      algoPluginStr,
-      { confidence: editForm.confidence, nmsThreshold: editForm.nms, inferenceMode: editForm.mode }
-    )
-    ch.algoPlugin = algoPluginStr
-    ch.inferenceEnabled = true
-    ch.interval = editForm.interval
-    ElMessage.success(`通道 ${ch.name} 配置已保存, 推理调度已启动`)
-    await loadData() // 刷新调度记录 → 算法列表/间隔/模式同步
-  } catch (e: any) {
-    ElMessage.error(`配置保存失败: ${e?.message || e}`)
-  } finally {
-    saving.value = false
-  }
-}
+onMounted(() => {
+  loadData()
+  loadAreaTree()
+})
 </script>
 
 <style scoped>
 .algo-config-view {
   --bg-page: #f5f7fa; --bg-card: #fff; --border-light: #e8ecf1;
-  --text-primary: #1d2129; --text-secondary: #6b7785; --panel-left-width: 380px;
+  --text-primary: #1d2129; --text-secondary: #6b7785; --panel-left-width: 340px;
   display: flex; flex-direction: column; height: 100%; background: var(--bg-page);
 }
 .page-header { padding: 10px 24px; background: var(--bg-card); border-bottom: 1px solid var(--border-light); }
 .page-title { margin: 0 0 2px; font-size: 17px; color: var(--text-primary); }
 .page-desc { font-size: 12px; color: var(--text-secondary); }
-.layout-body { flex: 1; display: flex; gap: 12px; padding: 12px 0px; overflow: hidden; }
+/* [algo-view-readonly 2026-09-12] 两栏布局: 通道树(定宽) | 算法列表(自适应全宽);
+   原第三栏编辑区整体移除 (全部绘制/配置收敛到事件规则页) */
+.layout-body { flex: 1; display: flex; gap: 12px; padding: 12px 16px; overflow: hidden; }
 .panel-left { width: var(--panel-left-width); flex-shrink: 0; overflow-y: auto; }
 .panel-left :deep(.el-card__body) { padding: 0; }
-/* [2026-09-01] 三栏布局: 通道列表 | 算法列表 | 编辑区; 中列全高表格内滚动,
-   右列(编辑+ROI 两卡)定高无滚动; 画布 720x405 (16:9 上限) */
-.panel-mid { width: 480px; flex-shrink: 0; display: flex; flex-direction: column; overflow: hidden; }
+.panel-mid { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow: hidden; }
 .panel-mid :deep(.el-card__body) { flex: 1; overflow: hidden; padding: 0; display: flex; flex-direction: column; }
 .panel-mid .algo-table { flex: 1; }
 .panel-title { font-weight: 600; font-size: 14px; display: flex; justify-content: space-between; align-items: center; }
 .text-muted { color: var(--text-secondary); font-size: 12px; }
-.panel-right { flex: 1; display: flex; flex-direction: column; gap: 10px; overflow-y: auto; }
-/* [FIX tw-res-vis 2026-09-09] 三视图 tab 撑满右栏 (一屏一卡), 内容区滚动兜底低分屏 */
-.right-view-tabs { flex: 1; display: flex; flex-direction: column; min-height: 0; }
-.right-view-tabs :deep(> .el-tabs__header) { margin-bottom: 8px; }
-.right-view-tabs :deep(> .el-tabs__content) { flex: 1; overflow-y: auto; min-height: 0; }
-.empty-state { flex: 1; display: flex; align-items: center; justify-content: center; }
-.edit-card :deep(.el-card__body), .roi-card :deep(.el-card__body) { padding: 10px 20px; }
-.edit-card :deep(.el-card__header), .roi-card :deep(.el-card__header) { padding: 6px 20px; }
-/* [2026-09-01] 右列高度预算: 编辑卡(~200) + ROI 卡(header+tabs+画布 405+列表) ≈ 800 ≤ 883 可视 → 无滚动 */
-.edit-card, .roi-card { flex-shrink: 0; }
-/* [UX 2026-09-01 对齐效果图] 左栏: 搜索工具行 + 分组折叠 + 双行通道项 + ON 徽标 */
+/* [chan-tree 三级树] 搜索行 + 树节点 (区域/设备/通道 图标区分 + ON 徽标) */
 .ch-toolbar { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--border-light); }
 .ch-search { flex: 1; }
-.ch-group-list { padding: 6px 8px 12px; overflow-y: auto; }
-.ch-group-head { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; color: var(--text-primary); padding: 8px 6px; cursor: pointer; user-select: none; }
-.ch-group-arrow { transition: transform 0.2s; font-size: 12px; color: var(--text-secondary); }
-.ch-group-arrow.collapsed { transform: rotate(-90deg); }
-.ch-item { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 10px; border-radius: 6px; cursor: pointer; }
-.ch-item:hover { background: var(--bg-page); }
-.ch-item.active { background: var(--el-color-primary-light-9); }
-.ch-item.active .ch-item-name { color: var(--el-color-primary); }
-.ch-item-info { min-width: 0; }
-.ch-item-name { font-size: 13px; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.ch-item-no { font-size: 11px; color: var(--text-secondary); margin-top: 2px; }
+.ch-tree-wrap { position: relative; min-height: 200px; max-height: calc(100vh - 250px); overflow-y: auto; padding: 6px 8px 12px; }
+.ch-tree { --el-tree-node-content-height: 30px; background: transparent; }
+.ch-tree :deep(.el-tree-node__content) { border-radius: 6px; }
+.ch-tree-node { display: flex; align-items: center; gap: 6px; width: 100%; overflow: hidden; }
+.ch-tree-icon { font-size: 14px; color: var(--el-color-primary); flex-shrink: 0; }
+.ch-tree-node--device .ch-tree-icon { color: var(--text-secondary); }
+.ch-tree-node--channel .ch-tree-icon { color: var(--el-color-success); }
+.ch-tree-node--area .ch-tree-label,
+.ch-tree-node--ungrouped .ch-tree-label { font-weight: 600; }
+.ch-tree-label { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 13px; color: var(--text-primary); }
+.ch-tree-no { flex-shrink: 0; font-size: 11px; color: var(--text-secondary); }
 .ch-item-on { flex-shrink: 0; border-radius: 4px; }
-/* 中栏 header: 标题+通道名两行左置, 右侧「+ 新增算法」链接 */
+/* 中栏 header: 标题+通道名两行左置 (只读页无右侧操作入口) */
 .algo-mid-head { display: flex; justify-content: space-between; align-items: center; width: 100%; }
 .algo-mid-head-left { min-width: 0; }
 .algo-mid-channel { font-size: 12px; font-weight: 400; color: var(--text-secondary); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .algo-table { width: 100%; }
-.algo-table :deep(.current-algo-row) td { background: var(--el-color-primary-light-9) !important; }
-.algo-table :deep(.el-table__row) { cursor: pointer; }
 /* [UX 2026-09-01] 算法名单元格: 主名 + 小字 id 双行 */
 .algo-name-cell { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; line-height: 1.2; }
 /* [docx#5 P1-5] 规则订阅状态行内标识 */
 .algo-name-line { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
 .algo-norule-warn { color: var(--el-color-warning); cursor: help; }
 .algo-rule-count { flex-shrink: 0; }
-.edit-card .edit-norule-alert { margin-bottom: 10px; padding: 6px 12px; }
 .algo-id-sub { font-size: 11px; color: var(--text-secondary); word-break: break-all; }
-.edit-card .algo-id-text { margin-left: 10px; font-size: 12px; color: var(--text-secondary); }
-.edit-actions { display: flex; justify-content: flex-end; gap: 12px; margin-top: 2px; padding-top: 8px; border-top: 1px solid var(--border-light); }
-/* 事件规则添加 dialog */
-.rule-dialog-target { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
-.rule-dialog-sub { font-size: 12px; color: var(--text-secondary); }
-.rule-filter { margin-bottom: 8px; }
-.rule-check-wrap { max-height: 320px; overflow-y: auto; border: 1px solid var(--border-light); border-radius: 6px; padding: 8px; }
-.rule-check-wrap :deep(.el-checkbox-group) { display: flex; flex-wrap: wrap; gap: 2px 12px; }
-.rule-check-item { margin-right: 8px; }
-.rule-check-key { font-size: 11px; color: var(--text-secondary); margin-left: 4px; }
-/* [R6 P1-4 2026-09-12] 三档标注: B 档「AI 研判兜底」标签 / C 档「预留位」灰字 (仍可选) */
-.rule-tier-tag { margin-left: 4px; transform: scale(0.85); transform-origin: left center; }
-.rule-tier-hint { margin-left: 4px; font-size: 11px; color: var(--el-text-color-placeholder, #A8ABB2); }
-.rule-dialog-count { float: left; line-height: 32px; font-size: 12px; color: var(--text-secondary); }
-/* [任务3] 事件规则编辑抽屉: 右侧滑出全量表单, 不跳平台 */
-.rule-drawer-body { display: flex; flex-direction: column; gap: 14px; padding: 0 4px; }
-.rule-drawer-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding-bottom: 10px; border-bottom: 1px solid var(--border-light); }
-.rule-drawer-sub { font-size: 12px; color: var(--text-secondary); }
-.rule-drawer-item { border: 1px solid var(--border-light); border-radius: 8px; padding: 12px 14px; background: var(--bg-card, #fafafa); }
-.rule-drawer-item-head { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
-.rule-drawer-item-name { font-weight: 600; font-size: 13px; flex: 1; min-width: 0; }
-/* [SIMPLE-EDIT 2026-09-03] 摘要行 (原内联表单/重置按钮已删, 编辑统一走 SimpleRuleDrawer 简易抽屉) */
-.rule-drawer-item-summary { display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
-  font-size: 12px; color: var(--text-secondary); }
-.rule-drawer-sep { color: var(--border-light); }
-/* [UX 2026-09-01] 中栏 header「+ 绑定事件规则」主入口按钮 */
-.algo-add-btn { padding: 5px 10px; font-size: 12px; }
-/* 绑定事件规则抽屉: 搜索 + 勾选表格 + 分页 + 底部动作 */
-.bind-rule-body { display: flex; flex-direction: column; gap: 10px; padding: 0 4px; }
-.bind-rule-search { flex: 0 0 auto; }
-.bind-rule-table { flex: 1; min-height: 0; }
-.bind-rule-page { display: flex; justify-content: flex-end; padding-top: 6px; }
-.bind-rule-count { float: left; line-height: 32px; font-size: 12px; color: var(--text-secondary); margin-right: auto; }
-.config-header { display: flex; justify-content: space-between; align-items: center; font-weight: 600; font-size: 14px; }
-.edit-form :deep(.el-form-item) { margin-bottom: 8px; }
-.edit-form :deep(.el-form-item__error) { padding-top: 1px; }
-/* 滑块+数字输入并排行 (替代 show-input 省行高) */
-.slider-row { display: flex; align-items: center; gap: 10px; width: 100%; }
-.slider-row .slider-main { flex: 1; }
-.slider-row .slider-num { width: 96px; flex-shrink: 0; }
-/* [FIX 2026-08-28 1080P 单屏] 画布 wrap 默认 aspect-ratio 16/9 撑满整行宽 →
-   画布高达 600+px 必滚动; 限宽居中后高度可控 (~405px)。
-   !important: 实测 scoped 后代选择器在设备端被组件自身规则压过, 直接加保险。 */
-.roi-card :deep(.tripwire-canvas-wrap),
-.roi-card :deep(.pw-canvas-wrap),
-.roi-card :deep(.roi-canvas-wrap) { max-width: 720px !important; margin: 0 auto !important; overflow: hidden; }
-/* [2026-09-01] 绘制区单屏无滚动: ROI 卡自身内容定高 (tabs+画布 240+列表限高),
-   卡内不产生滚动; 右栏仅在低于 1080P 视口时兜底滚动 */
-.roi-card :deep(.el-tabs__content) { overflow: visible; }
-.roi-card :deep(.el-tabs__header) { margin-bottom: 8px; }
-.counting-config-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
-.counting-config-row .counting-label { font-size: 13px; color: var(--text-secondary); }
-.tripwire-list { margin-top: 10px; display: flex; flex-direction: column; gap: 4px; max-height: 108px; overflow-y: auto; }
-.roi-placeholder {
-  height: 260px; background: var(--bg-page); border: 2px dashed var(--border-light);
-  border-radius: 8px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px;
-}
-.roi-message { font-size: 15px; color: var(--text-primary); font-weight: 500; }
-.roi-hint { font-size: 12px; color: var(--text-secondary); }
+/* 查看 ROI 弹窗 (只读): 画布限宽 720 (16:9) + 图形/列表说明 */
+.roi-viewer-dialog :deep(.el-dialog__body) { padding-top: 8px; }
+.roi-viewer-body { display: flex; flex-direction: column; gap: 8px; min-height: 320px; }
+.roi-viewer-tabs :deep(.el-tabs__header) { margin-bottom: 8px; }
+.roi-viewer-body :deep(.roi-viewer) { max-width: 720px; margin: 0 auto; }
+.roi-viewer-desc { margin: 0 0 8px; font-size: 12px; color: var(--text-secondary); }
+.roi-viewer-hint { float: left; line-height: 32px; font-size: 12px; color: var(--text-secondary); }
+.roi-type-tag { margin-right: 6px; }
+.tripwire-list { margin-top: 10px; display: flex; flex-direction: column; gap: 4px; max-height: 150px; overflow-y: auto; }
 .tripwire-list__item {
   display: flex; align-items: center; justify-content: space-between;
   padding: 6px 10px; background: var(--bg-page); border-radius: 4px;
-}
-.pw-toolbar-row {
-  display: flex; align-items: center; gap: 10px; margin-bottom: 8px;
-  .pw-mig-hint { font-size: 12px; color: #909399; }
 }
 </style>

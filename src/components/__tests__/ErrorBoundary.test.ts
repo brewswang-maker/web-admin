@@ -12,8 +12,9 @@
  *   - 自定义 errorMessage prop
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { mount, type VueWrapper } from '@vue/test-utils'
+import { nextTick } from 'vue'
 import { createRouter, createMemoryHistory } from 'vue-router'
 import ErrorBoundary from '@/components/ErrorBoundary.vue'
 
@@ -29,7 +30,12 @@ function createTestRouter() {
 }
 
 // ── Element Plus 组件 Stub ────────────────────────────────
+// [FIX P2-2 2026-09-12] inheritAttrs: false 必需: 否则父级 @click 编译的
+//   onClick 会 fallthrough 到 stub 根 button 直接执行一次, stub 自身
+//   $emit('click') 又经 vnode.props.onClick 再执行一次 → handler 双触发
+//   (showDetails 翻转两次回原值, 断言 failed)。
 const ElButtonStub = {
+  inheritAttrs: false,
   template: '<button class="el-button" @click="$emit(\'click\')"><slot /></button>',
   props: ['type', 'loading', 'link'],
 }
@@ -72,6 +78,21 @@ describe('components/ErrorBoundary', () => {
     await router.isReady()
   })
 
+  /**
+   * [FIX P2-2 2026-09-12] 子组件 render 抛错 → onErrorCaptured 置 hasError=true
+   *   是 ref 变更, UI 切换经调度器在 nextTick 后落地; mount 同步返回时仍是
+   *   旧 vnode (错误 UI 未渲染), 直接断言必失败 — 必须 await nextTick()。
+   */
+  async function mountWithError(props: Record<string, unknown> = {}) {
+    const wrapper = mount(ErrorBoundary, {
+      global: { plugins: [router], stubs: globalStubs },
+      slots: { default: ThrowingChild },
+      props,
+    })
+    await nextTick()
+    return wrapper
+  }
+
   // ========================================================================
   // 正常渲染
   // ========================================================================
@@ -100,42 +121,29 @@ describe('components/ErrorBoundary', () => {
   // 错误捕获
   // ========================================================================
   describe('错误捕获', () => {
-    it('捕获错误后显示错误UI', () => {
-      const wrapper = mount(ErrorBoundary, {
-        global: { plugins: [router], stubs: globalStubs },
-        slots: { default: ThrowingChild },
-      })
+    it('捕获错误后显示错误UI', async () => {
+      const wrapper = await mountWithError()
 
       expect(wrapper.find('.error-boundary').exists()).toBe(true)
     })
 
-    it('显示默认错误消息', () => {
-      const wrapper = mount(ErrorBoundary, {
-        global: { plugins: [router], stubs: globalStubs },
-        slots: { default: ThrowingChild },
-      })
+    it('显示默认错误消息', async () => {
+      const wrapper = await mountWithError()
 
       const msg = wrapper.find('.error-message')
       expect(msg.exists()).toBe(true)
       expect(msg.text()).toContain('异常')
     })
 
-    it('自定义 errorMessage 覆盖默认消息', () => {
-      const wrapper = mount(ErrorBoundary, {
-        global: { plugins: [router], stubs: globalStubs },
-        slots: { default: ThrowingChild },
-        props: { errorMessage: '自定义错误提示' },
-      })
+    it('自定义 errorMessage 覆盖默认消息', async () => {
+      const wrapper = await mountWithError({ errorMessage: '自定义错误提示' })
 
       const msg = wrapper.find('.error-message')
       expect(msg.text()).toBe('自定义错误提示')
     })
 
-    it('显示重试按钮', () => {
-      const wrapper = mount(ErrorBoundary, {
-        global: { plugins: [router], stubs: globalStubs },
-        slots: { default: ThrowingChild },
-      })
+    it('显示重试按钮', async () => {
+      const wrapper = await mountWithError()
 
       const buttons = wrapper.findAll('.el-button')
       // 至少有重试按钮
@@ -149,11 +157,8 @@ describe('components/ErrorBoundary', () => {
   // 重试按钮
   // ========================================================================
   describe('重试按钮', () => {
-    it('点击重试按钮触发retry事件', () => {
-      const wrapper = mount(ErrorBoundary, {
-        global: { plugins: [router], stubs: globalStubs },
-        slots: { default: ThrowingChild },
-      })
+    it('点击重试按钮触发retry事件', async () => {
+      const wrapper = await mountWithError()
 
       // 找到重试按钮（包含"重试"文字的按钮）
       const buttons = wrapper.findAll('.el-button')
@@ -167,12 +172,8 @@ describe('components/ErrorBoundary', () => {
       expect(wrapper.emitted()).toBeDefined()
     })
 
-    it('自定义 retryText', () => {
-      const wrapper = mount(ErrorBoundary, {
-        global: { plugins: [router], stubs: globalStubs },
-        slots: { default: ThrowingChild },
-        props: { retryText: '再次尝试' },
-      })
+    it('自定义 retryText', async () => {
+      const wrapper = await mountWithError({ retryText: '再次尝试' })
 
       const buttons = wrapper.findAll('.el-button')
       const retryBtn = buttons.find(b => b.text().includes('再次尝试'))
@@ -184,24 +185,16 @@ describe('components/ErrorBoundary', () => {
   // 返回首页按钮
   // ========================================================================
   describe('返回首页按钮', () => {
-    it('showBack=true时显示返回按钮', () => {
-      const wrapper = mount(ErrorBoundary, {
-        global: { plugins: [router], stubs: globalStubs },
-        slots: { default: ThrowingChild },
-        props: { showBack: true },
-      })
+    it('showBack=true时显示返回按钮', async () => {
+      const wrapper = await mountWithError({ showBack: true })
 
       const buttons = wrapper.findAll('.el-button')
       const backBtn = buttons.find(b => b.text().includes('返回'))
       expect(backBtn).toBeDefined()
     })
 
-    it('showBack=false时隐藏返回按钮', () => {
-      const wrapper = mount(ErrorBoundary, {
-        global: { plugins: [router], stubs: globalStubs },
-        slots: { default: ThrowingChild },
-        props: { showBack: false },
-      })
+    it('showBack=false时隐藏返回按钮', async () => {
+      const wrapper = await mountWithError({ showBack: false })
 
       const buttons = wrapper.findAll('.el-button')
       const backBtn = buttons.find(b => b.text().includes('返回'))
@@ -213,20 +206,14 @@ describe('components/ErrorBoundary', () => {
   // 错误详情
   // ========================================================================
   describe('错误详情', () => {
-    it('默认不显示错误详情', () => {
-      const wrapper = mount(ErrorBoundary, {
-        global: { plugins: [router], stubs: globalStubs },
-        slots: { default: ThrowingChild },
-      })
+    it('默认不显示错误详情', async () => {
+      const wrapper = await mountWithError()
 
       expect(wrapper.find('.error-details').exists()).toBe(false)
     })
 
     it('点击"查看详情"展开错误堆栈', async () => {
-      const wrapper = mount(ErrorBoundary, {
-        global: { plugins: [router], stubs: globalStubs },
-        slots: { default: ThrowingChild },
-      })
+      const wrapper = await mountWithError()
 
       // 找到"查看详情"按钮
       const buttons = wrapper.findAll('.el-button')
@@ -242,33 +229,22 @@ describe('components/ErrorBoundary', () => {
   // 变体
   // ========================================================================
   describe('变体', () => {
-    it('page 变体默认显示标题', () => {
-      const wrapper = mount(ErrorBoundary, {
-        global: { plugins: [router], stubs: globalStubs },
-        slots: { default: ThrowingChild },
-      })
+    it('page 变体默认显示标题', async () => {
+      const wrapper = await mountWithError()
 
       const title = wrapper.find('.error-title')
       expect(title.exists()).toBe(true)
     })
 
-    it('inline 变体不显示标题', () => {
-      const wrapper = mount(ErrorBoundary, {
-        global: { plugins: [router], stubs: globalStubs },
-        slots: { default: ThrowingChild },
-        props: { variant: 'inline' },
-      })
+    it('inline 变体不显示标题', async () => {
+      const wrapper = await mountWithError({ variant: 'inline' })
 
       const title = wrapper.find('.error-title')
       expect(title.exists()).toBe(false)
     })
 
-    it('card 变体有正确的 class', () => {
-      const wrapper = mount(ErrorBoundary, {
-        global: { plugins: [router], stubs: globalStubs },
-        slots: { default: ThrowingChild },
-        props: { variant: 'card' },
-      })
+    it('card 变体有正确的 class', async () => {
+      const wrapper = await mountWithError({ variant: 'card' })
 
       expect(wrapper.find('.error-boundary.card').exists()).toBe(true)
     })

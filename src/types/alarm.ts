@@ -154,6 +154,12 @@ export interface AlarmEvent {
   /** [SSOT R1/R2 2026-09-12] 后端单判定源结果 (WS 帧 linkage_verdict, §5.1);
    *  undefined = 旧后端 或 verdict_push_enabled=false 回退态 → 前端走本地兜底链 */
   linkageVerdict?: LinkageVerdict
+  /** [FIX-P0-1/P1-1 2026-09-12] 目标轨迹 ID (后端 track_id; -1 = 无 track)。
+   *  与 aggregated_count 同批下发 (REST 列表/详情 + WS 帧), 供详情追溯展示 */
+  trackId?: number
+  /** [FIX-P1-1/P1-2 2026-09-12] 长窗聚合合并计数 (后端 aggregated_count):
+   *  1 = 新告警; N>1 = 10min 长窗内同键 N 条已合并到本行 (列表/详情 ×N 角标) */
+  aggregatedCount?: number
 }
 
 /** [SSOT R1/R2 2026-09-12] 后端判定结果 (LinkageEngine::matchAndVerdict 序列化形态).
@@ -805,6 +811,13 @@ export function normalizeAlarmCore(raw: any): AlarmEvent {
   // [AI 复核恢复 2026-09-10] gov 已含 metadata.ai_review (...gov 展开), 在 return 前
   //   统一解析一次供 aiReview 结构化字段与 aiConclusion 兜底链共用
   const aiReview = parseAiReview(gov)
+  // [FIX-P0-1/P1-1 2026-09-12] 目标轨迹 + 合并计数归一 (REST 列表/详情 + WS 帧
+  //   顶层字段): track_id 恒下发 (-1 = 无 track); aggregated_count 仅 >0 下发
+  //   (新告警 = 1) — 缺省/非法一律归一 (track=-1 / count=1), 模板零判空。
+  const trackIdNum = Number(raw.track_id ?? raw.trackId)
+  const trackId = Number.isFinite(trackIdNum) ? trackIdNum : -1
+  const aggNum = Number(raw.aggregated_count ?? raw.aggregatedCount ?? 1)
+  const aggregatedCount = Number.isFinite(aggNum) && aggNum > 1 ? aggNum : 1
 
   return {
     id: raw.id || raw.alarm_id || `${raw.device_id || ''}_${channelId}_${raw.timestamp_ms || Date.now()}`,
@@ -918,6 +931,9 @@ export function normalizeAlarmCore(raw: any): AlarmEvent {
     //   → undefined = 旧后端/回退态 → 前端本地兜底链, 零回归)
     origin: typeof raw.origin === 'string' && raw.origin ? raw.origin : undefined,
     linkageVerdict: parseLinkageVerdict(raw.linkage_verdict ?? raw.linkageVerdict),
+    // [FIX-P0-1/P1-1 2026-09-12] 目标轨迹 + 合并计数 (列表/详情 ×N 角标数据源)
+    trackId,
+    aggregatedCount,
   }
 }
 // [t3-tree-channel 2026-09-11 完成锚点] 三级树通道级服务端下钻(单值直传+多值 fan-out)批次 · 部署产物 entry=index-CvT0U9Nv4f.js tgz md5=07a2e26224ed93a40c47f987c04b7bb5

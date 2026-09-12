@@ -221,4 +221,13 @@ export function isRowClickInteractive(event: Event): boolean {
   return !!target?.closest('button, a, input, label, .el-dropdown, .el-switch, .el-checkbox, .el-image, .el-tag__close')
 }
 
+// [FIX-P1-1/P1-2 2026-09-12] 长窗聚合合并计数标签: 后端 aggregated_count > 1 时
+//   返回 N (列表/详情 ×N 角标数据源, N>1 才展示); 缺省/非法/新告警(=1) → 1。
+//   归一化已在 normalizeAlarmCore 完成 (camelCase), snake_case 兼容为容错双源。
+export function mergedCountOf(row: any): number {
+  const raw = row?.aggregatedCount ?? row?.aggregated_count ?? 1
+  const n = Number(raw)
+  return Number.isFinite(n) && n > 1 ? n : 1
+}
+
 // [chan-col 2026-09-11 完成锚点] alarmChLabel 占位口径批次 · 部署产物 entry=index-wS8-Hc--kp.js tgz md5=57e4f6f0d728c29eeca8f2a8f6dd629b

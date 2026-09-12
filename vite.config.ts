@@ -187,7 +187,10 @@ export default defineConfig(async () => {
           changeOrigin: true,
         },
         // box-sdk 录像文件代理（MP4 证据链回放）
-        '/record': {
+        // [FIX rec-route 2026-09-12] 原 '/record' 前缀误吞页面路由 /recordings（Vite proxy
+        //   无尾斜杠前缀匹配），导致直接访问/刷新 /recordings 被代理到后端而非 SPA →
+        //   白屏。改 '^/record/' 正则锚定，仅匹配录像文件静态前缀。
+        '^/record/': {
           target: 'http://127.0.0.1:18080',
           changeOrigin: true,
         },

@@ -589,8 +589,10 @@ const primaryMenus = computed<PrimaryMenu[]>(() => {
     items: [
       { path: '/dashboard', label: t('menu.dashboard'), icon: Odometer },
       { path: '/pipelines', label: t('menu.pipelineEditor'), icon: SetUp },
-      // [ADD 2026-08-28] 算法配置入口: 路由 /algo-config 早已存在但未挂菜单,
+      // [ADD 2026-08-28] 算法查看入口: 路由 /algo-config 早已存在但未挂菜单,
       //   仅 admin 可见 (与路由 meta.roles: ['admin'] 对齐)
+      // [algo-view-readonly 2026-09-12] 更名「算法配置→算法查看」: 页面全面只读化
+      //   (编辑/开关/删除全部下线, 全部绘制收敛到事件规则), 菜单标签随 i18n 更新
       { path: '/algo-config', label: t('menu.algoConfig'), icon: SetUp },
       // [FLOOR-MAP 2026-09-03] 平面图入口: /maps 三层联动·管理层 (admin 专属,
       //   与路由 meta.roles: ['admin'] 对齐; 挂 ai 组照 algo-config 写法)

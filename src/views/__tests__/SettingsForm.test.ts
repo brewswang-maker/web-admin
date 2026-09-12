@@ -15,6 +15,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
+import { i18n as testI18n, setI18nLocale } from '@/i18n'
+
+// [FIX P2-2 2026-09-12] SettingsView 用 useI18n()（多语言迁移后新增）,
+//   测试未装 i18n 插件 → 'Need to install with app.use function' 炸 4 用例。
+//   用项目真实 i18n 实例; 测试环境 navigator.language=en-US 会选英文 → 强制 zh-CN。
+setI18nLocale('zh-CN')
 
 // ── Mock element-plus ──────────────────────────────────────
 vi.mock('element-plus', async () => {
@@ -71,7 +77,7 @@ function createWrapper() {
   setActivePinia(pinia)
   return mount(SettingsView, {
     global: {
-      plugins: [pinia],
+      plugins: [pinia, testI18n],
       stubs: {
         'el-card': { template: '<div class="el-card"><slot /></div>' },
         'el-tabs': { template: '<div class="el-tabs"><slot /></div>' },
@@ -92,6 +98,11 @@ function createWrapper() {
         'el-icon': { template: '<i class="el-icon"><slot /></i>' },
         'el-tooltip': { template: '<span class="el-tooltip"><slot /></span>' },
         'el-alert': { template: '<div class="el-alert"><slot /></div>' },
+        // [FIX P2-2 2026-09-12] 模型列表新增 el-table (单元格 #default 解构 { row }),
+        //   未 stub 时无 table 上下文 → row undefined 解构炸。el-table-column 用
+        //   布尔 stub (不渲染 slot) 避免造 row 数据。
+        'el-table': { template: '<div class="el-table"><slot /></div>' },
+        'el-table-column': true,
       },
     },
   })

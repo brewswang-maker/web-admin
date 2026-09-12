@@ -16,7 +16,14 @@ import { mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import LazyChart from '@/components/LazyChart.vue'
 import StatisticsView from '@/views/StatisticsView.vue'
+import { i18n as testI18n, setI18nLocale } from '@/i18n'
 import type { EChartsOption } from 'echarts'
+
+// [FIX P2-2 2026-09-12] StatisticsView 用 useI18n()（v1.x 新增多语言）,
+//   测试未装 i18n 插件 → 'Need to install with app.use function' 炸 4 用例。
+//   直接用项目真实 i18n 实例; 测试环境 navigator.language=en-US 会使
+//   detectInitialLocale 选英文 → 强制切 zh-CN 匹配中文词条断言。
+setI18nLocale('zh-CN')
 
 // ── Mock element-plus ──────────────────────────────────────
 vi.mock('element-plus', async () => {
@@ -127,7 +134,7 @@ function createWrapper() {
   setActivePinia(pinia)
   return mount(StatisticsView, {
     global: {
-      plugins: [pinia],
+      plugins: [pinia, testI18n],
       stubs: {
         'el-card': { template: '<div class="el-card"><slot /><slot name="header" /></div>' },
         'el-row': { template: '<div class="el-row"><slot /></div>' },
