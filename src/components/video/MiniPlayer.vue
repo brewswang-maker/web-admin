@@ -525,7 +525,10 @@ let srcEndedFired = false
 
 function playSrc(url: string) {
   srcMode = true
-  srcCandidates = [url, ...(props.srcFallbacks || [])].filter(Boolean)
+  // [FIX rec-cand-dedup 2026-09-12] 候选去重: src 与 srcFallbacks 可能含相同 URL
+  //   (同源 :8088 场景 recordUrlCandidates 双候选同址) — 同址重复尝试白耗一整个
+  //   mp4 首帧超时周期 (20s), 去重后同址只试一次
+  srcCandidates = [...new Set([url, ...(props.srcFallbacks || [])].filter(Boolean))]
   srcIndex = 0
   tryNextSrcCandidate()
 }

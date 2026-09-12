@@ -79,7 +79,10 @@ export function recordUrlCandidates(url: string): string[] {
   const cands = [`${window.location.origin}${double}`]
   const hn = window.location.hostname
   if (hn) cands.push(`http://${hn}:8088${double}`)
-  return cands
+  // [FIX rec-cand-dedup 2026-09-12] 去重: 8088 同源访问时两候选完全一致 (origin 即
+  //   http://host:8088) → 原实现同一 URL 白重试一整个 mp4 超时周期 (实测「已尝试
+  //   全部格式」需 40s 才报); 去重后候选链只留唯一项, 失败快速进入上层处理。
+  return [...new Set(cands)]
 }
 
 /**
