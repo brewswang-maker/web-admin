@@ -62,6 +62,7 @@ const loading = ref(false)
 const playingUrl = ref('')
 const isPlaying = ref(false)
 const isPaused = ref(false)
+const muted = ref(true)
 const playbackSpeed = ref(1)
 const currentSessionId = ref('')
 // [REC-PLAY 2026-09-11] 当前播放段起点 ms: jumpToTime 原按「当天 0 点秒数」设 currentTime,
@@ -1082,6 +1083,24 @@ async function togglePause() {
     video.pause()
     isPaused.value = true
   }
+}
+
+function toggleMute() {
+  muted.value = !muted.value
+  if (videoRef.value) videoRef.value.muted = muted.value
+}
+
+function takeSnapshot() {
+  const video = videoRef.value
+  if (!video || !video.videoWidth) return
+  const canvas = document.createElement('canvas')
+  canvas.width = video.videoWidth
+  canvas.height = video.videoHeight
+  canvas.getContext('2d')?.drawImage(video, 0, 0)
+  const link = document.createElement('a')
+  link.href = canvas.toDataURL('image/png')
+  link.download = `recording-${Date.now()}.png`
+  link.click()
 }
 
 async function changeSpeed(speed: number) {
@@ -2129,7 +2148,7 @@ onUnmounted(() => {
 
 <template>
   <div class="recording-view">
-    <div style="display:flex;gap:16px;height:calc(100vh - 120px)">
+    <div style="display:flex;gap:8px;height:100%;">
       <!-- 左侧: 设备通道树 + 录像查询面板 (设计图左侧栏布局) -->
       <div class="rec-left-col">
         <el-card shadow="never" class="rec-tree-card">
@@ -2241,7 +2260,7 @@ onUnmounted(() => {
               <div style="font-size:12px;margin-top:4px">点击时间轴上的蓝色录像块开始回放</div>
             </div>
             <!-- 进度条 + 时间显示 -->
-            <div class="player-progress-row" v-if="isPlaying">
+            <!-- <div class="player-progress-row" v-if="isPlaying">
               <span class="player-time">{{ formatHMS(currentTime) }}</span>
               <el-slider
                 class="player-progress-slider"
@@ -2255,11 +2274,16 @@ onUnmounted(() => {
                 @end="onSeekEnd"
               />
               <span class="player-time">{{ formatHMS(duration) }}</span>
-            </div>
+            </div> -->
             <!-- [TL-VIEW 2026-09-12] 可缩放时间轴: 滚轮缩放/拖拽平移/双击复位;
                  点击任意点定位播放 (空档给就近段一键入口); 悬停显示时间与所属块 -->
             <div v-if="recordingSource === 'device'" class="tl-wrap">
               <div class="tl-toolbar">
+                  <!-- [P1-3] 来源颜色图例 -->
+                <span class="tl-legend" title="录像来源颜色标识 (可用查询面板「存储位置」过滤)">
+                    <i class="lg-dot lg-zlm" />中心储存
+                    <i class="lg-dot lg-gb" />设备存储
+                </span>
                 <span class="tl-toolbar-title">时间轴</span>
                 <el-button-group size="small" class="tl-zoom-btns">
                   <el-button title="放大时间颗粒度" @click="tlZoomIn">＋</el-button>
@@ -2267,11 +2291,7 @@ onUnmounted(() => {
                   <el-button title="恢复 24 小时全览 (双击时间轴同效)" @click="tlResetView">24h</el-button>
                 </el-button-group>
                 <span class="tl-span-label" title="当前视口跨度">{{ tlSpanLabel }}</span>
-                <!-- [P1-3] 来源颜色图例 -->
-                <span class="tl-legend" title="录像来源颜色标识 (可用查询面板「存储位置」过滤)">
-                  <i class="lg-dot lg-zlm" />中心储存
-                  <i class="lg-dot lg-gb" />设备存储
-                </span>
+
                 <!-- [P2-2] 区间选区导出: 开关 + 选区信息 + 导出/清除 -->
                 <el-button
                   size="small"
@@ -2285,19 +2305,20 @@ onUnmounted(() => {
                   <el-button size="small" type="primary" :loading="tlExporting" @click="tlRangeExport">导出选区</el-button>
                   <el-button size="small" text @click="tlRangeClear">清除</el-button>
                 </template>
+                <!-- [P1-1] 常驻时间定位控件 (对齐 Milestone Web Client 时间选择器常驻): 不离回放视图直接定位 -->
+                <div class="tl-seek-row">
+                  <el-time-picker
+                    v-model="tlSeekTime"
+                    value-format="HH:mm:ss" format="HH:mm:ss"
+                    placeholder="HH:mm:ss"
+                    size="small"
+                    class="tl-seek-time"
+                  />
+                  <el-button size="small" type="primary" plain @click="tlSeekGo">定位</el-button>
+                </div>
                 <span class="tl-hint">{{ tlRange.mode ? '拖拽框选区间导出' : '滚轮缩放 · 拖拽平移 · 双击复位' }}</span>
               </div>
-              <!-- [P1-1] 常驻时间定位控件 (对齐 Milestone Web Client 时间选择器常驻): 不离回放视图直接定位 -->
-              <div class="tl-seek-row">
-                <el-time-picker
-                  v-model="tlSeekTime"
-                  value-format="HH:mm:ss" format="HH:mm:ss"
-                  placeholder="HH:mm:ss"
-                  size="small"
-                  class="tl-seek-time"
-                />
-                <el-button size="small" type="primary" plain @click="tlSeekGo">定位</el-button>
-              </div>
+
               <div class="tl-canvas-wrap">
                 <canvas
                   ref="canvasRef"
@@ -2317,35 +2338,34 @@ onUnmounted(() => {
               </div>
             </div>
             <!-- 控制条 (设计图: 上一段/播放暂停/下一段 + 回放钟 + 倍速 + 停止/全屏) -->
-            <div v-if="isPlaying" class="player-controls">
-              <div class="pc-group">
-                <el-button size="small" text title="第一段" @click="navToEdge('first')">首段</el-button>
-                <el-button size="small" :icon="DArrowLeft" text title="上一段" @click="playPrevSegment" />
-                <el-button size="small" :icon="isPaused ? VideoPlay : VideoPause" type="primary" circle title="暂停/恢复" @click="togglePause" />
-                <el-button size="small" :icon="DArrowRight" text title="下一段" @click="playNextSegment" />
-                <el-button size="small" text title="最后一段" @click="navToEdge('last')">末段</el-button>
+            <!-- v-if="isPlaying" -->
+            <div  class="player-controls">
+              <div class="pc-group pc-nav-group">
+                <button class="pc-icon-btn" title="上一段" @click="playPrevSegment"><i class="iconfont1 icon1-xiayige-copy" /></button>
+                <button class="pc-icon-btn pc-play-btn" :title="isPaused ? '播放' : '暂停'" @click="togglePause"><i class="iconfont1" :class="isPaused ? 'icon1-bofang1' : 'icon1-zanting-copy'" /></button>
+                <button class="pc-icon-btn" title="下一段" @click="playNextSegment"><i class="iconfont1 icon1-xiayige" /></button>
               </div>
-              <div class="pc-group">
-                <el-button size="small" text :disabled="!!currentSessionId" title="上一帧 (暂停态; 快捷键 ,)" @click="stepFrame(-1)">上一帧</el-button>
-                <el-button size="small" text :disabled="!!currentSessionId" title="下一帧 (暂停态; 快捷键 .)" @click="stepFrame(1)">下一帧</el-button>
+              <div class="pc-group pc-frame-group">
+                <button class="pc-icon-btn" :disabled="!!currentSessionId" title="上一帧" @click="stepFrame(-1)"><i class="iconfont1 icon1-xiayige-copy" /></button>
+                <div class="pc-clock pc-clock-click" title="回放钟 (段起点+进度) — 点击打开按时间点观看" @click="openTimeSeek">{{ playbackClockLabel }}</div>
+                <button class="pc-icon-btn" :disabled="!!currentSessionId" title="下一帧" @click="stepFrame(1)"><i class="iconfont1 icon1-xiayige" /></button>
+                <div class="pc-group pc-continuous" title="段播完自动衔接相邻下一段 (间隙 ≤ 30s)">
+                  <el-switch v-model="continuousPlay" size="small" />
+                  <span class="pc-switch-label">连播</span>
+                </div>
+                <div class="pc-group">
+                  <el-select v-model="playbackSpeed" size="small" class="speed-select" @change="changeSpeed">
+                    <el-option v-for="spd in [0.5, 1, 2, 4, 8, 16]" :key="spd" :label="`${spd}x`" :value="spd" />
+                  </el-select>
+                </div>
               </div>
-              <div class="pc-clock pc-clock-click" title="回放钟 (段起点+进度) — 点击打开按时间点观看" @click="openTimeSeek">{{ playbackClockLabel }}</div>
-              <div class="pc-group pc-continuous" title="段播完自动衔接相邻下一段 (间隙 ≤ 30s)">
-                <el-switch v-model="continuousPlay" size="small" />
-                <span class="pc-switch-label">连播</span>
-              </div>
+
+
               <div class="pc-group">
-                <el-button-group size="small" class="speed-btn-group">
-                  <el-button v-for="spd in [0.5, 1, 2, 4, 8, 16]" :key="spd"
-                    :type="playbackSpeed === spd ? 'primary' : 'default'"
-                    @click="changeSpeed(spd)">
-                    {{ spd }}x
-                  </el-button>
-                </el-button-group>
-              </div>
-              <div class="pc-group">
-                <el-button size="small" @click="stopPlay">停止</el-button>
-                <el-button size="small" :icon="FullScreen" @click="toggleFullscreen">{{ isFullscreen ? '退出全屏' : '全屏' }}</el-button>
+                <!-- <button class="pc-icon-btn" :title="muted ? '打开声音' : '静音'" @click="toggleMute"><i class="iconfont1" :class="muted ? 'icon1-a-shengyinguan' : 'icon1-a-shengyinkai'" /></button>
+                <button class="pc-icon-btn" title="截图" @click="takeSnapshot"><i class="iconfont1 icon1-zhuapai" /></button> -->
+                <button class="pc-icon-btn" title="停止" @click="stopPlay"><i class="iconfont1 icon1-tingzhi" /></button>
+                <button class="pc-icon-btn" :title="isFullscreen ? '退出全屏' : '全屏'" @click="toggleFullscreen"><i class="iconfont1" :class="isFullscreen ? 'icon1-suoxiao1' : 'icon1-a-9Equanping'" /></button>
               </div>
             </div>
           </div>
@@ -2364,13 +2384,13 @@ onUnmounted(() => {
           </div>
           </div>
           <!-- 快捷键提示 -->
-          <div class="player-hint">
+          <!-- <div class="player-hint">
             💡 快捷键: <kbd>空格</kbd> 暂停/播放 · <kbd>←/→</kbd> 快退/快进 5s · <kbd>Shift+←/→</kbd> 30s · <kbd>,</kbd>/<kbd>.</kbd> 逐帧 · 时间轴滚轮缩放/拖拽
-          </div>
+          </div> -->
         </el-card>
 
         <!-- 本地录像片段列表 -->
-        <el-card v-if="recordingSource === 'local'" shadow="never" style="flex:1;overflow:auto">
+         <el-card v-if="recordingSource === 'local'" shadow="never" style="flex:1;overflow:auto">
           <template #header>本地录像 ({{ localRecordings.length }})</template>
           <el-table :data="localRecordings" v-loading="localLoading" stripe size="small">
             <el-table-column label="通道" min-width="120">
@@ -2599,7 +2619,7 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
-/* .recording-view { padding: 20px; } */
+ .recording-view {height:100%; }
 .speed-btn-group .el-button { padding-left: 10px; padding-right: 10px; }
  :deep(.el-card__header) { padding: 10px; }
  :deep(.el-card__header) { padding: 10px; }
@@ -2611,7 +2631,7 @@ onUnmounted(() => {
 
 /* [V4-X4 2026-07-08] 播放器进度条与全屏 */
 .video-container {
-  background: #000;
+  /*background: #000;*/
   border-radius: 4px;
   overflow: hidden;
 }
@@ -2702,22 +2722,36 @@ onUnmounted(() => {
 .player-video { width: 100%; height: auto; min-height: 0; flex: 1; background: #000; display: block; object-fit: contain; }
 .player-empty {
   position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
-  color: #fff; font-size: 14px; background: rgba(0, 0, 0, 0.9); pointer-events: none; text-align: center;
+  color: #fff; font-size: 14px;
+  /*background: rgba(0, 0, 0, 0.9)*/
+  pointer-events: none; text-align: center;
 }
 /* ── [TL-VIEW 2026-09-12] 可缩放时间轴: 工具条/悬停提示 ── */
-.tl-wrap { margin-top: 8px; }
-.tl-toolbar { display: flex; align-items: center; gap: 8px; padding: 0 2px 4px; }
-.tl-toolbar-title { color: #909399; font-size: 12px; }
+.tl-wrap { background: #050d2b; border-top: 1px solid #123b78; }
+.tl-toolbar { display: flex; align-items: center; gap: 6px; min-height: 36px; padding: 4px 8px; flex-wrap: nowrap; overflow-x: auto; color: #cfe7ff; }
+.tl-toolbar-title { color: #e4f3ff; font-size: 12px; white-space: nowrap; }
 .tl-zoom-btns .el-button { padding: 3px 8px; }
+.tl-toolbar :deep(.el-button) { color: #cfe7ff; background: #091748; border-color: #2b5a9c; }
+.tl-toolbar :deep(.el-button:hover) { color: #b8d8ef; background: #17408c; border-color: #2b5a9c; }
+.tl-toolbar :deep(.el-button--warning) { color: #fff; background: #f0a62b; border-color: #f0a62b; }
+.tl-toolbar :deep(.el-button--primary) { color: #b8d8ef; background: #091748; border-color: #2b5a9c; }
+.tl-toolbar :deep(.el-time-editor.el-input),
+.tl-toolbar :deep(.el-date-editor.el-input),
+.tl-toolbar :deep(.el-input__wrapper) { background: #091748; box-shadow: 0 0 0 1px #2b5a9c inset; }
+.tl-toolbar :deep(.el-input__prefix-inner) { color: #b8d8ef;}
+.tl-toolbar :deep(.el-input__suffix) { color: #b8d8ef;}
+.tl-toolbar :deep(.el-input__inner) { color: #e4f3ff; }
+.tl-toolbar :deep(.el-input__inner::placeholder) { color: #8eb3d4; }
 .tl-span-label { color: #00D4AA; font-size: 12px; font-family: monospace; }
-.tl-hint { margin-left: auto; color: #606266; font-size: 11px; }
+.tl-hint { margin-left: auto; color: #b8d8ef; font-size: 11px; }
 /* [P1-3] 来源图例 (与时间轴块/列表标签同色系) */
-.tl-legend { display: inline-flex; align-items: center; gap: 4px; color: #909399; font-size: 11px; }
+.tl-legend { display: inline-flex; align-items: center; gap: 4px; color: #b8d8ef; font-size: 11px; white-space: nowrap; }
 .tl-legend .lg-dot { display: inline-block; width: 12px; height: 8px; border-radius: 2px; margin: 0 2px 0 8px; }
 .tl-legend .lg-zlm { background: #67c23a; }
 .tl-legend .lg-gb { background: #409eff; }
 /* [P1-1] 常驻时间定位控件行 */
-.tl-seek-row { display: flex; align-items: center; gap: 6px; padding: 2px 2px 4px; }
+.tl-seek-row { display: inline-flex; align-items: center; gap: 4px; padding: 0; flex: 0 0 auto; }
+.tl-seek-time { width: 116px; }
 .tl-seek-time { width: 120px; }
 .tl-canvas-wrap { position: relative; }
 .player-timeline { width: 100%; height: 40px; display: block; cursor: grab; }
@@ -2729,7 +2763,7 @@ onUnmounted(() => {
 }
 .tl-tooltip-time { color: #fff; font-size: 12px; font-family: monospace; }
 .tl-tooltip-info { color: #00D4AA; font-size: 11px; }
-.pc-switch-label { color: #d1d5db; font-size: 12px; }
+.pc-switch-label { color: #00cfff; font-size: 12px; }
 /* ── [P2-2 2026-09-12] 区间选区导出 ── */
 .tl-range-label {
   color: #fadb14; font-size: 11px; font-family: monospace;
@@ -2758,19 +2792,60 @@ onUnmounted(() => {
 .recording-main-content { flex: 1; display: flex; flex-direction: row; gap: 12px; min-width: 0; min-height: 0; height: 100%; overflow-x: auto; }
 /* [FIX tl-narrow 2026-09-12] 窄视口下播放器列曾被右列挤压至 0 宽 (时间轴画不出) → 保底宽度, 溢出走横向滚动 */
 .player-card { flex: 1 1 auto; min-width: 460px; min-height: 0; display: flex; flex-direction: column; }
+.player-card :deep(.el-card__body) { padding: 0; }
 .player-card :deep(.el-card__body) { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-.player-controls { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 12px; background: #111827; }
-.player-controls .el-button { height: 28px; padding: 4px 10px; color: #d1d5db; background: transparent; border-color: transparent; }
-.player-controls .el-button:hover { color: #fff; background: rgba(255,255,255,.12); }
+.player-controls {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    min-height: 42px;
+    padding: 4px 10px;
+    background: #091748;
+    box-sizing: border-box;
+}
+.player-controls .el-button { height: 30px; padding: 4px 10px; color: #00cfff; background: transparent; border-color: transparent; }
+.player-controls .el-button:hover { color: #fff; background: rgba(0,190,255,.18); }
 .player-controls .el-button.is-circle { width: 28px; padding: 0; }
+.pc-icon-btn { width: 32px; height: 32px; padding: 0; border: 0; border-radius: 3px; color: #00cfff; background: transparent; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; font-size: 19px; }
+.pc-icon-btn:hover { color: #fff; background: rgba(0,190,255,.2); }
+.pc-icon-btn:disabled { opacity: .35; cursor: not-allowed; }
+.pc-play-btn {
+    width: 34px; height: 34px;
+    border-radius: 50%;
+    color: #00cfff;
+    /*background: #00cfff;*/
+    font-size: 16px;
+}
+.pc-play-btn:hover {
+    color: #fff; background: rgba(0,190,255,.2);
+}
+.pc-nav-group { gap: 3px; }
+.pc-frame-group { gap: 0; }
 .pc-group { display: flex; align-items: center; gap: 6px; }
-.pc-clock { color: #00D4AA; font-family: monospace; font-size: 14px; user-select: none; white-space: nowrap; }
+.pc-clock { color: #ffae32; background: rgba(0,0,0,.22); border: 1px solid rgba(0,190,255,.35); border-radius: 3px; padding: 5px 12px; min-width: 170px; text-align: center; font-family: monospace; font-size: 13px; user-select: none; white-space: nowrap; }
 .pc-clock-click { cursor: pointer; }
 .pc-clock-click:hover { text-decoration: underline; }
-.speed-btn-group .el-button { min-width: 34px; padding: 3px 7px; color: #cbd5e1; background: #1f2937; border-color: #374151; }
+.speed-btn-group .el-button { min-width: 34px; padding: 3px 7px; color: #d7e8ff; background: #102b72; border-color: #2b5a9c; }
 .speed-btn-group .el-button:hover,
 .speed-btn-group .el-button.is-plain:hover { color: #fff; background: #374151; }
 .speed-btn-group .el-button.is-primary { color: #fff; background: #2563eb; border-color: #2563eb; }
+.speed-select { width: 58px; margin-left: 10px; }
+.speed-select :deep(.el-input__wrapper) { background: transparent; box-shadow: none; padding: 0 4px; }
+.speed-select :deep(.el-select__wrapper),
+.speed-select :deep(.el-select__wrapper:hover),
+.speed-select :deep(.el-select__wrapper.is-focused),
+.speed-select :deep(.el-select__wrapper:focus),
+.speed-select :deep(.el-select__wrapper:focus-visible) {
+  background: transparent !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
+}
+.speed-select :deep(.el-select__suffix) { display: none; }
+.speed-select :deep(.el-input__inner),
+.speed-select :deep(.el-select__selected-item) { color: #00cfff !important; text-align: center; }
+.speed-select :deep(.el-select__caret) { color: #00cfff; }
+.pc-continuous { margin-left: 8px; }
 
 /* AI 智能检索抽屉 */
 .smart-drawer-body { display: flex; flex-direction: column; gap: 12px; }
