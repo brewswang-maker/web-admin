@@ -105,6 +105,7 @@
                     :src-fallbacks="playbackFallbackUrls"
                     :src-format="playerSrcFormat"
                     :src-is-live="playerSrcIsLive"
+                    :show-live-badge="false"
                     :seek-start="queueActive ? queueSeekStart : undefined"
                     :stop-at="queueActive ? queueStopAt : undefined"
                     autoplay :show-controls="true"

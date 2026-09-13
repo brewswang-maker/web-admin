@@ -25,7 +25,7 @@
       <el-button size="small" type="primary" @click="retryPlay" style="margin-top:8px">🔄 重试</el-button>
     </div>
     <!-- LIVE badge -->
-    <div v-if="playing && !loading" class="mini-player__live-badge">
+    <div v-if="showLiveBadge && playing && !loading" class="mini-player__live-badge">
       <span class="mini-player__live-dot" />
       <span>LIVE</span>
     </div>
@@ -91,9 +91,12 @@ const props = withDefaults(defineProps<{
   streamType?: 'main' | 'sub'
   /** 组件是否可见 (v-show 场景下控制是否启动流) */
   visible?: boolean
+  /** 录像回放应关闭live */
+  showLiveBadge?: boolean
 }>(), {
   autoPlay: true,
   muted: true,
+  showLiveBadge: true,
   aspectRatio: '16:9',
   showControls: false,
   skipStartApi: false,
