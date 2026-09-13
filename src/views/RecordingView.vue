@@ -57,6 +57,11 @@ const devices = ref<Device[]>([])
 const selectedDeviceId = ref('')
 const selectedChannelId = ref('')
 const selectedDate = ref(new Date().toISOString().split('T')[0])
+// [REC-UI 2026-09-13 效果图对标] 查询日内起止时间 (默认全天=原行为; 对齐效果图「起止时间」双选择器)
+const queryStartTime = ref('00:00:00')
+const queryEndTime = ref('23:59:59')
+// [REC-UI 2026-09-13] 录像片段列表抽屉 (控制条「列表」按钮打开; 主视图保持自动播放首段, 抽屉仅按需展开)
+const clipDrawerVisible = ref(false)
 const recordings = ref<RecordingSegment[]>([])
 const loading = ref(false)
 const playingUrl = ref('')
@@ -378,7 +383,10 @@ function normalizeDeviceRecording(raw: Record<string, unknown>): RecordingSegmen
   }
 }
 
-async function fetchRecordings() {
+// [FIX p2-autoplay 2026-09-12] 回归修复: 片段列表已去除 → 查询成功后必须自动播放首段
+//   (零人工操作进入播放)。opts.autoPlay 仅由「查询」按钮与无定位目标的告警自动查询
+//   传入; doTimeSeek/告警跳转等自带目标点的链路保持默认 false, 由各自定位逻辑主导。
+async function fetchRecordings(opts?: { autoPlay?: boolean }) {
   if (!selectedDeviceId.value || !selectedChannelId.value || !selectedDate.value) {
     ElMessage.warning('请选择设备、通道和日期')
     return
@@ -386,21 +394,44 @@ async function fetchRecordings() {
   loading.value = true
   try {
     // 使用 POST /api/v1/recordings/query 查询GB28181设备录像
+    // [REC-UI 2026-09-13] 支持日内起止时间范围 (效果图双时间选择器; 默认 00:00:00~23:59:59 全天)
     const { data } = await recordingHttp.post('/query', {
       device_id: selectedDeviceId.value,
       channel_id: selectedChannelId.value,
-      start_time: selectedDate.value + 'T00:00:00',
-      end_time: selectedDate.value + 'T23:59:59',
+      start_time: `${selectedDate.value}T${queryStartTime.value || '00:00:00'}`,
+      end_time: `${selectedDate.value}T${queryEndTime.value || '23:59:59'}`,
     })
     // [FIX rec-snake 2026-09-11] 见 normalizeDeviceRecording 注释: 先映射再入 store
     const rawList: Array<Record<string, unknown>> = data?.data?.recordings || data?.data || []
     recordings.value = rawList.map(normalizeDeviceRecording)
     await nextTick()
     drawTimeline()
+    if (opts?.autoPlay) await autoPlayFirstSegment()
   } catch (e: any) {
     ElMessage.error('查询录像失败: ' + (e.message || ''))
   } finally {
     loading.value = false
+  }
+}
+
+/** [FIX p2-autoplay 2026-09-12] 查询后自动播放首段 (按 start 升序) + 时间轴聚焦
+ *  (仅当首段不在当前视口内时平移, 24h 全览下无副作用) */
+async function autoPlayFirstSegment() {
+  const segs = buildSegs()
+  const first = segs[0]
+  if (!first) return
+  if (first.s < tlView.startMs || first.s > tlView.startMs + tlView.spanMs) {
+    tlView.startMs = clampTlStart(first.s - tlView.spanMs / 2, tlView.spanMs)
+    drawTimeline()
+  }
+  const ok = await playSegment(first.r, { startAtMs: first.s })
+  if (ok) { ElMessage.success(`已自动播放首段 ${fmtClockMs(first.s)} 起的录像`); return }
+  // [FIX p2-autoplay2 2026-09-12] 首段重试后仍不可播 (NVR 归档/会话竞态) → 顺延第二段,
+  //   保证「零人工操作进入播放」不因单段故障而落空
+  const second = segs[1]
+  if (second) {
+    ElMessage.warning('首段暂不可播放，已顺延播放第二段')
+    await playSegment(second.r, { startAtMs: second.s })
   }
 }
 
@@ -620,12 +651,30 @@ async function activateTimeline(clickedMs: number, width: number) {
       const ts = a.timestamp
       const d = new Date(ts)
       // [FIX rec-jump 2026-09-11] 与 jumpToTime 同源换算 (原「当天 0 点秒数」对分段文件越界)
-      if (playingUrl.value && videoRef.value) {
+      // [FIX p2-clock 2026-09-12] 仅当目标时刻被当前播放段覆盖时走段内 seek; 跨段改切段播放 —
+      //   原按「有在播流即 seek」: 首段(00:00)上点 11:51:38 告警 → seconds=42698s,
+      //   无解码 (H265, duration NaN) 时 clamp 失效 → currentTime 巨型值经 timeupdate
+      //   回写污染回放钟 (下段 14:30:25 + 42698s → 跨日 02:22:03), 且画面并不真跳到告警。
+      const curRec = recordings.value.find((r) => r.id === currentRecId.value)
+      const curS = curRec ? Date.parse(curRec.startTime || '') : 0
+      const curE = curRec ? Date.parse(curRec.endTime || '') : 0
+      const covers = playingUrl.value && videoRef.value && curE > curS && ts >= curS && ts <= curE + 5000
+      if (covers) {
         await jumpToTime(ts)
         ElMessage.success(`已跳转到告警: ${a.alarm_type} @ ${d.toLocaleTimeString('zh-CN')}`)
       } else {
-        pendingJumpMs.value = ts
-        ElMessage.info(`已记录跳转目标: ${d.toLocaleString('zh-CN')}，请先加载录像`)
+        // [FIX p2-alarm-click 2026-09-12] 回归修复: 未播放态原仅存 pendingJumpMs 等待
+        //   「先加载录像」— 但点击场景无任何消费者 (死值), 表现为「点击没反应」。
+        //   现直接定位: 解析覆盖告警时刻的段并播放; 60s 内就近段从段起点播; 否则保留提示。
+        const { hit: alarmHit, near: alarmNear } = resolveSegmentAt(ts)
+        const alarmSeg = alarmHit || (alarmNear && Math.abs(alarmNear.s - ts) <= TL_SEEK_NEAR_MS ? alarmNear : undefined)
+        if (alarmSeg) {
+          await playSegment(alarmSeg.r, { startAtMs: alarmHit ? ts : alarmSeg.s })
+          ElMessage.success(`已定位到告警: ${a.alarm_type} @ ${d.toLocaleTimeString('zh-CN')}`)
+        } else {
+          pendingJumpMs.value = ts
+          ElMessage.info(`已记录跳转目标: ${d.toLocaleString('zh-CN')}，请先加载录像`)
+        }
       }
       return
     }
@@ -770,16 +819,23 @@ function drawTimeline() {
     }
   }
 
-  // 当前播放位置指针 (绿色, 视口内)
+  // [REC-UI 2026-09-13 效果图对标] 当前播放位置指针 (橙色高亮 + 顶部指示三角; 原绿色细线辨识度低)
   if (isPlaying.value && currentSegmentStartMs.value) {
     const px = X(currentSegmentStartMs.value + currentTime.value * 1000)
     if (px >= 0 && px <= W) {
-      ctx.strokeStyle = '#00D4AA'
+      ctx.strokeStyle = '#ffa940'
       ctx.lineWidth = 2
       ctx.beginPath()
       ctx.moveTo(px, 6)
       ctx.lineTo(px, H)
       ctx.stroke()
+      ctx.fillStyle = '#ffa940'
+      ctx.beginPath()
+      ctx.moveTo(px - 4, 6)
+      ctx.lineTo(px + 4, 6)
+      ctx.lineTo(px, 13)
+      ctx.closePath()
+      ctx.fill()
     }
   }
 
@@ -799,8 +855,27 @@ function drawTimeline() {
   }
 }
 
-async function playSegment(rec: RecordingSegment, opts?: { startAtMs?: number }) {
+// [FIX p2-session 2026-09-12] GB 回放会话切换 (NVR 同通道单会话): 旧会话未释放时新
+//   /play 恒 5002「Failed to start playback」(真机实证: 场景2 建立会话未 stop → 场景4
+//   定位置播 5002; 手工 stop 后重播即成功)。故每次切换播放源前 best-effort stop 旧会话。
+async function stopGbSession() {
+  const sid = currentSessionId.value
+  if (!sid) return
+  currentSessionId.value = ''
+  try { await recordingHttp.post(`/${encodeURIComponent(sid)}/stop`) } catch { /* best-effort: 会话可能已自释放 */ }
+}
+
+async function playSegment(rec: RecordingSegment, opts?: { startAtMs?: number; _retry?: boolean }): Promise<boolean> {
   try {
+    await stopGbSession()  // [FIX p2-session] 切源前释放旧 GB 回放会话
+    // [FIX p2-clock 2026-09-12] 切段重置回放钟进度: 原残留上一段 currentTime (含异常 seek
+    //   巨型值) 会污染新段 clock 显示 (14:30:25 段起点 + 42698s → 跨日 02:22:03)。
+    currentTime.value = 0
+    // [FIX p2-clock2 2026-09-13] 切段基准同步重置为新段起点: 原仅 startAtMs 路径更新
+    //   currentSegmentStartMs, 普通切段 (上一段/下一段/连播/跨段导航) 沿用旧段基准 →
+    //   回放钟显示错段 (nav 补测实证: 切到 00:23:02 段时钟仍显示 00:00:00)、时间轴
+    //   播放游标与多路同步定位 (currentAbsMs) 错段。startAtMs 场景由 GB 分支随后覆盖。
+    currentSegmentStartMs.value = Date.parse(rec.startTime) || 0
     // [FIX rec-play 2026-09-11] 三处断点修复:
     //   ① rec.id 为 ZLM 磁盘绝对路径 (含 '/'), 拼进 /${id}/play 路由必 404
     //      → 改占位段 '0' (后端处理器仅回显 id, 真实参数全从 body 取);
@@ -820,7 +895,7 @@ async function playSegment(rec: RecordingSegment, opts?: { startAtMs?: number })
       isPaused.value = false
       await nextTick()
       const video = videoRef.value
-      if (!video) return
+      if (!video) return false
       // [FIX rec-url 2026-09-11] 相对路径 /record/... 在 nginx 未配路由时 404 →
       //   候选链: 同源双层优先, 失败 (video error) 回退 8088 双层 (LAN 兜底)
       const cands = recordUrlCandidates(rec.url)
@@ -839,7 +914,7 @@ async function playSegment(rec: RecordingSegment, opts?: { startAtMs?: number })
       if (opts?.startAtMs) await jumpToTime(opts.startAtMs)
       // [P2-1] 主通道定位 → 同步驱动从窗 (无 startAtMs 时对齐段起点)
       void syncTo(opts?.startAtMs || Date.parse(rec.startTime) || 0)
-      return
+      return true
     }
 
     // GB28181 设备录像: 回放流从 start_time 起推; startAtMs 传入时设备直接
@@ -852,11 +927,17 @@ async function playSegment(rec: RecordingSegment, opts?: { startAtMs?: number })
       channel_id: selectedChannelId.value,
       start_time: startIso,
       end_time: rec.endTime,
-    })
+    }, { timeout: 15000 })  // [FIX p2-timeout] NVR 对「仍在归档的新段」回放会挂起, 不再无限等待
     const result = data?.data || data
     if (!result?.urls) {
+      // [FIX p2-retry 2026-09-12] NVR 回放建立竞态 (旧会话刚释放/INVITE 忙):
+      //   首次失败延迟 2.5s 自动重试一次 (真机实证 stop 后重播即成功)
+      if (!opts?._retry) {
+        await new Promise((r) => setTimeout(r, 2500))
+        return playSegment(rec, { ...opts, _retry: true })
+      }
       ElMessage.warning('未获取到播放地址，设备可能不支持回放')
-      return
+      return false
     }
     const urls = result.urls
     currentSessionId.value = result.call_id || ''
@@ -873,7 +954,7 @@ async function playSegment(rec: RecordingSegment, opts?: { startAtMs?: number })
     await nextTick()
 
     const video = videoRef.value
-    if (!video) return
+    if (!video) return false
 
     // 按选定格式播放，不可用时降级
     const fmt = playbackFormat.value
@@ -890,7 +971,7 @@ async function playSegment(rec: RecordingSegment, opts?: { startAtMs?: number })
         if (urlMap[fb]) { playUrl = urlMap[fb]; break }
       }
     }
-    if (!playUrl) { ElMessage.warning('无可用的播放格式'); return }
+    if (!playUrl) { ElMessage.warning('无可用的播放格式'); return false }
 
     // [FIX rec-play 2026-09-11] 原缺: 不写 playingUrl 则 jumpToTime 守卫恒警告返回
     playingUrl.value = playUrl
@@ -902,7 +983,7 @@ async function playSegment(rec: RecordingSegment, opts?: { startAtMs?: number })
     if (playUrl.startsWith('rtsp://') || playUrl.startsWith('rtmp://')) {
       ElMessage.warning({ message: '浏览器不支持 RTSP/RTMP 播放，已切换为 HTTP-FLV', duration: 3000 })
       const fbUrl = urlMap['flv'] || urlMap['hls'] || ''
-      if (!fbUrl) { ElMessage.warning('无可用的播放格式'); return }
+      if (!fbUrl) { ElMessage.warning('无可用的播放格式'); return false }
       playUrl = fbUrl
     }
 
@@ -915,6 +996,9 @@ async function playSegment(rec: RecordingSegment, opts?: { startAtMs?: number })
       player.load()
       player.play()
       player.on(flvjs.Events.ERROR, () => {
+        // [FIX p2-flv-guard 2026-09-12] 旧实例守护: flv.js destroy 后有异步 emit 残留
+        //   (库已如 bug) + 用户已切段时旧回调不得摧毁新实例。
+        if (playerInstance !== player) return
         player.destroy()
         playerInstance = null
         if (urls.hls) attachHls(urls.hls)
@@ -927,10 +1011,17 @@ async function playSegment(rec: RecordingSegment, opts?: { startAtMs?: number })
       video.play().catch(() => {})
     }
   } catch (e: any) {
+    // [FIX p2-retry 2026-09-12] /play 超时 (15s 挂起) /网络异常: 同 5002 竞态重试一次
+    if (!opts?._retry) {
+      await new Promise((r) => setTimeout(r, 2000))
+      return playSegment(rec, { ...opts, _retry: true })
+    }
     ElMessage.error('回放失败: ' + (e.message || ''))
+    return false
   }
   // [P2-1] GB28181 会话链路 (未提前 return) 同样同步从窗
   void syncTo(opts?.startAtMs || Date.parse(rec.startTime) || 0)
+  return true
 }
 
 function attachHls(hlsUrl: string) {
@@ -938,13 +1029,20 @@ function attachHls(hlsUrl: string) {
   if (!video) return
   if (Hls.isSupported()) {
     const hls = new Hls({ enableWorker: true, maxBufferLength: 30 })
+    // [FIX p2-hls-guard 2026-09-12] 重试上限: H265 等解码不兼容触发 fatal MEDIA_ERROR 时
+    //   原无限 recoverMediaError → 持续 playerError / MSE 反复重建; 现每类 fatal 上限 2 次,
+    //   超限销毁停止重试 (保留可诊断最终态, 用户可切段/切格式)。
+    let netRetries = 0, mediaRetries = 0
     hls.loadSource(hlsUrl)
     hls.attachMedia(video)
     hls.on(Hls.Events.MANIFEST_PARSED, () => video.play().catch(() => {}))
     hls.on(Hls.Events.ERROR, (_e, data) => {
-      if (data.fatal) {
-        if (data.type === Hls.ErrorTypes.NETWORK_ERROR) hls.startLoad()
-        else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) hls.recoverMediaError()
+      if (!data.fatal) return
+      if (data.type === Hls.ErrorTypes.NETWORK_ERROR && netRetries < 2) { netRetries++; hls.startLoad() }
+      else if (data.type === Hls.ErrorTypes.MEDIA_ERROR && mediaRetries < 2) { mediaRetries++; hls.recoverMediaError() }
+      else {
+        hls.destroy()
+        if (playerInstance === hls) playerInstance = null
       }
     })
     playerInstance = hls
@@ -1013,6 +1111,32 @@ function navSegment(dir: -1 | 1) {
 function playPrevSegment() { navSegment(-1) }
 function playNextSegment() { navSegment(1) }
 
+/** [REC-UI 2026-09-13 效果图对标] 快退/快进(±5s): 目标=当前绝对时刻±N秒, 复用时间轴点击链路
+ *  (命中当前段 → jumpToTime 段内精准 seek; 跨段/空档 → resolveSegmentAt 切段播放) */
+async function seekBy(deltaSec: number) {
+  const cur = currentAbsMs()
+  if (!cur) {
+    ElMessage.info('请先播放录像')
+    return
+  }
+  const w = canvasRef.value?.getBoundingClientRect().width || 1200
+  await activateTimeline(cur + deltaSec * 1000, w)
+}
+
+/** [REC-UI 2026-09-13] 片段抽屉选段 → 从段起点播放并收起抽屉 (复用 playSegment 全链路) */
+async function onClipPick(rec: RecordingSegment) {
+  clipDrawerVisible.value = false
+  await playSegment(rec, { startAtMs: Date.parse(rec.startTime) || 0 })
+}
+
+/** [REC-UI 2026-09-13] 片段时长标签 (抽屉列表) */
+function clipDurLabel(rec: RecordingSegment): string {
+  const s = (Date.parse(rec.endTime || '') - Date.parse(rec.startTime || '')) / 1000
+  if (!isFinite(s) || s <= 0) return '--'
+  const m = Math.floor(s / 60)
+  return m >= 60 ? `${Math.floor(m / 60)}h${m % 60}m` : `${m}m${Math.round(s % 60)}s`
+}
+
 /** [P0-5] 跳当日第一段/最后一段起点 (对齐 Milestone「数据库第一个/最后一个片段」) */
 function navToEdge(edge: 'first' | 'last') {
   const list = buildSegs()
@@ -1058,7 +1182,7 @@ async function batchDownload() {
 /** 设计图查询按钮: 按当前源分流 (设备录像 / 本地录像) */
 async function onQueryClick() {
   if (recordingSource.value === 'local') await fetchLocalRecordings()
-  else await fetchRecordings()
+  else await fetchRecordings({ autoPlay: true })  // [FIX p2-autoplay] 查询即自动播放首段
 }
 
 async function togglePause() {
@@ -1379,6 +1503,9 @@ function onLoadedMetadata() {
   const video = videoRef.value
   if (!video) return
   duration.value = isFinite(video.duration) ? video.duration : 0
+  // [FIX p2-speed 2026-09-12] 倍速保持: H265 流触发 flv.js demux 错误 → MSE 重建 /
+  //   flv→hls 切换后 playbackRate 被重置回 1 (真机实测), 元数据就绪时重新应用当前档位。
+  if (video.playbackRate !== playbackSpeed.value) video.playbackRate = playbackSpeed.value
 }
 function onTimeUpdate() {
   const video = videoRef.value
@@ -1858,7 +1985,8 @@ async function autoFetchRecordingsIfNeeded() {
 
   autoFetchTriggered.value = true
   ElMessage.info('正在自动查询告警时间段的录像...')
-  await fetchRecordings()
+  // [FIX p2-autoplay] 无定位目标 (无 time 参数) 时同样自动播首段; 有目标则维持定位链主导
+  await fetchRecordings({ autoPlay: !pendingJumpMs.value })
   // 如果有跳转时间，等录像加载后尝试定位
   if (pendingJumpMs.value) {
     await nextTick()
@@ -1911,7 +2039,15 @@ async function jumpToTime(ms: number) {
   if (currentSegmentStartMs.value > 0) {
     seconds = (ms - currentSegmentStartMs.value) / 1000
     if (seconds < 0) seconds = 0
-    if (duration.value > 0 && seconds > duration.value) seconds = Math.max(0, duration.value - 1)
+    // [FIX p2-clock 2026-09-12] 原仅按 video.duration clamp; H265 无解码时 duration 恒 NaN
+    //   → 跨段强 seek 的巨型 seconds (如 42698s) 直接写入 currentTime 并经 timeupdate
+    //   回写 currentTime ref, 污染回放钟。补段记录时长作第二道界 (超出则钳至段尾)。
+    const curRec = recordings.value.find((r) => r.id === currentRecId.value)
+    const segLenS = curRec
+      ? (Date.parse(curRec.endTime || '') - Date.parse(curRec.startTime || '')) / 1000
+      : 0
+    const limitS = duration.value > 0 ? duration.value : segLenS
+    if (limitS > 0 && seconds > limitS) seconds = Math.max(0, limitS - 1)
   } else {
     // 兜底: 无段起点基准 (历史链路), 保持当天秒数
     const dayStart = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0).getTime()
@@ -2206,6 +2342,12 @@ onUnmounted(() => {
             <el-option label="设备存储" value="gb28181" />
           </el-select>
           <el-date-picker v-model="selectedDate" type="date" value-format="YYYY-MM-DD" placeholder="选择日期" class="qp-block date-block" />
+          <!-- [REC-UI 2026-09-13 效果图对标] 起止时间双选择器 (日内范围; 默认全天, 可缩至任一时段查询) -->
+          <div class="qp-time-range">
+            <el-time-picker v-model="queryStartTime" value-format="HH:mm:ss" format="HH:mm:ss" placeholder="起始时间" class="qp-time-item" />
+            <span class="qp-time-sep">~</span>
+            <el-time-picker v-model="queryEndTime" value-format="HH:mm:ss" format="HH:mm:ss" placeholder="结束时间" class="qp-time-item" />
+          </div>
           <el-button type="primary" class="qp-block-btn" :loading="loading || localLoading" @click="onQueryClick">查询</el-button>
           <el-button class="qp-block-btn" :disabled="recordingSource !== 'device' || !filteredRecordings.length" @click="batchDownload">录像下载</el-button>
           <div class="qp-links">
@@ -2339,16 +2481,25 @@ onUnmounted(() => {
             </div>
             <!-- 控制条 (设计图: 上一段/播放暂停/下一段 + 回放钟 + 倍速 + 停止/全屏) -->
             <!-- v-if="isPlaying" -->
+            <!-- [REC-UI 2026-09-13 效果图对标] 控制条三簇: 左(列表/音量/截图) 中(段导航+退进+回放钟+连播/倍速) 右(停止/全屏) -->
             <div  class="player-controls">
+              <div class="pc-group pc-media-group">
+                <button class="pc-icon-btn" title="录像片段列表" @click="clipDrawerVisible = true"><span class="pc-list-glyph">☰</span></button>
+                <button class="pc-icon-btn" :title="muted ? '打开声音' : '静音'" @click="toggleMute"><i class="iconfont1" :class="muted ? 'icon1-a-shengyinguan' : 'icon1-a-shengyinkai'" /></button>
+                <button class="pc-icon-btn" title="截图" @click="takeSnapshot"><i class="iconfont1 icon1-zhuapai" /></button>
+              </div>
+              <div class="pc-group pc-center-group">
               <div class="pc-group pc-nav-group">
                 <button class="pc-icon-btn" title="上一段" @click="playPrevSegment"><i class="iconfont1 icon1-xiayige-copy" /></button>
                 <button class="pc-icon-btn pc-play-btn" :title="isPaused ? '播放' : '暂停'" @click="togglePause"><i class="iconfont1" :class="isPaused ? 'icon1-bofang1' : 'icon1-zanting-copy'" /></button>
                 <button class="pc-icon-btn" title="下一段" @click="playNextSegment"><i class="iconfont1 icon1-xiayige" /></button>
               </div>
               <div class="pc-group pc-frame-group">
+                <button class="pc-icon-btn" title="后退 5 秒" @click="seekBy(-5)"><i class="iconfont1 icon1-houtui" /></button>
                 <button class="pc-icon-btn" :disabled="!!currentSessionId" title="上一帧" @click="stepFrame(-1)"><i class="iconfont1 icon1-xiayige-copy" /></button>
                 <div class="pc-clock pc-clock-click" title="回放钟 (段起点+进度) — 点击打开按时间点观看" @click="openTimeSeek">{{ playbackClockLabel }}</div>
                 <button class="pc-icon-btn" :disabled="!!currentSessionId" title="下一帧" @click="stepFrame(1)"><i class="iconfont1 icon1-xiayige" /></button>
+                <button class="pc-icon-btn" title="前进 5 秒" @click="seekBy(5)"><i class="iconfont1 icon1-qianjin" /></button>
                 <div class="pc-group pc-continuous" title="段播完自动衔接相邻下一段 (间隙 ≤ 30s)">
                   <el-switch v-model="continuousPlay" size="small" />
                   <span class="pc-switch-label">连播</span>
@@ -2359,11 +2510,8 @@ onUnmounted(() => {
                   </el-select>
                 </div>
               </div>
-
-
+              </div>
               <div class="pc-group">
-                <!-- <button class="pc-icon-btn" :title="muted ? '打开声音' : '静音'" @click="toggleMute"><i class="iconfont1" :class="muted ? 'icon1-a-shengyinguan' : 'icon1-a-shengyinkai'" /></button>
-                <button class="pc-icon-btn" title="截图" @click="takeSnapshot"><i class="iconfont1 icon1-zhuapai" /></button> -->
                 <button class="pc-icon-btn" title="停止" @click="stopPlay"><i class="iconfont1 icon1-tingzhi" /></button>
                 <button class="pc-icon-btn" :title="isFullscreen ? '退出全屏' : '全屏'" @click="toggleFullscreen"><i class="iconfont1" :class="isFullscreen ? 'icon1-suoxiao1' : 'icon1-a-9Equanping'" /></button>
               </div>
@@ -2527,6 +2675,24 @@ onUnmounted(() => {
         <el-button type="primary" :loading="timeSeekLoading" @click="doTimeSeek">定位播放</el-button>
       </template>
     </el-dialog>
+
+    <!-- [REC-UI 2026-09-13 效果图对标] 录像片段列表抽屉 (控制条「列表」按钮打开;
+         作为自动连播/自动播放首段的主动选段补充入口, 不占主视野) -->
+    <el-drawer v-model="clipDrawerVisible" title="录像片段列表" :size="540" direction="rtl">
+      <div class="clip-list">
+        <el-empty v-if="!filteredRecordings.length" description="暂无可选片段 (请先在左侧查询录像)" :image-size="60" />
+        <div
+          v-for="(rec, i) in filteredRecordings" :key="rec.id"
+          class="clip-item" :class="{ active: rec.id === currentRecId }"
+          @click="onClipPick(rec)"
+        >
+          <span class="clip-idx">{{ i + 1 }}</span>
+          <span class="clip-src" :class="rec.source === 'zlm' ? 'clip-src-zlm' : 'clip-src-gb'">{{ rec.source === 'zlm' ? '中心储存' : '设备存储' }}</span>
+          <span class="clip-range">{{ (rec.startTime || '').replace('T', ' ').slice(0, 19) }} ~ {{ (rec.endTime || '').replace('T', ' ').slice(11, 19) }}</span>
+          <span class="clip-dur">{{ clipDurLabel(rec) }}</span>
+        </div>
+      </div>
+    </el-drawer>
 
     <!-- [REC-FUSE 2026-09-11] AI 智能检索常驻抽屉 (原 Tab 面板迁入; 结果一键「跳转到该时刻回放」复用 playSmartResult 融合链路) -->
     <el-drawer v-model="smartDrawerVisible" title="AI 智能检索" :size="720" direction="rtl">
@@ -2846,6 +3012,28 @@ onUnmounted(() => {
 .speed-select :deep(.el-select__selected-item) { color: #00cfff !important; text-align: center;width: 20px; }
 .speed-select :deep(.el-select__caret) { color: #00cfff; }
 .pc-continuous { margin-left: 8px; }
+
+/* [REC-UI 2026-09-13 效果图对标] 控制条三簇: 左功能簇/中播放簇/右全屏簇 */
+.pc-media-group { gap: 2px; padding-right: 8px; border-right: 1px solid rgba(0,190,255,.18); }
+.pc-center-group { gap: 12px; }
+.pc-list-glyph { font-size: 17px; line-height: 1; font-family: inherit; }
+
+/* [REC-UI 2026-09-13] 查询面板起止时间双选择器 (日内范围) */
+.qp-time-range { display: flex; align-items: center; gap: 4px; width: 100%; margin-bottom: 10px; }
+.qp-time-item { flex: 1; min-width: 0; }
+.qp-time-sep { flex: 0 0 auto; color: var(--el-text-color-secondary); }
+
+/* [REC-UI 2026-09-13] 录像片段列表抽屉 */
+.clip-list { display: flex; flex-direction: column; gap: 4px; }
+.clip-item { display: flex; align-items: center; gap: 8px; padding: 7px 10px; border-radius: 4px; cursor: pointer; background: var(--el-fill-color-light); font-size: 12px; }
+.clip-item:hover { background: var(--el-fill-color); }
+.clip-item.active { outline: 1px solid var(--el-color-primary); background: var(--el-color-primary-light-9); }
+.clip-idx { width: 26px; color: var(--el-text-color-secondary); text-align: right; }
+.clip-src { flex: 0 0 56px; text-align: center; border-radius: 3px; font-size: 11px; line-height: 17px; }
+.clip-src-zlm { color: #67c23a; background: rgba(103,194,58,.12); }
+.clip-src-gb { color: #409eff; background: rgba(64,158,255,.12); }
+.clip-range { flex: 1; font-family: monospace; color: var(--el-text-color-primary); }
+.clip-dur { flex: 0 0 52px; text-align: right; color: var(--el-text-color-secondary); }
 
 /* AI 智能检索抽屉 */
 .smart-drawer-body { display: flex; flex-direction: column; gap: 12px; }

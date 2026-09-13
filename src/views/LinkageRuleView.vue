@@ -82,13 +82,13 @@
           <el-button type="info" @click="toggleRuleStats" :loading="ruleStatsLoading" title="查看规则触发统计">
             <el-icon><DataLine /></el-icon>规则统计
           </el-button>
-          <!-- [vp8 双模式 / REVERT 2026-09-02] 新建默认开选择抽屉 (模板/高级两入口,
-               'custom' 高频字段子表单已移除); 高级新建/模板库走下拉 -->
-          <el-dropdown split-button type="primary" class="new-rule-split" @click="openNewRuleDrawer" @command="onNewCommand">
+          <!-- [P11-CONVERGE 2026-09-13] 新建入口归一: 主体=简易直达 (vp6 纯净单页,
+               原 choice 三卡页随新建链下线 — 「简易模式」卡真实形态即本直达,
+               「高级/模板库」两卡由下拉承接); SimpleRuleDrawer 挂载保留服务编辑链 -->
+          <el-dropdown split-button type="primary" class="new-rule-split" @click="onNewRuleSimple" @command="onNewCommand">
             <span class="new-rule-label"><el-icon><Plus /></el-icon>新建规则</span>
             <template #dropdown>
               <el-dropdown-menu>
-                <el-dropdown-item command="simple">简易创建（推荐）</el-dropdown-item>
                 <el-dropdown-item command="advanced">高级新建（专业模式）</el-dropdown-item>
                 <el-dropdown-item command="template" divided>从模板库创建</el-dropdown-item>
               </el-dropdown-menu>
@@ -249,16 +249,11 @@
     <el-drawer v-model="drawerVisible" :title="editingRule ? '编辑联动规则' : '新建联动规则'" size="520px" direction="rtl" :close-on-click-modal="false" destroy-on-close append-to-body>
       <div class="editor-body">
         <el-form :model="form" label-position="top" size="default" :rules="formRules" ref="formRef">
-          <!-- [vp7 向导 2026-09-01] 双形态切换: el-steps 分步向导 / 全览 (原单页表单)
-               [vp6-SIMPLE 2026-09-02] 简易模式入口 = vp6 纯净表单: 无向导条无 AI 增强无确认预览 -->
-          <div v-if="!simpleEntryMode" class="wizard-bar">
-            <el-steps :active="wizardStep" simple style="flex: 1; min-width: 0">
-              <el-step v-for="(s, i) in WIZARD_STEPS" :key="s" :title="s" style="cursor: pointer" @click="wizardStep = i" />
-            </el-steps>
-            <el-switch v-model="wizardMode" active-text="分步" inactive-text="全览" size="small" style="flex-shrink: 0" />
-          </div>
+          <!-- [UI-CONVERGE 2026-09-12 P10] el-steps 分步向导与「分步/全览」开关下线:
+               wizardMode 默认已全览 (2026-09-03 用户反馈), 向导残留; 抽屉保留
+               基本信息/触发条件/动作编排 三分区锚点单页滚动 -->
 
-          <div v-show="sectionVisible(0)">
+          <div>
           <!-- 规则名称 + 启用开关 -->
           <el-row :gutter="12">
             <el-col :span="18">
@@ -272,9 +267,10 @@
               </el-form-item>
             </el-col>
           </el-row>
-          <el-form-item label="描述">
-            <el-input v-model="form.description" placeholder="可选，规则的简要说明" />
-          </el-form-item>
+          <!-- [UI-CONVERGE 2026-09-13 P8] 描述/标签收进「冲突处理与高级配置」折叠区:
+               85/83 条有值全部 22 内置模板批量写入、手写率≈0, 主列表无描述列、
+               标签筛选无消费 (grep 0 命中)、引擎判定链不消费 tags (§2.7 普查);
+               form.description/form.tags 数据链 (模板应用/回显/序列化) 全保留 -->
           <el-row :gutter="16">
             <el-col :span="12">
               <el-form-item label="优先级 (1-100)" prop="priority">
@@ -287,15 +283,20 @@
               </el-form-item>
             </el-col>
           </el-row>
-          <el-form-item label="标签">
-            <el-select v-model="form.tags" multiple filterable allow-create default-first-option placeholder="输入标签后回车" style="width: 100%">
-              <el-option v-for="tag in allTags" :key="tag" :label="tag" :value="tag" />
-            </el-select>
-          </el-form-item>
 
           <!-- [FIX P1-1] 冲突处理与高级配置 -->
           <el-collapse v-model="advancedCollapse" style="margin-bottom: 12px">
             <el-collapse-item title="冲突处理与高级配置" name="advanced">
+              <!-- [UI-CONVERGE 2026-09-13 P8] 描述/标签自基本信息区收拢至此 (输入保留,
+                   零消费字段不再占首屏; 编辑有值自动展开见 L3257) -->
+              <el-form-item label="描述">
+                <el-input v-model="form.description" placeholder="可选，规则的简要说明" />
+              </el-form-item>
+              <el-form-item label="标签">
+                <el-select v-model="form.tags" multiple filterable allow-create default-first-option placeholder="输入标签后回车" style="width: 100%">
+                  <el-option v-for="tag in allTags" :key="tag" :label="tag" :value="tag" />
+                </el-select>
+              </el-form-item>
               <el-row :gutter="16">
                 <el-col :span="12">
                   <el-form-item label="互斥组">
@@ -356,23 +357,15 @@
           </el-collapse>
           </div>
 
-          <div v-show="sectionVisible(1)">
-          <el-divider content-position="left">
-            触发条件
-            <el-switch v-model="advancedConditionMode" size="small" active-text="高级" inactive-text="普通"
-              style="margin-left: 12px; vertical-align: middle" />
-          </el-divider>
+          <div>
+          <el-divider content-position="left">触发条件</el-divider>
 
-          <!-- 高级条件模式: 可视化树编辑器 -->
-          <div v-if="advancedConditionMode" style="margin-bottom: 12px">
-            <el-alert type="info" :closable="false" style="margin-bottom: 8px">
-              使用可视化树编辑器组合 AND/OR/NOT 条件。支持时间、空间、事件源、合并条件叶子节点。
-            </el-alert>
-            <ConditionTreeEditor v-model="conditionTreeValue" />
-          </div>
+          <!-- [UI-CONVERGE 2026-09-12 P6] 「普通/高级」条件树入口下线: condition_tree
+               0/89 使用、业界无 per-rule 条件树对应物 (Axis 多条件 AND 在应用内、
+               Milestone 规则线性); 回显/序列化链保留 (存量带树规则原样往返零丢失) -->
 
-          <!-- 普通条件卡片 -->
-          <div v-for="cond in conditionDefs" :key="cond.type" v-show="condStepVisible(cond.type)" class="condition-card" :class="{ 'is-enabled': form.conditions[cond.type].enabled }">
+          <!-- 条件卡片 -->
+          <div v-for="cond in conditionDefs" :key="cond.type" class="condition-card" :class="{ 'is-enabled': form.conditions[cond.type].enabled }">
             <!-- [FIX 2026-09-02] 单开关重构 (对标海康 iVMS/宇视 NVR 联动规则编辑器):
                  ① 去重: 仅保留头部开关 (原 cond-body 顶部 cond-enable-bar 重复开关已删)
                  ② 事件类型 = 必备核心条件, 无开关无折叠箭头, 条件体常显
@@ -414,12 +407,9 @@
                     <el-checkbox v-for="d in weekdays" :key="d.value" :label="d.label" :value="d.value" size="small" />
                   </el-checkbox-group>
                 </div>
-                <div class="monthdays">
-                  <span class="cond-sub-label">每月日期</span>
-                  <el-select v-model="form.conditions.time.config.monthdays" multiple collapse-tags collapse-tags-tooltip placeholder="不选=不限" size="small" style="width: 100%">
-                    <el-option v-for="d in monthdayOptions" :key="d.value" :label="d.label" :value="d.value" />
-                  </el-select>
-                </div>
+                <!-- [UI-CONVERGE 2026-09-12 P5] 「每月日期」下拉下线: monthdays 0/89 使用,
+                     业界时间条件均为「时段+星期」两级 (华为 4 计划模板=快捷填充, 无月日期/
+                     节假日独立字段); time_cond.monthdays 序列化/回显保留 (存量零丢失) -->
                 <!-- [STAGE1 P1-2 2026-09-10] 布防时段 4 模板 chip: 华为 ivm_02_0043
                      口径 (全天候/工作日/周末/工作时间), 点击仅改 draft, 不直接保存;
                      与后端 LinkageEngine 判定逻辑解耦, 不触碰 .cpp 判定代码 -->
@@ -467,34 +457,47 @@
                     </el-alert>
                   </div>
                 </el-form-item>
-                <el-form-item label="物理位置" label-position="top" class="cond-form-item">
-                  <!-- [FIX area-cascade-label 2026-09-11] 扁平位置列表 → 「区域 (N 台设备)→设备」
-                       树形单选 (对标 ChannelView/LiveView 区域→设备主体范式): 区域节点 value=
-                       区域 id (引擎按 resolved 快照展开, 语义与旧下拉一致), 设备节点 value=设备 id
-                       (旧设备位置 fallback 语义); 旧版位置实体/老设备 id 不在树中 → legacy
-                       disabled 节点只读回显 (同 legacyPointEcho 模式), 不裸显未知 id。
-                       保存链不变: spatial_cond.location_id = cleanLocation(config.location)。 -->
-                  <el-tree-select
-                    v-model="form.conditions.region.config.location"
-                    :data="locationTreeData"
-                    node-key="value"
-                    :props="{ label: 'label', children: 'children' }"
-                    check-on-click-node
-                    clearable filterable
-                    placeholder="选择安保区域或设备"
-                    style="width: 100%"
-                    @focus="loadDeviceGroups"
-                  />
-                </el-form-item>
-                <el-form-item label="关联通道(快照背景)" label-position="top" class="cond-form-item">
-                  <!-- [FIX area-cascade-label 2026-09-11] 池收窄 (症状 2): 区域已选时仅列
-                       「区域 resolved 摄像头 ∪ 绑定通道中摄像头」+ 当前值池外 fallback,
-                       无关通道不再淹没; label 升级「通道名 (设备名)」 (症状 3) —
-                       老规则 20 位串从 sc.location_id 回填时也走目录反查, 不裸显数字 -->
-                  <el-select v-model="form.conditions.region.config.channelId" placeholder="选择通道加载快照" clearable filterable style="width: 100%" @change="onRegionChannelChange">
-                    <el-option v-for="ch in snapshotChannelOptions" :key="ch.value" :label="ch.label" :value="ch.value" />
-                    <template #empty><span class="text-secondary">暂无摄像头通道</span></template>
-                  </el-select>
+                <!-- [UI-CONVERGE 2026-09-12 P2] 空间卡「物理位置」tree-select 下线:
+                     location_id 双入口收敛 (同字段曾由空间卡 config.location 与位置卡
+                     config.point 双编辑, 保存链静默覆盖); 业界物理位置归属地图/资产层
+                     (HikCentral 地图、华为楼层联动), 不进规则触发条件 — 位置条件卡片
+                     为唯一管辖入口。region.config.location 序列化/ui 快照往返保留。 -->
+                <!-- [AREA-TREE 2026-09-13] 「区域 / 设备 / 通道」三级复选树 (用户指定:
+                     按告警中心 AlarmDeviceTreePanel 同款方式选择, 全站统一):
+                     数据源同源 (utils/areaTree 组区域树 + 本页通道池按设备挂叶),
+                     勾选语义对齐告警中心 — 勾区域 = 子树全部通道 / 勾设备 = 该设备
+                     全部通道 / 勾通道 = 仅该通道 (show-checkbox 级联+半选)。
+                     v-model 契约不变 (spatial_cond.bound_channel_ids 通道 id 集),
+                     树勾选经 onBoundTreeCheck 展开写入并走原画板底图派生链;
+                     未归属区域的设备/通道挂虚拟根兜底 (全量可勾不留死角)。
+                     替代同日早版 DEV-FLAT 设备分组多选下拉。 -->
+                <el-form-item label="设备 / 通道" label-position="top" class="cond-form-item">
+                  <div class="bound-ch-tree">
+                    <div class="bound-ch-tree__head">
+                      <span class="bound-ch-tree__title">区域 / 设备 / 通道</span>
+                      <el-button v-if="boundChannelDraft.length" link size="small" type="danger" @click="clearBoundChannels">一键清除</el-button>
+                    </div>
+                    <div class="bound-ch-tree__body">
+                      <el-tree
+                        ref="boundTreeRef"
+                        :key="boundTreeKey"
+                        :data="boundChannelTreeData"
+                        node-key="key"
+                        :props="{ label: 'label', children: 'children' }"
+                        show-checkbox
+                        default-expand-all
+                        :expand-on-click-node="false"
+                        :default-checked-keys="boundChannelDraft"
+                        empty-text="暂无可选通道 (通道池未就绪或无设备接入)"
+                        @check="onBoundTreeCheck"
+                      />
+                    </div>
+                  </div>
+                  <!-- [DEV-FILTER 2026-09-13] 收窄透明化 (用户诉求「通道列表只有 1 个」):
+                       收窄是圈定语义而非 bug, 但 UI 无解释形似故障 — 动态显示收窄来源与
+                       解除路径 (历史位置残留可一键恢复全量, 区域收窄指路位置条件卡) -->
+                  <p v-if="boundNarrowHint" class="cond-hint" style="margin-top:2px; color: var(--el-color-warning)">{{ boundNarrowHint }}<el-button v-if="locationNarrowActive" size="small" text type="primary" style="margin-left:6px" @click="clearRegionLocationNarrow">恢复全量</el-button></p>
+                  <p class="cond-hint" style="margin-top:4px">圈定触发通道（空间/位置条件启用时同步作为事件源通道 — 无规则的通道不启动推理，省 TPU 算力）；画板底图自动取首个摄像头通道，勾选 ≥2 路出现「绘制通道」页签（可逐通道绘制）。</p>
                 </el-form-item>
                 <el-form-item label="ROI绘制区域" label-position="top" class="cond-form-item">
                   <!-- [FIX 2026-09-02] 形状范式 (对标海康 iVMS/大华 DSS 联动规则编辑器);
@@ -534,6 +537,14 @@
                         : '点击通道名开始逐通道绘制 (未进入 = 所有绑定通道共用同一份形状)' }}
                     </span>
                   </div>
+                  <!-- [FE-BOUNDARY 2026-09-12] 双入口边界厘清: 通道圈定 (空间条件 bound∪area / 位置条件级联)
+                       与逐通道形状 (本画板) 是两个维度; 触发 = 两层 AND。
+                       实测证据 (.tmp/bound_area_probe_result.log, 真机 3d8e1223e5):
+                       {area+勾选c1} 对区域内未勾选 c2/c3 的 spatial 仍 =true → area∪bound 并集,
+                       勾选不缩窄区域; 纯绑定 (area 空) 对区域外通道 =false → 收窄路径成立。 -->
+                  <p class="cond-hint" style="margin-top:4px">
+                    触发双层判定: ①通道圈定（绑定通道 ∪ 安保区域[位置条件]，并集）②本画板形状（逐通道模式下仅对已绘通道生效）。
+                  </p>
                   <RoiPolygonEditor
                     v-model="form.conditions.region.config.roiPolygon"
                     :background-image-url="roiBackgroundUrl"
@@ -592,7 +603,7 @@
                       :saved="displayPassageways"
                       @confirm="onPassagewayConfirm"
                     />
-                    <el-empty v-else description="请先选择上面的「关联通道(快照背景)」" :image-size="60" />
+                    <el-empty v-else description="请先在「绑定通道」勾选通道" :image-size="60" />
                     <div v-if="displayPassageways.length" class="pw-list">
                       <div v-for="pw in displayPassageways" :key="pw.id" class="pw-list__item">
                         <span>
@@ -615,27 +626,10 @@
                     </div>
                   </div>
                 </el-form-item>
-                <el-form-item label="安保区域" label-position="top" class="cond-form-item">
-                  <!-- [P1 2026-09-10 更名] 远程区域列表 (替代旧硬编码); 选中后展示覆盖设备/通道数;
-                       引擎按区域 resolved 快照展开匹配 (任一通道命中即触发) -->
-                  <el-select v-model="form.conditions.region.config.group" placeholder="选择安保区域 (按区域圈定触发范围)" clearable filterable style="width: 100%" @focus="loadDeviceGroups">
-                    <el-option v-for="g in deviceGroupOptions" :key="g.value" :label="g.label" :value="g.value" />
-                    <template #empty><span class="text-secondary">暂无区域（可在安保区域页创建）</span></template>
-                  </el-select>
-                  <div v-if="selectedGroupInfo" class="cond-hint" style="margin-top:4px">
-                    ✅ 区域「{{ selectedGroupInfo.name }}」覆盖 {{ selectedGroupInfo.device_count ?? selectedGroupInfo.device_ids.length }} 台设备 / {{ selectedGroupInfo.channel_count ?? selectedGroupInfo.resolved_channel_ids.length }} 路通道；事件来自其中任一通道即按本规则空间判定触发。
-                  </div>
-                </el-form-item>
-                <el-form-item label="绑定通道（多选，显式圈定）" label-position="top" class="cond-form-item">
-                  <!-- [vp9 2026-09-01] spatial_cond.bound_channel_ids: 与分组/ROI/绊线共同决定触发范围;
-                       引擎侧任一命中即通过 (与 source_cond 取并集, 避免规则静默) -->
-                  <el-select v-model="boundChannelDraft" multiple filterable clearable collapse-tags collapse-tags-tooltip placeholder="按设备逐个勾选通道 (不选 = 不按通道收窄)" style="width: 100%" @change="onBoundChannelsChange">
-                    <!-- [AREA-CASCADE 2026-09-11] 友好 label (通道名 (设备名)/·IP) + 区域已选时收窄至
-                         resolved 通道 ∪ 已绑通道; 池外已选值注入 fallback, tag/tooltip 永远可读 -->
-                    <el-option v-for="ch in boundChannelOptions" :key="ch.value" :label="ch.label" :value="ch.value" />
-                  </el-select>
-                  <p class="cond-hint" style="margin-top:4px">对标 NVIDIA sensor-scene 显式绑定：勾选后仅这些通道的事件进入本规则的 ROI/绊线判定；留空则由事件源与分组决定。</p>
-                </el-form-item>
+                <!-- [UI-CONVERGE 2026-09-12] 空间卡片「安保区域」下拉下线 (与位置条件双入口重复):
+                     area_id 唯一 UI 入口收敛到位置卡片级联; 本键 (region.config.group) 保留
+                     序列化读 (L4249 rc.group || cascade) 与回显兼容 (sc.area_id →
+                     areaCascadeAreaId), 存量值不丢、可见性由位置卡片承接。 -->
               </template>
 
               <!-- 位置条件 -->
@@ -670,7 +664,7 @@
                       </span>
                     </template>
                   </el-tree>
-                  <p class="cond-hint" style="margin-top:4px">不勾任何通道 = 整区域生效 (按区域 resolved 快照展开)；勾选后仅所选设备/通道的事件进入本规则判定。</p>
+                  <p class="cond-hint" style="margin-top:4px">不勾任何通道 = 整区域生效 (按区域 resolved 快照展开)；勾选通道并入范围、与区域取并集（因勾选恒在区域内，勾选不会缩小范围）。如需仅部分通道触发，请改用「区域」页签：不选安保区域 + 在「绑定通道」中精确勾选。</p>
                 </el-form-item>
                 <div v-if="selectedLocationChannels" class="cond-hint" style="margin-top:2px; color: var(--el-color-success)">
                   ✅ 区域「{{ selectedLocationChannels.areaName }}」共 {{ selectedLocationChannels.devices.length }} 台设备 / {{ selectedLocationChannels.totalChannels }} 路通道<template v-if="areaCascadeChannelIds.size">；已显式圈定 {{ areaCascadeChannelIds.size }} 路</template>。
@@ -735,66 +729,23 @@
                 </el-row>
               </template>
 
-              <!-- 事件源 -->
-              <template v-if="cond.type === 'eventSource'">
-                <p class="cond-hint">选择通道 (留空=全部)</p>
-                <el-checkbox-group v-model="form.conditions.eventSource.config.channels" class="channel-grid" v-loading="optionsLoading">
-                  <template v-if="channelOptionsDynamic.length > 0">
-                    <el-checkbox v-for="ch in channelOptionsDynamic" :key="ch.value" :label="ch.label" :value="ch.value" size="small" />
-                  </template>
-                  <template v-else>
-                    <span class="text-secondary" style="padding: 8px 0; display: inline-block;">暂无通道数据，请先添加通道或检查后端连接</span>
-                  </template>
-                </el-checkbox-group>
-                <!-- [FLOOR-MAP 2026-09-03] 适用平面图多选: 纯可视化绑定 (告警弹窗
-                     地图 Tab 消费), 不参与触发匹配; 保存走 source_cond.map_ids 透传;
-                     [2026-09-04] scene_tag 分组展示 (大华 DSS9000 同场景包对标) -->
-                <el-form-item label="适用平面图" label-position="top" class="cond-form-item" style="margin-top: 8px">
-                  <el-select v-model="form.mapIds" multiple collapse-tags collapse-tags-tooltip filterable
-                    placeholder="不选=不限 (可在平面图页维护)" style="width: 100%">
-                    <template v-for="g in mapGroupsByScene" :key="g.label">
-                      <el-option-group :label="g.label">
-                        <el-option v-for="m in g.items" :key="m.id"
-                          :label="`${m.floor || m.name} · ${m.cameras?.length ? m.cameras.length + ' 路绑定' : '未绑定'}`" :value="m.id" />
-                      </el-option-group>
-                    </template>
-                    <template #empty><span class="text-secondary">暂无平面图（可在 AI 智能 → 平面图页创建）</span></template>
-                  </el-select>
-                </el-form-item>
-              </template>
-
-              <!-- 自动合并 -->
-              <template v-if="cond.type === 'autoMerge'">
-                <el-row :gutter="16">
-                  <el-col :span="8">
-                    <el-form-item label="合并窗口(ms)" label-position="top" class="cond-form-item">
-                      <el-input-number v-model="form.conditions.autoMerge.config.windowMs" :min="1000" :max="60000" :step="1000" style="width: 100%" />
-                    </el-form-item>
-                  </el-col>
-                  <el-col :span="8">
-                    <el-form-item label="最大合并数" label-position="top" class="cond-form-item">
-                      <el-input-number v-model="form.conditions.autoMerge.config.maxCount" :min="2" :max="100" style="width: 100%" />
-                    </el-form-item>
-                  </el-col>
-                  <el-col :span="8">
-                    <el-form-item label="合并维度" label-position="top" class="cond-form-item">
-                      <el-select v-model="form.conditions.autoMerge.config.dimension" style="width: 100%">
-                        <el-option label="通道" value="channel" /><el-option label="类型" value="type" /><el-option label="位置" value="location" />
-                      </el-select>
-                    </el-form-item>
-                  </el-col>
-                </el-row>
-              </template>
+              <!-- [UI-CONVERGE 2026-09-12 P1] 事件源卡下线 (通道网格 + 「适用平面图」多选):
+                   通道网格与抽屉末尾 DeviceChannelPicker 写同一 eventSource.config.channels
+                   (双编辑器同屏, 7/89 使用), map_ids 0/89 使用; 事件源数据链 (watch/保存/
+                   回显) 全保留 — 有空间条件规则经绑定通道双写 (保存链 SRC-CONVERGE),
+                   纯事件源规则由下方 picker 圈定 -->
             </div>
           </div>
 
-          <!-- [r25 2026-09-02] 设备通道多选从原步 4 提升到步 1 末尾 -->
-          <div style="margin-top: 12px">
+          <!-- [r25 2026-09-02] 设备通道多选从原步 4 提升到步 1 末尾
+               [UI-CONVERGE 2026-09-12 P1] 通道圈定唯一化: 空间/位置条件启用时隐藏
+               (通道语义并入「绑定通道（多选）」), 仅纯事件源规则显示 -->
+          <div v-show="pickerVisible" style="margin-top: 12px">
             <DeviceChannelPicker v-model="deviceChannelValue" />
           </div>
           </div>
 
-          <div v-show="sectionVisible(2)">
+          <div>
           <el-divider content-position="left">联动动作</el-divider>
 
           <!-- 动作 Tabs -->
@@ -837,50 +788,19 @@
             </el-tab-pane>
           </el-tabs>
 
-          <!-- [FLOOR-MAP 2026-09-04] 联动平面图快捷卡: 常驻展示 (一等入口, 不必先钻
-               客户端 tab 勾选动作); switch 直绑 actionState.CLIENT_SHOW_MAP —— 与动作
-               tabs 内「联动地图位置」勾选框同源双向 (任一侧切换同步另一侧)。
-               华为 iVMS 楼层联动配置独立对标 — map_ids 多选与触发条件区同源 (form.mapIds
-               双向同步), FloorMapCanvas 只读预览与告警弹窗同渲染 (所见即所得);
-               楼层展示顺序 = 平面图页绑定 is_primary 优先 (后端 getBindingsByChannel 排序) -->
+          <!-- [FLOOR-MAP 2026-09-04] 联动平面图快捷卡: switch 直绑 actionState.CLIENT_SHOW_MAP
+               — 与动作 tabs 内「联动地图位置」勾选框同源双向 (任一侧切换同步另一侧)。
+               [UI-CONVERGE 2026-09-12 P4] 「关联平面图」多选 + FloorMapCanvas 只读预览下线:
+               map_ids 0/89 使用 (107 地图动作 6 条走动作编排, 非此字段); 弹窗定位按告警
+               通道绑定反查平面图 (原「不选=不限」默认行为), form.mapIds 序列化/回显保留 -->
           <div class="map-action-panel">
             <div class="map-action-head">
               <el-switch v-model="actionState.CLIENT_SHOW_MAP" />
               <span class="map-action-title">联动平面图 (楼层图包)</span>
               <span class="map-action-sub">触发时告警弹窗自动定位平面图 + 落点涟漪</span>
             </div>
-            <template v-if="actionState.CLIENT_SHOW_MAP">
-            <el-alert type="info" :closable="false" show-icon style="margin: 10px 0"
-              title="告警弹窗将自动定位至平面图并投影告警落点涟漪 (触发即定位); 多图时主图默认在前、支持楼层切换" />
-            <el-row :gutter="12">
-              <el-col :span="10">
-                <el-form-item label="关联平面图 (可多选, 与触发条件区同步)" label-position="top">
-                  <el-select v-model="form.mapIds" multiple collapse-tags collapse-tags-tooltip filterable
-                    placeholder="不选=不限 (按通道绑定反查)" style="width: 100%"
-                    @change="previewMapId = 0">
-                    <template v-for="g in mapGroupsByScene" :key="g.label">
-                      <el-option-group :label="g.label">
-                        <el-option v-for="m in g.items" :key="m.id"
-                          :label="`${m.floor || m.name} · ${m.cameras?.length ? m.cameras.length + ' 路绑定' : '未绑定'}`" :value="m.id" />
-                      </el-option-group>
-                    </template>
-                    <template #empty><span class="text-secondary">暂无平面图（可在 AI 智能 → 平面图页创建）</span></template>
-                  </el-select>
-                  <div class="map-action-tip">
-                    主图与楼层顺序在「AI 智能 → 平面图」绑定管理中维护 (is_primary 优先);
-                    摄像头落点/FOV 拖拽微调亦在该页编辑
-                  </div>
-                </el-form-item>
-              </el-col>
-              <el-col :span="14">
-                <!-- 只读预览 (华为对标): 底图+摄像头+FOV 扇形, 与告警弹窗 plan 模式同渲染 -->
-                <div v-if="previewMap" class="map-action-preview">
-                  <FloorMapCanvas :map="previewMap" :bindings="previewMap.cameras || []" />
-                </div>
-                <div v-else class="map-action-preview-empty">选择平面图后预览渲染</div>
-              </el-col>
-            </el-row>
-            </template>
+            <el-alert v-if="actionState.CLIENT_SHOW_MAP" type="info" :closable="false" show-icon style="margin: 10px 0"
+              title="告警弹窗将自动定位至告警通道绑定的平面图并投影落点涟漪 (触发即定位); 图包绑定与楼层顺序在「AI 智能 → 平面图」页维护 (is_primary 优先)" />
           </div>
           </div>
 
@@ -897,10 +817,6 @@
             模拟测试
           </el-button>
           <div style="flex:1" />
-          <template v-if="wizardMode">
-            <el-button :disabled="wizardStep === 0" @click="wizardStep--">上一步</el-button>
-            <el-button v-if="wizardStep < WIZARD_STEPS.length - 1" type="primary" plain @click="wizardStep++">下一步</el-button>
-          </template>
           <el-button @click="drawerVisible = false">取消</el-button>
           <el-button type="primary" @click="handleSave" :loading="saving">保存规则</el-button>
         </div>
@@ -910,12 +826,12 @@
     <!-- ═══ [vp8 双模式 / REVERT 2026-09-02] 简易创建抽屉: 新建默认入口,
          choice 页仅剩 从模板库选择(tune 微调) 与 切换到高级模式(全功能抽屉) 两入口 -->
     <SimpleRuleDrawer
-      v-model="simpleDrawerOpen"
-      :committing="simpleCommitting || editSaving"
+      v-model="editVisible"
+      :committing="editSaving"
       :editing-rule-id="editRuleId"
       :initial-tune="editTune"
       edit-simple-advanced
-      @commit="commitSimple"
+      @commit="commitSimpleEdit"
       @switch-advanced="onSimpleSwitchAdvanced"
     />
 
@@ -1545,9 +1461,8 @@ import { deviceApi } from '@/api/device'   // [AREA-CASCADE 2026-09-11] 级联�
 import { safeChannelHash } from '@/utils/channelHash'
 // [FLOOR-MAP 2026-09-03] 适用平面图多选: 地图列表缓存 (与平面图页共用单例)
 import { useFloorMap } from '@/composables/useFloorMap'
-// [FLOOR-MAP 2026-09-04] 联动平面图动作面板: scene_tag 分组标签 + 只读预览画布
-import { sceneTagLabel, type FloorMapWithCameras } from '@/types/floorMap'
-import FloorMapCanvas from '@/components/map/FloorMapCanvas.vue'
+// [UI-CONVERGE 2026-09-12 P4] sceneTagLabel/FloorMapWithCameras/FloorMapCanvas 随
+//   「关联平面图」多选+只读预览下线移除 (map_ids 0/89); useFloorMap 缓存保留 (列表列在用)
 import { validateTemplateImport } from '@/api/templateSchema'
 import RoiPolygonEditor from '@/components/RoiPolygonEditor.vue'
 // [pw-in-rule 2026-09-12 绘制收敛] 尾随通道绘制并入规则页 (算法查看页只读化后承接)
@@ -1559,7 +1474,7 @@ import { testApi } from '@/api/test'
 import type { EventCoverageItem } from '@/api/test'
 import PlanEditor from '@/components/PlanEditor.vue'
 import CEPPatternEditor from '@/components/CEPPatternEditor.vue'
-import ConditionTreeEditor from '@/components/ConditionTreeEditor.vue'
+// [UI-CONVERGE 2026-09-12 P6] ConditionTreeEditor 入口下线 (condition_tree 0/89), 组件文件保留
 // [vp7 向导 2026-09-01] 新建事件规则向导子组件 (设备通道多选/NLG/模板库/AI 增强/确认预览)
 import DeviceChannelPicker from '@/components/linkage/DeviceChannelPicker.vue'
 // [REVERT 2026-09-02] TemplateGallery 不再在本视图使用: 工具栏/卡片已有"从模板库创建"语义,
@@ -1568,22 +1483,25 @@ import DeviceChannelPicker from '@/components/linkage/DeviceChannelPicker.vue'
 //   步 3/4/5 整段隐藏 (WIZARD_STEPS 3 步化), 三个组件本身已全部删除。
 //   VLM 二次验证保留在「冲突处理与高级配置」折叠里 (后端 LinkageEngine.cpp:3579 真触发)
 import SimpleRuleDrawer from '@/components/linkage/SimpleRuleDrawer.vue'
-import type { SimpleCommitPatch, SimpleCommitEvent } from '@/components/linkage/SimpleRuleDrawer.vue'
 import { useSimpleRuleEdit } from '@/composables/useSimpleRuleEdit'
 import { securityAreaApi } from '@/api/securityAreas'
 import type { SecurityArea, DeviceLocation } from '@/api/securityAreas'
+// [AREA-TREE 2026-09-13] 与告警中心 AlarmDeviceTreePanel 同源组树工具 (区域层级)
+import { buildAreaTree, areaTreeToElTreeData } from '@/utils/areaTree'
 import type { RoiData } from '@/composables/useRoiCanvas'
 import { isFullscreenPoints } from '@/composables/useAlarmShapes'  // [FEAT guard-badge] 满屏识别同口径 (与弹窗角标/满屏按钮一致)
 
 // ── 常量 ──
 
+// [UI-CONVERGE 2026-09-12 P1/P7] eventSource/autoMerge 卡片下线: 事件源双编辑器收敛
+//   (通道唯一入口 = 绑定通道/picker), autoMerge 0 使用+业界无 per-rule 合并窗口 UI
+//   (华为汇聚规则=平台级); form.conditions.eventSource/autoMerge 数据结构与保存/
+//   回显链全保留 (存量零丢失)
 const conditionDefs = [
   { type: 'time', icon: '🕐', label: '时间条件' },
   { type: 'region', icon: '📍', label: '空间条件' },
   { type: 'location', icon: '📌', label: '位置条件' },
   { type: 'eventType', icon: '🎯', label: '事件类型' },
-  { type: 'eventSource', icon: '📹', label: '事件源' },
-  { type: 'autoMerge', icon: '🔄', label: '自动合并' },
 ] as const
 
 const weekdays = [
@@ -1591,8 +1509,7 @@ const weekdays = [
   { label: '周四', value: 4 }, { label: '周五', value: 5 }, { label: '周六', value: 6 }, { label: '周日', value: 7 },
 ]
 
-// 每月日期选项 (1-31)
-const monthdayOptions = Array.from({ length: 31 }, (_, i) => ({ label: `${i + 1}日`, value: i + 1 }))
+// [UI-CONVERGE 2026-09-12 P5] monthdayOptions 随「每月日期」下拉下线 (monthdays 0/89)
 
 // [STAGE1 P1-2 2026-09-10] 布防时段 4 模板 (华为 ivm_02_0043 口径):
 //   全天候=7×24, 工作日=周一-五, 周末=六-日, 工作时间=周一-五 09:00-18:00
@@ -1638,11 +1555,8 @@ async function loadDeviceGroups() {
     loadCascadeDevices()
   } catch { /* 分组服务不可用时静默降级到设备位置 fallback */ }
 }
-// 分组下拉: value=id (LinkageEngine 按 resolved 快照展开), label=名称+覆盖数 (华为"分组视图"语义)
-const deviceGroupOptions = computed(() => deviceGroups.value.map(g => ({
-  value: g.id,
-  label: `${g.name} (${g.device_count ?? g.device_ids.length} 设备 / ${g.channel_count ?? g.resolved_channel_ids.length} 通道)`,
-})))
+// [UI-CONVERGE 2026-09-12] deviceGroupOptions (分组下拉) 已随空间卡片安保区域下线;
+//   selectedGroupInfo 保留 (区域通道池收窄 chain snapshot/bound options 仍消费)。
 // 选中分组的覆盖范围展示 (规则内确认范围)
 const selectedGroupInfo = computed(() => deviceGroups.value.find(g => g.id === form.conditions.region.config.group) || null)
 // 位置下拉: 位置表实体优先 (正确语义: 先选位置), 设备提取位置 fallback (向后兼 容老规则)
@@ -1916,6 +1830,8 @@ const boundChannelOptions = computed<ChannelOption[]>(() => {
   const draft = boundChannelDraft.value
   // [FIX area-dev-narrow2 2026-09-11] 位置树设备维度直滤优先 (形态鸿沟治本,
   //   详见 snapshotChannelOptions 处锚点注释); 无位置选择 → 分组名单收窄 → 全量。
+  //   [DEV-TREE 2026-09-13] 早版设备过滤分支随下拉一并下线 — 树形勾选层承接
+  //   「按设备定位」能力, 本池回归纯收窄链 (历史位置/安保区域/全量 + fallback)。
   const locFiltered = filterChannelsByLocation(
     pool,
     form.conditions.region.config.location,
@@ -1955,6 +1871,135 @@ const boundChannelOptions = computed<ChannelOption[]>(() => {
   const fallbacks = draft.filter(v => !knownAll.has(v)).map(v => ({ label: fallbackBoundLabel(v), value: v }))
   return [...list.map(ch => ({ ...ch, label: friendlyChannelLabel(ch) })), ...fallbacks]
 })
+
+// ── [DEV-FILTER 2026-09-13] 空间卡设备过滤 → 已由 [DEV-TREE 2026-09-13] 树形勾选替代 ──
+//    (原 regionDeviceFilter/regionDeviceOptions/selectAllChannelsOfDevice 三件套删除;
+//    树形勾选勾父节点 = 继承该设备全部通道, 能力超集, 见 regionChannelTreeData)
+const boundNarrowHint = computed(() => {
+  const total = channelOptionsDynamic.value.length
+  const shown = boundChannelOptions.value.length
+  // [DEV-TREE 2026-09-13] 历史位置残留收窄 (「通道列表只有 1 个」真凶):
+  //   位置树时代保存的 ui_state.region.location 残留在 config.location, 位置选择器
+  //   下线后收窄不可见也无从解除 → 提示 + 「恢复全量」一键清除 (清空仅入编辑态,
+  //   保存时才写回 ui 快照/spatial_cond, 不保存零副作用)
+  // [AREA-TREE 2026-09-13] 树为全量勾选不受收窄影响 — hint 降级为纯信息提示:
+  // 收窄仅影响保存后触发通道解析 (后端 location/area 解析), 不再隐藏任何选项
+  if (locationNarrowActive.value) return `规则残留历史位置过滤 (${shown}/${total} 路命中, 影响保存后触发解析): 点「恢复全量」清除`
+  const areaName = selectedGroupInfo.value?.name
+  if (areaName) return `规则已关联安保区域「${areaName}」(${shown}/${total} 路命中, 影响保存后触发解析) — 树勾选不受限`
+  return ''
+})
+// [DEV-FILTER 2026-09-13] config.location 残留是否正在收窄通道池
+const locationNarrowActive = computed(() => {
+  const loc = form.conditions.region.config.location
+  if (!loc) return false
+  return !!filterChannelsByLocation(
+    channelOptionsDynamic.value,
+    loc,
+    areaByIdMap.value,
+    deviceGroups.value.map(g => g.device_ids || []),
+  )
+})
+// [DEV-FILTER 2026-09-13] 一键解除历史位置收窄: 清空编辑态 config.location;
+//   保存链写回空值 = 持久清除残留 (位置入口已下线, 语义上等价于用户在旧 UI 清空位置)
+function clearRegionLocationNarrow() {
+  form.conditions.region.config.location = ''
+}
+
+// ── [AREA-TREE 2026-09-13] 「区域 / 设备 / 通道」三级复选树 (告警中心同款) ──
+//    区域层: buildAreaTree/areaTreeToElTreeData (与告警中心 AlarmDeviceTreePanel 同一
+//    工具, 区域 key=area.id type='area' 内置); 设备层: cascadeDeviceName 反查名;
+//    通道层: cascadeChannelsByDevice (label 带设备名后缀)。区域直绑但不属于已列
+//    设备的通道归「区域直绑通道」虚拟节点 (resolved 语义完整性, 同 areaCascadeTreeData)。
+//    未归属任何区域的设备挂「未分组设备」虚拟根, 无 deviceId 通道挂「其他 / 历史
+//    绑定」虚拟根 — 全量可勾不留死角 (替代 DEV-FLAT 分组下拉)。
+interface BoundTreeNode { key: string; label: string; type: 'area' | 'device' | 'channel'; children: BoundTreeNode[] }
+const boundChannelTreeData = computed<BoundTreeNode[]>(() => {
+  // 设备层工厂: 区域 device_ids → 设备节点 → 通道叶子 (key=裸通道 id, 与契约直通)
+  const childrenOf = (n: { area: SecurityArea }): BoundTreeNode[] => {
+    const devNodes: BoundTreeNode[] = []
+    const claimed = new Set<string>()
+    for (const devId of n.area.device_ids || []) {
+      const chs = cascadeChannelsByDevice.value.get(devId) || []
+      for (const c of chs) claimed.add(c.value)
+      devNodes.push({
+        key: `dev:${devId}`, type: 'device',
+        label: `${cascadeDeviceName(devId)}${chs.length ? ` (${chs.length} 通道)` : ' (无在线通道)'}`,
+        children: chs.map(c => ({ key: c.value, label: c.label, type: 'channel' as const, children: [] })),
+      })
+    }
+    const direct = [...new Set([...(n.area.channel_ids || []), ...(n.area.resolved_channel_ids || [])])]
+      .filter(id => !claimed.has(id))
+    if (direct.length) {
+      devNodes.push({
+        key: `areadirect:${n.area.id}`, type: 'device', label: `区域直绑通道 (${direct.length})`,
+        children: direct.map(id => ({ key: id, label: cascadeChannelLabel(id), type: 'channel' as const, children: [] })),
+      })
+    }
+    return devNodes
+  }
+  const areaNodes = areaTreeToElTreeData(buildAreaTree(deviceGroups.value), childrenOf) as unknown as BoundTreeNode[]
+  // 兜底: 通道池中未被任何区域树上树的部分 (未分组设备 / 无归属通道)
+  const areaDevSet = new Set(deviceGroups.value.flatMap(g => g.device_ids || []))
+  const onTreeCh = new Set<string>()
+  const walk = (list: BoundTreeNode[]) => { for (const nd of list) { if (nd.type === 'channel') onTreeCh.add(nd.key); walk(nd.children) } }
+  walk(areaNodes)
+  const strayByDev = new Map<string, BoundTreeNode>()
+  const orphanCh: BoundTreeNode[] = []
+  for (const ch of channelOptionsDynamic.value) {
+    if (onTreeCh.has(ch.value)) continue
+    if (ch.deviceId && !areaDevSet.has(ch.deviceId)) {
+      let g = strayByDev.get(ch.deviceId)
+      if (!g) {
+        g = { key: `dev:${ch.deviceId}`, type: 'device', label: ch.deviceName || ch.deviceIp || ch.deviceId, children: [] }
+        strayByDev.set(ch.deviceId, g)
+      }
+      g.children.push({ key: ch.value, label: ch.label, type: 'channel', children: [] })
+    } else if (!ch.deviceId) {
+      orphanCh.push({ key: ch.value, label: ch.label, type: 'channel', children: [] })
+    }
+  }
+  if (strayByDev.size) areaNodes.push({ key: '__stray_dev__', type: 'area', label: '未分组设备', children: [...strayByDev.values()] })
+  if (orphanCh.length) areaNodes.push({ key: '__orphan_ch__', type: 'area', label: '其他 / 历史绑定', children: orphanCh })
+  return areaNodes
+})
+// 树重建 key (default-checked-keys 仅挂载时生效): 通道池/区域数据就绪度变化 → 重建
+// 重放勾选; 用户勾选不改 key (树自身状态即 SSOT, 勾选经 onBoundTreeCheck 写回 draft)
+const boundTreeKey = computed(() =>
+  `${channelOptionsDynamic.value.length}|${boundChannelTreeData.value.length}|${cascadeDevLoaded.value ? 1 : 0}`)
+const boundTreeRef = ref()
+// [FIX ref-array 2026-09-13] 本环境 template ref 被收集为数组包装 ([实例], 同
+//   cascadeTreeRef 代理怪癖 — 当年因此改用 checkedNodes 回调参数): 兼容双形态取实例
+function boundTreeApi(): any {
+  const v: any = boundTreeRef.value
+  return Array.isArray(v) ? v[0] : v
+}
+// 树勾选 → 通道集写回 draft (契约 bound_channel_ids) + 原派生链
+// [AREA-CASCADE FIX 同款] checkedNodes 回调参数直取 (ref 代理缺方法 + 含折叠未渲染节点);
+// 勾区域/设备节点时其子通道节点已级联入 checkedNodes, 无需再展开
+function onBoundTreeCheck(_data: unknown, checked: unknown) {
+  const nodes = ((checked as any)?.checkedNodes || []) as Array<{ key: string | number; type?: string }>
+  const picked: string[] = []
+  for (const nd of nodes) if (nd.type === 'channel') picked.push(String(nd.key))
+  // 池外孤儿保护: draft 中不在树通道全集的 id (历史绑定/快照) 保留, 防全量覆盖静默丢弃
+  const treeChIds = new Set<string>()
+  const walk = (list: BoundTreeNode[]) => { for (const n of list) { if (n.type === 'channel') treeChIds.add(n.key); walk(n.children) } }
+  walk(boundChannelTreeData.value)
+  const orphan = boundChannelDraft.value.filter(id => !treeChIds.has(id))
+  const next = [...orphan, ...picked]
+  boundChannelDraft.value = next   // 触发 watch → setCheckedKeys 幂等重放 (无循环)
+  onBoundChannelsChange(next)      // 首个摄像头通道自动派生画板底图 (原派生链)
+}
+function clearBoundChannels() {
+  boundChannelDraft.value = []
+  onBoundChannelsChange([])
+}
+// draft 外部变化 (编辑加载/取消/清除) → 命令式重放树勾选; setCheckedKeys 不触发
+// @check 无死循环, 用户勾选引起的写回为幂等重放 (状态一致零视觉抖动), 池外孤儿
+// key 被树忽略但 draft 不丢
+// [FIX tdz 2026-09-13] 树勾选重放 watch 投至 form 声明之后 (guard-badge watch 旁,
+//   同款 TDZ 陷阱第三次被 Browser 实测插出): 见 L2780 附近区域
+//   watch(boundChannelDraft) → setCheckedKeys 重放块
 
 // ── [FEAT guard-badge 2026-09-10] 绑定通道插件层布防状态 (区域库查询) ──
 interface GuardState {
@@ -2021,13 +2066,18 @@ function firstCameraChannel(ids: string[]): string {
   const camSet = new Set(cameraChannelOptions.value.map(c => c.value))
   return ids.find(id => camSet.has(id)) || ''
 }
+// [UI-CONVERGE 2026-09-12] 快照背景下拉下线 (对标 §2.5 业界"选择通道"三义合一) —
+//   channelId 转纯内部态 (画板底图), 派生规则: 当前基码不在页签上下文集 (绑定∪快照∪
+//   回显∪触碰) 时, 跟随到新绑定集首个摄像头通道; 在集内保持 (保护逐通道回显通道
+//   的底图不被绑定编辑拉走)。
 function onBoundChannelsChange(ids: string[]) {
-  if (ids.length > 0 && !form.conditions.region.config.channelId) {
-    const firstCam = firstCameraChannel(ids)
-    if (firstCam) {
-      form.conditions.region.config.channelId = firstCam
-      loadChannelSnapshot(firstCam)
-    }
+  const cfg = form.conditions.region.config
+  const curBase = roiBaseOf(String(cfg.channelId || ''))
+  if (curBase && roiTabChannels.value.some(t => t.value === curBase)) return
+  const firstCam = firstCameraChannel(ids)
+  if (firstCam && roiBaseOf(firstCam) !== curBase) {
+    cfg.channelId = firstCam
+    loadChannelSnapshot(firstCam)
   }
 }
 
@@ -2171,14 +2221,8 @@ async function switchRoiChannel(target: string) {
   await nextTick()
   roiSuppressTouch = false
 }
-/** 关联通道下拉变更: 载入快照底图 + 逐通道模式下同步激活页签 (画布与底图一致) */
-async function onRegionChannelChange(val: string) {
-  await loadChannelSnapshot(val)
-  if (roiStrictMode.value) {
-    const base = roiBaseOf(String(val || ''))
-    if (base && base !== activeRoiChannel.value) await switchRoiChannel(base)
-  }
-}
+// [UI-CONVERGE 2026-09-12] onRegionChannelChange 已随快照背景下拉下线:
+//   画板底图切换只走 switchRoiChannel (自带底图同步) 与 onBoundChannelsChange 派生。
 /** 标记当前激活通道已编辑 (watch roiPolygon 触发, 供保存序列化) */
 function roiMarkTouched() {
   const key = activeRoiChannel.value
@@ -2703,29 +2747,9 @@ function mapNameById(id: number): string {
   return floorMaps.value.find((m) => m.id === id)?.name || `#${id}`
 }
 
-// [FLOOR-MAP 2026-09-04] 联动平面图位置动作面板: 勾选 CLIENT_SHOW_MAP 后展示。
-//   华为 iVMS 楼层联动配置对标 — map_ids 多选与触发条件区同源 (form.mapIds);
-//   scene_tag 分组 (大华 DSS9000 同场景包对标); FloorMapCanvas 只读预览与告警
-//   弹窗 plan 模式同渲染。map_ids 仍走 source_cond 透传, 引擎匹配零改动
-const previewMapId = ref(0)
-const previewMap = computed<FloorMapWithCameras | null>(() => {
-  const id = previewMapId.value && form.mapIds.includes(previewMapId.value)
-    ? previewMapId.value
-    : form.mapIds[0]
-  return floorMaps.value.find((m) => m.id === id) || null
-})
-const mapGroupsByScene = computed(() => {
-  const groups = new Map<string, FloorMapWithCameras[]>()
-  for (const m of floorMaps.value) {
-    const key = m.scene_tag || ''
-    if (!groups.has(key)) groups.set(key, [])
-    groups.get(key)!.push(m)
-  }
-  return [...groups.entries()].map(([tag, items]) => ({
-    label: tag ? `${sceneTagLabel(tag)} (${tag})` : '未分类',
-    items,
-  }))
-})
+// [UI-CONVERGE 2026-09-12 P4] previewMap/previewMapId/mapGroupsByScene 下线
+//   (随「关联平面图」多选与只读预览移除, map_ids 0/89); useFloorMap 缓存与
+//   mapNameById 保留 (规则列表列仍在用)
 watch(() => actionState.CLIENT_SHOW_MAP, (on) => {
   // 面板展开时懒加载地图列表 (30s TTL 单例, 平面图页已拉过则直接吃缓存)
   if (on && !floorMaps.value.length) loadFloorMaps().catch(() => {})
@@ -2760,6 +2784,14 @@ const form = reactive({
 //   Vue watch 建立即同步取 source 初值, boundChannelDraft getter 读 form,
 //   声明顺序错误 = setup 崩溃。挂载后回填/勾选/重置均自然触发刷新。
 watch(boundChannelDraft, () => { refreshGuardStates() })
+
+// [AREA-TREE 2026-09-13] draft 外部变化 (编辑加载/取消/清除) → 命令式重放树勾选
+//   (自树工具块投至此, TDZ 修复: watch 建立即同步取 source 初值, getter 读 form);
+//   setCheckedKeys 不触发 @check 无死循环, 用户勾选引起的写回为幂等重放
+//   (状态一致零视觉抖动), 池外孤儿 key 被树忽略但 draft 不丢
+watch(boundChannelDraft, (ids) => {
+  nextTick(() => boundTreeApi()?.setCheckedKeys?.([...(ids || [])]))
+})
 
 // [FIX tdz 2026-09-12] 画板 roiPolygon 变更 → 标记当前激活通道 (自 form 前投至此, TDZ 修复);
 //   程序性赋值经 roiSuppressTouch 抑制
@@ -2800,23 +2832,17 @@ const advancedCollapse = ref<string[]>([])
 const advancedConditionMode = ref(false)
 const conditionTreeValue = ref<ConditionNode | undefined>(undefined)
 
-// ═══ [r25 2026-09-02 化简向导] ═══
-// 3 步向导: 0 基本信息 → 1 触发条件 → 2 动作编排 (含设备通道多选, 原步 4 归并);
-// el-steps 分步 / 全览双形态切换保留。隐藏原步 3 AI 增强/步 4 计划与防区/步 5 确认预览。
-const WIZARD_STEPS = ['基本信息', '触发条件', '动作编排']
-// [REVERT 2026-09-02] 恢复 vp8 之前默认形态: 打开抽屉默认分步向导 (wizardMode=true),
-// 同一套功能分步引导展示 (vp8 曾改为全览一页铺开, 用户反馈观感即"高级模式才有的字段");
-// 右上角「分步/全览」切换保留。
-// [TPL-VP6 r2 2026-09-03 用户反馈] 默认改全览: 模板落地/高级入口打开即一页铺开
-// (字段已预填, 全览可直接检阅全部能力), 需引导时右上角切「分步」。
-const wizardMode = ref(false)
-// [vp6-SIMPLE 2026-09-02] 简易模式入口: vp6 纯净表单 (单页普通模式, 隐藏向导条/AI 增强/确认预览)
+// ═══ [UI-CONVERGE 2026-09-12 P10] 分步向导残留下线 ═══
+// WIZARD_STEPS/wizardMode/wizardStep/sectionVisible/condStepVisible 删除:
+// wizardMode 默认已全览 (2026-09-03 用户反馈), 「分步」开关与 footer 上一步/下一步
+// 为向导残留; 三分区锚点单页滚动保留。
+// [vp6-SIMPLE 2026-09-02] 简易模式入口标记保留 (赋值链不变, 仅历史向导条引用已删)
 const simpleEntryMode = ref(false)
-const wizardStep = ref(0)
-const sectionVisible = (s: number) => !wizardMode.value || wizardStep.value === s
-/** 条件卡片分步归属: time 归「计划与防区」(布防计划语义), 其余归「触发条件」 */
-// [r25] 化简: 全模式/分步模式均把所有条件卡归到步 1 (time 卡从原步 4 归并)
-const condStepVisible = (_type: string) => sectionVisible(1)
+
+// [UI-CONVERGE 2026-09-12 P1] 通道圈定唯一化: 空间/位置条件任一启用 → picker 隐藏
+// (通道语义并入「绑定通道（多选）」, 保存链 SRC-CONVERGE 双写 source_cond);
+// 纯事件源规则由 picker 圈定 — 对标海康「触发通道」单入口
+const pickerVisible = computed(() => !(form.conditions.region.enabled || form.conditions.location.enabled))
 
 // ── 防区选择 (DeviceChannelPicker): channelIds String 化单向同步进 eventSource.channels,
 //    保存链 source_cond 组装 (数字/字符串双形态分拣) 零改动复用。 [r25] 从步 4 提升到步 1 末尾 ──
@@ -2837,86 +2863,11 @@ const vlmSuppressThreshold = ref(0.85)
 
 // [r25] 删除 applyNlg: RuleNlgInput 组件已删除 (步 3 NLG 整段隐藏)
 
-// ── 模板一键应用到当前表单: RuleTemplate 字段 → 表单 (海康 iVMS-8700 式导入;
-//    与既有 applyTemplate (直接从模板创建新规则) 语义不同, 勿合并) ──
-function applyTemplateToForm(t: any) {
-  if (!form.name && t.name) form.name = `${t.name}`
-  if (typeof t.priority === 'number') form.priority = t.priority
-  if (typeof t.cooldown_ms === 'number') form.cooldownMs = t.cooldown_ms
-  if (t.description && !form.description) form.description = t.description
-  if (Array.isArray(t.tags) && t.tags.length) form.tags = [...new Set([...form.tags, ...t.tags])]
-  if (t.time_cond) {
-    form.conditions.time.enabled = !!(t.time_cond.time_start || t.time_cond.weekdays?.length)
-    form.conditions.time.config.startTime = t.time_cond.time_start || form.conditions.time.config.startTime
-    form.conditions.time.config.endTime = t.time_cond.time_end || form.conditions.time.config.endTime
-    if (t.time_cond.weekdays?.length) form.conditions.time.config.weekdays = [...t.time_cond.weekdays]
-  }
-  const src = t.source_cond
-  if (src?.event_types?.length || src?.algorithm_ids?.length) {
-    form.conditions.eventType.enabled = true
-    form.conditions.eventType.config.types = [...new Set([...form.conditions.eventType.config.types, ...(src.algorithm_ids?.length ? src.algorithm_ids : src.event_types)])]
-  }
-  if (src?.min_severity !== undefined) form.conditions.eventType.config.minSeverity = src.min_severity
-  if (src?.min_confidence !== undefined) form.conditions.eventType.config.minConfidence = Math.round(src.min_confidence * 100)
-  if (Array.isArray(src?.channel_ids) && src.channel_ids.length) {
-    form.conditions.eventSource.enabled = true
-    form.conditions.eventSource.config.channels = [...new Set([...form.conditions.eventSource.config.channels, ...src.channel_ids.map(String)])]
-  }
-  if (t.merge_cond?.enabled) {
-    form.conditions.autoMerge.enabled = true
-    form.conditions.autoMerge.config.windowMs = t.merge_cond.window_ms || 10000
-  }
-  // [COND-PERSIST 2026-09-03] 模板 spatial_cond 防御性落地 (当前模板库 0/276 携带,
-  //   后续模板若带位置/绊线/分组字段则原值预填; 有任一字段即启用区域条件)
-  const tsc = (t as any).spatial_cond
-  if (tsc && typeof tsc === 'object') {
-    let hasAny = false
-    if (tsc.location_id) { form.conditions.location.enabled = true; form.conditions.location.config.point = tsc.location_id; hasAny = true }
-    if (tsc.region_id) { form.conditions.region.config.roi = tsc.region_id; hasAny = true }
-    // [P1 2026-09-10 更名] area_id ?? device_group_id 双键读 (存量规则旧键回显兼容)
-    const legacyGroupId = tsc.area_id ?? ((tsc as any).device_group_id || '')
-    if (legacyGroupId) { form.conditions.region.config.group = legacyGroupId; hasAny = true }
-    if (tsc.tripwire_id) { form.conditions.region.config.tripwireId = String(tsc.tripwire_id); hasAny = true }
-    if (tsc.direction) { form.conditions.region.config.direction = tsc.direction; hasAny = true }
-    if (Array.isArray(tsc.bound_channel_ids) && tsc.bound_channel_ids.length) {
-      form.conditions.region.config.boundChannelIds = tsc.bound_channel_ids.map(String); hasAny = true
-    }
-    if (tsc.roi_shapes_json) {
-      try {
-        // [ROI-GAP 2026-09-06] v2 形态 {combine, shapes} 兼容 (同编辑回显链)
-        const parsedTpl = JSON.parse(tsc.roi_shapes_json)
-        const shapes = (Array.isArray(parsedTpl) ? parsedTpl
-          : Array.isArray(parsedTpl?.shapes) ? parsedTpl.shapes : []) as Array<{ shape: string; name?: string; active?: boolean; direction?: string; points: number[] }>
-        if (!Array.isArray(parsedTpl) && typeof parsedTpl?.combine === 'string') {
-          form.conditions.region.config.roiCombine = parsedTpl.combine === 'intersection' ? 'intersection' : 'union'
-        }
-        if (shapes.length) {
-          form.conditions.region.config.roiPolygon = shapes.filter(s => s && Array.isArray(s.points)).map((s, i) => ({
-            roi_id: `roi_tpl_${Date.now()}_${i}`,
-            roi_name: s.name || `区域 ${i + 1}`,
-            roi_type: s.shape as any,
-            polygon: s.points.map((v, k) => Math.round(k % 2 === 0 ? v * 1920 : v * 1080)),
-            is_active: s.active !== false,
-            direction: (s.direction || undefined) as any,
-          }))
-          hasAny = true
-        }
-      } catch { /* 模板形状快照损坏 → 忽略, 不阻断落地 */ }
-    }
-    if (hasAny) form.conditions.region.enabled = true
-  }
-  // 模板动作 → 勾选 + 参数
-  let applied = 0
-  for (const a of t.actions || []) {
-    const key = ACTION_TYPE_REVERSE_MAP[a.type]
-    if (!key) continue
-    actionState[key] = true
-    const { type: _at, target: _tg, name: _an, enabled: _ae, ...rest } = a
-    if (Object.keys(rest).length) actionParams[key] = { ...(actionParams[key] || {}), ...rest }
-    applied++
-  }
-  ElMessage.success(`模板「${t.name}」已应用 (${applied} 动作 / 标签 ${t.tags?.length || 0} 项); 可在高级模式中补全防区范围`)
-}
+// [P11-CLEANUP 2026-09-13] applyTemplateToForm 删除: 原模板落表单链路唯一消费方
+//   (commitSimple create / onSimpleSwitchAdvanced 模板分支) 均随新建链下线;
+//   平台「从模板库创建」走 applyRuleTemplate 后端直建 (applyTemplate), 不经本函数。
+
+
 
 // [r25] 删除 conditionSummary/previewActions: RulePreviewPanel 组件已删除 (步 5 确认预览整段隐藏)
 //   预览能力由「页脚 模拟测试」按铉保留 (handleDryRun 另走点)
@@ -3010,7 +2961,7 @@ async function onPassagewayConfirm(payload: {
   cooldown_sec: number
 }) {
   const chIdStr = String(form.conditions.region.config.channelId || '')
-  if (!chIdStr) { ElMessage.warning('请先选择"关联通道(快照背景)"再绘制通道'); return }
+  if (!chIdStr) { ElMessage.warning('请先在「绑定通道」勾选通道再绘制'); return }
   const chIdNum = Number(chIdStr)
   try {
     await regionApi.upsertPassageway({
@@ -3374,8 +3325,7 @@ function resetEditorState(rule: LinkageRule | null) {
   form.responseDeadlineS = rule?.response_deadline_s ?? 0
   // [POPUP-AUTOCLOSE 2026-09-03] 恢复弹窗自动关闭秒 (整型兜底, 缺省 0=永不自动关闭)
   form.popupAutoCloseS = Number(rule?.popup_auto_close_s ?? 0) || 0
-  // [r25] 向导步归零 + 防区选择/AI 增强字段回填 (fusion_* 删除, 后端 nlohmann 宽容不读)
-  wizardStep.value = 0
+  // [UI-CONVERGE 2026-09-12 P10] 向导步归零随分步向导下线移除
   // [COND-PERSIST 2026-09-03] picker 先清空 (编辑态稍后由 ui_state 恢复):
   //   suppress 防止 deep watch 的「picker 非空 ⇒ enabled」推断在 flush 时
   //   覆盖刚回填的 eventSource (尤其禁用态保留勾选场景); nextTick 后恢复同步
@@ -3399,7 +3349,8 @@ function resetEditorState(rule: LinkageRule | null) {
   vlmSuppressThreshold.value = typeof (rule as any)?.vlm_suppress_threshold === 'number' ? (rule as any).vlm_suppress_threshold : 0.85
   // [r25] 折叠默认收起条件中删除 enableVlmVerify/responseDeadlineS (这两项不再为用户主动配置,
   //   VLM 已默认启用 (新建 enableVlmVerify=true)、response_deadline_s 后端仅存不用, 不该在高级折叠里提示)
-  advancedCollapse.value = (form.mutexGroup || form.suppressAfterRule || form.suppressLowerPriority || form.closeCondition) ? ['advanced'] : []
+  // [UI-CONVERGE 2026-09-13 P8] 描述/标签收进折叠区: 有值时编辑自动展开 (防藏值)
+  advancedCollapse.value = (form.mutexGroup || form.suppressAfterRule || form.suppressLowerPriority || form.closeCondition || form.description || (form.tags && form.tags.length > 0)) ? ['advanced'] : []
   // 恢复条件树
   if (rule?.condition_tree) {
     advancedConditionMode.value = true
@@ -3658,116 +3609,43 @@ function openEditor(rule: LinkageRule | null) {
 //   编辑也从 choice 入口进, 且「简易/高级模式」卡片均复用新建同一 vp6 表单回显编辑
 //   (resetEditorState 整包回显 + handleSave 原生 update 分支), 不另建编辑表单。
 //   注: composable 的 editingRule 别名为 editSourceRule (本地 L1664 已有同名编辑器状态)。
-const simpleDrawerVisible = ref(false)
-const simpleCommitting = ref(false)
+//   [P11-CLEANUP 2026-09-13] simpleDrawerVisible/simpleCommitting/simpleDrawerOpen 桥
+//   随新建链下线移除: 挂载开关退化为 editVisible 直绑 (新建链已无置 true 点)。
 const { editVisible, editSaving, editRuleId, editTune, editingRule: editSourceRule, openSimpleEdit, clearSimpleEdit, commitSimpleEdit } =
   useSimpleRuleEdit({ onSaved: () => fetchRules() })
 
-/** 共享挂载开关桥: 新建(simpleDrawerVisible) 或 编辑(editVisible) 任一打开;
- *  关闭时同步回落 (编辑关闭清 editVisible, 防编辑态渗入新建流程的 choice 入口) */
-const simpleDrawerOpen = computed({
-  get: () => simpleDrawerVisible.value || editVisible.value,
-  set: (v: boolean) => {
-    simpleDrawerVisible.value = v
-    if (!v) editVisible.value = false
-  },
-})
-
-/** 新建 → 选择抽屉 (模板优先 / 切高级); 清除编辑态防止上一轮编辑的预填残留 */
-function openNewRuleDrawer() {
+/** [P11-CONVERGE 2026-09-13] 新建主体=简易直达: 开 vp6 纯净单页 (原 choice「简易模式」
+ *  卡同形态), 跳过 choice 三卡页; 清编辑态防上一轮预填残留。
+ *  (choice 另两卡「高级/模板库」由下拉直达承接; SimpleRuleDrawer 新建链下线, 编辑链保留) */
+function onNewRuleSimple() {
   resetEditorState(null)
   clearSimpleEdit()
-  simpleDrawerVisible.value = true
-}
-
-/** 简易时间四档 → time 条件 (night 跨夜与高级表单同语义) */
-function applySimpleTime(p: SimpleCommitPatch) {
-  if (p.timePreset === 'all') { form.conditions.time.enabled = false; return }
-  form.conditions.time.enabled = true
-  form.conditions.time.config.startTime = p.timeStart || '08:00'
-  form.conditions.time.config.endTime = p.timeEnd || '20:00'
-  form.conditions.time.config.weekdays = p.weekdays?.length ? [...p.weekdays] : [1, 2, 3, 4, 5]
-}
-
-/** 高频字段草稿 → 内部表单 (动作参数等高级语义由模板整包/高级模式承载)
- *  [POPUP-AUTOCLOSE 2026-09-03] popup_auto_close_s 一并合入: 修复 create 链路
- *  (commitSimple 模板分支 / TPL-VP6 switch-advanced 模板落地) 该字段不进 form 的缺口 */
-function applySimplePatch(p: SimpleCommitPatch) {
-  form.name = p.name
-  if (typeof p.priority === 'number') form.priority = p.priority
-  if (typeof p.cooldownMs === 'number') form.cooldownMs = p.cooldownMs
-  // [POPUP-AUTOCLOSE] 弹窗自动关闭秒 (整型化兑底, 与 handleSave 提交倒钳位对称)
-  if (typeof p.popup_auto_close_s === 'number') form.popupAutoCloseS = Math.max(0, Math.floor(p.popup_auto_close_s) || 0)
-  // [FLOOR-MAP 2026-09-04] 地图联动草稿回填: 简易→高级切换时 map_ids 与 CLIENT_SHOW_MAP
-  //   动作态随草稿进 vp6 表单 (快捷卡 switch 与条件区多选同源同步)
-  if (Array.isArray(p.map_ids)) form.mapIds = [...p.map_ids]
-  if (typeof p.map_linked === 'boolean') actionState.CLIENT_SHOW_MAP = p.map_linked
-  form.conditions.eventType.enabled = true
-  form.conditions.eventType.config.types = [...(p.eventTypes || [])]
-  applySimpleTime(p)
-  deviceChannelValue.value = { deviceIds: [...(p.deviceIds || [])], channelIds: [...(p.channelIds || [])] }
-  if (p.actions) {
-    Object.keys(actionState).forEach(k => delete actionState[k])
-    for (const key of p.actions) actionState[key] = true
-  }
-}
-
-/** 简易抽屉统一保存入口: update=高频字段直 PATCH (composable), create=模板分支走 handleSave 唯一保存链
- *  [TPL-VP6 2026-09-03] 模板创建已改走 onSimpleSwitchAdvanced 落地 vp6 全功能表单由用户手动保存,
- *  此 create 分支保留防御 (未来若恢复就地创建入口仍可用) */
-async function commitSimple(e: SimpleCommitEvent) {
-  if (e.mode === 'update') {
-    await commitSimpleEdit(e)
-    return
-  }
-  const p = e.payload
-  simpleCommitting.value = true
-  try {
-    resetEditorState(null)
-    if (p.template) applyTemplateToForm(p.template) // 模板整包合入 (保动作参数)
-    applySimplePatch(p)
-    if (p.template) form.name = p.name // 模板分支: 用户微调名优先
-    simpleDrawerVisible.value = false
-    const ok = await handleSave()
-    if (!ok) { simpleEntryMode.value = false; drawerVisible.value = true } // 校验失败落全功能表单补全
-  } finally { simpleCommitting.value = false }
-}
-
-/** 切换全功能表单: 简易卡片=vp6 纯净单页 (simple), 高级卡片/模板页切高级=全功能全览 (full)
- *  [UX-ALIGN 2026-09-03] 编辑态简易/高级卡片: 复用新建同一 vp6 表单回显编辑
- *  (resetEditorState 整包回显, 草稿 p 忽略 — 回显数据比高频字段草稿更全;
- *  不走 openEditor 因其写死 simpleEntryMode=false; handleSave 原生支持 update)
- *  [TPL-VP6 2026-09-03] 模板选中即切 vp6 全功能表单: p.template 整包合入
- *  (动作勾选+参数/优先级/冷却/描述/标签/时间/事件/通道) + 高频字段覆盖, 与
- *  commitSimple 模板分支同序 — 落地页具备动作编排/互斥组/抑制链/VLM 复核/元数据全部能力 */
-function onSimpleSwitchAdvanced(p: SimpleCommitPatch | null, mode?: 'simple' | 'full') {
-  if (editVisible.value && editSourceRule.value) {
-    const row = editSourceRule.value
-    simpleDrawerOpen.value = false // 经桥关闭 (同步清 editVisible, 防渗入新建)
-    resetEditorState(row)
-    simpleEntryMode.value = mode !== 'full' // 简易卡片=vp6 纯净单页; 高级卡片=全功能全览
-    wizardMode.value = false // [TPL-VP6 r2] 默认全览 (用户反馈), 右上角可切分步
-    drawerVisible.value = true
-    return
-  }
-  simpleDrawerVisible.value = false
-  if (p) {
-    resetEditorState(null)
-    // [TPL-VP6] 模板整包先合入 (保动作参数/元数据), 高频字段覆盖其后 — 与 commitSimple 模板分支同序
-    if (p.template) applyTemplateToForm(p.template)
-    applySimplePatch(p)
-    if (p.name) form.name = p.name
-  }
-  simpleEntryMode.value = mode !== 'full' // 简易卡片=vp6 纯净表单 (无向导/AI 增强/确认预览)
-  wizardMode.value = false // [TPL-VP6 r2 2026-09-03 用户反馈] 默认全览: 模板落地/高级入口一页铺开, 右上角可切「分步」
+  simpleEntryMode.value = true
   drawerVisible.value = true
 }
 
-/** 工具栏新建下拉: 选择抽屉(默认) / 高级 / 模板库 */
+// [P11-CLEANUP 2026-09-13] applySimpleTime/applySimplePatch/commitSimple 随新建链下线移除:
+//   唯一消费方均为新建态分支 (commitSimple create/onSimpleSwitchAdvanced 非 编辑分支),
+//   编辑态回显走 resetEditorState 整包回显, 高频草稿合入链路不再被引用。
+
+/** [UX-ALIGN 2026-09-03] 编辑态简易/高级卡片: 复用新建同一 vp6 表单回显编辑
+ *  (resetEditorState 整包回显; 不走 openEditor 因其写死 simpleEntryMode=false;
+ *  handleSave 原生支持 update)
+ *  [P11-CLEANUP 2026-09-13] 收缩为编辑态单分支: 新建链下线后非编辑分支不可达
+ *  (emit 签名收缩为仅 mode; 草稿 p/模板整包 p.template 随 applyTemplateToForm 一并移除) */
+function onSimpleSwitchAdvanced(mode: 'simple' | 'full') {
+  if (!editVisible.value || !editSourceRule.value) return
+  const row = editSourceRule.value
+  editVisible.value = false
+  resetEditorState(row)
+  simpleEntryMode.value = mode !== 'full' // 简易卡片=vp6 纯净单页; 高级卡片=全功能全览
+  drawerVisible.value = true
+}
+
+/** 工具栏新建下拉: 高级 / 模板库 (简易直达已上移主体按钮, [P11-CONVERGE]) */
 function onNewCommand(cmd: string) {
   if (cmd === 'advanced') openEditor(null)
   else if (cmd === 'template') openTemplateLibrary()
-  else openNewRuleDrawer()
 }
 
 // ── 编辑器: 保存 (内部表单 → 后端格式) ──
@@ -4229,7 +4107,10 @@ async function handleSave(): Promise<boolean> {
     const mergedBoundChannelIds = [...new Set([...(rc.config.boundChannelIds || []).map(String), ...cascadeChIds])]
     const spatial_cond = (rc.enabled || lc.enabled) ? {
       region_id: cleanLocation(rc.config.roi || ''),
-      location_id: cleanLocation(lc.enabled ? (lc.config.point || rc.config.location) : (rc.config.location || '')),
+      // [UI-CONVERGE 2026-09-12 P2] location_id 唯一管辖 = 位置条件卡 (point):
+      // 位置卡关 = 该维度不收窄 (旧「空间卡 location 兑底」链随 UI 下线移除;
+      // 老规则回显 enabled 从 !!sc.location_id 推导, 原值往返零丢失)
+      location_id: cleanLocation(lc.enabled ? lc.config.point : ''),
       // [P1 2026-09-10 更名] 写新键 area_id (后端序列化双键镜像; 存量规则旧键双键读兼容)
       area_id: cleanGroup(rc.config.group || cascadeAreaId),
       // [vp9 2026-09-01] 显式绑定通道 (多选, 字符串形态与引擎侧双形态匹配兼容)
@@ -4260,13 +4141,23 @@ async function handleSave(): Promise<boolean> {
     const esc = form.conditions.eventSource
     // 提取 alarm type (从算法 ID 最后一部分)
     const event_types = etc.config.types.map(id => { const p = id.split('.'); return p[p.length - 1] || id })
+    // [SRC-CONVERGE 2026-09-12 P1] 绑定通道双写 source_cond: 空间/位置条件启用时
+    //   picker 隐藏 (通道圈定唯一入口 = 绑定∪级联勾选集), 引擎入口闸门
+    //   (hasAnyEnabledRuleForChannel 未启用规则通道不启动推理) 与空间收窄同源;
+    //   纯事件源规则 (无空间条件) 仍由 picker 圈定, 行为不变。
+    //   老规则零迁移: 回显 eventSource 空时双写自动生效, 原纯事件源勾选原样保留
+    const spatialOn = rc.enabled || lc.enabled
+    const srcActive = esc.enabled || (spatialOn && mergedBoundChannelIds.length > 0)
+    const srcChannels = (spatialOn && mergedBoundChannelIds.length > 0)
+      ? dedupeChannelForms([...mergedBoundChannelIds, ...esc.config.channels])
+      : esc.config.channels
     // 通道分类: 小整数 ID → channel_ids (int32), 字符串 ID → device_ids
     // [FIX 2026-08-28 双形态存储] GB28181 通道有主码流(不带 _ch0)/子码流(带 _ch0)
     //   双实例, 告警的 channel_id_str 两种形态都可能出现; 后端 device_ids 是
     //   精确比对 → 规则同时存两种形态, 任一实例的告警都能命中。
     const numericChannels: number[] = []
     const stringChannels: string[] = []
-    for (const c of esc.config.channels) {
+    for (const c of srcChannels) {
       const n = parseInt(c, 10)
       if (!isNaN(n) && String(n) === c.trim()) numericChannels.push(n)
       else {
@@ -4277,8 +4168,8 @@ async function handleSave(): Promise<boolean> {
     }
     // [任务5] 事件源 / 设备过滤 关闭态: device_ids/channel_ids 设空数组 (不限维度生效)
     const source_cond = {
-      channel_ids: esc.enabled ? numericChannels : [],
-      device_ids: esc.enabled ? stringChannels : [],
+      channel_ids: srcActive ? numericChannels : [],
+      device_ids: srcActive ? stringChannels : [],
       event_types,
       min_severity: etc.config.minSeverity,
       min_confidence: etc.config.minConfidence / 100,
@@ -4913,7 +4804,8 @@ const emit = defineEmits<{ (e: 'edit-closed'): void }>()
 const embedMode = computed(() => !!props.embedEditRuleId)
 /** 深链已打开过编辑 (防初始 both-false 误触发 edit-closed) */
 const embedStarted = ref(false)
-watch([simpleDrawerOpen, drawerVisible], ([a, b]) => {
+// [P11-CLEANUP] simpleDrawerOpen → editVisible (挂载开关退化后同一编辑链半径)
+watch([editVisible, drawerVisible], ([a, b]) => {
   if (embedMode.value && embedStarted.value && !a && !b) emit('edit-closed')
 })
 
@@ -5210,6 +5102,12 @@ watch(mainTab, (tab) => {
 .cascade-tree :deep(.el-tree-node__content) { height: 28px; border-radius: 6px; margin-bottom: 1px; }
 .cascade-tree :deep(.el-tree-node__content:hover) { background: var(--el-fill-color-light); }
 .cascade-tree :deep(.el-tree__empty-block) { background: transparent; color: var(--el-text-color-secondary); }
+/* [AREA-TREE 2026-09-13] 「区域 / 设备 / 通道」复选树卡片 (告警中心面板同款范式) */
+.bound-ch-tree { width: 100%; border: 1px solid var(--el-border-color-lighter); border-radius: 6px; padding: 8px 10px; background: var(--el-bg-color); }
+.bound-ch-tree__head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; padding-bottom: 4px; border-bottom: 1px solid var(--el-border-color-lighter); }
+.bound-ch-tree__title { font-weight: 600; font-size: 13px; }
+.bound-ch-tree__body { max-height: 260px; overflow: auto; }
+.bound-ch-tree :deep(.el-tree-node__content) { height: 26px; }
 .casc-node { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .casc-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
 .is-rotated { transform: rotate(180deg); }

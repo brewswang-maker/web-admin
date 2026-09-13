@@ -160,6 +160,10 @@ export interface AlarmEvent {
   /** [FIX-P1-1/P1-2 2026-09-12] 长窗聚合合并计数 (后端 aggregated_count):
    *  1 = 新告警; N>1 = 10min 长窗内同键 N 条已合并到本行 (列表/详情 ×N 角标) */
   aggregatedCount?: number
+  /** [AGG-DETAIL 2026-09-12] 明细归属 (后端 merged_into): 非空 = 本行是被合并到
+   *  该首行的明细行 (时间/置信度/快照完整保留); 列表行恒空 (后端默认滤明细),
+   *  仅详情 fallback (直接打开明细 id) 场景下发 */
+  mergedInto?: string
 }
 
 /** [SSOT R1/R2 2026-09-12] 后端判定结果 (LinkageEngine::matchAndVerdict 序列化形态).
@@ -283,6 +287,7 @@ export interface AlarmQuery {
   start_ms?: number      // 后端时间戳参数
   end_ms?: number
   since?: number         // [P0-4-d] WS 断线重连补拉: 只返回 created_at > since 的告警 (ms, 排他)
+  include_merged?: number // [MERGE-VIS 2026-09-13] 同窗合并明细开关: 1=含被合并行 (默认), 0=仅聚合首行 (WS 补拉用, 避免弹窗角标计数与列表行重复)
   scene?: string         // [校园方案 2026-08-30] 场景过滤 (逗号分隔多值, 后端 SSOT 展开 SQL IN); [2026-09-07] 各场景事件页数据源统一走此参数 (与 scene_tags 登记自动同步)
   search?: string
   dateRange?: [string, string]
@@ -818,6 +823,10 @@ export function normalizeAlarmCore(raw: any): AlarmEvent {
   const trackId = Number.isFinite(trackIdNum) ? trackIdNum : -1
   const aggNum = Number(raw.aggregated_count ?? raw.aggregatedCount ?? 1)
   const aggregatedCount = Number.isFinite(aggNum) && aggNum > 1 ? aggNum : 1
+  // [AGG-DETAIL 2026-09-12] 明细归属归一: 空串/缺失 → undefined (列表行常态)
+  const mergedIntoRaw = raw.merged_into ?? raw.mergedInto
+  const mergedInto =
+    typeof mergedIntoRaw === 'string' && mergedIntoRaw ? mergedIntoRaw : undefined
 
   return {
     id: raw.id || raw.alarm_id || `${raw.device_id || ''}_${channelId}_${raw.timestamp_ms || Date.now()}`,
@@ -934,6 +943,8 @@ export function normalizeAlarmCore(raw: any): AlarmEvent {
     // [FIX-P0-1/P1-1 2026-09-12] 目标轨迹 + 合并计数 (列表/详情 ×N 角标数据源)
     trackId,
     aggregatedCount,
+    // [AGG-DETAIL 2026-09-12] 明细归属 (详情 fallback 直开明细行时非空)
+    mergedInto,
   }
 }
 // [t3-tree-channel 2026-09-11 完成锚点] 三级树通道级服务端下钻(单值直传+多值 fan-out)批次 · 部署产物 entry=index-CvT0U9Nv4f.js tgz md5=07a2e26224ed93a40c47f987c04b7bb5

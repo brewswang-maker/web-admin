@@ -15,6 +15,13 @@
     <!-- Error + Retry -->
     <div v-if="errorMsg" class="mini-player__overlay mini-player__error">
       <span>{{ errorMsg }}</span>
+      <!-- [H265-HINT 2026-09-13] 拉流地址返回 200 却始终无首帧 → 多为源流 H265
+           (GB28181 NVR 常见), flv.js/hls.js 均不解 H265; 提示用户换路径而非反复重试 -->
+      <!-- [NVR-PB 2026-09-13] 补充命中路径: FLV CodecUnsupported 快速失败 (NVR 回放流
+           非标封装/HEVC, 不经首帧超时) 原本只会落到通用「已尝试全部格式」误导文案 -->
+      <span v-if="errorMsg.includes('首帧') || h265Suspect" class="mini-player__hint" style="margin-top:4px;font-size:12px;opacity:.85">
+        该回放流编码为本播放器不支持的 H.265/非标封装 (NVR 回放常见)；可在录像管理页验证同段录像，或联系现场将 NVR 码流改为 H.264
+      </span>
       <el-button size="small" type="primary" @click="retryPlay" style="margin-top:8px">🔄 重试</el-button>
     </div>
     <!-- LIVE badge -->
@@ -71,6 +78,15 @@ const props = withDefaults(defineProps<{
   showControls?: boolean
   /** 跳过 /start 调用（流已在推时使用，如浮窗预览） */
   skipStartApi?: boolean
+  /** [FIX nvr-playback 2026-09-13] 显式指定 src 候选的播放格式, 不依赖 URL 后缀:
+   *   NVR 回放流的相对路径 (ZLM /rtp/gb_playback_xxx.live.flv 等) 未必含 .flv/.m3u8,
+   *   而 hls_url 形如 /index/api/hls/... 也不含 .m3u8 → URL 后缀推断常常误判 mp4,
+   *   喂进原生 <video> 拉一个 flv 流 = 解析失败 + 「回放地址不可用」。
+   *   未指定时按 URL 后缀兜底 (向后兼容). */
+  srcFormat?: '' | 'flv' | 'ws-flv' | 'hls' | 'mp4'
+  /** [FIX nvr-playback 2026-09-13] 是否直播语义. 默认 true (直播预览行为不变);
+   *   回放流传 false 启用 flv.js 的 seek/duration/不循环 (对齐 RecordingView 回放配置). */
+  srcIsLive?: boolean
   /** 码流类型: 'main' (高清) 或 'sub' (子码流, 低分辨率) */
   streamType?: 'main' | 'sub'
   /** 组件是否可见 (v-show 场景下控制是否启动流) */
@@ -82,6 +98,8 @@ const props = withDefaults(defineProps<{
   showControls: false,
   skipStartApi: false,
   streamType: 'main',
+  srcFormat: '',
+  srcIsLive: true,
   visible: true,
   srcFallbacks: () => [],
   seekStart: undefined,
@@ -135,6 +153,8 @@ const loading = ref(false)
 const playing = ref(false)
 const errorMsg = ref('')
 const muted = ref(props.muted)
+// [NVR-PB 2026-09-13] 候选链内出现过 FLV CodecUnsupported (非标/HEVC 编码) → 模板提示分支
+const h265Suspect = ref(false)
 
 let playerInstance: Hls | flvjs.Player | null = null
 let currentFormat: PlayerFormat | '' = ''
@@ -363,6 +383,8 @@ function attachPlayer(video: HTMLVideoElement, fmt: PlayerFormat, url: string) {
         //   phase1 会命中杀流后 ~80ms 内重 INVITE 恢复的流 → 实际秒级自愈;
         //   每次真实首帧 (markPlaying) 重置退避计数 → 周期性扰动也能持续自愈.
         player.on(flvjs.Events.ERROR, (errorType: string, errorDetail: string) => {
+          // [NVR-PB 2026-09-13] destroy 后旧实例异步 emit 防护 (flv.js 库 bug, 同 src 模式)
+          if (playerInstance !== player) return
           console.error('[MiniPlayer FLV] error:', errorType, errorDetail, 'url=', url)
           destroyPlayer()
           scheduleAutoRetry(`FLV ${errorDetail}`)
@@ -517,6 +539,9 @@ let srcCandidates: string[] = []
 let srcIndex = 0
 let srcMode = false
 let srcVideoErrorHandler: (() => void) | null = null
+// [NVR-PB 2026-09-13] 候选链中出现过 CodecUnsupported (FLV 非标/HEVC 编码) → 耗尽后
+//   错误文案切 H265/非标提示分支 (h265Suspect), 取代误导性的「已尝试全部格式」
+//   (h265Suspect 为响应式 ref, 模板 v-if 直接消费; srcCodecUnsupported 语义合并入内)
 // [POPUP-3MIN 2026-09-11] 回放连播: mp4 起点 seek / 截止暂停 / 结束转发 监听引用
 let srcLoadedMetaHandler: (() => void) | null = null
 let srcTimeUpdateHandler: (() => void) | null = null
@@ -525,6 +550,7 @@ let srcEndedFired = false
 
 function playSrc(url: string) {
   srcMode = true
+  h265Suspect.value = false  // [NVR-PB] 新候选链重置编码不支持标记
   // [FIX rec-cand-dedup 2026-09-12] 候选去重: src 与 srcFallbacks 可能含相同 URL
   //   (同源 :8088 场景 recordUrlCandidates 双候选同址) — 同址重复尝试白耗一整个
   //   mp4 首帧超时周期 (20s), 去重后同址只试一次
@@ -539,7 +565,10 @@ function tryNextSrcCandidate() {
   destroyPlayer()
   if (srcIndex >= srcCandidates.length) {
     loading.value = false
-    errorMsg.value = '回放地址不可用 · 已尝试全部格式'
+    // [NVR-PB 2026-09-13] CodecUnsupported → H265/非标编码提示 (原通用文案误导用户以为地址坏)
+    errorMsg.value = h265Suspect.value
+      ? '回放流编码不支持 (H.265/非标封装)'
+      : '回放地址不可用 · 已尝试全部格式'
     emit('error', errorMsg.value)
     return
   }
@@ -548,7 +577,12 @@ function tryNextSrcCandidate() {
   attachSrcPlayer(video, srcCandidates[srcIndex++])
 }
 
-/** 挂载单个 src 候选; 任一失败路径统一走 tryNextSrcCandidate */
+/** 挂载单个 src 候选; 任一失败路径统一走 tryNextSrcCandidate
+ *  [FIX nvr-playback 2026-09-13] 格式判定重构:
+ *    优先级: srcFormat prop (显式) → URL 后缀兜底 (.m3u8/hls → hls, .flv/ws → flv, 其他 → mp4).
+ *    NVR 回放流 URL 路径形态不稳定, 显式 srcFormat 是报警弹窗联动回放可用的关键.
+ *  [FIX nvr-playback 2026-09-13] flv 路径 hasAudio 改 true (原 false), isLive 用 srcIsLive
+ *    (默认 true 保持直播行为, 回放传 false 启用 seek/duration) — 与录像管理页同款配置 */
 function attachSrcPlayer(video: HTMLVideoElement, raw: string) {
   const isWs = /^wss?:\/\//i.test(raw)
   const url = isWs ? normalizeWsFlvUrl(raw) : normalizeStreamUrl(raw)
@@ -560,7 +594,17 @@ function attachSrcPlayer(video: HTMLVideoElement, raw: string) {
     tryNextSrcCandidate()
   }
 
-  if (lower.includes('.m3u8')) {
+  // 格式推断: 显式 prop > URL 后缀; 兜底为 mp4
+  let mode: 'hls' | 'flv' | 'mp4'
+  const explicit = props.srcFormat
+  if (explicit === 'flv' || explicit === 'ws-flv') mode = 'flv'
+  else if (explicit === 'hls') mode = 'hls'
+  else if (explicit === 'mp4') mode = 'mp4'
+  else if (lower.includes('.m3u8') || lower.includes('hls')) mode = 'hls'
+  else if (isWs || lower.includes('.flv')) mode = 'flv'
+  else mode = 'mp4'
+
+  if (mode === 'hls') {
     if (Hls.isSupported()) {
       const hls = new Hls({
         enableWorker: true,
@@ -587,17 +631,22 @@ function attachSrcPlayer(video: HTMLVideoElement, raw: string) {
       failNext('HLS 不受支持')
       return
     }
-  } else if (isWs || lower.includes('.flv')) {
+  } else if (mode === 'flv') {
     if (!flvjs.isSupported()) { failNext('flv.js 不受支持'); return }
     const player = flvjs.createPlayer({
-      type: 'flv', url, isLive: true, hasAudio: false, hasVideo: true,
+      // [FIX nvr-playback] hasAudio=true + isLive=srcIsLive (回放传 false 启用 seek)
+      type: 'flv', url, isLive: props.srcIsLive, hasAudio: true, hasVideo: true,
     }, {
       enableStashBuffer: false,
       stashInitialSize: 128,
       lazyLoad: false,
-      liveBufferLatencyChasing: true,
+      // [FIX nvr-playback] 回放场景不需要直播追帧/追延迟; 直播场景默认 isLive=true 走追帧
+      liveBufferLatencyChasing: props.srcIsLive,
     } as any)
     player.on(flvjs.Events.ERROR, (errorType: string, errorDetail: string) => {
+      // [NVR-PB 2026-09-13] 非标/HEVC 编码标记 (文案分支) + destroy 后旧实例异步 emit 防护
+      if (playerInstance !== player) return
+      if (`${errorType}/${errorDetail}`.includes('CodecUnsupported')) h265Suspect.value = true
       failNext(`FLV ${errorType}/${errorDetail}`)
     })
     player.attachMediaElement(video)

@@ -65,88 +65,67 @@
 
     <!-- 设备表格 -->
     <el-card style="margin-top:12px">
-      <el-table :data="deviceStore.devices" stripe row-key="id" v-loading="deviceStore.loading"
-                @selection-change="(rows: DeviceItem[]) => selected = rows"
-                @expand-change="handleExpandChange">
-        <el-table-column type="expand">
+      <!-- [AREA-GROUP 2026-09-13] :data 改为区域分组树 (区域/子区域行 + 设备行);
+           default-expand-all 直接可见分组层级: 区域行箭头展开成员。
+           [TREE-EXPAND-FIX 2026-09-13] 删除 type="expand" 列: EP 树形数据(tree-props)
+           与 expand 列混用时树形子行不渲染 (store.treeData 完整但 DOM 无 level-* 行,
+           Playwright DOM 取证实测) — 用户报"华盾集团不能展开看不到设备"即此因。
+           通道查看改操作列「通道」按钮 + el-dialog (纯树形模式子行渲染恢复)。 -->
+      <el-table :data="areaGroupedRows" stripe :row-key="rowKeyOf"
+                :tree-props="{ children: 'children' }" default-expand-all
+                v-loading="deviceStore.loading"
+                @selection-change="(rows: DeviceItem[]) => selected = rows">
+        <el-table-column type="selection" width="45" :selectable="((row: any) => !isAreaRow(row)) as any" />
+        <el-table-column prop="name" label="设备名称" min-width="200" show-overflow-tooltip>
           <template #default="{ row }">
-            <div class="channel-expand">
-              <div v-if="channelLoading === row.id" style="padding:12px;text-align:center">
-                <el-icon class="is-loading"><Loading /></el-icon> 加载中...
-              </div>
-              <div v-else-if="!channelMap[row.id] || channelMap[row.id].length === 0" style="padding:12px;color:#8c8c8c">
-                暂无通道数据
-              </div>
-              <el-table v-else :data="channelMap[row.id]" size="small" style="margin:8px 0">
-                <el-table-column prop="name" label="通道名称" min-width="140" show-overflow-tooltip>
-                  <template #default="{ row: ch }">
-                    <span style="color:var(--el-color-primary)">{{ ch.name }}</span>
-                  </template>
-                </el-table-column>
-                <el-table-column prop="id" label="通道ID" min-width="180" show-overflow-tooltip />
-                <el-table-column prop="deviceType" label="类型" width="100">
-                  <template #default="{ row: ch }">
-                    <el-tag size="small" type="info">{{ ch.deviceType || 'IPCamera' }}</el-tag>
-                  </template>
-                </el-table-column>
-                <el-table-column prop="vendor" label="厂商" width="90" show-overflow-tooltip />
-                <el-table-column prop="model" label="型号" width="90" show-overflow-tooltip />
-                <el-table-column prop="status" label="状态" width="80">
-                  <template #default="{ row: ch }">
-                    <el-tag :type="ch.status === 'streaming' ? 'success' : 'info'" size="small">
-                      {{ ch.status === 'streaming' ? '在线' : '离线' }}
-                    </el-tag>
-                  </template>
-                </el-table-column>
-                <el-table-column label="位置" width="140">
-                  <template #default="{ row: ch }">
-                    <span v-if="ch.longitude && ch.latitude" style="font-size:12px;color:#8c8c8c">
-                      {{ ch.longitude.toFixed(4) }}, {{ ch.latitude.toFixed(4) }}
-                    </span>
-                    <span v-else style="color:#ccc">-</span>
-                  </template>
-                </el-table-column>
-                <el-table-column label="操作" width="120" fixed="right">
-                  <template #default="{ row: ch }">
-                    <el-button size="small" link type="success" @click="handleChannelLive(row, ch)">预览</el-button>
-                    <el-button size="small" link type="primary" @click="handleChannelDetail(ch)">详情</el-button>
-                  </template>
-                </el-table-column>
-              </el-table>
-            </div>
+            <!-- [AREA-GROUP] 区域行: 组名 + 子树设备数徽标 + 描述副文本
+                 (原 expand 摘要卡片信息并入, 见 TREE-EXPAND-FIX) -->
+            <template v-if="isAreaRow(row)">
+              <span class="area-group__name">{{ row.__name }}</span>
+              <el-tag size="small" type="success" effect="plain" class="area-group__count">{{ row.__devCount }} 台</el-tag>
+              <div v-if="row.__desc" class="area-group__desc">{{ row.__desc }}</div>
+            </template>
+            <template v-else>{{ row.name }}</template>
           </template>
         </el-table-column>
-        <el-table-column type="selection" width="45" />
-        <el-table-column prop="name" label="设备名称" min-width="150" show-overflow-tooltip />
         <el-table-column prop="deviceType" label="类型" width="100">
           <template #default="{ row }">
-            <el-tag size="small" type="info">{{ row.deviceType }}</el-tag>
+            <span v-if="isAreaRow(row)" class="area-dash">—</span>
+            <el-tag v-else size="small" type="info">{{ row.deviceType }}</el-tag>
           </template>
         </el-table-column>
         <el-table-column prop="ip" label="IP地址" width="140" />
         <el-table-column prop="status" label="状态" width="90">
           <template #default="{ row }">
-            <el-tag :type="statusTagType(row.status) as any" size="small">{{ statusLabel(row.status) }}</el-tag>
+            <span v-if="isAreaRow(row)" class="area-dash">—</span>
+            <el-tag v-else :type="statusTagType(row.status) as any" size="small">{{ statusLabel(row.status) }}</el-tag>
           </template>
         </el-table-column>
         <el-table-column prop="channelCount" label="通道" width="100">
           <template #default="{ row }">
-            <span v-if="row.channelCount > 0" class="channel-badge">
-              <span class="channel-total">{{ row.channelCount }}</span>
-              <span v-if="row.onlineChannels" class="channel-online"> ({{ row.onlineChannels }}在线)</span>
-            </span>
-            <span v-else style="color:#8c8c8c">0</span>
+            <template v-if="isAreaRow(row)"><span class="area-dash">—</span></template>
+            <template v-else>
+              <span v-if="row.channelCount > 0" class="channel-badge">
+                <span class="channel-total">{{ row.channelCount }}</span>
+                <span v-if="row.onlineChannels" class="channel-online"> ({{ row.onlineChannels }}在线)</span>
+              </span>
+              <span v-else style="color:#8c8c8c">0</span>
+            </template>
           </template>
         </el-table-column>
         <el-table-column prop="algoPlugin" label="算法插件" width="110">
           <template #default="{ row }">
-            <el-tag v-if="row.algoPlugin !== '无'" size="small" type="warning">{{ row.algoPlugin }}</el-tag>
-            <span v-else style="color:#8c8c8c">-</span>
+            <span v-if="isAreaRow(row)" class="area-dash">—</span>
+            <template v-else>
+              <el-tag v-if="row.algoPlugin !== '无'" size="small" type="warning">{{ row.algoPlugin }}</el-tag>
+              <span v-else style="color:#8c8c8c">-</span>
+            </template>
           </template>
         </el-table-column>
         <el-table-column prop="syncStatus" label="同步" width="90">
           <template #default="{ row }">
-            <el-tag :type="syncTagType(row.syncStatus) as any" size="small">{{ syncLabel(row.syncStatus) }}</el-tag>
+            <span v-if="isAreaRow(row)" class="area-dash">—</span>
+            <el-tag v-else :type="syncTagType(row.syncStatus) as any" size="small">{{ syncLabel(row.syncStatus) }}</el-tag>
           </template>
         </el-table-column>
         <el-table-column prop="location" label="位置" width="100" show-overflow-tooltip />
@@ -163,13 +142,23 @@
             <span v-else style="color:#8c8c8c">-</span>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="480" fixed="right">
+        <!-- [TREE-EXPAND-FIX 2026-09-13] 去 fixed="right": 窄视口下 sticky 操作列
+             (原 480px 白底不透明) 完全遮挡名称列 (elementFromPoint 实测 100% 覆盖);
+             宽度 480→360 (link 小按钮可容纳) -->
+        <el-table-column label="操作" width="360">
           <template #default="{ row }">
+            <!-- [AREA-GROUP] 区域行: 仅成员管理入口 -->
+            <template v-if="isAreaRow(row)">
+              <el-button size="small" link type="primary" @click="$router.push('/security-areas')">管理成员</el-button>
+            </template>
+            <template v-else>
             <el-button size="small" link type="primary" @click="$router.push(`/devices/${row.id}`)">详情</el-button>
             <el-button size="small" link type="warning" @click="openEditDialog(row)">编辑</el-button>
+            <el-button size="small" link type="success" @click="handleLive(row)">预览</el-button>
+            <!-- [TREE-EXPAND-FIX] 通道查看入口 (原 expand 行内表格迁移至此) -->
+            <el-button size="small" link type="primary" @click="openChannelDlg(row)">通道</el-button>
             <!-- [DEV-GROUP 2026-09-07] 行内设置分组: 勾选即多组绑定 (设备视角) -->
             <el-button size="small" link type="primary" @click="openGroupDialog(row)">分组</el-button>
-            <el-button size="small" link type="success" @click="handleLive(row)">预览</el-button>
             <!-- [DEV-CTRL 2026-09-06] 按 deviceType 动态控制按钮:
                  IPCamera → 云台 (真调 /ptz/control, 后端 device:control 权限+审计);
                  NVR/DVR → 录像检索 (设备端存储); 其他类型不出对应按钮 -->
@@ -183,6 +172,7 @@
             <el-button size="small" link @click="handleSync(row)">同步</el-button>
             <el-button size="small" link type="info" @click="handleSyncTime(row)">校时</el-button>
             <el-button size="small" link type="danger" @click="handleDelete(row)">删除</el-button>
+            </template>
           </template>
         </el-table-column>
       </el-table>
@@ -249,6 +239,45 @@
         </el-descriptions>
       </template>
     </el-card>
+
+    <!-- [TREE-EXPAND-FIX 2026-09-13] 通道查看弹窗 (原 expand 行内表格迁移):
+         表格列与原 expand 内容一致 (预览/详情按钮沿用 handleChannelLive/Detail) -->
+    <el-dialog v-model="channelDlg.visible" :title="`通道列表 - ${channelDlg.device?.name || ''}`" width="820px">
+      <div v-if="channelLoading === channelDlg.device?.id" style="padding:24px;text-align:center">
+        <el-icon class="is-loading"><Loading /></el-icon> 加载中...
+      </div>
+      <div v-else-if="!channelDlg.device || !channelMap[channelDlg.device.id] || channelMap[channelDlg.device.id].length === 0" style="padding:24px;color:#8c8c8c;text-align:center">
+        暂无通道数据
+      </div>
+      <el-table v-else :data="channelMap[channelDlg.device!.id]" size="small" max-height="420">
+        <el-table-column prop="name" label="通道名称" min-width="140" show-overflow-tooltip>
+          <template #default="{ row: ch }">
+            <span style="color:var(--el-color-primary)">{{ ch.name }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column prop="id" label="通道ID" min-width="180" show-overflow-tooltip />
+        <el-table-column prop="deviceType" label="类型" width="100">
+          <template #default="{ row: ch }">
+            <el-tag size="small" type="info">{{ ch.deviceType || 'IPCamera' }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="vendor" label="厂商" width="90" show-overflow-tooltip />
+        <el-table-column prop="model" label="型号" width="90" show-overflow-tooltip />
+        <el-table-column prop="status" label="状态" width="80">
+          <template #default="{ row: ch }">
+            <el-tag :type="ch.status === 'streaming' ? 'success' : 'info'" size="small">
+              {{ ch.status === 'streaming' ? '在线' : '离线' }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="120">
+          <template #default="{ row: ch }">
+            <el-button size="small" link type="success" :disabled="!channelDlg.device" @click="handleChannelLive(channelDlg.device!, ch)">预览</el-button>
+            <el-button size="small" link type="primary" @click="handleChannelDetail(ch)">详情</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+    </el-dialog>
 
     <!-- 设备发现对话框 -->
     <el-dialog v-model="showDiscoverDialog" :title="`设备发现 - ${discoverMethodLabel}`" width="760px" @closed="discoveredDevices = []">
@@ -598,6 +627,8 @@ import { discoverGB28181, getGB28181Config } from '@/api/devices'
 import { deviceApi } from '@/api/device'
 import { securityAreaApi } from '@/api/securityAreas'
 import type { SecurityArea } from '@/api/securityAreas'
+// [AREA-GROUP 2026-09-13] 设备列表按安保区域分组: 复用区域平表→树工具 (与告警树同源)
+import { buildAreaTree, type AreaTreeNode } from '@/utils/areaTree'
 import type { DeviceItem, ProtocolType, DiscoveredDevice } from '@/types/device'
 import type { GB28181Config } from '@/api/devices'
 import { PROTOCOL_OPTIONS } from '@/types/device'
@@ -705,8 +736,77 @@ const activeGroups = computed(() => deviceGroups.value.filter(g => g.status === 
 async function loadGroups() {
   try {
     const res = await securityAreaApi.listAreas()
-    deviceGroups.value = res.data?.data?.items ?? []
-  } catch { deviceGroups.value = [] }
+    // [AREA-GROUP 2026-09-13] 宽容解包 (后端 areas/items 双形态, 同 AlarmDeviceTreePanel)
+    //   + 同步构建区域树 (分组展示数据源)
+    const raw: any = (res as any)?.data?.data
+    const list: SecurityArea[] = Array.isArray(raw?.areas) ? raw.areas
+      : Array.isArray(raw?.items) ? raw.items : Array.isArray(raw) ? raw : []
+    deviceGroups.value = list
+    areaRoots.value = buildAreaTree(list.filter((g) => g.status === 'active'))
+  } catch {
+    deviceGroups.value = []
+    areaRoots.value = []
+  }
+}
+
+// ── [AREA-GROUP 2026-09-13] 设备列表按安保区域分组 (区域/子区域为分组维度) ──
+// 区域行 __isArea 承载分组头 (组名+子树设备数), 设备行按 device_ids/通道 resolved
+// 反查挂接 (groupsOf 同判定); 未归属设备入「未分组」虚拟组; 服务端筛选激活时
+// 裁剪无设备分支 (空组隐藏), 无筛选时空组也可见 (管理视角)。
+const areaRoots = ref<AreaTreeNode[]>([])
+const hasDeviceFilter = computed(() =>
+  !!(search.value || statusFilter.value || typeFilter.value || projectFilter.value))
+
+/** 单区域直接绑定判定 (与 groupsOf 同口径, 单组版) */
+function areaHasDevice(a: SecurityArea, d: DeviceItem): boolean {
+  return (a.device_ids ?? []).includes(d.id)
+    || (a.resolved_channel_ids ?? []).some((c) => c === d.id || c.startsWith(d.id + '_'))
+}
+
+/** 子树设备总数 (子区域并集去重: 多区域绑定设备只计一次) */
+function countSubtreeDevs(n: AreaTreeNode): number {
+  const ids = new Set<string>()
+  const walk = (node: AreaTreeNode) => {
+    for (const d of deviceStore.devices) if (areaHasDevice(node.area, d)) ids.add(d.id)
+    for (const c of node.children) walk(c)
+  }
+  walk(n)
+  return ids.size
+}
+
+const areaGroupedRows = computed<any[]>(() => {
+  const devices = deviceStore.devices as DeviceItem[]
+  const toAreaRow = (n: AreaTreeNode): any => ({
+    __key: `area:${n.id}`,
+    __isArea: true,
+    __name: n.name,
+    __desc: n.area.description || '',
+    __devCount: countSubtreeDevs(n),
+    children: [...n.children.map(toAreaRow), ...devices.filter((d) => areaHasDevice(n.area, d))],
+  })
+  const rows = areaRoots.value.map(toAreaRow)
+  const ungrouped = devices.filter((d) => !activeGroups.value.some((g) => areaHasDevice(g, d)))
+  if (ungrouped.length) {
+    rows.push({
+      __key: 'area:__ungrouped__', __isArea: true, __name: '未分组',
+      __desc: '尚未绑定任何安保区域的设备', __devCount: ungrouped.length,
+      children: ungrouped,
+    })
+  }
+  if (!hasDeviceFilter.value) return rows
+  const prune = (row: any): any | null => {
+    if (!row.__isArea) return row
+    const kids = (row.children || []).map(prune).filter(Boolean)
+    return kids.length ? { ...row, children: kids } : null
+  }
+  return rows.map(prune).filter(Boolean)
+})
+
+function isAreaRow(row: any): boolean {
+  return !!row?.__isArea
+}
+function rowKeyOf(row: any): string {
+  return row?.__isArea ? row.__key : row.id
 }
 
 function groupTypeLabel(t: string) {
@@ -752,19 +852,20 @@ async function saveGroups() {
   } finally { groupSaving.value = false }
 }
 
-async function handleExpandChange(row: DeviceItem, expandedRows: DeviceItem[]) {
-  if (expandedRows.find((r: DeviceItem) => r.id === row.id)) {
-    // 展开：加载通道
-    channelLoading.value = row.id
-    try {
-      const res = await deviceApi.getChannels(row.id) as any
-      const data = res?.data?.data ?? res?.data ?? []
-      channelMap.value[row.id] = Array.isArray(data) ? data : (data.channels || [])
-    } catch { channelMap.value[row.id] = [] }
-    finally { channelLoading.value = '' }
-  }
+// [TREE-EXPAND-FIX 2026-09-13] 原 handleExpandChange (行内 expand 拉通道) 废弃:
+//   expand 列已删 (与树形数据混用致子行不渲染, 见模板头注释)。通道查看改
+//   「通道」按钮 + el-dialog, 复用原加载逻辑与 channelMap。
+const channelDlg = ref<{ visible: boolean; device: DeviceItem | null }>({ visible: false, device: null })
+async function openChannelDlg(row: DeviceItem) {
+  channelDlg.value = { visible: true, device: row }
+  channelLoading.value = row.id
+  try {
+    const res = await deviceApi.getChannels(row.id) as any
+    const data = res?.data?.data ?? res?.data ?? []
+    channelMap.value[row.id] = Array.isArray(data) ? data : (data.channels || [])
+  } catch { channelMap.value[row.id] = [] }
+  finally { channelLoading.value = '' }
 }
-
 function handleChannelLive(device: DeviceItem, channel: any) {
   router.push(`/live?deviceId=${device.id}&channelId=${channel.id || channel.channel_id}`)
 }
@@ -1258,6 +1359,18 @@ onUnmounted(() => {
 
 <style scoped>
 /*.devices-page { padding: 0 4px; }*/
+/* [AREA-GROUP 2026-09-13] 区域分组行样式 */
+.area-group__name { font-weight: 600; }
+/* [TREE-EXPAND-FIX] 原 expand 摘要卡片描述并入名称列副文本 */
+.area-group__desc {
+  font-size: 12px; color: #8c8c8c; margin-top: 2px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 360px;
+}
+.area-group__count { margin-left: 6px; }
+.area-dash { color: #c0c4cc; }
+.area-expand { display: flex; align-items: center; padding: 8px 12px; gap: 8px; }
+.area-expand__name { font-weight: 600; }
+.area-expand__meta { color: #8c8c8c; font-size: 12px; margin-right: 12px; }
 .toolbar-card { margin-bottom: 0; }
 .toolbar { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; }
 .toolbar-left { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }

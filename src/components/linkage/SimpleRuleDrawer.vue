@@ -8,7 +8,16 @@
        [TPL-VP6 2026-09-03] 模板卡片: TemplateGallery 选中即携模板整包 switch-advanced,
        落地平台 vp6 全功能表单 (动作编排/互斥组/抑制链/VLM 复核/元数据齐备), 不再进
        tune 简化表单; tune 视图仅保留给编辑态高频微调 (无全功能宿主时的就地编辑)。
-       事件类型选项由本实例 fetchOptions() 填充 (useLinkageOptions 非单例, 否则下拉恒空)。 -->
+       事件类型选项由本实例 fetchOptions() 填充 (useLinkageOptions 非单例, 否则下拉恒空)。
+       [UI-CONVERGE 2026-09-13 P9] 「弹窗自动关闭」输入下线 (高级表单折叠区保留同字段):
+       popup_auto_close_s 0/89 使用, 简易高频表单不承载低频降噪参数;
+       TuneForm/预填/tunePatch 透传链全保留 (存量值往返零丢失, 恒 0 时语义=不自动关闭)
+       [P11-CLEANUP 2026-09-13] 新建链下线后死分支清理 (isEdit 恒真, 本组件仅编辑链可达):
+       ① 删 template 视图链 (TemplateGallery/onPickTemplate/guessPreset — 新建模板已由
+       平台「从模板库创建」下拉+独立模板弹窗承接, TemplateGallery.vue 全仓零引用随删);
+       ② 删新建态分支 (choice 卡新建文案/推荐 tag/重选模板/saveTune create/picked 提示条);
+       ③ 保留 tune 视图与 editSimpleAdvanced 双模 prop (无全功能宿主场景的就地编辑能力,
+       非死亡残留); emit('switch-advanced') 收缩为仅 mode (草稿 p 父侧从未消费) -->
   <!-- append-to-body: [SCENE-EDIT-INPLACE] 嵌入模式下 LinkageRuleView 外壳 v-show 隐藏,
        本抽屉须 teleport 到 body 才可见 (平台正常模式行为不变) -->
   <el-drawer
@@ -22,28 +31,29 @@
     @update:model-value="(v: boolean) => emit('update:modelValue', v)"
   >
     <div class="srd-body">
-      <!-- ── 视图 1: 入口选择 (三卡片并列) [UX-ALIGN 2026-09-03] 新建/编辑统一入口 ── -->
+      <!-- ── 视图 1: 入口选择 [UX-ALIGN 2026-09-03 → P11-CLEANUP 2026-09-13 仅编辑态] ── -->
       <template v-if="view === 'choice'">
         <!-- 编辑态预选提示: 用户清楚当前编辑对象 + 推荐路径 (规则名取 initialTune.name, 单一数据源) -->
-        <el-alert v-if="isEdit" type="info" :closable="false" style="margin-bottom: 12px">
+        <el-alert type="info" :closable="false" style="margin-bottom: 12px">
           <template #title>
-            正在编辑规则「{{ initialTune?.name ?? '' }}」: 推荐选择「简易模式」快速修改高频字段 (名称 / 事件类型 / 设备通道 / 生效时段 / 弹窗自动关闭), 或选择「高级模式」调整完整治理配置
+            正在编辑规则「{{ initialTune?.name ?? '' }}」: 推荐选择「简易模式」快速修改高频字段 (名称 / 事件类型 / 设备通道 / 生效时段), 或选择「高级模式」调整完整治理配置
           </template>
         </el-alert>
         <div class="srd-hero">
-          <div class="srd-card" :class="{ 'srd-card--disabled': isEdit }" @click="onTemplateCardClick">
+          <!-- 模板卡: 禁用只读告知 (换模板=重建语义; 新建模板由平台「从模板库创建」承接) -->
+          <div class="srd-card srd-card--disabled">
             <el-icon class="srd-card-icon"><CopyDocument /></el-icon>
             <div class="srd-card-main">
-              <div class="srd-card-title">从模板库选择 <el-tag v-if="!isEdit" size="small" type="success" effect="dark">推荐</el-tag></div>
-              <div class="srd-card-desc">{{ isEdit ? '编辑态不支持更换模板, 请先删除规则后从模板重新创建' : '行业 / 场景 / 事件分类模板, 选一条微调即可生效, 约 30 秒' }}</div>
+              <div class="srd-card-title">从模板库选择</div>
+              <div class="srd-card-desc">编辑态不支持更换模板, 请先删除规则后从模板重新创建</div>
             </div>
             <el-icon class="srd-card-arrow"><ArrowRight /></el-icon>
           </div>
           <div class="srd-card" @click="onSimpleCardClick">
             <el-icon class="srd-card-icon"><EditPen /></el-icon>
             <div class="srd-card-main">
-              <div class="srd-card-title">简易模式 <el-tag v-if="isEdit" size="small" type="success" effect="dark">推荐</el-tag></div>
-              <div class="srd-card-desc">{{ isEdit ? (editSimpleAdvanced ? '与新建简易模式同一表单: 名称 / 事件 / 时间 / 通道 / 弹窗自动关闭' : '快速修改: 名称 / 事件类型 / 设备通道 / 生效时段 / 弹窗自动关闭, 动作编排保持不变') : '单页快速填写: 名称 / 事件 / 时间 / 通道 / 弹窗自动关闭 (vp6 经典表单)' }}</div>
+              <div class="srd-card-title">简易模式 <el-tag size="small" type="success" effect="dark">推荐</el-tag></div>
+              <div class="srd-card-desc">{{ editSimpleAdvanced ? '与新建简易模式同一表单: 名称 / 事件 / 时间 / 通道' : '快速修改: 名称 / 事件类型 / 设备通道 / 生效时段, 动作编排保持不变' }}</div>
             </div>
             <el-icon class="srd-card-arrow"><ArrowRight /></el-icon>
           </div>
@@ -58,22 +68,12 @@
         </div>
       </template>
 
-      <!-- ── 视图 2: 模板选择 [TPL-VP6 2026-09-03] 选中即携整包切 vp6 全功能表单 ── -->
-      <template v-else-if="view === 'template'">
-        <TemplateGallery :selected-tags="[]" @apply-template="onPickTemplate" />
-      </template>
-
-      <!-- ── 视图 3: 高频微调表单 [TPL-VP6 2026-09-03] 仅编辑态可达 (模板创建已直落 vp6 全功能表单) /
-           [SIMPLE-EDIT 2026-09-03] 编辑模式复用同表单 (picked 条件保留防御) ── -->
-      <template v-else-if="view === 'tune' && (picked || isEdit)">
-        <el-alert v-if="isEdit" type="info" :closable="false" style="margin-bottom: 12px">
+      <!-- ── 视图 2: 高频微调表单 [P11-CLEANUP] 编辑态 editSimpleAdvanced=false 宿主的就地编辑
+           (无全功能表单宿主的场景页/算法页); 平台页 (editSimpleAdvanced) 直开 vp6 回显编辑 -->
+      <template v-else-if="view === 'tune' && isEdit">
+        <el-alert type="info" :closable="false" style="margin-bottom: 12px">
           <template #title>
-            编辑「{{ tune.name }}」: 仅更新 名称 / 事件类型 / 设备通道 / 生效时段 / 弹窗自动关闭, 动作编排与高级治理配置保持不变
-          </template>
-        </el-alert>
-        <el-alert v-else type="success" :closable="false" style="margin-bottom: 12px">
-          <template #title>
-            模板「{{ picked?.name ?? '' }}」: {{ picked?.actions?.length || 0 }} 个动作已带入{{ actionSummary }}
+            编辑「{{ tune.name }}」: 仅更新 名称 / 事件类型 / 设备通道 / 生效时段, 动作编排与高级治理配置保持不变
           </template>
         </el-alert>
         <el-form label-position="top" size="default">
@@ -115,19 +115,8 @@
               </div>
             </div>
           </el-form-item>
-          <!-- [POPUP-AUTOCLOSE 2026-09-03] 弹窗自动关闭 (新建/编辑都可见):
-               0 = 永不自动关闭 (默认, 对齐海康 iVMS / 大华 DSS 报警弹窗常驻语义);
-               >0 = 打开 N 秒后自动关闭。仅作用于 WS 命中本规则的弹窗,
-               详情入口弹窗不受此控制 (始终不自动关闭)。 -->
-          <el-form-item label="弹窗自动关闭">
-            <el-input-number
-              v-model="tune.popupAutoCloseS"
-              :min="0" :max="3600" :step="5"
-              placeholder="0 = 永不自动关闭"
-              style="width: 180px"
-            />
-            <span class="srd-popup-close-hint">秒 · 0=永不自动关闭 (推荐), &gt;0=N 秒后自动关闭</span>
-          </el-form-item>
+          <!-- [UI-CONVERGE 2026-09-13 P9] 「弹窗自动关闭」输入下线 (0/89 使用, 高级表单
+               折叠区保留同字段); tune.popupAutoCloseS 数据链保留 (预填恒 0/透传不变) -->
           <!-- [FLOOR-MAP 2026-09-04] 联动平面图 (编辑主路径一等字段, 华为楼层联动对标):
                开关=CLIENT_SHOW_MAP(107) 动作增删; 多选=source_cond.map_ids (scene_tag 分组·大华);
                保存后告警弹窗自动定位至平面图并投影落点涟漪 (海康触发即定位) -->
@@ -159,18 +148,10 @@
 
     <template #footer>
       <div class="srd-footer">
-        <template v-if="view === 'template'">
+        <template v-if="view === 'tune'">
           <el-button @click="view = 'choice'">返回</el-button>
           <div style="flex: 1" />
-          <el-button link type="primary" @click="emitSwitchAdvanced(null, 'full')">切换到高级模式 →</el-button>
-        </template>
-        <template v-else-if="view === 'tune'">
-          <el-button v-if="isEdit" @click="view = 'choice'">返回</el-button>
-          <el-button v-else @click="view = 'template'">重选模板</el-button>
-          <div style="flex: 1" />
-          <el-button type="primary" :loading="committing" @click="saveTune">
-            {{ isEdit ? '保存修改' : '保存并生效' }}
-          </el-button>
+          <el-button type="primary" :loading="committing" @click="saveTune">保存修改</el-button>
         </template>
         <template v-else>
           <div style="flex: 1" />
@@ -187,12 +168,11 @@
 import { ref, reactive, computed, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { ArrowRight, CopyDocument, EditPen, Setting } from '@element-plus/icons-vue'
-import type { RuleTemplate } from '@/api/linkage'
+// [P11-CLEANUP] RuleTemplate/TemplateGallery 随新建模板链下线移除
 import { useLinkageOptions } from '@/composables/useLinkageOptions'
 // [FLOOR-MAP 2026-09-04] 简易表单地图联动: 地图列表单例缓存 + scene_tag 分组 (大华同场景包对标)
 import { useFloorMap } from '@/composables/useFloorMap'
 import { sceneTagLabel, type FloorMapWithCameras } from '@/types/floorMap'
-import TemplateGallery from './TemplateGallery.vue'
 import DeviceChannelPicker from './DeviceChannelPicker.vue'
 
 export interface SimpleCommitPatch {
@@ -214,8 +194,6 @@ export interface SimpleCommitPatch {
   actions?: string[]
   priority?: number
   cooldownMs?: number
-  /** 模板分支: 整包模板 (父视图走 applyTemplateToForm 保动作参数) */
-  template?: RuleTemplate | null
 }
 
 /** [SIMPLE-EDIT 2026-09-03] @commit 统一事件形态: mode=update 时 ruleId 必带,
@@ -241,7 +219,8 @@ const emit = defineEmits<{
   (e: 'update:modelValue', v: boolean): void
   /** [SIMPLE-EDIT 2026-09-03] 统一事件形态: mode=update 时 ruleId 必带, 父视图走 updateRule */
   (e: 'commit', p: SimpleCommitEvent): void
-  (e: 'switch-advanced', p: SimpleCommitPatch | null, mode?: 'simple' | 'full'): void
+  /** [P11-CLEANUP] 收缩为仅 mode: 新建草稿 p 父侧从未消费 (编辑回显数据比草稿全) */
+  (e: 'switch-advanced', mode: 'simple' | 'full'): void
 }>()
 
 const { eventTypeOptions, fetchOptions } = useLinkageOptions()
@@ -261,29 +240,20 @@ const mapGroupsByScene = computed(() => {
   }))
 })
 
-// ── 视图状态机 ──
-type View = 'choice' | 'template' | 'tune'
+// ── 视图状态机 [P11-CLEANUP] template 视图随新建模板链下线移除 ──
+type View = 'choice' | 'tune'
 const view = ref<View>('choice')
 // tune 表单进入时懒加载地图列表 (开关打开前就已可选, 避免开白屏下拉)
 watch(view, (v) => {
   if (v === 'tune' && !floorMaps.value.length) loadFloorMaps().catch(() => {})
 })
-const picked = ref<RuleTemplate | null>(null)
 const committing = computed(() => !!props.committing)
 
 /** 编辑模式: editingRuleId + initialTune 同时给定时生效 (与新建共享同一挂载实例) */
 const isEdit = computed(() => !!props.editingRuleId && !!props.initialTune)
 
-const drawerTitle = computed(() => {
-  // [UX-ALIGN 2026-09-03] 编辑态统一标题 (与「新建联动规则」对称), 规则名在 choice 提示条展示
-  if (isEdit.value) return '编辑联动规则'
-  const t: Record<View, string> = {
-    choice: '新建联动规则',
-    template: '从模板创建 · 选择模板',
-    tune: '编辑联动规则 · 快速微调', // [TPL-VP6] tune 仅编辑态可达 (模板创建直落 vp6 全功能表单)
-  }
-  return t[view.value]
-})
+const drawerTitle = computed(() =>
+  view.value === 'tune' ? '编辑联动规则 · 快速微调' : '编辑联动规则')
 
 // 打开时重置状态机; 并拉取选项 (useLinkageOptions 非单例, 本组件实例的 eventTypeOptions
 // 需自行 fetchOptions 填充, 模块级 Promise 缓存下复用拉取, 保证触发事件下拉有数据)
@@ -291,7 +261,6 @@ const drawerTitle = computed(() => {
 // 卡片时即带出当前值), 不再直进 tune — 入口体验与新建完全一致, 仅初始态不同
 watch(() => props.modelValue, (v) => {
   if (!v) return
-  picked.value = null
   if (isEdit.value && props.initialTune) {
     Object.assign(tune, {
       name: props.initialTune.name,
@@ -335,54 +304,6 @@ const tuneScope = computed({
   set: (v: { deviceIds: string[]; channelIds: number[] }) => { tune.deviceIds = v.deviceIds; tune.channelIds = v.channelIds },
 })
 
-/** 模板动作类型 → 中文名 (摘要展示用, 覆盖常用, 兜底显示编号) */
-const ACTION_LABELS: Record<number, string> = {
-  100: '客户端弹直播', 105: 'TTS 播报', 109: '执行预案', 112: '事件录像', 114: '客户端抓图',
-  115: '声光报警输出', 116: '云台控制', 200: 'Web 弹窗', 201: '邮件', 212: 'Web 弹图',
-  215: 'Web 抓图', 300: 'APP 推送', 304: 'APP 处置', 503: '继电器开关', 504: 'HTTP 工单回调',
-}
-
-/** 模板动作摘要 (tune 提示条) */
-const actionSummary = computed(() => {
-  const list = (picked.value?.actions || []).slice(0, 4).map((a: any) => ACTION_LABELS[a.type] || `动作${a.type}`)
-  const more = (picked.value?.actions?.length || 0) - list.length
-  return list.length ? ` (${list.join('/')}${more > 0 ? ` 等 ${more + list.length} 项` : ''})` : ''
-})
-
-// ── [TPL-VP6 2026-09-03] 模板选择 → 直落平台 vp6 全功能表单 ──
-// 原 view='tune' 就地 5 字段微调过于简陋 (缺动作编排/互斥组/抑制链/VLM 复核/优先级/
-// 冷却/描述/标签), 无法支撑模板意图一键落地为完整可执行规则。改为携模板整包
-// switch-advanced: 宿主 (LinkageRuleView) applyTemplateToForm (动作勾选+参数/元数据/
-// 时间/事件/通道整包) + applySimplePatch (高频字段) 预填后打开 vp6 全功能抽屉, 用户在
-// 完整表单检查/编排后手动保存 — 编辑器单一来源, 与平台行内编辑同链路同表单。
-function onPickTemplate(t: RuleTemplate) {
-  const src: any = (t as any).source_cond || {}
-  const tc: any = (t as any).time_cond || {}
-  const timeStart: string = tc.time_start || '08:00'
-  const timeEnd: string = tc.time_end || '20:00'
-  const weekdays: number[] = tc.weekdays?.length ? [...tc.weekdays] : [1, 2, 3, 4, 5]
-  // [TPL-VP6] 预设档以模板原始 time_cond 判定 (无 time_start = 'all' 全天):
-  // 原实现先兑底 '08:00' 再 guessPreset 会把无时间模板误判成「白天」档, 语义失真
-  const timePreset = guessPreset(tc.time_start || '', tc.time_end || '', weekdays)
-  emitSwitchAdvanced({
-    name: t.name || '',
-    eventTypes: [...(src.algorithm_ids?.length ? src.algorithm_ids : (src.event_types || []))],
-    channelIds: [...(src.channel_ids || [])].map(Number).filter(n => !Number.isNaN(n)),
-    deviceIds: [...(src.device_ids || [])],
-    timePreset, timeStart, timeEnd, weekdays,
-    // 模板不带弹窗自动关闭字段: 落地表单默认 0 (永不自动关闭), 与编辑态同字段同语义可在 vp6 表单调整
-    popup_auto_close_s: 0,
-    template: t,
-  }, 'full')
-}
-
-function guessPreset(s: string, e: string, wd: number[]): 'all' | 'day' | 'night' | 'custom' {
-  if (!s && !e) return 'all'
-  if (s === '08:00' && e === '20:00' && wd.length === 5 && wd.join() === '1,2,3,4,5') return 'day'
-  if (s === '20:00' && e === '07:00' && wd.length === 7) return 'night'
-  return 'custom'
-}
-
 function validateCommon(f: TuneForm): boolean {
   if (!f.name.trim()) { ElMessage.warning('请输入规则名称'); return false }
   if (f.eventTypes.length === 0) { ElMessage.warning('请至少选择一个触发事件类型'); return false }
@@ -402,44 +323,31 @@ function tunePatch(): SimpleCommitPatch {
   }
 }
 
-/** [SIMPLE-EDIT 2026-09-03] tune 保存: 编辑分支=update (仅高频字段, ruleId 随行)
- *  [TPL-VP6 2026-09-03] 模板 create 分支保留防御: onPickTemplate 已改携整包切 vp6 全功能
- *  表单, 新建态 tune 不可达; 若未来恢复就地创建入口, 此分支仍走 commitSimple 模板链 */
+/** [SIMPLE-EDIT 2026-09-03] tune 保存: update (仅高频字段, ruleId 随行)
+ *  [P11-CLEANUP] create 分支随新建链下线移除 (新建态 tune 不可达) */
 function saveTune() {
   if (!validateCommon(tune)) return
-  const payload = tunePatch()
-  if (isEdit.value) {
-    emit('commit', { mode: 'update', payload, ruleId: props.editingRuleId })
-  } else {
-    emit('commit', { mode: 'create', payload: { ...payload, template: picked.value } })
-  }
+  emit('commit', { mode: 'update', payload: tunePatch(), ruleId: props.editingRuleId })
 }
 
-/** 切换表单: mode='simple' vp6 纯净单页 (简易卡片) / 'full' 全功能全览 (高级卡片/模板页) */
-function emitSwitchAdvanced(p: SimpleCommitPatch | null, mode?: 'simple' | 'full') {
-  emit('switch-advanced', p, mode)
+/** 切换表单: mode='simple' vp6 纯净单页 (简易卡片) / 'full' 全功能全览 (高级卡片)
+ *  [P11-CLEANUP] 收缩为仅 mode: 新建草稿 p 父侧从未消费 */
+function emitSwitchAdvanced(mode: 'simple' | 'full') {
+  emit('switch-advanced', mode)
 }
 
-/** ── [UX-ALIGN 2026-09-03] choice 卡片路由: 编辑/新建同一入口, 行为按态分流 ── */
+/** ── choice 卡片路由 [P11-CLEANUP] 仅编辑态: 模板卡已改禁用只读 (无 click) ── */
 
-/** 模板卡片: 编辑态禁用 (换模板=重建语义, desc 已说明), 新建态进模板选择 */
-function onTemplateCardClick() {
-  if (isEdit.value) return
-  view.value = 'template'
-}
-
-/** 简易卡片: 新建态沿用 [FINAL 2026-09-02] 直开全功能表单 simple 形态; 编辑态默认进
- *  tune 就地编辑; 平台页 (editSimpleAdvanced) 同新建走 switch-advanced 携草稿,
- *  复用同一 vp6 表单回显编辑 — 新建/编辑同一卡片同一表单 */
+/** 简易卡片: 平台页 (editSimpleAdvanced) 走 switch-advanced 复用同一 vp6 表单回显编辑;
+ *  非平台宿主进 tune 就地编辑 */
 function onSimpleCardClick() {
-  if (isEdit.value && !props.editSimpleAdvanced) { view.value = 'tune'; return }
-  emitSwitchAdvanced(isEdit.value ? tunePatch() : null, 'simple')
+  if (!props.editSimpleAdvanced) { view.value = 'tune'; return }
+  emitSwitchAdvanced('simple')
 }
 
-/** 高级卡片: 编辑态携带当前高频字段草稿交父视图 (覆盖式开全功能编辑 / 跳平台 /linkage); 新建态直开全功能新建 */
+/** 高级卡片: 复用新建同一 vp6 全功能表单回显编辑 (resetEditorState 整包回显) */
 function onAdvancedCardClick() {
-  if (isEdit.value) { emitSwitchAdvanced(tunePatch(), 'full'); return }
-  emitSwitchAdvanced(null, 'full')
+  emitSwitchAdvanced('full')
 }
 
 // ── 时间四档展示辅助 ──
@@ -468,8 +376,6 @@ function timePresetHint(p: 'day' | 'night'): string {
 .srd-time-detail { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
 .srd-time-sep { color: var(--el-text-color-secondary); }
 .srd-time-hint { font-size: 12px; color: var(--el-text-color-secondary); }
-/* [POPUP-AUTOCLOSE 2026-09-03] 弹窗自动关闭输入提示 */
-.srd-popup-close-hint { margin-left: 10px; font-size: 12px; color: var(--el-text-color-secondary); }
 /* [FLOOR-MAP 2026-09-04] 地图联动配置行 */
 .srd-map-link { display: flex; align-items: center; gap: 12px; width: 100%; flex-wrap: wrap; }
 .srd-map-select { max-width: 360px; }

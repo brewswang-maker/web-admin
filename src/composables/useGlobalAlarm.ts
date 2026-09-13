@@ -476,7 +476,9 @@ async function backfillMissedAlarms() {
   if (lastAlarmTs <= 0) return  // 从未收到过告警, 无断点基准 (首次连接不补拉)
   backfilling = true
   try {
-    const res: any = await alarmApi.getList({ since: lastAlarmTs, count: 20 })
+    // [LIST-UNMERGED-DEFAULT 2026-09-13] REST 端点默认已改逐条; 补拉进弹窗池
+    //   必须显式滤明细行, 否则同窗事件会连弹 N 次 (刷屏回归)
+    const res: any = await alarmApi.getList({ since: lastAlarmTs, count: 20, include_merged: 0 })
     const d: any = res?.data?.data ?? res?.data
     const list: any[] = Array.isArray(d?.alarms) ? d.alarms : (Array.isArray(d?.items) ? d.items : [])
     if (!list.length) return

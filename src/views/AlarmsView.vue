@@ -316,15 +316,53 @@
           <template #default="{ row }">
             <span class="type-cell">
               <span class="type-badge">{{ zh(row.type) }}</span>
-              <!-- [FIX-P1-2 2026-09-12] 长窗聚合合并计数: ×N (N>1 展示, 同键 10min 合并) -->
-              <el-tooltip
+              <!-- [FIX-P1-2 2026-09-12] 长窗聚合合并计数: ×N (N>1 展示, 同键 10min 合并)
+                   [AGG-DETAIL 2026-09-12] 角标可点击: popover 懒加载展开被合并明细
+                   (时间/置信度/快照 — 弹窗可合并, 列表证据链不丢, /alarms/:id/occurrences) -->
+              <el-popover
                 v-if="mergedCountOf(row) > 1"
-                :content="`长窗口内已合并 ${mergedCountOf(row)} 条同类事件`"
                 placement="top"
-                :show-after="300"
+                :width="400"
+                trigger="click"
+                :show-after="100"
+                @show="openOccurrences(row)"
               >
-                <span class="merged-count-badge">×{{ mergedCountOf(row) }}</span>
-              </el-tooltip>
+                <template #reference>
+                  <span class="merged-count-badge occ-trigger">×{{ mergedCountOf(row) }}</span>
+                </template>
+                <div class="occ-pop">
+                  <div class="occ-pop-title">
+                    同窗合并明细
+                    <span class="occ-pop-sub">{{ mergedCountOf(row) }} 条 (含本行首条)</span>
+                  </div>
+                  <el-table
+                    v-loading="occLoading"
+                    :data="occItems"
+                    size="small"
+                    max-height="260"
+                    :empty-text="occLoading ? '加载中…' : '暂无明细记录 (首条证据见本行)'">
+                    <el-table-column label="时间" width="112">
+                      <template #default="{ row: o }">{{ fmtOccTime(o.timestamp) }}</template>
+                    </el-table-column>
+                    <el-table-column label="置信度" width="70" align="center">
+                      <template #default="{ row: o }">{{ Math.round((o.confidence || 0) * 100) + '%' }}</template>
+                    </el-table-column>
+                    <el-table-column label="快照" align="center">
+                      <template #default="{ row: o }">
+                        <el-image
+                          v-if="occSnapUrl(o)"
+                          :src="occSnapUrl(o)"
+                          :preview-src-list="[occSnapUrl(o)]"
+                          preview-teleported
+                          fit="cover"
+                          class="occ-snap"
+                        />
+                        <span v-else class="occ-nosnap">—</span>
+                      </template>
+                    </el-table-column>
+                  </el-table>
+                </div>
+              </el-popover>
             </span>
           </template>
         </el-table-column>
@@ -739,6 +777,8 @@ import {
   Picture, VideoPlay, Position, ArrowDown,
 } from '@element-plus/icons-vue'
 import { alarmApi } from '@/api/alarm'
+// [AGG-DETAIL 2026-09-12] ×N 展开明细行类型 (后端原始 snake_case 形态)
+import type { AlarmOccurrence } from '@/api/alarm'
 import { screeningApi, type AlarmFeedbackItem } from '@/api/screening'
 import { exportApi } from '@/api/export'
 import { queryRecordings, toLocalISOString, recordUrlCandidates, type DeviceRecording } from '@/api/recording'
@@ -867,6 +907,10 @@ const showEvidenceDialog = ref(false)
 const evidenceLoading = ref(false)
 const evidenceData = ref<AlarmEvidence | null>(null)
 const evidenceAlarmId = ref('')
+// [AGG-DETAIL 2026-09-12] ×N 角标展开: 同窗被合并事件明细 (popover 懒加载,
+//   后端逐条保留 时间/置信度/快照 — 原 UPDATE-only 聚合全丢, 现证据链不丢)
+const occLoading = ref(false)
+const occItems = ref<AlarmOccurrence[]>([])
 // [POPUP-GALLERY 2026-09-07] 证据链弹窗多图画廊: 主快照 + 取证帧 (事前/事中/
 //   事后) 并入同列表 — 与 AlarmPopup 缩略图画廊同款交互 (左右翻页/点击切换)
 const evidenceImageIndex = ref(0)
@@ -1179,6 +1223,10 @@ async function fetchAlarms() {
       page: currentPage.value,
       pageSize: pageSize.value,
       // count: 不发 — 让后端 default 50 生效, 之前 pageSize*5 远大于默认造成过度拉取
+      // [LIST-UNMERGED 2026-09-13] 事件列表逐条独立展示: 后端默认滤聚合明细行
+      //   (merged_into 非空), 显式带开关 → 同窗合并的每条事件独立成行,
+      //   合并视角只保留在弹窗 ×N 角标 + occurrences 展开 (用户诉求整改)
+      include_merged: 1,
     }
 
     if (levelFilter.value) {
@@ -1321,6 +1369,36 @@ function getSnapshotUrl(row: any): string {
   return `data:${mime};base64,${fixed}`
 }
 
+// [AGG-DETAIL 2026-09-12] ×N 角标点击 → 拉取同窗被合并明细 (时间/置信度/快照)。
+//   popover @show 懒加载; 明细行含首条外的同窗事件 (时间倒序)。
+async function openOccurrences(row: any) {
+  occItems.value = []
+  occLoading.value = true
+  try {
+    const res = await alarmApi.getOccurrences(row.id, 50)
+    const body: any = res.data?.data ?? res.data
+    occItems.value = Array.isArray(body?.items) ? body.items : []
+  } catch (e) {
+    console.warn('[AlarmsView] occurrences load failed:', e)
+  } finally {
+    occLoading.value = false
+  }
+}
+function fmtOccTime(ms: number): string {
+  if (!ms) return '-'
+  return new Date(ms).toLocaleString('zh-CN', { hour12: false })
+}
+// occurrence 行的 snapshot_url 为后端原始值 (相对路径), 内联同款绝对化
+//   (与 types/alarm.ts toAbsoluteUrl 同口径: http/data: 直返, 补 origin 前缀)
+function occSnapUrl(o: AlarmOccurrence): string {
+  const u = o?.snapshot_url
+  if (!u) return ''
+  if (u.startsWith('http') || u.startsWith('data:')) return u
+  return typeof window !== 'undefined'
+    ? (u.startsWith('/') ? window.location.origin + u : window.location.origin + '/' + u)
+    : u
+}
+
 // ── 统计 + 筛选（单次遍历） ──
 const { alarmStatCards, filteredAlarms } = (() => {
   const filtered = computed(() => {
@@ -1426,6 +1504,10 @@ function statusLabel(status: string) {
     // [P0-3] 工单流转状态
     acknowledged: '已确认收到', disposed: '处置中',
     escalated: '已升级', reassigned: '已转派',
+    // [STATUS-CN 2026-09-13] 落库初始态 new (status 列默认值) 与端点
+    //   metadata.status 缺失 fallback 'pending' — 此前无映射原样显英文,
+    //   统一中文化 (弹窗/列表同款语义)
+    new: '待处理', pending: '待处理',
     resolved: '已解决', closed: '已关闭',
     // [接警单号 2026-09-09] 弹窗研判判定历史值 (true_positive 新提交已改 confirmed)
     true_positive: '真实告警', unsure: '存疑', known: '已知事件'
@@ -2208,6 +2290,34 @@ onUnmounted(() => {
   font-weight: 600;
   line-height: 16px;
   cursor: default;
+}
+/* [AGG-DETAIL 2026-09-12] ×N 角标可点击展开明细 (popover 触发器 + 面板样式) */
+.merged-count-badge.occ-trigger {
+  cursor: pointer;
+}
+.merged-count-badge.occ-trigger:hover {
+  background: rgba(99, 102, 241, 0.22);
+}
+.occ-pop-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--app-text-primary, #303133);
+  margin-bottom: 6px;
+}
+.occ-pop-sub {
+  font-weight: 400;
+  color: var(--app-text-secondary, #909399);
+  margin-left: 4px;
+}
+.occ-snap {
+  width: 56px;
+  height: 36px;
+  border-radius: 4px;
+  display: block;
+  margin: 0 auto;
+}
+.occ-nosnap {
+  color: var(--app-text-secondary, #909399);
 }
 
 /* ── 设备单元格 ── */

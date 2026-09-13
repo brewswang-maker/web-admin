@@ -7,6 +7,27 @@ import { alarmHttp, http } from './http'
 import type { ApiResponse, PageResponse } from '@/types/common'
 import type { AlarmEvent, AlarmStats, AlarmQuery, AlarmHandleForm, AlarmTrendItem, AlarmTypeDistribution, AlarmEvidence } from '@/types/alarm'
 
+/** [AGG-DETAIL 2026-09-12] ×N 展开明细行 (GET /alarms/:id/occurrences 原始形态,
+ *  snake_case 直读 — 与 RestApiHandlers 端点字段一一对应, 零映射漂移) */
+export interface AlarmOccurrence {
+  alarm_id: string
+  /** 归属首行 id (非空 = 明细行) */
+  merged_into: string
+  alarm_type: string
+  level: number
+  /** 触发时刻 (epoch ms) — UPDATE-only 时代此字段整条丢失 */
+  timestamp: number
+  channel_id: string
+  channel_name?: string
+  device_id?: string
+  /** 快照 (本地路径/URL, 展示时经同款绝对化处理) */
+  snapshot_url?: string
+  confidence: number
+  zone?: string
+  track_id?: number
+  trace_id?: string
+}
+
 export const alarmApi = {
   /** 获取告警列表 */
   getList(params?: AlarmQuery) {
@@ -16,6 +37,16 @@ export const alarmApi = {
   /** 获取告警详情 */
   getDetail(id: string) {
     return alarmHttp.get<ApiResponse<AlarmEvent>>(`/${id}`)
+  },
+
+  /** [AGG-DETAIL 2026-09-12] ×N 展开: 查同窗被合并事件明细 (后端逐条保留
+   *  时间/置信度/快照/track — 弹窗可合并, 列表证据链不丢)。
+   *  返回后端原始 snake_case 行 (轻量直读, 不经 normalizeAlarmCore) */
+  getOccurrences(id: string, limit = 50) {
+    return alarmHttp.get<ApiResponse<{ items: AlarmOccurrence[]; total: number }>>(
+      `/${id}/occurrences`,
+      { params: { limit } },
+    )
   },
 
   /** 处理告警 — Phase 13 P0 #4: 后端注册的是 PUT,前端用 POST 会 405 */

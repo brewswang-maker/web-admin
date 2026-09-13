@@ -17,6 +17,7 @@ import {
   narrowChannelsToArea,
   narrowSnapshotChannels,
   filterChannelsByLocation,
+  locationFilterKind,
   type FriendlyChannelLike,
   type LocationAreaLike,
 } from '@/composables/useFriendlyChannelLabel'
@@ -180,5 +181,77 @@ describe('filterChannelsByLocation 位置树设备维度直滤', () => {
     const onlySub = [{ label: '展厅入口', value: '102_ch0', deviceId: '3' }]
     const out = filterChannelsByLocation(onlySub, '3', areas, owners)
     expect(out).toHaveLength(1)
+  })
+})
+
+// ── [FIX ghost-chan 2026-09-12] 设备节点多出幽灵通道回归锁死 ──
+//   用户实测: 华盾设备实际 2 通道, 选设备节点后关联通道下拉出 3 项。
+//   排除结论 (真机取证): 区域 id (area-*) 与设备 id (国标 20 位) 无撞车;
+//   同设备通道池无主/子码流 dupBase — 幽灵项来自组件层「已绑草稿不静默消失」
+//   extras 并入跨设备通道。纯函数层锁死两类嫌疑: ① 区域直绑白名单在设备
+//   节点不并入; ② 同物理通道双形态不重复计数。
+describe('filterChannelsByLocation 设备节点幽灵通道锁死 [FIX ghost-chan]', () => {
+  // 模拟真机形态: 华盾展厅设备(id=D2) 2 通道; 区域 resolved 白名单含
+  //   兄弟设备(id=D1) 的通道 (区域维度 ∪ 语义的历史残留)
+  const pool2: FriendlyChannelLike[] = [
+    { label: '展厅主屏', value: '34020000001320002001', deviceId: 'D2' },
+    { label: '展厅入口', value: '34020000001320002002', deviceId: 'D2' },
+    { label: '办公室通道01', value: '34020000001320000002_ch0', deviceId: 'D1' },
+    { label: '同物理通道·主形态', value: '103', deviceId: 'D2' },
+    { label: '同物理通道·子码流', value: '103_ch1', deviceId: 'D2' },
+  ]
+  const areas2 = new Map<string, LocationAreaLike>([
+    ['area-A', {
+      id: 'area-A',
+      device_ids: ['D1', 'D2'],
+      channel_ids: [],
+      // 直绑白名单混入跨设备通道 + 同物理通道双形态 (嫌疑①②的真实形态)
+      resolved_channel_ids: ['34020000001320000002_ch0', '103_ch1'],
+    }],
+  ])
+  const owners2 = [['D1', 'D2']]
+
+  it('选设备节点: 区域直绑白名单中的其他设备通道不并入 (嫌疑①)', () => {
+    const out = filterChannelsByLocation(pool2, 'D2', areas2, owners2)
+    expect(out!.map(c => c.value)).toEqual([
+      '34020000001320002001',
+      '34020000001320002002',
+      '103',               // 同物理通道只留池序首个形态 (嫌疑②)
+    ])
+    expect(out!.some(c => c.deviceId === 'D1')).toBe(false)   // 跨设备串入零容忍
+    expect(out!.some(c => c.value === '103_ch1')).toBe(false) // 双形态不重复计数
+  })
+
+  it('选设备节点: 兄弟设备节点不受影响 (归属 deviceId 直等)', () => {
+    const out = filterChannelsByLocation(pool2, 'D1', areas2, owners2)
+    expect(out!.map(c => c.value)).toEqual(['34020000001320000002_ch0'])
+  })
+
+  it('选区域节点: 设备维度 ∪ 直绑白名单并集 (现状不变, 双形态去重不适用此语义)', () => {
+    const out = filterChannelsByLocation(pool2, 'area-A', areas2, owners2)
+    // D1+D2 全部 5 项: 区域语义 ∪ 白名单, 含双形态 (与设备节点严格语义刻意不同)
+    expect(out).toHaveLength(5)
+  })
+})
+
+describe('locationFilterKind 节点类型判定 (区域/设备/未选 单一事实源)', () => {
+  const areas: Map<string, LocationAreaLike> = new Map([
+    ['area-1', { id: 'area-1', device_ids: ['3'] }],
+  ])
+  const owners = [['3'], ['7']]
+
+  it('区域节点 id → area', () => {
+    expect(locationFilterKind('area-1', areas, owners)).toBe('area')
+  })
+  it('设备节点 id (任一区域 device_ids 命中) → device', () => {
+    expect(locationFilterKind('3', areas, owners)).toBe('device')
+    expect(locationFilterKind('7', areas, owners)).toBe('device')
+  })
+  it('未选/旧版位置 → null (调用方维持全量/分组收窄原逻辑)', () => {
+    expect(locationFilterKind('', areas, owners)).toBeNull()
+    expect(locationFilterKind('legacy-loc-9', areas, owners)).toBeNull()
+  })
+  it('设备 id 不在任一区域 device_ids → null (不属位置树)', () => {
+    expect(locationFilterKind('99', areas, owners)).toBeNull()
   })
 })

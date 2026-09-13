@@ -103,6 +103,8 @@
                     :key="`pb-${currentAlarm?.id || 'none'}-${queueEpoch}-${playerSrc}`"
                     :src="playerSrc" :channel-id="currentAlarm.channelId"
                     :src-fallbacks="playbackFallbackUrls"
+                    :src-format="playerSrcFormat"
+                    :src-is-live="playerSrcIsLive"
                     :seek-start="queueActive ? queueSeekStart : undefined"
                     :stop-at="queueActive ? queueStopAt : undefined"
                     autoplay :show-controls="true"
@@ -312,10 +314,15 @@
                       <span class="alarm-popup__detail-key">告警类型:</span>
                       <span class="alarm-popup__detail-val">{{ alarmTypeLabel }}</span>
                     </div>
-                    <!-- [FIX-P1-2 2026-09-12] 长窗聚合合并计数 (后端 aggregated_count > 1 展示) -->
+                    <!-- [FIX-P1-2 2026-09-12] 长窗聚合合并计数 (后端 aggregated_count > 1 展示)
+                         [OCC-POPUP 2026-09-13] 角标可点击: 展开同窗被合并事件明细 (不再死链) -->
                     <div v-if="mergedCount > 1" class="alarm-popup__detail-row">
                       <span class="alarm-popup__detail-key">合并计数:</span>
-                      <span class="alarm-popup__detail-val">×{{ mergedCount }} 条（同类事件已合并）</span>
+                      <span class="alarm-popup__detail-val">
+                        <span class="alarm-popup__merged-badge" role="button" tabindex="0"
+                              title="点击查看被合并事件明细"
+                              @click="openOccurrences" @keydown.enter="openOccurrences">×{{ mergedCount }} 条（同类事件已合并）</span>
+                      </span>
                     </div>
                     <!-- [FIX-P0-1 2026-09-12] 目标轨迹 (后端 track_id >= 0 展示, 供追溯) -->
                     <div v-if="currentTrackId >= 0" class="alarm-popup__detail-row">
@@ -503,6 +510,59 @@
         </div>
       </div>
     </transition>
+
+    <!-- [OCC-POPUP 2026-09-13] ×N 合并明细弹层: 同窗被合并事件逐条展示
+         (时间/置信度/轨迹/快照 — /alarms/:id/occurrences, 角标点击触发;
+         置于 transition 外不受弹窗显隐销毁影响, append-to-body 防层级裁剪)
+         [OCC-ZINDEX 2026-09-13] 告警弹窗根容器 fixed z-index:9999, el-dialog
+         默认 z-index≈2000 档会被完全遮挡 — 点了"没反应"实为弹层在弹窗下方;
+         modal-class 提到 10010 盖过弹窗根 (非 scoped 块, 见文件尾) -->
+    <el-dialog
+      v-model="occOpen"
+      title="同窗合并明细"
+      width="560px"
+      append-to-body
+      modal-class="alarm-occ-overlay"
+      class="alarm-popup__occ-dialog"
+    >
+      <div class="alarm-popup__occ-sub">
+        共 {{ occItems.length }} 条被合并事件 (含首条)
+        <template v-if="currentAlarm"> · {{ resolvedDeviceName || currentAlarm.deviceId || '' }}</template>
+      </div>
+      <el-table
+        v-loading="occLoading"
+        :data="occItems"
+        size="small"
+        max-height="380"
+        :empty-text="occLoading ? '加载中…' : '暂无明细记录 (首条证据见本告警)'"
+      >
+        <el-table-column label="时间" width="155">
+          <template #default="{ row: o }">{{ fmtOccTime(o.timestamp) }}</template>
+        </el-table-column>
+        <el-table-column label="置信度" width="72" align="center">
+          <template #default="{ row: o }">{{ Math.round((o.confidence || 0) * 100) + '%' }}</template>
+        </el-table-column>
+        <el-table-column label="轨迹" width="64" align="center">
+          <template #default="{ row: o }">
+            <span v-if="Number(o.track_id) >= 0">#{{ o.track_id }}</span>
+            <span v-else>-</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="快照" align="center">
+          <template #default="{ row: o }">
+            <el-image
+              v-if="occSnapUrl(o)"
+              :src="occSnapUrl(o)"
+              :preview-src-list="[occSnapUrl(o)]"
+              preview-teleported
+              fit="cover"
+              class="alarm-popup__occ-snap"
+            />
+            <span v-else class="alarm-popup__occ-nosnap">—</span>
+          </template>
+        </el-table-column>
+      </el-table>
+    </el-dialog>
   </Teleport>
 </template>
 
@@ -527,7 +587,7 @@ import {
   appendAlarmNote, closePopup,
 } from '@/composables/useAlarmPopup'
 import { ACTION_TYPE_REVERSE_MAP } from '@/api/linkage'
-import { alarmApi } from '@/api/alarm'
+import { alarmApi, type AlarmOccurrence } from '@/api/alarm'
 import { useAuthStore } from '@/stores/auth'  // [接警单号 2026-09-09] 处置提交带当前登录用户 (handled_by)
 import { queryRecordings, toLocalISOString, recordUrlCandidates, type DeviceRecording } from '@/api/recording'
 import { recordingHttp } from '@/api/http'
@@ -712,6 +772,9 @@ watch(currentAlarm, (a) => {
   resetQueue()  // [POPUP-3MIN] 切告警重置连播队列 (播放源/进度清零, 由新告警 loadPlayback 重建)
   clearPreviewOverride()
   playbackFallbackUrls.value = []
+  // [NVR-PB] 切告警复位播放源格式/直播语义 (新告警由 playQueueItem/playSelectedRecording 重设)
+  playerSrcFormat.value = ''
+  playerSrcIsLive.value = true
   // [FIX rec-direct-layer 2026-09-11] 直显路径立即补层: 告警自带 video_clip_url 常为
   //   单层 /record/rtp/... (nginx 实测恒 404); 原逻辑要等 loadPlayback 证据接口返回
   //   才修成双层 → MiniPlayer 先用死链播 3~4s (404 请求 + :key 变化重建闪烁,
@@ -774,7 +837,16 @@ const appending = ref(false)
 const receiverUnit = computed(() => currentAlarm.value?.ticketId || '-')
 const receiverName = computed(() => currentAlarm.value?.handledBy || '值班人')
 // [POPUP-DISPOSE-STATE 2026-09-03] 已处置状态 → 只读展示 + 「追加处警」按钮; 未处置 → 表单 + 「确认处置」
-const isDisposed = computed(() => !!currentAlarm.value?.status && currentAlarm.value.status !== 'unhandled')
+// [STATUS-CN 2026-09-13] new/pending 同属未处置初始态 (落库 status 列默认值 /
+//   详情端点 metadata.status 缺失 fallback), 不再误判为已处置只读形态
+const isDisposed = computed(() => {
+  // [STATUS-CN 2026-09-13] String() 宽化: currentAlarm.status 的 AlarmStatus 联合
+  //   类型不含 new/pending (后端 metadata 透传的运行时值), 直比会触发 TS2367
+  const s = String(currentAlarm.value?.status ?? '')
+  if (!s) return false
+  if (s === 'unhandled' || s === 'new' || s === 'pending') return false
+  return true
+})
 const appendEditing = ref(false)
 const disposeTypeLabel = computed(() => {
   switch (disposeType.value) {
@@ -786,7 +858,8 @@ const disposeTypeLabel = computed(() => {
   }
 })
 watch(currentAlarm, (a) => {
-  disposeType.value = a?.status && a.status !== 'unhandled' ? a.status : ''
+  // [STATUS-CN 2026-09-13] 未处置初始态 (new/pending/unhandled) 不回填处置类型
+  disposeType.value = a?.status && !['unhandled', 'new', 'pending'].includes(a.status) ? a.status : ''
   appendEditing.value = false
 })
 /** [FIX 2026-09-09] await 真实结果: 原实现无 await, 后端失败也弹“已确认处置”假成功
@@ -857,6 +930,12 @@ const queueSrc = ref('')
 const queueSeekStart = ref(0)
 const queueStopAt = ref<number | undefined>(undefined)
 const queueEpoch = ref(0)
+// [NVR-PB 2026-09-13] 当前播放源的显式格式/直播语义 (绑 MiniPlayer src-format/src-is-live):
+//   ZLM mp4 直链段留 '' (URL 后缀推断命中 mp4); NVR 回放流段显式 'flv'+'非直播' —
+//   NVR 流 URL 后缀不可靠且 /rtp/... 形态常被后缀推断误判 mp4, 显式格式是弹窗
+//   联动回放可用的关键 (对齐录像管理页 isLive:false + hasAudio:true 配置)
+const playerSrcFormat = ref<'' | 'flv' | 'ws-flv' | 'hls' | 'mp4'>('')
+const playerSrcIsLive = ref(true)
 // [FIX pb-skip 2026-09-12] 失败段自动跳过计数 (onPlaybackError): 进度行提示
 //   「已跳过 N 段」; 新队列/重播/tab 重入时归零
 const skippedSegments = ref(0)
@@ -933,6 +1012,9 @@ function playQueueItem(i: number) {
   queueSeekStart.value = item.seekStart
   queueStopAt.value = item.stopAt
   queueSrc.value = src
+  // [NVR-PB] 队列段恒为 ZLM mp4 直链 → 后缀推断即可, 直播语义标志复位
+  playerSrcFormat.value = ''
+  playerSrcIsLive.value = true
 }
 function startQueuePlayback(items: PlaybackQueueItem[]) {
   playbackQueue.value = items
@@ -941,6 +1023,7 @@ function startQueuePlayback(items: PlaybackQueueItem[]) {
   queueActive.value = true
   skippedSegments.value = 0
   tailRefreshes = 0
+  void stopGbPlayback()  // [FIX p1-session 2026-09-12] 队列接管 → 释放可能残留的 GB 会话
   playQueueItem(0)
   stopRecordingPoll()  // 连播接管后无需再等 clip 回填
 }
@@ -966,7 +1049,14 @@ function onPlaybackEnded() {
 //   入口, 用户只能关闭弹窗重开。现失败段自动跳过继续连播 (末段失败 → 同「已播
 //   完」态挂「重播」入口); 跳过计数在进度行提示, 失败段 URL 打 console 供取证。
 function onPlaybackError() {
-  if (!queueActive.value) return
+  if (!queueActive.value) {
+    // [FIX p1-heal 2026-09-12] 非队列路径 (GB28181 单段回放 / 证据 clip) 原直接 return:
+    //   候选链全败后无任何自愈 → 「持续 playerError」死局。现每次告警最多自愈一次:
+    //   重查 ±2.5min 段 → 有相交片走连播队列; 否则挑覆盖事件时刻的段重播 (设备回放流
+    //   瞬时不可用/会话被抢占时给第二次机会)。
+    void healPlaybackFailure()
+    return
+  }
   const cur = playbackQueue.value[queueIndex.value]
   console.warn('[AlarmPopup] segment playback failed, skip:', queueIndex.value + 1,
     '/', playbackQueue.value.length, cur?.url)
@@ -975,6 +1065,32 @@ function onPlaybackError() {
   if (next < playbackQueue.value.length) { playQueueItem(next); return }
   queueFinished.value = true
   maybeRefreshQueueTail()
+}
+// [FIX p1-heal 2026-09-12] 非队列失败自愈 (每告警一次, 防错误循环; 见 onPlaybackError 注释)
+let healedAlarmId = ''
+let healing = false
+let popupClosing = false  // [FIX p1-heal] 组件卸载哨兵: 禁止卸载后异步自愈回写
+async function healPlaybackFailure() {
+  const alarm = currentAlarm.value
+  if (!alarm?.id || !alarm.deviceId || healing || popupClosing) return
+  if (healedAlarmId === alarm.id) return
+  healedAlarmId = alarm.id
+  healing = true
+  const t = new Date(alarm.createdAt).getTime()
+  try {
+    const recs = await queryRecordings({
+      device_id: alarm.deviceId,
+      channel_id: alarm.channelId || undefined,
+      start_time: toLocalISOString(new Date(t - CLIP_QUERY_PAD_MS)),
+      end_time: toLocalISOString(new Date(t + CLIP_QUERY_PAD_MS)),
+    })
+    if (currentAlarm.value?.id !== alarm.id || popupClosing) return
+    if (recs.length) deviceRecordings.value = recs
+    const items = buildPlaybackQueue(recs)
+    if (items.length) { startQueuePlayback(items); return }
+    const covering = pickCoveringRecording(recs, t)
+    if (covering) await playSelectedRecording(covering, { silent: true })
+  } catch { /* 自愈失败保持现状 */ } finally { healing = false }
 }
 // [POPUP-3MIN] 尾部补片: 告警新鲜时片仍在完成中 (实测新片最迟 T+92s 可见), 队列可能
 //   缺尾段; 播完现有段后每 8s 补查一次 (≤6 次且告警 5 分钟内), 补到即自动续播.
@@ -1032,12 +1148,22 @@ async function refreshQueueTail() {
   maybeRefreshQueueTail()
 }
 // [POPUP-3MIN] 切回「联动回放」tab → 从头 (T-90s) 重播, 保证完整回看 3 分钟.
+// [PB-AUTOLOAD 2026-09-13] 首次切入回放 tab 且无任何播放源时自动 loadPlayback:
+//   此前空态需手点「加载设备录像」, 老-告警 (age>120s 无本地 clip) 用户不知要手点 →
+//   体感"回放不能看"。自动触发后走 queryRecordings → 本地片连播 / NVR 兜底链。
 watch(activePrimaryTab, (t, prev) => {
-  if (t === 'playback' && prev !== 'playback' && queueActive.value && playbackQueue.value.length) {
+  if (t !== 'playback' || prev === 'playback') return
+  if (queueActive.value && playbackQueue.value.length) {
     queueFinished.value = false
     skippedSegments.value = 0
     playbackFallbackUrls.value = []
     playQueueItem(0)
+    return
+  }
+  const alarm = currentAlarm.value
+  if (alarm?.id && !alarm.videoClipUrl && !recordingsLoading.value
+      && !deviceRecordings.value.length) {
+    loadPlayback()
   }
 })
 
@@ -1108,6 +1234,9 @@ async function playSelectedRecording(rec: DeviceRecording, opts?: { silent?: boo
   //   (host="data") → ERR_NAME_NOT_RESOLVED + "网络连接异常" 噪音 (探针实证)。
   //   本地 zlm 录像 → 跳过 /play 直接走直链候选链 (双层同源 nginx 206)。
   if (mp4Direct) {
+    // [NVR-PB] 直链分支: 格式/直播语义标志复位 (URL 后缀推断命中 mp4)
+    playerSrcFormat.value = ''
+    playerSrcIsLive.value = true
     const cands = recordUrlCandidates(mp4Direct)
     playbackFallbackUrls.value = cands.slice(1)
     currentAlarm.value!.videoClipUrl = cands[0]
@@ -1115,23 +1244,49 @@ async function playSelectedRecording(rec: DeviceRecording, opts?: { silent?: boo
     return
   }
   try {
+    // [FIX p1-device 2026-09-12] 回归修复: /recordings/query 的 GB28181 条目 device_id
+    //   存的是「通道号」(如 34020000001320002002), 原样透传 → GB28181Adapter::startPlayback
+    //   registry_.find(通道号) 失败 "device not found" → HTTP 200 + body code=5002 →
+    //   弹窗联动回放恒失败 (playerError)。设备号/通道号以告警上下文为准 (真机实测 code=0)。
+    const alarm = currentAlarm.value
+    await stopGbPlayback()  // [FIX p1-session] 释放上一回放会话 (NVR 并发会话数有限)
+    // [NVR-PB 2026-09-13] /play 窗口裁剪: 原样传整段 start_time 会从段头开播 (NVR 段
+    //   可达 30 分钟, 用户看到的是事件前很久的画面); GB28181 Playback 原生支持任意起点,
+    //   裁到 [T-90s, T+90s] ∩ 段范围 = 精确 3 分钟联动回放窗口
+    const tMs = alarm ? new Date(alarm.createdAt).getTime() : NaN
+    const rs = parseRecTime(rec.start_time), re = parseRecTime(rec.end_time)
+    const winStart = Number.isFinite(tMs) && Number.isFinite(rs) ? Math.max(rs, tMs - CLIP_HALF_MS) : rs
+    const winEnd = Number.isFinite(tMs) && Number.isFinite(re) ? Math.min(re, tMs + CLIP_HALF_MS) : re
+    const fmtLocal = (ms: number) => {
+      const d = new Date(ms), p = (n: number) => String(n).padStart(2, '0')
+      return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
+        + `T${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
+    }
     const { data } = await recordingHttp.post(`/${rec.id}/play`, {
-      device_id: rec.device_id, channel_id: rec.channel_id,
-      start_time: rec.start_time, end_time: rec.end_time,
-    })
+      device_id: alarm?.deviceId || rec.device_id,
+      channel_id: alarm?.channelId || rec.channel_id,
+      start_time: Number.isFinite(winStart) ? fmtLocal(winStart) : rec.start_time,
+      end_time: Number.isFinite(winEnd) ? fmtLocal(winEnd) : rec.end_time,
+    }, { timeout: 15000 })  // [FIX p1-timeout] NVR 对「仍在归档的新段」回放会挂起, 不再无限等待
     const result = data?.data || data
+    // [FIX p1-session] 记录会话 id 供 /stop 生命周期治理 (关弹窗/切告警/新播放/卸载)
+    const cid = String(result?.call_id || '')
+    if (cid) gbPlaybackCallId.value = cid
     if (result?.urls) {
-      // [FIX rec-layer 2026-09-11] mp4 兜底直链同样经候选链展开 (双层同源优先)
-      const mp4Cands = mp4Direct ? recordUrlCandidates(mp4Direct) : []
-      const cands = [result.urls.flv, result.urls.hls, result.urls.wsFlv, ...mp4Cands]
-        .filter((u): u is string => !!u)
-      if (cands.length) {
-        playbackFallbackUrls.value = cands.slice(1)
-        currentAlarm.value!.videoClipUrl = cands[0]
+      // [NVR-PB 2026-09-13] 显式格式重构 (原依赖 MiniPlayer URL 后缀推断, NVR 流
+      //   /rtp/... 形态常被误判 mp4 → 原生 video 拉流解析失败 → 「已尝试全部格式」):
+      //   flv 优先 (延迟最低) → wsFlv 同家族 fallback (同走 flv.js); hls 编解码栈不同
+      //   且 srcFormat 全局唯一不随候选切换, 不入 fallback; 显式 'flv' + isLive=false
+      //   对齐录像管理页回放配置 (isLive:false + hasAudio:true, 真机可播路径)
+      const flv = String(result.urls.flv || '')
+      const wsFlv = String(result.urls.wsFlv || '')
+      const main = flv || wsFlv
+      if (main) {
+        playerSrcFormat.value = flv ? 'flv' : 'ws-flv'
+        playerSrcIsLive.value = false
+        playbackFallbackUrls.value = [...new Set([wsFlv, flv].filter((u) => !!u && u !== main))]
+        currentAlarm.value!.videoClipUrl = main
       } else ElMessage.warning('无可用播放地址')
-    } else if (mp4Direct) {
-      currentAlarm.value!.videoClipUrl = mp4Direct
-      if (!silent) ElMessage.info('设备不支持回放流，已切换录像文件直链')
     } else if (!silent) ElMessage.warning('设备不支持回放')
   } catch (e: any) {
     const body = e?.response?.data
@@ -1147,7 +1302,24 @@ async function playSelectedRecording(rec: DeviceRecording, opts?: { silent?: boo
     } else if (!silent) {
       ElMessage.error('回放失败: ' + (msg || '设备可能离线'))
     }
+    // [FIX p1-heal] /play 失败/超时 (流未建立 → MiniPlayer 不挂载, @error 无从触发) 同样
+    //   触发一次自愈; healedAlarmId 守卫防循环 (每告警一次)
+    if (!mp4Direct) void healPlaybackFailure()
   }
+}
+// [FIX p1-session 2026-09-12] GB28181 回放会话生命周期治理: 原实现全程零 /stop 调用
+//   (grep 0 匹配) — 每次 /play 在 NVR 侧建一个回放会话 (call_id), 弹窗关闭/切告警后
+//   会话悬挂; NVR 并发回放会话数有限, 堆积后新 /play 被拒 (5002) → 「播放失败 /
+//   持续 playerError」的又一层来源。现于 关弹窗/切告警/发起新播放/连播接管/卸载
+//   时 best-effort /stop (接口实测: POST /recordings/{call_id}/stop → {"stopped":true})。
+const gbPlaybackCallId = ref('')
+async function stopGbPlayback() {
+  const cid = gbPlaybackCallId.value
+  if (!cid) return
+  gbPlaybackCallId.value = ''
+  try {
+    await recordingHttp.post(`/${encodeURIComponent(cid)}/stop`)
+  } catch { /* best-effort: 会话可能已被设备侧回收 */ }
 }
 const isRecordingInProgress = computed(() => {
   if (!currentAlarm.value) return false
@@ -1158,12 +1330,27 @@ const isRecordingInProgress = computed(() => {
 })
 
 let recordingPollTimer: ReturnType<typeof setInterval> | null = null
+// [P1 2026-09-13] 轮询硬上限: 56mf 实测弹窗挂机整夜 → 8s 轮询无限持续
+//   (nginx 证据: 同一条告警 evidence 4311 次/9.6h; queryRecordings 每次
+//   穿透到 NVR SIP RecordInfo 查询, 每 8s 一次持续打 NVR)。除
+//   isRecordingInProgress (age<120s) 外再加计数上限双保险: 录像生成实测
+//   30~40s, 单告警 10 次 (80s) 仍未出片 → 停轮询, 避免无限打后端/NVR。
+const RECORDING_POLL_MAX = 10
+let recordingPollCount = 0
+let recordingPollAlarmId = ''
 function startRecordingPoll() {
   stopRecordingPoll()
+  recordingPollCount = 0
+  recordingPollAlarmId = ''
   recordingPollTimer = setInterval(async () => {
     if (!isRecordingInProgress.value || !currentAlarm.value?.id) { stopRecordingPoll(); return }
     if (queueActive.value) { stopRecordingPoll(); return }  // [POPUP-3MIN] 连播已接管
     const alarmId = currentAlarm.value.id
+    if (alarmId !== recordingPollAlarmId) { recordingPollAlarmId = alarmId; recordingPollCount = 0 }  // [P1] 切告警重置额度
+    if (++recordingPollCount > RECORDING_POLL_MAX) {
+      console.warn('[AlarmPopup] recording poll hit max attempts (' + RECORDING_POLL_MAX + '), stopped')
+      stopRecordingPoll(); return
+    }
     try {
       // [POPUP-3MIN 2026-09-11] 先探连播队列 (录像片就绪即接管 3 分钟回放), 再退 clip 直显
       const alarm = currentAlarm.value
@@ -1283,6 +1470,8 @@ function startHeartbeat() { stopHeartbeat(); heartbeatFails = 0; heartbeatStoppe
 function stopHeartbeat() { if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null } }
 watch(() => currentAlarm.value?.id, () => {
   playerError.value = ''; stopLiveFailTimer(); switchedAwayFromLive = false; liveFallbackHint.value = ''
+  healedAlarmId = ''  // [FIX p1-heal] 新告警重新允许一次失败自愈
+  void stopGbPlayback()  // [FIX p1-session] 切告警 → 释放上一 GB 回放会话
   if (popupVisible.value) startHeartbeat()
 })
 watch(popupVisible, (v) => {
@@ -1315,9 +1504,11 @@ watch(popupVisible, (v) => {
   if (v) {
     // 条件启动: autoCloseSeconds > 0 才倒计时, =0 不启动 (默认永不自动关闭)
     startAutoCloseCountdown(currentPopupAutoCloseS.value)
+    healedAlarmId = ''  // [FIX p1-heal] 重开弹窗重新允许一次失败自愈
     loadPlayback(); startHeartbeat(); if (!currentAlarm.value?.videoClipUrl) startRecordingPoll()
   } else {
     stopAutoCloseCountdown(); stopRecordingPoll()
+    void stopGbPlayback()  // [FIX p1-session 2026-09-12] 关弹窗释放 GB 回放会话
   }
 })
 
@@ -1337,6 +1528,40 @@ const mergedCount = computed(() => {
   const n = Number(currentAlarm.value?.aggregatedCount ?? 1)
   return Number.isFinite(n) && n > 1 ? n : 1
 })
+// [OCC-POPUP 2026-09-13] ×N 角标可点: 展开同窗被合并事件明细 (逐条时间/置信度/
+//   轨迹/快照 — /alarms/:id/occurrences; 与 AlarmEventsPanel 同款数据链)
+const occOpen = ref(false)
+const occLoading = ref(false)
+const occItems = ref<AlarmOccurrence[]>([])
+async function openOccurrences() {
+  const id = currentAlarm.value?.id
+  if (!id) return
+  occOpen.value = true
+  occLoading.value = true
+  occItems.value = []
+  try {
+    const res = await alarmApi.getOccurrences(id, 50)
+    const body: any = res.data?.data ?? res.data
+    occItems.value = Array.isArray(body?.items) ? body.items : []
+  } catch (e) {
+    console.warn('[AlarmPopup] occurrences load failed:', e)
+  } finally {
+    occLoading.value = false
+  }
+}
+function fmtOccTime(ms: number): string {
+  if (!ms) return '-'
+  return new Date(ms).toLocaleString('zh-CN', { hour12: false })
+}
+// occurrence 行 snapshot_url 为后端原始值 (相对路径), 内联同款绝对化
+function occSnapUrl(o: AlarmOccurrence): string {
+  const u = o?.snapshot_url
+  if (!u) return ''
+  if (u.startsWith('http') || u.startsWith('data:')) return u
+  return typeof window !== 'undefined'
+    ? (u.startsWith('/') ? window.location.origin + u : window.location.origin + '/' + u)
+    : u
+}
 const currentTrackId = computed(() => {
   const n = Number(currentAlarm.value?.trackId ?? -1)
   return Number.isFinite(n) ? n : -1
@@ -1478,6 +1703,9 @@ const STATUS_CN: Record<string, string> = {
   closed: '已关闭', ignored: '已忽略', forwarded: '已转发',
   escalated: '已升级', reassigned: '已转派', false_alarm: '误报',
   true_positive: '真实告警', unsure: '存疑', known: '已知事件',
+  // [STATUS-CN 2026-09-13] 未处置初始态中文化: new = 落库 status 列默认值;
+  //   pending = 详情端点 metadata.status 缺失 fallback — 此前无映射原样显英文
+  new: '待处理', pending: '待处理', handling: '处理中',
 }
 function statusLabel(s?: string): string { return STATUS_CN[s || ''] || s || '-' }
 
@@ -1512,6 +1740,8 @@ onBeforeUnmount(() => {
   window.removeEventListener('alarm-clip-updated', onAlarmClipUpdated)
   stopAutoCloseCountdown(); stopRecordingPoll(); stopHeartbeat(); stopLiveFailTimer()
   stopTailRefresh()  // [POPUP-3MIN] 连播尾段补片定时器
+  popupClosing = true  // [FIX p1-heal] 卸载后禁止自愈异步回写
+  void stopGbPlayback()  // [FIX p1-session 2026-09-12] 卸载释放 GB 回放会话
 })
 
 // 引用保留 (避免 tree-shake 报错)
@@ -2267,6 +2497,24 @@ void jumpToPlayback; void openImageTab
   border-radius: 8px;
 }
 
+/* [OCC-POPUP 2026-09-13] ×N 角标可点 + 合并明细弹层 */
+.alarm-popup__merged-badge {
+  display: inline-block;
+  color: #FF6B35;
+  background: rgba(255, 107, 53, 0.12);
+  font-size: 13px;
+  font-weight: 600;
+  padding: 1px 10px;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: background .15s ease, transform .15s ease;
+}
+.alarm-popup__merged-badge:hover { background: rgba(255, 107, 53, 0.24); }
+.alarm-popup__merged-badge:active { transform: scale(.96); }
+.alarm-popup__occ-sub { color: #8c8c8c; font-size: 12px; margin-bottom: 8px; }
+.alarm-popup__occ-snap { width: 72px; height: 44px; border-radius: 4px; }
+.alarm-popup__occ-nosnap { color: #c0c4cc; }
+
 .alarm-popup__link {
   background: transparent;
   border: none;
@@ -2523,5 +2771,13 @@ void jumpToPlayback; void openImageTab
   flex: 1 1 auto; min-width: 0;
   word-break: break-all;
   color: #606266;
+}
+</style>
+
+<!-- [OCC-ZINDEX 2026-09-13] 非 scoped: occ 明细弹层 append-to-body 挂 body,
+     scoped 样式无 data-v 属性作用不到 overlay; 10010 盖过告警弹窗根 9999 -->
+<style>
+.alarm-occ-overlay {
+  z-index: 10010 !important;
 }
 </style>

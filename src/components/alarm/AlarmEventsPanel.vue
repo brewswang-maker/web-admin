@@ -68,15 +68,60 @@
         <template #default="{ row }">
           <span class="type-cell">
             <span class="type-badge">{{ zh(row.type) }}</span>
-            <!-- [FIX-P1-2 2026-09-12] 长窗聚合合并计数: ×N (N>1 展示, 同键 10min 合并) -->
-            <el-tooltip
+            <!-- [FIX-P1-2 2026-09-12] 长窗聚合合并计数: ×N (N>1 展示, 同键 10min 合并)
+                 [AGG-DETAIL 2026-09-12] 角标可点击: popover 懒加载展开被合并明细
+                 (时间/置信度/快照 — 与 AlarmsView 同款, /alarms/:id/occurrences) -->
+            <el-popover
               v-if="mergedCountOf(row) > 1"
-              :content="`长窗口内已合并 ${mergedCountOf(row)} 条同类事件`"
               placement="top"
-              :show-after="300"
+              :width="400"
+              trigger="click"
+              :show-after="100"
+              @show="openOccurrences(row)"
             >
-              <span class="merged-count-badge">×{{ mergedCountOf(row) }}</span>
-            </el-tooltip>
+              <template #reference>
+                <span class="merged-count-badge occ-trigger">×{{ mergedCountOf(row) }}</span>
+              </template>
+              <div class="occ-pop">
+                <div class="occ-pop-title">
+                  同窗合并明细
+                  <span class="occ-pop-sub">{{ mergedCountOf(row) }} 条 (含本行首条)</span>
+                </div>
+                <el-table
+                  v-loading="occLoading"
+                  :data="occItems"
+                  size="small"
+                  max-height="260"
+                  :empty-text="occLoading ? '加载中…' : '暂无明细记录 (首条证据见本行)'">
+                  <el-table-column label="时间" width="112">
+                    <template #default="{ row: o }">{{ fmtOccTime(o.timestamp) }}</template>
+                  </el-table-column>
+                  <el-table-column label="置信度" width="70" align="center">
+                    <template #default="{ row: o }">{{ Math.round((o.confidence || 0) * 100) + '%' }}</template>
+                  </el-table-column>
+                  <el-table-column label="快照" align="center">
+                    <template #default="{ row: o }">
+                      <el-image
+                        v-if="occSnapUrl(o)"
+                        :src="occSnapUrl(o)"
+                        :preview-src-list="[occSnapUrl(o)]"
+                        preview-teleported
+                        fit="cover"
+                        class="occ-snap"
+                      />
+                      <span v-else class="occ-nosnap">—</span>
+                    </template>
+                  </el-table-column>
+                </el-table>
+              </div>
+            </el-popover>
+            <!-- [LIST-UNMERGED 2026-09-13] 事件列表逐条展示后, 明细行 (merged_into 非空)
+                 加归属标记防与首行混淆; 首行 ×N 角标不变 -->
+            <el-tag
+              v-else-if="row.mergedInto"
+              size="small" type="info" effect="plain"
+              class="merged-detail-tag"
+            >合并明细</el-tag>
           </span>
         </template>
       </el-table-column>
@@ -446,6 +491,8 @@ import {
 } from '@/composables/useAlarmTableHelpers'
 import { ensureAlarmGroups, groupNameOf } from '@/composables/useAlarmGroups'
 import { useAlarmLifecycle } from '@/composables/useAlarmLifecycle'
+// [AGG-DETAIL 2026-09-12] ×N 展开明细: 后端 occurrences 端点 (原始 snake_case)
+import { alarmApi, type AlarmOccurrence } from '@/api/alarm'
 import AlarmCard from '@/components/alarm/AlarmCard.vue'
 import DisposeDialog from '@/components/alarm/DisposeDialog.vue'
 import SnapshotAnnotated from '@/views/perimeter/SnapshotAnnotated.vue'
@@ -478,6 +525,37 @@ const page = defineModel<number>('page', { default: 1 })
 const pageSize = defineModel<number>('pageSize', { default: 20 })
 
 const { zh, ensure: ensureEventTypes } = useEventTypeZh()
+
+// [AGG-DETAIL 2026-09-12] ×N 角标展开: 同窗被合并事件明细 (popover 懒加载,
+//   与 AlarmsView 同款 — 后端逐条保留 时间/置信度/快照, 证据链不丢)
+const occLoading = ref(false)
+const occItems = ref<AlarmOccurrence[]>([])
+async function openOccurrences(row: any) {
+  occItems.value = []
+  occLoading.value = true
+  try {
+    const res = await alarmApi.getOccurrences(row.id, 50)
+    const body: any = res.data?.data ?? res.data
+    occItems.value = Array.isArray(body?.items) ? body.items : []
+  } catch (e) {
+    console.warn('[AlarmEventsPanel] occurrences load failed:', e)
+  } finally {
+    occLoading.value = false
+  }
+}
+function fmtOccTime(ms: number): string {
+  if (!ms) return '-'
+  return new Date(ms).toLocaleString('zh-CN', { hour12: false })
+}
+// occurrence 行 snapshot_url 为后端原始值 (相对路径), 内联同款绝对化
+function occSnapUrl(o: AlarmOccurrence): string {
+  const u = o?.snapshot_url
+  if (!u) return ''
+  if (u.startsWith('http') || u.startsWith('data:')) return u
+  return typeof window !== 'undefined'
+    ? (u.startsWith('/') ? window.location.origin + u : window.location.origin + '/' + u)
+    : u
+}
 
 // ── 生命周期操作 (处警/详情/更多菜单/复核/证据链) ──
 const lc = useAlarmLifecycle()
@@ -595,6 +673,34 @@ onMounted(() => {
   font-weight: 600;
   line-height: 16px;
   cursor: default;
+}
+/* [AGG-DETAIL 2026-09-12] ×N 角标可点击展开明细 (与 AlarmsView 同款) */
+.merged-count-badge.occ-trigger {
+  cursor: pointer;
+}
+.merged-count-badge.occ-trigger:hover {
+  background: rgba(99, 102, 241, 0.22);
+}
+.occ-pop-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--app-text-primary, #303133);
+  margin-bottom: 6px;
+}
+.occ-pop-sub {
+  font-weight: 400;
+  color: var(--app-text-secondary, #909399);
+  margin-left: 4px;
+}
+.occ-snap {
+  width: 56px;
+  height: 36px;
+  border-radius: 4px;
+  display: block;
+  margin: 0 auto;
+}
+.occ-nosnap {
+  color: var(--app-text-secondary, #909399);
 }
 
 /* 设备单元格 */
