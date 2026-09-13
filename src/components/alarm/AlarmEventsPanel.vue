@@ -108,6 +108,7 @@
                         preview-teleported
                         fit="cover"
                         class="occ-snap"
+                        :z-index="10020"
                       />
                       <span v-else class="occ-nosnap">—</span>
                     </template>

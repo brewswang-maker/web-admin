@@ -558,6 +558,7 @@
               preview-teleported
               fit="cover"
               class="alarm-popup__occ-snap"
+              :z-index="10020"
             />
             <span v-else class="alarm-popup__occ-nosnap">—</span>
           </template>
