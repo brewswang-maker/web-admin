@@ -51,3 +51,14 @@ verify_bind_rules.mjs
 .vp_snap_check.jpg
 .qoder_scratch/
 
+
+# ─── 探针/验证脚本与截图 (一次性产物, 不入版本库 2026-09-13) ───
+#   已跟踪的 .mjs (如 .floormap_verify.mjs) 不受影响 (gitignore 不作用于已跟踪文件)
+*.mjs
+*.cjs
+*.png
+*.py
+*.sh
+.pw-browsers/
+*.tgz
+box-sdk_path_placeholder
