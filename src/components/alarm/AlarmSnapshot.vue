@@ -10,6 +10,7 @@
       class="alarm-snapshot__image"
       :preview-src-list="[imageUrl]"
       :preview-teleported="true"
+      :z-index="10020"
       @load="onImageLoad"
       @error="onImageError"
     >
@@ -66,6 +67,7 @@
     <el-image-viewer
       v-if="viewerVisible"
       :url-list="[imageUrl]"
+      :z-index="10020"
       teleported
       hide-on-click-modal
       @close="viewerVisible = false"
