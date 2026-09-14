@@ -147,12 +147,19 @@
               <!-- 图片: 本次报警事件的图片, 有几张显示几张 -->
               <div v-show="activePrimaryTab === 'image'" class="alarm-popup__pane">
                 <div class="alarm-popup__image-wrap">
+                  <!-- [EV-TS 2026-09-14] 当前帧语义角标: 取证帧展示「标签 + T±Ns + 绝对时刻」
+                       (主快照无 tag 不渲染; 对标海康/大华回放画面帧字幕呈现) -->
+                  <div v-if="currentFrame?.tag" class="alarm-popup__frame-badge">
+                    <span class="alarm-popup__frame-badge-tag">{{ currentFrame.tag }}</span>
+                    <span v-if="currentFrame.rel" class="alarm-popup__frame-badge-rel">{{ currentFrame.rel }}</span>
+                    <span v-if="currentFrame.abs" class="alarm-popup__frame-badge-abs">{{ currentFrame.abs }}</span>
+                  </div>
                   <AlarmSnapshot
                     :key="`img-${currentAlarm?.id || 'none'}-${imageIndex}`"
                     :image-url="currentSnapshotUrl"
-                    :bbox="popupBbox"
-                    :detections="popupDetections"
-                    :target-label="popupTargetLabel"
+                    :bbox="currentFrameIsPreOrPost ? undefined : popupBbox"
+                    :detections="currentFrameIsPreOrPost ? [] : popupDetections"
+                    :target-label="currentFrameIsPreOrPost ? '' : popupTargetLabel"
                     :channel-id="currentAlarm?.channelId || ''"
                     :algo-id="popupAlgoId"
                     :alarm-shapes="popupAlarmShapes"
@@ -171,12 +178,15 @@
                           'alarm-popup__thumb--evidence': !!img.tag,
                         }"
                         :style="{ backgroundImage: `url(${img.url})` }"
-                        :title="img.tag || '主快照'"
+                        :title="thumbTitle(img)"
                         @click="imageIndex = idx"
                       >
-                        <span v-if="img.tag" class="alarm-popup__thumb-tag">{{ img.tag }}</span>
+                        <span v-if="img.tag" class="alarm-popup__thumb-tag">{{ img.tag }}<span v-if="img.rel" class="alarm-popup__thumb-rel"> {{ img.rel }}</span></span>
                       </div>
                     </div>
+                    <!-- [EV-TS 2026-09-14] post 采集中提示: 补位链延时回写窗口内
+                         (evidence_update 帧到达后 post 入列自动消失) -->
+                    <span v-if="evidencePending" class="alarm-popup__ev-pending" title="事后帧由取证补位链在触发后延时抓取, 稍后自动回填">事后帧采集中…</span>
                     <button class="alarm-popup__thumbs-nav" :disabled="imageIndex >= totalImageCount - 1" @click="nextImage" aria-label="下一张">›</button>
                   </div>
                 </div>
@@ -442,8 +452,10 @@
                         <span class="alarm-popup__dispose-val">{{ receiverName }}</span>
                       </div>
                     </div>
-                    <!-- 编辑态: 未处置, 或已处置后点击「追加处警」进入 -->
-                    <template v-if="!isDisposed || appendEditing">
+                    <!-- [FIX disposed-readonly 2026-09-14] 编辑态仅未处置; 已处置恒只读回显 —
+                         原 `|| appendEditing` 使「追加处警」复用处置表单 (类型下拉可改选),
+                         与只读展示 + 追加信息语义不符 -->
+                    <template v-if="!isDisposed">
                       <div class="alarm-popup__dispose-row alarm-popup__dispose-row--col">
                         <span class="alarm-popup__dispose-key alarm-popup__dispose-key--required">告警类型:</span>
                         <el-select v-model="disposeType" placeholder="请选择" size="small" class="alarm-popup__dispose-select" popper-class="alarm-popup__dispose-popper">
@@ -476,7 +488,9 @@
                         <span class="alarm-popup__dispose-val">{{ formatTime(currentAlarm.handledAt || currentAlarm.createdAt) }}</span>
                       </div>
                     </template>
-                    <!-- <div class="alarm-popup__dispose-section">
+                    <!-- [FIX disposed-readonly 2026-09-14] 追加信息区 (恢复+改造): 仅已处置展示 —
+                         追加记录列表常显; 点「追加处警」后 appendEditing 展开追加内容输入框 -->
+                    <div v-if="isDisposed" class="alarm-popup__dispose-section">
                       <div class="alarm-popup__dispose-section-title">追加信息</div>
                       <div v-if="!currentAlarm.appendLogs?.length" class="alarm-popup__dispose-row">
                         <span class="alarm-popup__dispose-val alarm-popup__dispose-val--muted">暂无追加信息</span>
@@ -485,17 +499,25 @@
                         <span class="alarm-popup__append-log-text">[{{ formatAppendTime(log) }}] {{ log.content }}</span>
                         <span v-if="log.by" class="alarm-popup__append-log-by">追加人: {{ log.by }}</span>
                       </div>
-                      <div class="alarm-popup__dispose-row alarm-popup__dispose-row--col">
+                      <div v-if="appendEditing" class="alarm-popup__dispose-row alarm-popup__dispose-row--col">
                         <span class="alarm-popup__dispose-key">追加内容:</span>
                         <el-input v-model="appendNoteInput" type="textarea" :rows="2" resize="none" placeholder="请输入追加信息" class="alarm-popup__dispose-textarea" />
                       </div>
-                    </div> -->
+                    </div>
                     <div class="alarm-popup__dispose-actions">
-                      <el-button
-                        v-if="!isDisposed || appendEditing" type="primary"
-                        :disabled="!disposeType" @click="confirmDispose"
-                      >{{ isDisposed ? '追加处警' : '确认处置' }}</el-button>
-                      <el-button v-else type="primary" @click="appendEditing = true">追加处警</el-button>
+                      <!-- [FIX disposed-readonly 2026-09-14] 三态: 未处置→确认处置;
+                           已处置→追加处警; 追加编辑中→提交追加/取消 (不再出现处置类型下拉) -->
+                      <template v-if="!isDisposed">
+                        <el-button type="primary" :disabled="!disposeType" @click="confirmDispose">确认处置</el-button>
+                      </template>
+                      <template v-else-if="appendEditing">
+                        <el-button
+                          type="primary" :disabled="!appendNoteInput.trim()" :loading="appending"
+                          @click="confirmAppend"
+                        >提交追加</el-button>
+                        <el-button @click="cancelAppend">取消</el-button>
+                      </template>
+                      <el-button v-else type="primary" @click="startAppend">追加处警</el-button>
                     </div>
                   </div>
                 </el-scrollbar>
@@ -504,7 +526,7 @@
                 <button
                   class="alarm-popup__dispose-entry"
                   :class="{ 'alarm-popup__dispose-entry--append': isDisposed }"
-                  @click="activeSecondaryTab = 'dispose'"
+                  @click="openDisposePanel"
                 >{{ isDisposed ? '追加处警' : '处警' }}</button>
               </div>
             </div>
@@ -583,12 +605,13 @@ import { Loading } from '@element-plus/icons-vue'
 import MiniPlayer from '@/components/video/MiniPlayer.vue'
 import AlarmSnapshot from '@/components/alarm/AlarmSnapshot.vue'
 import EvidenceFrames from '@/components/EvidenceFrames.vue' // [POPUP-EV-MERGE 2026-09-07] 弹窗内已并入画廊, import 保留给未来复用 (无副作用)
+import { buildEvidenceFrames, isEvidencePostPending } from '@/utils/evidenceFrames' // [EV-TRIPLE 2026-09-14] 取证帧语义/时间戳共享模块
 import {
   popupVisible, currentAlarm, matchedRule, linkageLogs,
   currentPopupAutoCloseS,  // [POPUP-AUTOCLOSE 2026-09-03] 弹窗自动关闭秒数 (0=不启用)
   hasAction, dynamicButtons,
   queueInfo, nextAlarm, prevAlarm, handleAlarm as handleAlarmAction,
-  appendAlarmNote, closePopup,
+  appendAlarmNote, closePopup, disposeEditing,
 } from '@/composables/useAlarmPopup'
 import { ACTION_TYPE_REVERSE_MAP } from '@/api/linkage'
 import { alarmApi, type AlarmOccurrence } from '@/api/alarm'
@@ -643,15 +666,29 @@ watch(priorityMode, (v) => localStorage.setItem(PRIORITY_KEY, v))
 // [POPUP-EV-MERGE 2026-09-07] 取证帧并入画廊: pre/mid/post_snapshot_url 追加在主快照后
 //   (带语义角标), metadata 兼容数组/对象两形态 (DB 存数组, REST 部分路径 flatten);
 //   与已有 URL 去重 (同一帧可能既是主快照又入 evidence)
-interface GalleryImage { url: string; tag: string }
+// [EV-TRIPLE 2026-09-14] 帧语义标签/帧序/时间角标改由共享模块统一
+//   (src/utils/evidenceFrames.ts — 与详情抽屉 EvidenceFrames 同源; 弹窗
+//   角标不再硬编码「事前/事中/事后」, 按算法展开为「入侵前/触发时刻/事后」
+//   等 + T-12s/T+0/T+6s 相对时间角标, 视频时间轴范式)
+interface GalleryImage { url: string; tag: string; rel?: string; abs?: string; key?: string }
 const imageIndex = ref(0)
+/** [EV-TS] 告警时刻 (ms): evidence_ts 相对角标退化锚点 + post 采集中窗口基准 */
+const alarmTsMs = computed(() => {
+  const iso = currentAlarm.value?.createdAt
+  const t = iso ? Date.parse(iso) : NaN
+  return Number.isFinite(t) ? t : 0
+})
+/** metadata 数组/对象两形态归一 (DB 存数组, REST/WS 部分路径对象) */
+function popupMetaSrc(): Record<string, unknown> {
+  const rawMeta = (currentAlarm.value?.metadata || {}) as unknown
+  return Array.isArray(rawMeta) && rawMeta.length && typeof rawMeta[0] === 'object'
+    ? rawMeta[0] as Record<string, unknown>
+    : (rawMeta && typeof rawMeta === 'object' ? rawMeta as Record<string, unknown> : {})
+}
 const alarmImageList = computed<GalleryImage[]>(() => {
   const alarm = currentAlarm.value
   if (!alarm) return []
-  const rawMeta = (alarm.metadata || {}) as unknown
-  const metaSrc = Array.isArray(rawMeta) && rawMeta.length && typeof rawMeta[0] === 'object'
-    ? rawMeta[0] as Record<string, unknown>
-    : (rawMeta && typeof rawMeta === 'object' ? rawMeta as Record<string, unknown> : {})
+  const metaSrc = popupMetaSrc()
   // [P0-8 2026-09-04 人脸比对] 场景图优先 (保留"场景+人"画面, 对标大华; 后端 face_detector 落盘)
   const scene = typeof metaSrc.scene_url === 'string' && metaSrc.scene_url ? metaSrc.scene_url : ''
   const direct = metaSrc.snapshot_urls as string[] | undefined
@@ -677,22 +714,37 @@ const alarmImageList = computed<GalleryImage[]>(() => {
     else if (primary) list = [primary]
   }
   const mainUrls = scene ? [scene, ...list] : list
-  // [POPUP-EV-MERGE] 取证帧 (语义顺序 pre→mid→post, 与 EvidenceFrames 组件口径一致)
-  const evidenceDefs: Array<[string, string]> = [
-    ['pre_snapshot_url', '事前'],
-    ['mid_snapshot_url', '事中'],
-    ['post_snapshot_url', '事后'],
-  ]
+  // [EV-TRIPLE 2026-09-14] 取证帧: 共享语义模块构建 (pre→mid→post 固定序 +
+  //   算法语义标签 + evidence_ts 相对时间角标; 契约过滤宁缺毋假, 与
+  //   详情抽屉 EvidenceFrames 同源 — 原硬编码「事前/事中/事后」就地废除)
+  const algoKey = String(metaSrc.algo_id ?? '') || String(alarm.type || '')
   const evidence: GalleryImage[] = []
-  for (const [key, tag] of evidenceDefs) {
-    const u = typeof metaSrc[key] === 'string' ? metaSrc[key] as string : ''
-    if (u && !mainUrls.includes(u) && !evidence.some(e => e.url === u)) {
-      evidence.push({ url: u, tag })
+  for (const f of buildEvidenceFrames(metaSrc, algoKey, alarmTsMs.value)) {
+    if (!mainUrls.includes(f.url) && !evidence.some(e => e.url === f.url)) {
+      evidence.push({ url: f.url, tag: f.label, rel: f.rel, abs: f.abs, key: f.key })
     }
   }
   return [...mainUrls.map(u => ({ url: u, tag: '' })), ...evidence]
 })
 const totalImageCount = computed(() => Math.max(1, alarmImageList.value.length))
+/** [EV-TS] post 采集中 (补位链延时回写窗口): 已有取证帧且 post 未到、告警新鲜
+ *   — evidence_update 帧回写后 post 入列, 提示自动消失 */
+const evidencePending = computed(() =>
+  isEvidencePostPending(popupMetaSrc(), alarmImageList.value.filter(i => i.tag).length, alarmTsMs.value))
+/** 缩略图 hover title: 主快照 / 「标签 · T-12s (14:32:08)」 */
+function thumbTitle(img: GalleryImage): string {
+  if (!img.tag) return '主快照'
+  return [img.tag, img.rel, img.abs ? `(${img.abs})` : ''].filter(Boolean).join(' · ')
+}
+/** 当前大图帧 (取证帧时展示帧语义角标 + 时间) */
+const currentFrame = computed<GalleryImage | null>(() => alarmImageList.value[imageIndex.value] || null)
+/** [EV-FIX 2026-09-14b] pre/post 帧不叠加目标 bbox/detections: bbox 属触发帧
+ *   语义, 画在无目标的事前/事后帧上是「标注空气」误导操作员; 保留防区
+ *   polygon (静态事实), 仅触发时刻帧 (mid) 与主快照渲染完整叠加 */
+const currentFrameIsPreOrPost = computed(() => {
+  const k = currentFrame.value?.key
+  return k === 'pre' || k === 'post'
+})
 
 // ── [P0-8 2026-09-04 人脸比对] 抓拍 vs 注册照对比 (大华式双图 + 相似度 + 名单判定) ──
 const GROUP_TYPE_ZH: Record<string, string> = {
@@ -847,12 +899,16 @@ const receiverName = computed(() => currentAlarm.value?.handledBy || '值班人'
 // [STATUS-CN 2026-09-13] new/pending 同属未处置初始态 (落库 status 列默认值 /
 //   详情端点 metadata.status 缺失 fallback), 不再误判为已处置只读形态
 const isDisposed = computed(() => {
+  const a = currentAlarm.value
   // [STATUS-CN 2026-09-13] String() 宽化: currentAlarm.status 的 AlarmStatus 联合
   //   类型不含 new/pending (后端 metadata 透传的运行时值), 直比会触发 TS2367
-  const s = String(currentAlarm.value?.status ?? '')
-  if (!s) return false
-  if (s === 'unhandled' || s === 'new' || s === 'pending') return false
-  return true
+  const s = String(a?.status ?? '')
+  if (s && s !== 'unhandled' && s !== 'new' && s !== 'pending') return true
+  // [FIX disposed-readonly 2026-09-14] 治理证据兜底: status 缺失/初始态但已有
+  //   处置痕迹 (处置人/处置备注/追加记录) 同样判定已处置 — 防详情端点顶层
+  //   status 口径残留让只读回显与追加处警入口再次失效 (ticketId 不可作证据:
+  //   详情查询会对空号记录就地生成落库)
+  return !!(a?.handledBy || a?.handleNote || (a?.appendLogs?.length ?? 0) > 0)
 })
 const appendEditing = ref(false)
 const disposeTypeLabel = computed(() => {
@@ -864,10 +920,16 @@ const disposeTypeLabel = computed(() => {
     default: return disposeType.value || '-'
   }
 })
-watch(currentAlarm, (a) => {
+// [FIX dispose-edit-guard 2026-09-14] watch 门控改 "id 变化": 原 watch(currentAlarm)
+//   对任何对象替换触发 (同 id 富化合并帧/快照补位帧/新告警覆盖) → 静默清空用户
+//   已选处置类型 + 收起追加编辑态 (真机 14:47 实测: 用户填表期间连续新告警推送
+//   不断重置表单, 误判"未保存"); 仅换告警 (id 变) / 关闭清理 (id→undefined) 时回填。
+watch(() => currentAlarm.value?.id, () => {
+  const a = currentAlarm.value
   // [STATUS-CN 2026-09-13] 未处置初始态 (new/pending/unhandled) 不回填处置类型
   disposeType.value = a?.status && !['unhandled', 'new', 'pending'].includes(a.status) ? a.status : ''
   appendEditing.value = false
+  appendNoteInput.value = ''   // [FIX disposed-readonly 2026-09-14] 换告警清空追加输入
 })
 /** [FIX 2026-09-09] await 真实结果: 原实现无 await, 后端失败也弹“已确认处置”假成功
  *  (store.handleAlarm 失败时弹错误提示, 此处不再叠加成功 toast);
@@ -885,7 +947,7 @@ async function confirmDispose() {
 }
 
 // ── [追加信息 2026-09-09] 已处置告警追加处警信息 ──
-//   disposition 追加后为多行全文 (原备注 + [追加 ...] 行), 只读区"误报备注"
+//   disposition 追加后为多行全文 (原备注 + [追加 ...] 行), 只读区"备注"
 //   仅显示原处置记录, 追加行在下方追加信息区结构化展示 (独立表回填)。
 const originalNote = computed(() => {
   const full = currentAlarm.value?.handleNote || ''
@@ -902,15 +964,27 @@ function formatAppendTime(log: { time?: string; timeMs?: number }): string {
   }
   return '-'
 }
+// [FIX disposed-readonly 2026-09-14] 追加处警入口三函数: startAppend 展开追加输入 /
+//   cancelAppend 收起清零 / openDisposePanel 处置板入口 (已处置直入追加编辑态)
+function startAppend() { appendEditing.value = true }
+function cancelAppend() { appendEditing.value = false; appendNoteInput.value = '' }
+function openDisposePanel() {
+  activeSecondaryTab.value = 'dispose'
+  if (isDisposed.value) appendEditing.value = true
+}
 async function confirmAppend() {
   if (!appendNoteInput.value.trim() || appending.value) return
   appending.value = true
   try {
-    const ok = await appendAlarmNote(appendNoteInput.value)
+    // [FIX disposed-readonly 2026-09-14] handler 透传当前登录用户 (对齐
+    //   confirmDispose 的 auth.username; 原缺省时后端兜底 'admin')
+    const ok = await appendAlarmNote(appendNoteInput.value, auth.username || undefined)
     if (ok) {
       appendNoteInput.value = ''   // 清空输入框
       appendEditing.value = false  // 关闭追加编辑态
       ElMessage.success('已追加信息')
+    } else {
+      ElMessage.error('追加失败, 请重试')
     }
   } finally {
     appending.value = false
@@ -1755,7 +1829,15 @@ const STATUS_CN: Record<string, string> = {
 function statusLabel(s?: string): string { return STATUS_CN[s || ''] || s || '-' }
 
 const handleNote = ref('')
-watch(currentAlarm, (a) => { handleNote.value = a?.handleNote || '' })
+// [FIX dispose-edit-guard 2026-09-14] 同上门控: 仅换告警时回填备注 (原 watch(currentAlarm)
+//   在同 id 富化/补位帧到达时会把用户正在输入的备注清空)
+watch(() => currentAlarm.value?.id, () => { handleNote.value = currentAlarm.value?.handleNote || '' })
+// [FIX dispose-edit-guard 2026-09-14] 处警编辑中标记上报 (useAlarmPopup 覆盖守门消费):
+//   有未提交输入 (已选类型/备注非空/追加编辑态/追加输入非空) → 新告警推送不覆盖当前弹窗
+//   [FIX disposed-readonly 2026-09-14] watch 源补 appendNoteInput
+watch([disposeType, handleNote, appendEditing, appendNoteInput], () => {
+  disposeEditing.value = !!(disposeType.value || handleNote.value.trim() || appendEditing.value || appendNoteInput.value.trim())
+})
 
 function onKeydown(e: KeyboardEvent) {
   if (!popupVisible.value) return
@@ -2107,6 +2189,7 @@ void jumpToPlayback; void openImageTab
   width: 100%;
   /* [AI 复核恢复 2026-09-10] 原 height:100% 独占 pane; 改 flex 自适应后
      图片下方为 AI 复核卡片让出空间 (pane 为 flex column) */
+  position: relative; /* [EV-TS 2026-09-14] 帧语义角标叠加层基准 */
   flex: 1 1 auto;
   min-height: 0;
   display: flex; flex-direction: column;
@@ -2168,6 +2251,43 @@ void jumpToPlayback; void openImageTab
   text-align: center;
   border-radius: 0 0 3px 3px;
   pointer-events: none;
+}
+/* [EV-TS 2026-09-14] 帧相对时间角标 (T-12s/T+0/T+6s) — tag 行内右侧小字 */
+.alarm-popup__thumb-rel {
+  color: #5EC8E5;
+  font-variant-numeric: tabular-nums;
+}
+/* [EV-TS] post 采集中提示 (补位链延时回写窗口内呼吸闪烁) */
+.alarm-popup__ev-pending {
+  font-size: 11px;
+  color: #5EC8E5;
+  white-space: nowrap;
+  animation: alarm-popup-ev-blink 1.6s ease-in-out infinite;
+}
+@keyframes alarm-popup-ev-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+/* [EV-TS] 大图帧语义角标 (取证帧时叠于画面左上角, 回放帧字幕范式)
+   [EV-FIX 2026-09-14b] left 8 → 88: 避让 AlarmSnapshot「⛶ 全屏」悬浮按钮
+   (同锚点 top:8 left:8 z-index:10, 实测帧角标被其遮挡) */
+.alarm-popup__frame-badge {
+  position: absolute; top: 8px; left: 88px; z-index: 5;
+  display: flex; align-items: center; gap: 6px;
+  padding: 3px 8px;
+  background: rgba(5, 30, 60, 0.78);
+  border: 1px solid #1C6E8C;
+  border-radius: 4px;
+  pointer-events: none;
+}
+.alarm-popup__frame-badge-tag { font-size: 12px; color: #9BE8FF; }
+.alarm-popup__frame-badge-rel {
+  font-size: 12px; color: #00E5FF;
+  font-variant-numeric: tabular-nums; font-weight: 600;
+}
+.alarm-popup__frame-badge-abs {
+  font-size: 11px; color: #7FA8C9;
+  font-variant-numeric: tabular-nums;
 }
 .alarm-popup__thumbs-counter {
   font-size: 11px; color: #00E5FF;

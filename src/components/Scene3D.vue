@@ -39,7 +39,15 @@
           @pointercancel="endAiDrag"
           @click="openAiChat"
         >
-          <img :src="aiGif" alt="AI 助手" draggable="false" />
+          <video
+            :src="aiAvatarVideo"
+            autoplay
+            loop
+            muted
+            playsinline
+            disablepictureinpicture
+            aria-label="AI 助手"
+          ></video>
         </button>
         <div class="ai-message" role="tooltip">
           <span>随时待命：巡检、调策略、数据分析都交给我</span>
@@ -129,6 +137,10 @@ import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { CSS2DRenderer, CSS2DObject } from 'three/examples/jsm/renderers/CSS2DRenderer.js'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
+// [PERF 2026-09-14] stadium.glb 经 glTF-Transform meshopt 压缩 (68MB -> 12.4MB, gzip 5.8MB):
+//   EXT_meshopt_compression 是 required 扩展, GLTFLoader 必须注册解码器, 否则 load 直接抛错。
+//   解码器 wasm 以 base64 内嵌 (~25KB) 随 vendor-three 打包, 不产生额外网络请求。
+import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js'
 // [WEB-GLB v1.8.0] 对标 Sketchfab 渲染管线调研结论:
 // Sketchfab viewer 对户外模型使用 HDR 天空环境 IBL + ACES tone mapping
 // (Sketchfab PBR 渲染文档); v1.6.0 的 RoomEnvironment 是室内箱体环境,
@@ -145,7 +157,9 @@ import {
   type PerformanceSnapshot,
   type PerformanceReport,
 } from '@/utils/performance'
-import aiGif from '@/assets/ai.gif'
+// [PERF 2026-09-14] 首屏最大单文件优化: 5.4MB GIF → 158KB VP9-alpha webm (-97%);
+//   gif 自动播放语义由 <video autoplay muted loop playsinline> 等价替代 (Chrome/Edge/Firefox 全支持)
+import aiAvatarVideo from '@/assets/ai-avatar.webm'
 import { DEFAULT_DEVICES, DEFAULT_BUILDINGS, STADIUM_SCENE_META } from './scene3d/constants/defaultSceneData'
 import type { Building3DNode, SceneMeta } from './scene3d/types/scene3d'
 
@@ -495,7 +509,11 @@ function updateDrawPreview(start: THREE.Vector3, end: THREE.Vector3) {
 /** 为建筑加载 GLB 模型替换程序化几何体 */
 function loadBuildingModel(buildingName: string, modelUrl: string, transform?: { scale?: number; rotationDeg?: number; offsetY?: number }) {
   if (!scene || !modelUrl) return
-  if (!gltfLoader) gltfLoader = new GLTFLoader()
+  if (!gltfLoader) {
+    gltfLoader = new GLTFLoader()
+    // [PERF 2026-09-14] 注册 meshopt 解码器 (stadium.glb 为 meshopt 压缩格式)
+    gltfLoader.setMeshoptDecoder(MeshoptDecoder)
+  }
   // 检查缓存
   if (loadedModels.has(modelUrl)) {
     const cached = loadedModels.get(modelUrl)!.clone()
@@ -2619,7 +2637,8 @@ onUnmounted(() => {
   outline-offset: 2px;
 }
 
-.ai-trigger img {
+.ai-trigger img,
+.ai-trigger video {
   display: block;
   width: 100%;
   height: 100%;

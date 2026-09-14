@@ -194,10 +194,13 @@
  *   alarmApi.getList    → {channelId, start_ms, end_ms, level, page, pageSize}
  *   openAlarmDetailById → 全局告警详情弹窗 (复用, 不重复建设)
  */
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Loading } from '@element-plus/icons-vue'
-import flvjs from 'flv.js'
-import Hls from 'hls.js'
+// [PERF 2026-09-14] hls.js/flv.js 改动态 import (见 ensurePlayerLibs): 本组件经
+//   SituationScreen 静态引用, 原静态导入使 vendor-players(1.7MB) 随首页强制加载。
+//   类型仅编译期引用 (flvjs.Player / Hls), 运行时回放启动时才 import()。
+import type flvjs from 'flv.js'
+import type Hls from 'hls.js'
 import MiniPlayer from '@/components/video/MiniPlayer.vue'
 import type { CameraMapBinding } from '@/types/floorMap'
 import { deviceTypeLabel, deviceIconMeta } from '@/types/floorMap'
@@ -322,6 +325,23 @@ async function queryRec() {
 const recVideoRef = ref<HTMLVideoElement>()
 const playUrl = ref('')
 const recPaused = ref(false)
+// [PERF 2026-09-14] 播放器库按需加载单例 (与 MiniPlayer/SituationScreen 同模式)
+let HlsLib: typeof import('hls.js').default | null = null
+let flvjsLib: typeof import('flv.js').default | null = null
+let playerLibsLoading: Promise<void> | null = null
+function ensurePlayerLibs(): Promise<void> {
+  if (!playerLibsLoading) {
+    playerLibsLoading = Promise.all([
+      import('hls.js').then(m => { HlsLib = m.default }),
+      import('flv.js').then(m => { flvjsLib = m.default }),
+    ]).then(() => undefined).catch((err) => {
+      playerLibsLoading = null  // 失败允许下次重试
+      throw err
+    })
+  }
+  return playerLibsLoading
+}
+
 let flvPlayer: flvjs.Player | null = null
 let hlsPlayer: Hls | null = null
 async function playRec(r: DeviceRecording) {
@@ -342,14 +362,24 @@ async function playRec(r: DeviceRecording) {
     playUrl.value = url
     recPaused.value = false
     // 等 video 挂载后 attach (下一帧)
-    requestAnimationFrame(() => attachRecPlayer(url, !!urls.hls && !urls.flv && !urls.wsFlv))
+    requestAnimationFrame(() => { void attachRecPlayer(url, !!urls.hls && !urls.flv && !urls.wsFlv) })
   } catch (e: unknown) {
     recError.value = '回放启动失败: ' + (e instanceof Error ? e.message : String(e))
   }
 }
-function attachRecPlayer(url: string, preferHls: boolean) {
+async function attachRecPlayer(url: string, preferHls: boolean) {
   const video = recVideoRef.value
   if (!video) return
+  // [PERF 2026-09-14] 首次回放才加载播放器库; 失败降级原生 video
+  try {
+    await ensurePlayerLibs()
+  } catch {
+    video.src = url
+    video.play().catch(() => {})
+    return
+  }
+  const Hls = HlsLib!
+  const flvjs = flvjsLib!
   if (!preferHls && url.includes('.flv') && flvjs.isSupported()) {
     const p = flvjs.createPlayer({ type: 'flv', url, isLive: false, hasAudio: true, hasVideo: true }, { enableStashBuffer: false })
     p.attachMediaElement(video)
@@ -448,6 +478,15 @@ async function fetchAlarms(page = 1) {
 watch(activeTab, (t) => {
   if (t === 'alarms' && !alarms.value.length && !alarmLoading.value && !alarmError.value) fetchAlarms(1)
 })
+
+// [FIX situation-status 2026-09-14] 全局处警广播 → 告警列表重拉: 本弹窗行点击
+//   打开全局 AlarmPopup 处置后, 列表行状态停留旧值 (弹窗不随处置刷新);
+//   已加载过才重拉当前页 (懒加载语义保留 — 未开过告警 tab 零开销)。
+function onAlarmHandledEvt() {
+  if (alarms.value.length && !alarmLoading.value) fetchAlarms(alarmPage.value)
+}
+onMounted(() => window.addEventListener('alarm-handled', onAlarmHandledEvt))
+onBeforeUnmount(() => window.removeEventListener('alarm-handled', onAlarmHandledEvt))
 
 // ── 告警行展示 (归一化 AlarmEvent 字段; 名称走 SSOT 事件类型缓存) ──
 const { getAlarmTypeName } = useEventTypeNames()

@@ -11,7 +11,7 @@ import { ref, reactive } from 'vue'
 import { useAlarmStore } from '@/stores/alarm'
 import { settingsApi } from '@/api/settings'
 import { alarmApi } from '@/api/alarm'
-import { showAlarmPopup, pushLinkageLog, normalizeAlarmPayload, playAlarmSound, findMatchingRule, ensureRulesLoaded, invalidateRuleCache } from './useAlarmPopup'
+import { showAlarmPopup, pushLinkageLog, normalizeAlarmPayload, playAlarmSound, findMatchingRule, ensureRulesLoaded, invalidateRuleCache, popupVisible, currentAlarm } from './useAlarmPopup'
 import { useChannelStore } from '@/stores/channel'
 import { http } from '@/api/http'
 import type { AlarmEvent } from '@/types/alarm'
@@ -410,6 +410,24 @@ async function handleAlarm(alarm: any) {
       return
     }
 
+    // [EV-TRIPLE 2026-09-14] 取证补位帧 (post 帧延时回写, 后端
+    //   AlarmService::pushAlarmUpdate 置 evidence_update): 非新事件 —
+    //   metadata 含 post_snapshot_url + evidence_ts 全量三键的富化帧;
+    //   不预热流/不走弹窗判定三态链/不播 TTS。仅当弹窗正开且同 id 时调
+    //   showAlarmPopup 走「同 id 合并分支」(深合并 metadata → 弹窗画廊
+    //   post 帧/时间角标即时刷新, 不重置表单不重弹); 弹窗已关则静默
+    //   (post 已回写 DB, 列表/详情再次打开自然可见三帧)。
+    if ((normalized as any).evidenceUpdate) {
+      if (popupVisible.value && currentAlarm.value?.id === normalized.id) {
+        await showAlarmPopup(normalized, { origin: 'auto' })
+        console.log('[useGlobalAlarm] evidence update merged into open popup, id:', normalized.id)
+      } else {
+        console.log('[useGlobalAlarm] evidence update frame (popup closed/other id, silent), id:',
+          normalized.id)
+      }
+      return
+    }
+
     // [P0-A 2026-08-24] 告警到达即预热拉流 (fire-and-forget): SIP INVITE 与弹窗渲染并行
     //   原时序: WS 告警 → 弹窗渲染 → MiniPlayer mount → multi-urls 轮询 2.4s 无果 → 才发 /start
     //           (INVITE 在告警后 ~3s 才发出, 用户再等 INVITE 2-5s → 弹窗视频打开慢)
@@ -458,9 +476,16 @@ async function handleAlarm(alarm: any) {
         reportPopupResult('debounced')
       } else {
         // autoCloseSeconds 取 verdict.auto_close_s (主命中规则 popup_auto_close_s)
-        showAlarmPopup(normalized, { autoCloseSeconds: Number(verdict.auto_close_s) || 0, origin: 'auto' })
-        markPopupPopped(normalized.id, now)
-        reportPopupResult('shown')
+        // [FIX dispose-edit-guard 2026-09-14] 仅"实际呈现"才记账 (编辑保护挂起 → 不记账:
+        //   同 id 后续帧/用户提交后的新帧仍可补弹; 原实现无条件记账 → 挂起帧被 24h
+        //   TTL 吞掉。同 id 合并分支幂等, 双帧竞态不双弹, 语义不变)
+        const shown = await showAlarmPopup(normalized, { autoCloseSeconds: Number(verdict.auto_close_s) || 0, origin: 'auto' })
+        if (shown) {
+          markPopupPopped(normalized.id, now)
+          reportPopupResult('shown')
+        } else {
+          reportPopupResult('debounced')
+        }
       }
     } else {
       // 3b. 兜底链 (与重构前逐字一致, 勿改): 本地防抖 → findMatchingRule → 弹窗/静默
@@ -483,9 +508,14 @@ async function handleAlarm(alarm: any) {
           } else {
             // [SOUND-ORIGIN 2026-09-11] WS 推送自动弹窗 → origin:'auto' 播放报警音
             //   (手动入口默认 manual 静音, 见 useAlarmPopup.showAlarmPopup)
-            showAlarmPopup(normalized, { autoCloseSeconds: Number(matchedRule.popup_auto_close_s) || 0, origin: 'auto' })
-            markPopupPopped(normalized.id, now)
-            reportPopupResult('offline_fallback')
+            // [FIX dispose-edit-guard 2026-09-14] 同上: 呈现才记账 (挂起 → 不记账, 待补弹)
+            const shown = await showAlarmPopup(normalized, { autoCloseSeconds: Number(matchedRule.popup_auto_close_s) || 0, origin: 'auto' })
+            if (shown) {
+              markPopupPopped(normalized.id, now)
+              reportPopupResult('offline_fallback')
+            } else {
+              reportPopupResult('debounced')
+            }
           }
         } else {
           console.log('[useGlobalAlarm] popup suppressed (no matching linkage rule), type:',

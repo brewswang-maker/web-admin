@@ -90,6 +90,21 @@ export interface PassagewayDef {
   min_interval_ms?: number
   /** >0 = 由老 tripwire id 自动迁移 (幂等键) */
   migrated_from_tripwire?: number
+  // ---- [P0-P2 v6 2026-09-14] 判定增强字段 (与 REST passagewayToJson 同名) ----
+  /** [P0-1] ΔT 配对窗 (ms): -1=按档位派生 (默认 3000) / 0=禁用配对 / 1-20000 显式 */
+  tailgate_dt_ms?: number
+  /** [P1-4] 门线1 [x1,y1,x2,y2] 归一化; 全 -1 = 未配置 (自动最优平行边对) */
+  gate_line?: [number, number, number, number]
+  /** [P1-4] 门线2; 有效时进入双线计数区模式 (跨双线才计一次) */
+  gate_line2?: [number, number, number, number]
+  /** [P0-2] 时间窗投票毫秒 (最近 T 秒内 ≥k 帧): -1=派生 / >0 显式 */
+  vote_window_ms?: number
+  /** [P1-5] 尺寸过滤档: near_adaptive = 近景大框放宽 (走向镜头盲区) */
+  bbox_size_mode?: 'fixed' | 'near_adaptive'
+  /** [P1-6] 判定档位: fast 即触发 / precise ΔT+共现二级确认 */
+  detect_mode?: 'fast' | 'precise'
+  /** [P2-8] 同秒忽略 (Axis "Ignore counts made same second") */
+  same_second_ignore?: boolean
   enabled: boolean
   created_at: number
   updated_at: number

@@ -2,14 +2,20 @@
   <!-- [ROI-GAP 2026-09-06] 多帧取证: 插件 EvidenceFrameCache 产出
        pre/mid/post_snapshot_url (AlarmDispatcher 落盘为 /snapshots/evidence/),
        双帧=双时刻对照 (尾随通过前/后、物品消失前/后等), 三帧=证据链
-       (攀爬 起始→攀爬中→翻越后)。仅真实数据存在时渲染 (宁缺毋假),
-       data-evidence-count 供 DOM 探针验证。 -->
-  <div v-if="frames.length" class="evidence-frames" :data-evidence-count="frames.length">
+       (入侵 空场→触发→事后/攀爬 起始→攀爬中→翻越后)。仅真实数据存在时
+       渲染 (宁缺毋假), data-evidence-count 供 DOM 探针验证。
+       [EV-TRIPLE 2026-09-14] 语义分离后: pre=空场景/动作起始帧,
+       mid=触发帧 (人/物必在场), post=触发后延时抓帧 (补位链回写, 触发
+       瞬间不写) — 三帧硬区隔, 可对照还原事件来龙去脉。
+       [EV-TS 2026-09-14] evidence_ts 帧时刻戳 → 相对时间角标 (T-12s/
+       T+0/T+6s, 视频时间轴范式); post 未到时展示"采集中"占位。 -->
+  <div v-if="frames.length || pendingPost" class="evidence-frames"
+       :data-evidence-count="frames.length" :data-evidence-pending="pendingPost ? 1 : 0">
     <div class="ev-head">
       <span class="ev-title">{{ frames.length >= 3 ? '三帧证据链' : '双时刻取证' }}</span>
       <span v-if="!compact" class="ev-sub">按时间先后对照, 点击可放大 ({{ algoHint }})</span>
     </div>
-    <div class="ev-grid" :class="`ev-grid--${Math.min(frames.length, 3)}`">
+    <div class="ev-grid" :class="`ev-grid--${Math.min(frames.length + (pendingPost ? 1 : 0), 3)}`">
       <figure v-for="(f, i) in frames" :key="f.key" class="ev-cell" :data-evidence-key="f.key">
         <el-image
           :src="f.url" fit="cover" preview-teleported lazy
@@ -20,7 +26,19 @@
             <div class="ev-img-error">取证帧加载失败</div>
           </template>
         </el-image>
-        <figcaption class="ev-cap">{{ i + 1 }}. {{ f.label }}</figcaption>
+        <figcaption class="ev-cap">
+          {{ i + 1 }}. {{ f.label }}
+          <span v-if="f.rel" class="ev-ts" :title="f.abs || undefined">{{ f.rel }}</span>
+        </figcaption>
+      </figure>
+      <!-- [EV-TS] post 采集中占位: 三帧链 pre/mid 已到、post 由补位链
+           延时回写 — 仅新鲜告警 (窗口内) 展示, 老告警/已失败不常驻 -->
+      <figure v-if="pendingPost" class="ev-cell ev-cell--pending" data-evidence-key="post-pending">
+        <div class="ev-img ev-img-pending">
+          <span class="ev-spin" />
+          <span>事后帧采集中</span>
+        </div>
+        <figcaption class="ev-cap">{{ frames.length + 1 }}. 事后</figcaption>
       </figure>
     </div>
   </div>
@@ -44,6 +62,10 @@
  *   老告警 (无取证帧字段) 自动不显示, 不伪造占位。
  */
 import { computed } from 'vue'
+import {
+  buildEvidenceFrames, evidenceAlgoHint, isEvidencePostPending,
+  type EvidenceFrameMeta,
+} from '@/utils/evidenceFrames'
 
 const props = defineProps<{
   /** normalize 后告警 metadata (取证帧字段来源) */
@@ -52,68 +74,24 @@ const props = defineProps<{
   algoId?: string
   /** 弹窗内紧凑模式 (隐藏说明行) */
   compact?: boolean
+  /** [EV-TS 2026-09-14] 告警时刻 (ms) — evidence_ts 相对时间角标基准的
+   *   退化值 (mid 缺失时用) + post 采集中占位的新鲜度窗口基准; 缺省不显示 */
+  alarmTsMs?: number
 }>()
 
-interface EvFrame { key: string; label: string; url: string }
+// [EV-TRIPLE 2026-09-14] 帧语义/时间戳/构建逻辑已抽共享模块
+//   src/utils/evidenceFrames.ts (弹窗画廊 AlarmPopup 同源复用防漂移)
+type EvFrame = EvidenceFrameMeta
 
-/** 算法语义标签 (按算法 id 尾段映射; 未知算法退回通用文案) */
-const ALGO_LABELS: Record<string, { pre: string; mid: string; post: string }> = {
-  tailgating: { pre: '通过前', mid: '过程中', post: '通过后' },
-  object_removal: { pre: '消失前', mid: '过程中', post: '消失后' },
-  abandoned_luggage: { pre: '遗留时', mid: '滞留中', post: '滞留确认' },
-  climbing: { pre: '动作起始', mid: '攀爬中', post: '翻越后' },
-  intrusion: { pre: '入侵前', mid: '持续中', post: '触发时刻' },
-  // [ROI-GAP 2026-09-06] fall 三帧链 (include_mid=true) / gathering 双帧链补齐
-  fall: { pre: '倒地前', mid: '倒地中', post: '触发确认' },
-  gathering: { pre: '聚集前', mid: '聚集中', post: '触发时刻' },
-  // [trash-misclass 2026-09-06] personal_item 遗留/无人看管双帧链
-  //   (abandoned/unattended fillMeta, carried 高频低危不加帧)
-  personal_item: { pre: '遗留前', mid: '滞留中', post: '触发确认' },
-  // [FIX evidence-label 2026-09-07] canonical 兼容: AlarmDispatcher SSOT 归一后
-  //   algo_id 尾段是 canonical 名 (abandoned), 非插件名 (personal_item) —
-  //   语义两源通用 (遗留前/滞留中/触发确认), 双保险直配。
-  abandoned: { pre: '遗留前', mid: '滞留中', post: '触发确认' },
-  unattended_baggage: { pre: '看管前', mid: '离开中', post: '触发确认' },
-}
+const frames = computed<EvFrame[]>(() =>
+  buildEvidenceFrames(props.metadata, props.algoId, props.alarmTsMs))
 
-const frames = computed<EvFrame[]>(() => {
-  const m = (props.metadata || {}) as Record<string, unknown>
-  // [FIX evidence-label 2026-09-07] 标签解析三级链: 调用方 algoId 尾段 →
-  //   metadata.algo_id 尾段 → description_key 首段 ("personal_item.abandoned"
-  //   → personal_item)。此前只看 algoId 一级, SSOT 归一后的 canonical 名
-  //   (abandoned) 未命中时直接退通用文案 (真机弹窗实录"事发前/事发后")。
-  // [FIX tsc 2026-09-07] .pop() 返回 string|undefined, filter(Boolean) 不收窄 →
-  //   类型谓词收窄为 string[], 否则 ALGO_LABELS[t] 索引报 TS2538 (两处同修)
-  const tails = [
-    String(props.algoId || '').split('.').pop(),
-    String(m.algo_id || '').split('.').pop(),
-    String(m.description_key || '').split('.')[0],
-  ].filter((t): t is string => Boolean(t))
-  let labels = { pre: '事发前', mid: '过程中', post: '事发后' }
-  for (const t of tails) {
-    if (ALGO_LABELS[t]) { labels = ALGO_LABELS[t]; break }
-  }
-  const out: EvFrame[] = []
-  for (const key of ['pre', 'mid', 'post'] as const) {
-    const url = m[`${key}_snapshot_url`]
-    if (typeof url === 'string' && url
-        && (url.startsWith('data:image/') || url.startsWith('/'))) {
-      out.push({ key, label: labels[key], url })
-    }
-  }
-  return out
-})
+/** [EV-TS] post 采集中占位 (共享判定): 有帧但 post 未到 + 告警新鲜
+ *   (<20s 窗口) — evidence_update 帧到达后 post 写入 → 占位自然消失 */
+const pendingPost = computed(() =>
+  isEvidencePostPending(props.metadata, frames.value.length, props.alarmTsMs))
 
-const algoHint = computed(() => {
-  const m = (props.metadata || {}) as Record<string, unknown>
-  const tails = [
-    String(props.algoId || '').split('.').pop(),
-    String(m.algo_id || '').split('.').pop(),
-    String(m.description_key || '').split('.')[0],
-  ].filter((t): t is string => Boolean(t))
-  const hit = tails.find((t) => ALGO_LABELS[t]) || ''
-  return hit ? `${hit} 取证帧` : '取证帧'
-})
+const algoHint = computed(() => evidenceAlgoHint(props.algoId, props.metadata))
 </script>
 
 <style scoped>
@@ -174,5 +152,37 @@ const algoHint = computed(() => {
   color: var(--el-text-color-regular);
   background: var(--el-fill-color-light);
   border-top: 1px solid var(--el-border-color-lighter);
+}
+/* [EV-TS 2026-09-14] 相对时间角标 (T-12s/T+0/T+6s 视频时间轴范式) */
+.ev-ts {
+  margin-left: 6px;
+  font-size: 11px;
+  color: var(--el-text-color-secondary);
+  font-variant-numeric: tabular-nums;
+}
+/* [EV-TS] post 采集中占位 (补位链延时回写窗口内) */
+.ev-cell--pending {
+  border-style: dashed;
+}
+.ev-img-pending {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  background-color: var(--el-fill-color-darker);
+}
+.ev-spin {
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--el-border-color);
+  border-top-color: var(--el-color-primary);
+  border-radius: 50%;
+  animation: ev-spin 1s linear infinite;
+}
+@keyframes ev-spin {
+  to { transform: rotate(360deg); }
 }
 </style>

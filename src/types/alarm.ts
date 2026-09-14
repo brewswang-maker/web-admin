@@ -822,7 +822,19 @@ export function normalizeAlarmCore(raw: any): AlarmEvent {
   //   双源取值后再统一映射, 全视图受益。
   // [FIX tsc 2026-09-07] 保留 string 形态: 后端/历史数据可能发 'new' (L630 归一
   //   为 'unhandled'), 原 as AlarmStatus 收窄后 'new' 比较成 TS2367 无重叠
-  const rawStatusVal = String(raw.status || gov.status || '')
+  // [FIX disposed-readonly 2026-09-14] 详情端点顶层 status 遮蔽治理态修复:
+  //   GET /alarms/:id 对 metadata 数组形态 (GB28181 告警, 治理字段回填在首元素
+  //   gov) 恒返顶层 status='pending' (handle_status=0) — 原「顶层优先」使已处置
+  //   告警重开被误判未处置 (弹窗停留编辑态: 只读回显/追加处警入口全失效; 真机
+  //   实测 890ba6b9: 顶层 pending vs gov.status=confirmed)。顶层为初始态
+  //   (空/new/pending/unhandled) 且 gov 为非初始治理态时让位 gov; 其余组合保持
+  //   原优先级 (WS 帧/列表行顶层无 status → 仍走 gov), 零回归。
+  const topStatusVal = String(raw.status || '')
+  const govStatusVal = String(gov.status || '')
+  const INIT_STATUSES = ['', 'new', 'pending', 'unhandled']
+  const rawStatusVal = INIT_STATUSES.includes(topStatusVal)
+    && govStatusVal !== '' && !INIT_STATUSES.includes(govStatusVal)
+    ? govStatusVal : (topStatusVal || govStatusVal)
   // [AI 复核恢复 2026-09-10] gov 已含 metadata.ai_review (...gov 展开), 在 return 前
   //   统一解析一次供 aiReview 结构化字段与 aiConclusion 兜底链共用
   const aiReview = parseAiReview(gov)

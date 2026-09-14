@@ -183,8 +183,12 @@ vi.mock('three/examples/jsm/objects/Sky.js', () => ({
 }))
 vi.mock('three/examples/jsm/loaders/GLTFLoader.js', () => ({
   GLTFLoader: vi.fn(function () {
-    return { load: vi.fn(), loadAsync: vi.fn(() => new Promise(() => {})) }
+    return { load: vi.fn(), loadAsync: vi.fn(() => new Promise(() => {})), setMeshoptDecoder: vi.fn() }
   }),
+}))
+// [PERF 2026-09-14] meshopt 解码器 mock: 真实模块内嵌 wasm 编译, 测试环境仅需占位对象
+vi.mock('three/examples/jsm/libs/meshopt_decoder.module.js', () => ({
+  MeshoptDecoder: { ready: Promise.resolve(), supported: true },
 }))
 vi.mock('three/examples/jsm/utils/BufferGeometryUtils.js', () => ({
   mergeGeometries: vi.fn(() => ({ dispose: vi.fn() })),

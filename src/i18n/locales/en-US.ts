@@ -1439,6 +1439,8 @@ const enUS: MessageSchema = {
     levelHigh: 'High',
     levelMedium: 'Medium',
     levelLow: 'Low',
+    // [FIX level-ssot 2026-09-14] SSOT 5 档补全 (info 档)
+    levelInfo: 'Info',
     criticalAlarm: 'Critical Alarm',
     highAlarm: 'High Alarm',
     mediumAlarm: 'Medium Alarm',

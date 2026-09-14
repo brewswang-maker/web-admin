@@ -157,6 +157,7 @@
           <div v-if="centerView === '3d'" key="3d" class="center-view-3d">
           <div class="scene-container-with-panel" v-if="sceneDevices.length">
             <Scene3D
+              v-if="show3d"
               ref="scene3dRef"
               class="scene3d-wrapper"
               :devices="sceneDevices"
@@ -456,16 +457,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted, nextTick, watch, defineAsyncComponent } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
-import * as echarts from 'echarts/core'
-import { GaugeChart, LineChart, PieChart, BarChart } from 'echarts/charts'
-import {
-  GraphicComponent, GridComponent, TooltipComponent, LegendComponent, TitleComponent,
-} from 'echarts/components'
-import { CanvasRenderer } from 'echarts/renderers'
+// [PERF 2026-09-14] echarts 改动态 import (见 ensureEcharts): 解除本页 chunk 对
+//   vendor-echarts(1.5MB) 的静态依赖 (实测该下载拖慢首页框架渲染 3.9s@隧道带宽),
+//   图表库在 initCharts 数据就绪后才按需拉取。
+import type { ECharts } from 'echarts/core'
 import { situationApi, type SituationOverview, type SituationAlarmStream, type SituationAgentStatus } from '@/api/situation'
 import { statsHttp, streamHttp } from '@/api/http'
 import { normalizeStreamUrl } from '@/utils/streamUrl'
@@ -487,10 +486,12 @@ import FloorMapCanvas from '@/components/map/FloorMapCanvas.vue'
 import DeviceDetailDialog from '@/components/map/DeviceDetailDialog.vue'
 import { useFloorMap, channelIdVariants } from '@/composables/useFloorMap'
 import type { FloorMapWithCameras, CameraMapBinding } from '@/types/floorMap'
-import Scene3D from '@/components/Scene3D.vue'
 import SceneEditPanel from '@/components/SceneEditPanel.vue'
-import flvjs from 'flv.js'
-import Hls from 'hls.js'
+// [PERF 2026-09-14] hls.js/flv.js 改动态 import (见 ensurePlayerLibs): 解除本页
+//   chunk 对 vendor-players(1.7MB) 的静态依赖, 首次开播前才加载 (与拉流 API 并行,
+//   不额外延迟开播)。flvjs 仅保留类型引用 (flvjs.Player), 编译期擦除。
+import type flvjs from 'flv.js'
+import type Hls from 'hls.js'
 import { channelApi } from '@/api/channel'
 import { useChannelStore } from '@/stores/channel'
 import {
@@ -505,7 +506,63 @@ import {
   type RawMapDevicePoint,
 } from '@/utils/sceneDeviceMapper'
 
-echarts.use([GaugeChart, LineChart, PieChart, BarChart, GraphicComponent, GridComponent, TooltipComponent, LegendComponent, TitleComponent, CanvasRenderer])
+// ── [PERF 2026-09-14 R7] 3D 场景组件异步化 (解除数据请求对 three.js 下载的等待) ──
+//   Scene3D.vue 原为静态 import, 会把 three.js 全家桶 (899KB / gzip 187KB) 拖进
+//   本页 chunk 的依赖链 — Vue Router 懒加载 + Suspense 语义下, 本组件 mount (即
+//   数据请求发出点 onMounted) 被迫等待全部静态依赖下载完成。慢网/缓存失效时
+//   three.js 需 1~4s, 表现为"骨架屏已显示, 数据 3-4 秒才开始请求"。
+//   改异步组件后: 本页 chunk 独立执行 (gzip ~24KB), 数据请求立即发出;
+//   3D 引擎随设备数据到达 (模板 v-if 驱动) 再并行加载, 与数据展示互不阻塞。
+const Scene3D = defineAsyncComponent(() => import('@/components/Scene3D.vue'))
+
+// ── [PERF 2026-09-14] 重型库按需加载 (解除首屏 chunk 静态依赖) ──
+//   echarts (~1.5MB) / hls.js+flv.js (~1.7MB gzip 前) 原为静态 import, 随本页路由
+//   chunk 立即下载且被 Rollup 提升进首页加载链 (隧道实测: echarts 380KB gzip 下载
+//   3.9s, players 391KB gzip 0.9s, 期间框架 UI 无法渲染)。改动态单例后:
+//   - 图表: initCharts (数据就绪) 时才拉 echarts;
+//   - 播放器: 首次开播前才拉 hls/flv (与拉流 API 并行)。
+let echartsLib: typeof import('echarts/core') | null = null
+let echartsLoading: Promise<void> | null = null
+
+function ensureEcharts(): Promise<void> {
+  if (!echartsLoading) {
+    echartsLoading = Promise.all([
+      import('echarts/core'),
+      import('echarts/charts'),
+      import('echarts/components'),
+      import('echarts/renderers'),
+    ]).then(([core, charts, comps, renderers]) => {
+      core.use([
+        charts.GaugeChart, charts.LineChart, charts.PieChart, charts.BarChart,
+        comps.GraphicComponent, comps.GridComponent, comps.TooltipComponent,
+        comps.LegendComponent, comps.TitleComponent,
+        renderers.CanvasRenderer,
+      ])
+      echartsLib = core
+    }).catch((err) => {
+      echartsLoading = null  // 失败允许下次重试
+      throw err
+    })
+  }
+  return echartsLoading
+}
+
+let HlsLib: typeof import('hls.js').default | null = null
+let flvjsLib: typeof import('flv.js').default | null = null
+let playerLibsLoading: Promise<void> | null = null
+
+function ensurePlayerLibs(): Promise<void> {
+  if (!playerLibsLoading) {
+    playerLibsLoading = Promise.all([
+      import('hls.js').then(m => { HlsLib = m.default }),
+      import('flv.js').then(m => { flvjsLib = m.default }),
+    ]).then(() => undefined).catch((err) => {
+      playerLibsLoading = null  // 失败允许下次重试
+      throw err
+    })
+  }
+  return playerLibsLoading
+}
 
 const router = useRouter()
 const { t } = useI18n()
@@ -590,7 +647,19 @@ function openAlarmDetail(alarm: Alarm) {
 }
 
 function alarmLevelText(level: string): string {
-  return ({ critical: t('situationScreen.levelCritical'), high: t('situationScreen.levelHigh'), medium: t('situationScreen.levelMedium'), low: t('situationScreen.levelLow') } as Record<string, string>)[level] ?? level
+  // [FIX level-ssot 2026-09-14] SSOT 5 档全量映射 (info/low/medium/high/critical,
+  //   与 types/alarm.ts AlarmLevel / REST realtime-alarms switch 同契约):
+  //   原表缺 info/warning → 徽章直出英文原文 (用户实锚 "warning" 与「中」
+  //   徽章混排); 'warning' 为旧 3 档压缩表残留 → 归一到「中」(其原覆盖
+  //   severity 3/4 主体档), 不改变存量展示语义。
+  return ({
+    critical: t('situationScreen.levelCritical'),
+    high: t('situationScreen.levelHigh'),
+    medium: t('situationScreen.levelMedium'),
+    low: t('situationScreen.levelLow'),
+    info: t('situationScreen.levelInfo'),
+    warning: t('situationScreen.levelMedium'),
+  } as Record<string, string>)[level] ?? level
 }
 
 function alarmStatusText(status: string): string {
@@ -681,8 +750,24 @@ const sceneIsDemo = ref(false)
 /** [v1.9.4] 已结合进 3D 场景的真实设备台数（合并模式下展示"实况接入 N 台"） */
 const sceneRealCount = ref(0)
 
+// ── [PERF 2026-09-14 R7] 3D 初始化让位数据首帧 ──
+//   Scene3D init (WebGL 上下文 + PMREM 天空 + 建筑构建, 数百 ms~1s+ 同步长任务)
+//   原随 v-if 与数据面板在同一次渲染 flush 中执行, 阻塞"数据首屏上屏"
+//   (隧道 swiftshader 复测: 数据到达同帧 1.25s 长任务)。改为等两帧 (数据面板
+//   paint 完成后) 再挂载 3D: 数据先显示、3D 随后就位。后台标签页 rAF 暂停
+//   期间 3D 顺延至可见后自动补挂载, 无死角。
+const show3d = ref(false)
+watch(() => sceneDevices.value.length, (n) => {
+  if (n > 0 && !show3d.value) {
+    requestAnimationFrame(() => requestAnimationFrame(() => { show3d.value = true }))
+  }
+}, { immediate: true })
+
 // P2: Scene3D 组件引用（用于调用 exposed 方法）
-const scene3dRef = ref<InstanceType<typeof Scene3D> | null>(null)
+//   类型经 typeof import() 从 .vue 推导 — 仅类型查询, 不产生运行时依赖
+//   (运行时由上方 defineAsyncComponent 懒加载)
+type Scene3DExposed = InstanceType<(typeof import('@/components/Scene3D.vue'))['default']>
+const scene3dRef = ref<Scene3DExposed | null>(null)
 const sceneLabelsVisible = ref(true)
 
 function resetSceneCamera() {
@@ -844,7 +929,7 @@ const slideDirection = ref<'slide-left' | 'slide-right'>('slide-left')
 
 // 全屏状态
 const isFullscreen = ref(false)
-const fullscreenScene3dRef = ref<InstanceType<typeof Scene3D> | null>(null)
+const fullscreenScene3dRef = ref<Scene3DExposed | null>(null)
 
 function setCenterView(view: '3d' | 'video' | 'floor') {
   slideDirection.value = view === '3d' ? 'slide-right' : 'slide-left'
@@ -897,7 +982,7 @@ watch(isFullscreen, () => {
   fullscreenTimer = setTimeout(() => {
     fullscreenTimer = null
     if (centerView.value !== 'video') return
-    for (let i = 0; i < 4; i++) reattachPlayer(i)
+    for (let i = 0; i < 4; i++) void reattachPlayer(i)
     // 恢复轮巡定时器
     if (videoPollingActive.value) {
       startVideoPollTimers()
@@ -1102,6 +1187,8 @@ function destroySlotPlayers(slot: VideoSlot) {
 
 async function playVideoInSlot(slotIdx: number, channelId: string, deviceName: string) {
   const slot = videoSlots[slotIdx]
+  // [PERF 2026-09-14] 播放器库与拉流并行加载 (建播放器前才 await, 不额外延迟开播)
+  const libsPromise = ensurePlayerLibs()
   // 递增 generation，使旧异步操作的结果失效
   slot._gen++
   const myGen = slot._gen
@@ -1181,6 +1268,10 @@ async function playVideoInSlot(slotIdx: number, channelId: string, deviceName: s
         }, 200)
       })
     }
+
+    await libsPromise
+    const Hls = HlsLib!
+    const flvjs = flvjsLib!
 
     if (useHls) {
       // H265 → 使用 HLS 播放器（MSE 不支持 H265 FLV）
@@ -1311,7 +1402,7 @@ function restoreVideoSlotsFromStore() {
  * 仅重建播放器（不调 /start 或 /stop），用于全屏切换时 DOM 重建后重新绑定。
  * 支持 FLV (H264) 和 HLS (H265) 两种格式。关键: 不触发 SIP INVITE/teardown，避免设备压力。
  */
-function reattachPlayer(slotIdx: number) {
+async function reattachPlayer(slotIdx: number) {
   const slot = videoSlots[slotIdx]
   if (!slot.mediaUrl || !slot.playing) return
   let video = videoSlotRefs.value[slotIdx]
@@ -1338,6 +1429,11 @@ function reattachPlayer(slotIdx: number) {
       setTimeout(() => { video.muted = true; video.play().catch(() => {}) }, 200)
     })
   }
+
+  // [PERF 2026-09-14] 全屏切换重建: 库通常已就绪 (首次开播已加载)
+  await ensurePlayerLibs()
+  const Hls = HlsLib!
+  const flvjs = flvjsLib!
 
   if (slot.mediaFormat === 'hls') {
     // HLS 路径 (H265)
@@ -1505,6 +1601,8 @@ async function onDeviceVideo(device: { id: string; name: string; businessId?: st
   videoPreviewDevice.value = device
   videoPreviewVisible.value = true
   videoPreviewLoading.value = true
+  // [PERF 2026-09-14] 播放器库与拉流并行加载 (建播放器前才 await)
+  const libsPromise = ensurePlayerLibs()
   await nextTick()
   try {
     const channelId = await resolveChannelId(device)
@@ -1531,6 +1629,10 @@ async function onDeviceVideo(device: { id: string; name: string; businessId?: st
 
     const isH265 = !!(mediaInfo.codec && (mediaInfo.codec.toUpperCase().includes('H265') || mediaInfo.codec.toUpperCase().includes('HEVC')))
     const useHls = isH265 || mediaInfo.url.includes('.m3u8')
+
+    await libsPromise
+    const Hls = HlsLib!
+    const flvjs = flvjsLib!
 
     if (useHls) {
       if (Hls.isSupported()) {
@@ -1580,6 +1682,8 @@ async function onDeviceVideo(device: { id: string; name: string; businessId?: st
  *  投放 (toggle), 异设备触发 = 切换投放源; 全屏切换经 watch 迁移不中断 */
 async function onDeviceCast(device: { id: string; name: string; businessId?: string }) {
   if (castDeviceId.value === device.id) { stopCastToBoard(); ElMessage.info('已停止 LED 大屏投放'); return }
+  // [PERF 2026-09-14] 播放器库与拉流并行加载 (建播放器前才 await)
+  const libsPromise = ensurePlayerLibs()
   // 切换投放源: 先释放旧流与纹理 (幂等, 未投放时无操作)
   stopCastToBoard()
   const channelId = await resolveChannelId(device)
@@ -1612,6 +1716,9 @@ async function onDeviceCast(device: { id: string; name: string; businessId?: str
   const isH265 = !!(mediaInfo.codec && (mediaInfo.codec.toUpperCase().includes('H265') || mediaInfo.codec.toUpperCase().includes('HEVC')))
   const useHls = isH265 || mediaInfo.url.includes('.m3u8')
   let started = false
+  await libsPromise
+  const Hls = HlsLib!
+  const flvjs = flvjsLib!
   if (useHls) {
     if (Hls.isSupported()) {
       const hls = new Hls({ enableWorker: true, lowLatencyMode: true, liveSyncDurationCount: 1, liveMaxLatencyDurationCount: 2, maxBufferLength: 5 })
@@ -1907,9 +2014,17 @@ function onDeviceCleared(_deviceId: string) {
   selectedEditDevice.value = null
 }
 
-let charts: echarts.ECharts[] = []
+let charts: ECharts[] = []
 
-function initCharts() {
+async function initCharts() {
+  // [PERF 2026-09-14] echarts 按需加载: 数据就绪后才拉取图表库 (失败仅跳过图表)
+  try {
+    await ensureEcharts()
+  } catch {
+    console.warn('[SituationScreen] echarts 加载失败, 图表初始化跳过')
+    return
+  }
+  const echarts = echartsLib!
   // [v8.6] 幂等渲染: 先销毁旧实例, 避免重复创建
   charts.forEach(c => { try { c?.dispose?.() } catch {} })
   charts = []
@@ -2133,7 +2248,7 @@ function initCharts() {
 
   // 告警趋势
   if (alarmTrendRef.value) {
-    renderAlarmTrendChart()
+    void renderAlarmTrendChart()
   }
 
   // 告警类型分布
@@ -2325,6 +2440,11 @@ function formatAlarmTime(value: unknown): string {
   })
 }
 
+/** [FIX situation-status 2026-09-14] 未完结状态集 (仍需人工处置): 与
+ *  useAlarmTableHelpers.isDisposeEditable 口径一致 + 落库初始态 new/pending;
+ *  治理状态非空且不在集合内 → 已处置 (行标签 + 「查看详情」按钮判据)。 */
+const OPEN_STATUSES = ['new', 'pending', 'unhandled', 'acknowledged', 'handling', 'escalated', 'reassigned']
+
 function toAlarm(s: SituationAlarmStream): Alarm {
   const raw = s as SituationAlarmStream & {
     device_name?: string
@@ -2332,18 +2452,28 @@ function toAlarm(s: SituationAlarmStream): Alarm {
     timestamp_ms?: number | string
     timestampMs?: number | string
     timestamp?: number | string
+    status?: string
   }
   const timestamp = [raw.timestamp_ms, raw.timestampMs, raw.timestamp]
     .find(value => value != null && String(value).trim() !== '')
   const time = formatAlarmTime(timestamp)
     || formatAlarmTime(s.time)
+  // [FIX situation-status 2026-09-14] 处置状态解析: realtime-alarms 无顶层
+  //   status — 取 metadata 治理字段 gov.status (queryRecentDB 回填, 数组取
+  //   首元素/对象直读, 与 normalizeAlarmCore gov 解包同口径)。原恒 '未处理'
+  //   → 处置后重拉/首载列表状态与按钮永不变化 (用户投诉根因)。
+  const metaRaw = s.metadata as unknown
+  const govSrc: Record<string, unknown> = Array.isArray(metaRaw)
+    ? (metaRaw[0] && typeof metaRaw[0] === 'object' ? metaRaw[0] as Record<string, unknown> : {})
+    : (metaRaw && typeof metaRaw === 'object' ? metaRaw as Record<string, unknown> : {})
+  const rawStatus = String(raw.status || govSrc.status || '').toLowerCase()
   return {
     id: s.id,
     time: time || s.time || '-',
     location: s.deviceName || raw.device_name || raw.device || '',
     type: s.description,
     level: s.level,
-    status: '未处理',
+    status: rawStatus && !OPEN_STATUSES.includes(rawStatus) ? '已处置' : '未处理',
     // [FIX 2026-07-30] 兼容 snake/camel 双形态, 与 AlarmsView.vue 行为一致
     snapshotUrl: s.snapshotUrl || s.snapshot_url,
     metadata: s.metadata,
@@ -2373,8 +2503,15 @@ function getSnapshotUrl(alarm: Alarm): string {
 }
 
 /** 渲染告警趋势图表 (从 renderCharts 和切换 mode 时调用) */
-function renderAlarmTrendChart() {
+async function renderAlarmTrendChart() {
   if (!alarmTrendRef.value) return
+  // [PERF 2026-09-14] echarts 按需加载 (通常 initCharts 已就绪, 此处立即可用)
+  try {
+    await ensureEcharts()
+  } catch {
+    return
+  }
+  const echarts = echartsLib!
   // 销毁旧实例并重新创建
   const oldIdx = charts.findIndex(c => {
     try { return c.getDom() === alarmTrendRef.value } catch { return false }
@@ -2477,7 +2614,7 @@ async function switchAlarmTrendMode(mode: '24h' | '7d' | '30d') {
     // 今日模式用 hourlyData，如果已有数据则直接渲染
     if (hourlyData.value.length) {
       await nextTick()
-      renderAlarmTrendChart()
+      void renderAlarmTrendChart()
     }
   } else {
     // 7d/30d 模式调用 alarm-trend API
@@ -2488,7 +2625,7 @@ async function switchAlarmTrendMode(mode: '24h' | '7d' | '30d') {
       if (d.trend && Array.isArray(d.trend)) {
         alarmTrendData.value = d.trend
         await nextTick()
-        renderAlarmTrendChart()
+        void renderAlarmTrendChart()
       } else {
         hourlyFailed.value = true
       }
@@ -2579,29 +2716,77 @@ function onSnapshotError(evt: Event) {
   }
 }
 
+// [FIX level-ssot 2026-09-14] 告警级别 SSOT 5 档解析 (info/low/medium/high/
+//   critical, 与 types/alarm.ts AlarmLevel / RestApiHandlers realtime-alarms
+//   switch / 内置端 LinkageAlarmPopup.levelLabels 同契约):
+//   severity 数字优先 — alarm.new 与 linkage_alarm 双帧均携带整数 severity
+//   (1-5), 精确无损; level 字符串仅兜底 (REST/历史帧), 其中 'warning' 为
+//   BoxService 旧 3 档压缩表残留 (2/3/4→info/warning/warning) → 归一到
+//   medium, 不再英文原文直出。原 fallback 数组 ['low','low',...] 还把
+//   severity=1 错映射为 low (应为 info) — 一并修正。
+const LEVEL_BY_SEVERITY = ['info', 'low', 'medium', 'high', 'critical'] as const
+function resolveAlarmLevel(raw: Record<string, any>): string {
+  const sevNum = Number(raw.severity)
+  if (Number.isFinite(sevNum) && sevNum >= 1 && sevNum <= 5) {
+    return LEVEL_BY_SEVERITY[Math.round(sevNum) - 1]
+  }
+  const lv = typeof raw.level === 'string' ? raw.level.toLowerCase() : ''
+  if (lv === 'warning') return 'medium'
+  return lv || 'medium'
+}
+
 /** WebSocket 推送新告警时更新列表
  *  [FIX realtime-push 2026-09-06] 兼容 alarm.new 推送体: WS 顶层是
  *    alarm_id / timestamp_ms / device_name / severity(int 1-5) /
  *    snapshot_url (BoxService setWsPushFn 平铺, 无 id/time/level 字段),
  *    原判 raw?.id 恒 falsy → 实时推送全部静默丢弃 (首页实时报警
- *    列表不刷新的根因)。双形态归一后入表。 */
+ *    列表不刷新的根因)。双形态归一后入表。
+ *  [FIX ws-frame-classify 2026-09-14] 帧分类 + 同 id 合并 (根治重复行 /
+ *    刷新消失): 后端同一事件推多个帧 — alarm.new 主帧 / linkage_alarm
+ *    富化帧 / 短窗去重帧 / 聚合明细帧 / 事件结束帧 / 证据补位帧, 每个帧
+ *    alarm_id 可能不同 (聚合明细独立 id + merged_into 指回首行)。原实现
+ *    一律 unshift → 一条告警多行重复; 其中短窗去重帧不落库 (真机实锚
+ *    18:01:10 det_..._loitering_1789380070444 仅存在于 WS)、聚合明细被
+ *    REST merged_into='' 过滤 → 刷新后整行消失。
+ *    修复 (对齐 ONVIF PropertyOperation 三态 / 海康 activePostCount 计数
+ *    语义): 状态同步帧 (is_duplicate / event_phase=update|end / backfill /
+ *    evidence_update) 仅就地更新已有条目 (merged_into 优先命中首行),
+ *    找不到则丢弃 — 不新增; 新事件帧同 id 已存在时富化合并 (双帧归一),
+ *    否则插入。列表恒与 REST 重拉口径一致 (HEAD-only)。 */
 function onAlarmPush(data: unknown) {
   const raw = data as Record<string, any>
   if (!raw || typeof raw !== 'object') return
   const id = raw.id || raw.alarm_id || raw.event_id
   if (!id) return
-  const sevNum = Number(raw.severity)
-  const level: string = typeof raw.level === 'string' && raw.level
-    ? raw.level
-    : sevNum >= 1 && sevNum <= 5
-      ? (['low', 'low', 'medium', 'high', 'critical'] as const)[sevNum - 1]
-      : 'medium'
+  const sid = String(id)
+  const isStateSync = raw.is_duplicate === true
+    || raw.backfill === true || raw.evidence_update === true
+    || raw.event_phase === 'update' || raw.event_phase === 'end'
+  if (isStateSync) {
+    // 状态同步帧: 聚合明细按 merged_into 命中首行; 其余按自身 id 命中
+    const targetId = String(raw.merged_into || '') || sid
+    const row = latestAlarms.value.find(a => a.id === targetId)
+    if (!row) return  // 不在 20 条窗口 → 丢弃 (REST 不展示此类行, 防刷新消失)
+    const lv = resolveAlarmLevel(raw)
+    if (lv) row.level = lv
+    const snap = raw.snapshotUrl || raw.snapshot_url
+    if (!row.snapshotUrl && typeof snap === 'string' && snap) row.snapshotUrl = snap
+    return
+  }
+  // 新事件帧: 同 id 富化合并 (alarm.new + linkage_alarm 双帧归一, 后者补字段)
+  const exist = latestAlarms.value.find(a => a.id === sid)
+  if (exist) {
+    exist.level = resolveAlarmLevel(raw)
+    const snap = raw.snapshotUrl || raw.snapshot_url
+    if (!exist.snapshotUrl && typeof snap === 'string' && snap) exist.snapshotUrl = snap
+    return
+  }
   const time: string = raw.time || (raw.timestamp_ms
     ? new Date(Number(raw.timestamp_ms)).toLocaleString('zh-CN', { hour12: false })
     : new Date().toLocaleString('zh-CN', { hour12: false }))
   const s: SituationAlarmStream & { channel_id?: string } = {
-    id: String(id),
-    level,
+    id: sid,
+    level: resolveAlarmLevel(raw),
     description: raw.description || raw.alarm_type || '未知告警',
     deviceName: raw.deviceName || raw.device_name || raw.channel_id || '',
     time: raw.time || time,
@@ -2627,7 +2812,24 @@ function onFullscreenEsc(e: KeyboardEvent) {
 //   WS 只推新告警增量 (处置不推送) — 监听全局 'alarm-handled' 广播重拉
 //   latestAlarms (与各场景事件列表 useRealtimeAlarmEvents 同范式;
 //   只重拉告警面板, 不动 overview/charts/视频轮巡)。
-function onAlarmHandled() {
+// [FIX situation-status 2026-09-14] 升级双段: ① 按广播 detail.alarmId 就地
+//   更新行 (「已处置」+ 按钮切「查看详情」即时生效, 慢链下不等重拉);
+//   ② 重拉兜底对齐后端治理字段 (realtime-alarms 已透传 gov.status, toAlarm 解析)。
+function onAlarmHandled(e?: Event) {
+  // ① 就地更新 (即时反馈): 广播 detail.alarmId 命中行 → 状态/按钮即时切换,
+  //   不依赖慢链重拉 (隧道/高负载下 getRealtimeAlarms 可达数十秒)
+  const detail = (e as CustomEvent | undefined)?.detail || {}
+  const alarmId = String(detail.alarmId || '')
+  if (alarmId) {
+    const row = latestAlarms.value.find(a => a.id === alarmId)
+    if (row) {
+      const st = String(detail.status || '').toLowerCase()
+      // 弹窗处置链 (useAlarmPopup/appendAlarmNote) 不携带 status → 视为完结;
+      // 带 status 的入口 (行内动作) 按未完结集合精确判定
+      if (!st || !OPEN_STATUSES.includes(st)) row.status = '已处置'
+    }
+  }
+  // ② 重拉兜底: 对齐后端治理字段 (全量行状态校对)
   situationApi.getRealtimeAlarms({ limit: 20 }).then(res => {
     const alarms = res.data?.data
     if (alarms?.length) latestAlarms.value = alarms.map(toAlarm)
@@ -2652,6 +2854,11 @@ onMounted(async () => {
 
   // [v8.6] 非阻塞: 并行加载各面板数据, 到达即渲染
   fetchSituationData()
+
+  // [PERF 2026-09-14 R7] 3D chunk 预加载: 数据请求已发出后再并行拉取 Scene3D
+  //   (three.js ~190KB gzip) — 不阻塞数据 (import() 与 defineAsyncComponent
+  //   复用同一模块缓存, 加载完成后自动 resolve); 数据到达时 3D 引擎已就绪。
+  void import('@/components/Scene3D.vue')
 
   // T3: 预加载视频通道列表
   loadVideoDeviceList()
@@ -3077,6 +3284,9 @@ onUnmounted(() => {
 .alarm-row.high .alarm-level b { background: #E85720; }
 .alarm-row.medium .alarm-level b { background: #B88D12; }
 .alarm-row.low .alarm-level b { background: #1676D2; }
+/* [FIX level-ssot 2026-09-14] info 档徽章 (SSOT 5 档补全; 原缺档回落默认
+   蓝 #1676D2 与 low 同色难区分 — 信息级用低饱和灰蓝) */
+.alarm-row.info .alarm-level b { background: #6B7A99; }
 
 .alarm-snapshot {
   justify-content: center;

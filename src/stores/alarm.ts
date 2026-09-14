@@ -134,8 +134,15 @@ export const useAlarmStore = defineStore('alarm', () => {
         unsure: '已标记存疑', known: '已标记已知事件',
       }
       ElMessage.success(statusLabels[form.status] || '处理成功')
-      await fetchAlarms()
-      await fetchUnhandledCount()
+      // [FIX handle-latency 2026-09-14] PUT 成功即刻返回: 列表/计数刷新转后台 —
+      //   原 await fetchAlarms + fetchUnhandledCount 把慢链 (隧道高负载下可达
+      //   数十秒) 归入返回路径, 调用方 useAlarmPopup.handleAlarm 的
+      //   'alarm-handled' 广播 (行状态/按钮即时切换) 被一并阻塞 → 成功 toast
+      //   已弹但列表行数十秒不变「查看」(真机 E2E 实测 D2: 按钮文案=去处警)。
+      //   fire-and-forget 后 store 仍后台刷新 (两函数自带 try/catch 静默失败),
+      //   对唯一调用方语义仍为「PUT 成功 = true」, 列表/计数最终一致。
+      void fetchAlarms()
+      void fetchUnhandledCount()
       return true
     } catch (e: any) {
       ElMessage.error('处理告警失败')

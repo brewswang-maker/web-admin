@@ -46,8 +46,11 @@
  */
 import { ref, watch, onBeforeUnmount, nextTick } from 'vue'
 import { Loading } from '@element-plus/icons-vue'
-import Hls from 'hls.js'
-import flvjs from 'flv.js'
+// [PERF 2026-09-14] 播放器库改按需加载: hls.js + flv.js ≈1.1MB, 原静态导入经
+//   App.vue→AlarmPopup→MiniPlayer 静态链拖进首屏 vendor-misc (首页被迫下载)。
+//   类型仅编译期引用 (擦除), 运行时首次播放才 import() — 见 ensurePlayerLibs。
+import type Hls from 'hls.js'
+import type flvjs from 'flv.js'
 import { streamHttp } from '@/api/http'
 import { normalizeStreamUrl, normalizeWsFlvUrl } from '@/utils/streamUrl'
 import { useChannelStore } from '@/stores/channel'
@@ -356,16 +359,49 @@ function selectBestFormat(urls: Partial<Record<PlayerFormat, string>>): PlayerFo
   return null
 }
 
+// ── [PERF 2026-09-14] 播放器库按需加载（单例, 失败可重试） ──
+let HlsLib: typeof import('hls.js').default | null = null
+let flvjsLib: typeof import('flv.js').default | null = null
+let playerLibsLoading: Promise<void> | null = null
+
+function ensurePlayerLibs(): Promise<void> {
+  if (!playerLibsLoading) {
+    playerLibsLoading = Promise.all([
+      import('hls.js').then(m => { HlsLib = m.default }),
+      import('flv.js').then(m => { flvjsLib = m.default }),
+    ]).then(() => undefined).catch((err) => {
+      playerLibsLoading = null  // 失败允许下次重试
+      throw err
+    })
+  }
+  return playerLibsLoading
+}
+
 // ── 按格式播放 ──
-function attachPlayer(video: HTMLVideoElement, fmt: PlayerFormat, url: string) {
+//   [PERF 2026-09-14] async 化: flv/ws-flv/hls 分支先 await 播放器库再建实例;
+//   attachSeq 防竞态 — 库加载期间若有更新的 attach 请求, 旧请求直接放弃。
+let attachSeq = 0
+async function attachPlayer(video: HTMLVideoElement, fmt: PlayerFormat, url: string) {
+  const seq = ++attachSeq
+  if (fmt === 'flv' || fmt === 'ws-flv' || fmt === 'hls') {
+    try {
+      await ensurePlayerLibs()
+    } catch {
+      if (seq !== attachSeq) return
+      errorMsg.value = '播放组件加载失败'
+      scheduleAutoRetry('播放组件加载失败')
+      return
+    }
+    if (seq !== attachSeq || videoRef.value !== video) return
+  }
   destroyPlayer()
   currentFormat = fmt
 
   switch (fmt) {
     case 'flv':
     case 'ws-flv':
-      if (flvjs.isSupported()) {
-        const player = flvjs.createPlayer({
+      if (flvjsLib && flvjsLib.isSupported()) {
+        const player = flvjsLib.createPlayer({
           type: 'flv', url, isLive: true, hasAudio: false, hasVideo: true,
         }, {
           enableStashBuffer: false,
@@ -385,7 +421,7 @@ function attachPlayer(video: HTMLVideoElement, fmt: PlayerFormat, url: string) {
         //   修复: 统一走 scheduleAutoRetry 退避重连 (1s/3s/10s); 重连的 fetchStreamUrls
         //   phase1 会命中杀流后 ~80ms 内重 INVITE 恢复的流 → 实际秒级自愈;
         //   每次真实首帧 (markPlaying) 重置退避计数 → 周期性扰动也能持续自愈.
-        player.on(flvjs.Events.ERROR, (errorType: string, errorDetail: string) => {
+        player.on(flvjsLib.Events.ERROR, (errorType: string, errorDetail: string) => {
           // [NVR-PB 2026-09-13] destroy 后旧实例异步 emit 防护 (flv.js 库 bug, 同 src 模式)
           if (playerInstance !== player) return
           console.error('[MiniPlayer FLV] error:', errorType, errorDetail, 'url=', url)
@@ -403,8 +439,8 @@ function attachPlayer(video: HTMLVideoElement, fmt: PlayerFormat, url: string) {
       break
 
     case 'hls':
-      if (Hls.isSupported()) {
-        const hls = new Hls({
+      if (HlsLib && HlsLib.isSupported()) {
+        const hls = new HlsLib({
           enableWorker: true,
           lowLatencyMode: true,
           liveSyncDurationCount: 1,
@@ -413,7 +449,7 @@ function attachPlayer(video: HTMLVideoElement, fmt: PlayerFormat, url: string) {
         })
         hls.loadSource(url)
         hls.attachMedia(video)
-        hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        hls.on(HlsLib.Events.MANIFEST_PARSED, () => {
           const p = video.play()
           if (p && typeof p.catch === 'function') p.catch(() => {})
         })
@@ -586,7 +622,9 @@ function tryNextSrcCandidate() {
  *    NVR 回放流 URL 路径形态不稳定, 显式 srcFormat 是报警弹窗联动回放可用的关键.
  *  [FIX nvr-playback 2026-09-13] flv 路径 hasAudio 改 true (原 false), isLive 用 srcIsLive
  *    (默认 true 保持直播行为, 回放传 false 启用 seek/duration) — 与录像管理页同款配置 */
-function attachSrcPlayer(video: HTMLVideoElement, raw: string) {
+//   [PERF 2026-09-14] async 化 + 播放器库按需加载 (同 attachPlayer, 见 ensurePlayerLibs)
+async function attachSrcPlayer(video: HTMLVideoElement, raw: string) {
+  const seq = ++attachSeq
   const isWs = /^wss?:\/\//i.test(raw)
   const url = isWs ? normalizeWsFlvUrl(raw) : normalizeStreamUrl(raw)
   const lower = url.toLowerCase()
@@ -607,20 +645,31 @@ function attachSrcPlayer(video: HTMLVideoElement, raw: string) {
   else if (isWs || lower.includes('.flv')) mode = 'flv'
   else mode = 'mp4'
 
+  if (mode === 'hls' || mode === 'flv') {
+    try {
+      await ensurePlayerLibs()
+    } catch {
+      if (seq !== attachSeq) return
+      failNext('播放组件加载失败')
+      return
+    }
+    if (seq !== attachSeq || videoRef.value !== video) return
+  }
+
   if (mode === 'hls') {
-    if (Hls.isSupported()) {
-      const hls = new Hls({
+    if (HlsLib && HlsLib.isSupported()) {
+      const hls = new HlsLib({
         enableWorker: true,
         lowLatencyMode: true,
         liveSyncDurationCount: 1,
         liveMaxLatencyDurationCount: 2,
       })
-      hls.on(Hls.Events.ERROR, (_evt: any, data: any) => {
+      hls.on(HlsLib.Events.ERROR, (_evt: any, data: any) => {
         if (data?.fatal) failNext(`HLS ${data.type}/${data.details}`)
       })
       hls.loadSource(url)
       hls.attachMedia(video)
-      hls.on(Hls.Events.MANIFEST_PARSED, () => {
+      hls.on(HlsLib.Events.MANIFEST_PARSED, () => {
         const p = video.play()
         if (p && typeof p.catch === 'function') p.catch(() => {})
       })
@@ -635,8 +684,8 @@ function attachSrcPlayer(video: HTMLVideoElement, raw: string) {
       return
     }
   } else if (mode === 'flv') {
-    if (!flvjs.isSupported()) { failNext('flv.js 不受支持'); return }
-    const player = flvjs.createPlayer({
+    if (!flvjsLib || !flvjsLib.isSupported()) { failNext('flv.js 不受支持'); return }
+    const player = flvjsLib.createPlayer({
       // [FIX nvr-playback] hasAudio=true + isLive=srcIsLive (回放传 false 启用 seek)
       type: 'flv', url, isLive: props.srcIsLive, hasAudio: true, hasVideo: true,
     }, {
@@ -646,7 +695,7 @@ function attachSrcPlayer(video: HTMLVideoElement, raw: string) {
       // [FIX nvr-playback] 回放场景不需要直播追帧/追延迟; 直播场景默认 isLive=true 走追帧
       liveBufferLatencyChasing: props.srcIsLive,
     } as any)
-    player.on(flvjs.Events.ERROR, (errorType: string, errorDetail: string) => {
+    player.on(flvjsLib.Events.ERROR, (errorType: string, errorDetail: string) => {
       // [NVR-PB 2026-09-13] 非标/HEVC 编码标记 (文案分支) + destroy 后旧实例异步 emit 防护
       if (playerInstance !== player) return
       if (`${errorType}/${errorDetail}`.includes('CodecUnsupported')) h265Suspect.value = true

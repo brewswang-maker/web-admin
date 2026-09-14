@@ -309,10 +309,15 @@ export default defineConfig(async () => {
             if (!id.includes('node_modules')) return undefined
 
             // L1: Vue 核心生态（最稳定，长期缓存命中率最高）
-            if (/\/node_modules\/(vue|@vue\/(reactivity|runtime|shared|compiler|devtools))/.test(id)) {
+            // [PERF 2026-09-14] 修正: 原正则 (vue|...) 无尾锚 → vue-echarts/vue-i18n/
+            //   vue-router 等全部被误吞进 vendor-vue-core; 其中 vue-echarts 静态
+            //   import echarts/core → vendor-vue-core 静态依赖 vendor-echarts →
+            //   Rollup hoistTransitiveImports 将 1.5MB echarts 提升为入口静态 import
+            //   → 首屏强制加载 (LazyChart 按需加载设计完全失效)。加 \/ 锚定修复。
+            if (/\/node_modules\/(vue|@vue\/(reactivity|runtime|shared|compiler|devtools))\//.test(id)) {
               return 'vendor-vue-core'
             }
-            if (/\/node_modules\/(vue-router|pinia)/.test(id)) {
+            if (/\/node_modules\/(vue-router|pinia)\//.test(id)) {
               return 'vendor-vue-ecosystem'
             }
 
@@ -324,10 +329,21 @@ export default defineConfig(async () => {
               return 'vendor-element-icons'
             }
 
-            // L3: ECharts + zrender — 整包归入（core/charts/components 之间存在循环 import）
+            // L3: ECharts + zrender + vue-echarts — 整包归入（core/charts/components 之间存在循环 import）
             // v7.3: 不再拆分 sub-chunks，避免 Rollup 循环依赖警告
-            if (/\/node_modules\/(echarts|zrender)\//.test(id)) {
+            // [PERF 2026-09-14] +vue-echarts: 与 echarts 同 chunk 后, LazyChart 动态导入
+            //   仅按需拉取该 chunk; 任何静态 chunk 都不再依赖它。
+            if (/\/node_modules\/(echarts|zrender|vue-echarts)\//.test(id)) {
               return 'vendor-echarts'
+            }
+
+            // L3.5: 流媒体播放器 + PDF 解析（hls.js/flv.js/pdfjs-dist ≈1.1MB）
+            // [PERF 2026-09-14] 独立 chunk: 三者原按 L7 落 vendor-misc, 而 MiniPlayer
+            //   (App.vue→AlarmPopup 静态链) 使 vendor-misc 被首屏引用 → 播放器代码
+            //   首屏强制下载。MiniPlayer 改动态 import + 本规则独立分包后,
+            //   仅 LiveView / 回放 / 平面图导入页按需加载。
+            if (/\/node_modules\/(hls\.js|flv\.js|pdfjs-dist)\//.test(id)) {
+              return 'vendor-players'
             }
 
             // L4: Three.js — 整包归入一个 chunk（3D 库内部交叉引用多，不可拆碎）

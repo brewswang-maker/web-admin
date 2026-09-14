@@ -639,7 +639,7 @@
                             @change="(v: any) => toggleRulePassagewayEnabled(pw, !!v)"
                           />
                           {{ pw.name }}
-                          (sens={{ pw.sensitivity }}, {{ pw.direction_in ? '进入' : '离开' }} {{ pw.suppress_mode }}<template v-if="pw.migrated_from_tripwire">, 迁移自绊线#{{ pw.migrated_from_tripwire }}</template>)
+                          (sens={{ pw.sensitivity }}, {{ pw.direction_in ? '进入' : '离开' }} {{ pw.suppress_mode }}<template v-if="pw.detect_mode === 'precise'">, 精确档</template><template v-else>, 快速档</template><template v-if="pw.bbox_size_mode === 'near_adaptive'">, 近景放宽</template>, Δt={{ pw.tailgate_dt_ms == null || pw.tailgate_dt_ms === -1 ? '自动' : (pw.tailgate_dt_ms === 0 ? '禁用' : pw.tailgate_dt_ms + 'ms') }}<template v-if="pw.migrated_from_tripwire">, 迁移自绊线#{{ pw.migrated_from_tripwire }}</template>)
                         </span>
                         <el-button text size="small" type="danger" @click="deleteRulePassageway(pw)">删除</el-button>
                       </div>
@@ -3040,6 +3040,13 @@ async function onPassagewayConfirm(payload: {
   sensitivity: number
   suppress_mode: SuppressMode
   cooldown_sec: number
+  // [P0-P2 v6]
+  tailgate_dt_ms: number
+  detect_mode: 'fast' | 'precise'
+  bbox_size_mode: 'fixed' | 'near_adaptive'
+  same_second_ignore: boolean
+  gate_line?: [number, number, number, number]
+  gate_line2?: [number, number, number, number]
 }) {
   const chIdStr = String(form.conditions.region.config.channelId || '')
   if (!chIdStr) { ElMessage.warning('请先在「绑定通道」勾选通道再绘制'); return }
@@ -3056,6 +3063,13 @@ async function onPassagewayConfirm(payload: {
       sensitivity: payload.sensitivity,
       suppress_mode: payload.suppress_mode,
       cooldown_sec: payload.cooldown_sec,
+      // [P0-P2 v6 判定参数透传 (name 同 REST passagewayToJson 口径)]
+      tailgate_dt_ms: payload.tailgate_dt_ms,
+      detect_mode: payload.detect_mode,
+      bbox_size_mode: payload.bbox_size_mode,
+      same_second_ignore: payload.same_second_ignore,
+      ...(payload.gate_line ? { gate_line: payload.gate_line } : {}),
+      ...(payload.gate_line2 ? { gate_line2: payload.gate_line2 } : {}),
       enabled: true,
     })
     ElMessage.success('通道已添加')

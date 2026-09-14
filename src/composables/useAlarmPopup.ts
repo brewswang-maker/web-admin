@@ -134,6 +134,13 @@ export function normalizeAlarmPayload(raw: any): AlarmEvent {
     const bt = Number(raw?.backfill_ts ?? raw?.backfillTs)
     if (Number.isFinite(bt) && bt > 0) (n as any).backfillTs = bt
   }
+  // [EV-TRIPLE 2026-09-14] 取证补位帧标记透传 (post 帧回写, 后端
+  //   AlarmService::pushAlarmUpdate 置 evidence_update): 同被 normalizeAlarmCore
+  //   白名单丢弃, 此处补挂 camel — useGlobalAlarm 据此走「已开弹窗就地合并」
+  //   专用分支 (非新事件, 不走弹窗判定链/不播 TTS)。
+  if (raw?.evidence_update === true || raw?.evidence_update === 1) {
+    ;(n as any).evidenceUpdate = true
+  }
   return n
 }
 
@@ -419,10 +426,13 @@ export async function handleAlarm(
 // ── [追加信息 2026-09-09] 已处置告警追加处警信息 ──
 //   与 handleAlarm 不同: 追加后弹窗保持打开 (只读区就地追加一行展示),
 //   不跳队列/不关闭; 后端 status='append' 不动状态机 (主状态/接警单号不变)。
-export async function appendAlarmNote(content: string): Promise<boolean> {
+//   [FIX disposed-readonly 2026-09-14] handler 透传当前登录用户 (对齐
+//   handleAlarm 的 handled_by 归属; 原缺省时后端兜底 'admin', 非 admin
+//   用户追加会被错误记录为 admin)。
+export async function appendAlarmNote(content: string, handler?: string): Promise<boolean> {
   if (!currentAlarm.value || !content.trim()) return false
   try {
-    const res: any = await alarmApi.appendNote(currentAlarm.value.id, content.trim())
+    const res: any = await alarmApi.appendNote(currentAlarm.value.id, content.trim(), handler)
     const d = res?.data?.data ?? res?.data ?? res
     const appended = (d?.appended ?? {}) as Record<string, unknown>
     const cur = currentAlarm.value as any
@@ -533,18 +543,29 @@ export function pushLinkageLog(log: { action: string; status: string; icon?: str
   })
 }
 
+// [FIX dispose-edit-guard 2026-09-14] 处警编辑中标记 (AlarmPopup.vue 表单输入同步上报):
+//   disposeType 已选 / 备注非空 / 追加编辑态 → true。新告警 WS 帧到达时非高优先级
+//   不覆盖当前弹窗 (真机 14:47 实测: 用户填表期间连续新告警/富化帧推送静默替换
+//   currentAlarm → 处警表单被清空 → 点击确认处置无请求发出, 用户误判"未保存成功")。
+export const disposeEditing = ref(false)
+
 // ── 核心入口：弹出告警弹窗 ──
 // [POPUP-AUTOCLOSE 2026-09-03] options.autoCloseSeconds:
 //   - 详情入口 (openAlarmDetailById) 不传 → 0 → 永不自动关闭
 //   - WS 推送 (useGlobalAlarm) 透传 rule.popup_auto_close_s → 0=不启用, >0=N 秒后关闭
 // [SOUND-ORIGIN 2026-09-11] options.origin: 'manual' | 'auto' | 'linkage' (默认 manual)
 //   仅 auto/linkage 播放报警音; 手动打开一律静音 (旧调用点不传即静音, 自动链已显式传)
+// [FIX situation-status 2026-09-14] options.force: 手动详情入口 (openAlarmDetailById)
+//   显式切换意图 — 跳过下方两类防覆盖守卫, 保证弹窗最终显示用户点击的告警:
+//   慢链下 WS 新告警先弹 (origin=auto) 后, 点击目标到达时不再被拦
+//   (真机 2026-09-14 16:04 实测: 点击 loitering 行处置后 PUT 打到先弹的
+//   intrusion 28b500b1, 列表点击行状态不变, 用户误判"处置不生效")。
 export type AlarmPopupOrigin = 'manual' | 'auto' | 'linkage'
 export async function showAlarmPopup(
   rawAlarm: any,
-  options?: { autoCloseSeconds?: number; origin?: AlarmPopupOrigin },
-) {
-  if (!rawAlarm) return
+  options?: { autoCloseSeconds?: number; origin?: AlarmPopupOrigin; force?: boolean },
+): Promise<boolean> {
+  if (!rawAlarm) return false
 
   // 取消待执行的关闭定时器，防止新告警被旧 300ms 定时器清除
   if (closeTimer) {
@@ -568,13 +589,29 @@ export async function showAlarmPopup(
   // 2. 先更新状态 + 打开弹窗
   //    [FIX 2026-06-28] 优先级防覆盖: 如果当前弹窗是 critical/high，
   //    新告警优先级更低则不覆盖 (避免黑名单弹窗被 object_detected 覆盖)
+  //    [FIX situation-status 2026-09-14] force (手动入口): 用户显式打开目标告警,
+  //    跳过下列两类防覆盖守卫; 同时清处置编辑标记 — 切换告警即放弃未提交表单
+  //    (弹窗侧 watch 重置表单, 避免旧编辑态残留拦截后续 WS 帧)。
   const HIGH_PRIORITY: string[] = ['critical', 'high']
+  if (options?.force) disposeEditing.value = false
   if (popupVisible.value && currentAlarm.value) {
     const curIsHigh = HIGH_PRIORITY.includes(currentAlarm.value.level)
     const newIsHigh = HIGH_PRIORITY.includes(alarm.level)
-    if (curIsHigh && !newIsHigh) {
+    if (!options?.force && curIsHigh && !newIsHigh) {
       console.log('[useAlarmPopup] skip overwrite: current is high-priority, new is', alarm.level, alarm.type)
-      return
+      return false
+    }
+    // [FIX dispose-edit-guard 2026-09-14] 处警编辑保护: 用户已选类型/输入备注 (未提交) 时,
+    //   非高优先级新告警不覆盖弹窗 — 原行为直接替换 currentAlarm → 弹窗侧 watch 静默
+    //   清空处置表单, 用户点击"确认处置"时按钮已 disabled / 首行 return, PUT 从不发出
+    //   (真机 2026-09-14 14:47-14:55 实测: 6ff003ed 至今 status=new, nginx 无 PUT 记录;
+    //   期间连续新告警推送 14:50:46/14:52:46/14:53:22/14:54:34 不断重置表单)。
+    //   高优先级 (critical/high) 仍可抢断 — 安全提醒优先; 用户提交/清空/关闭后自动解除。
+    //   同 id 富化/补位帧不受此拦 (走下方同 id 合并分支, 本就不换告警不清表单)。
+    if (!options?.force && disposeEditing.value && !newIsHigh && alarm.id !== currentAlarm.value.id) {
+      console.log('[useAlarmPopup] dispose editing guard: skip overwrite by new alarm', alarm.id,
+        'level:', alarm.level, 'current:', currentAlarm.value.id)
+      return false
     }
   }
 
@@ -610,7 +647,7 @@ export async function showAlarmPopup(
     } as typeof alarm
     console.log('[useAlarmPopup] same-alarm enrich merged, id:', alarm.id,
       'meta keys:', Object.keys(mergedMeta).length)
-    return
+    return true
   }
 
   currentAlarm.value = alarm
@@ -645,12 +682,16 @@ export async function showAlarmPopup(
   } catch {
     matchedRule.value = null
   }
+  return true
 }
 
 // ── 关闭弹窗 ──
 let closeTimer: ReturnType<typeof setTimeout> | null = null
 export function closePopup() {
   popupVisible.value = false
+  // [FIX dispose-edit-guard 2026-09-14] 关闭即解除编辑保护 (防 closeTimer 300ms
+  //   窗口内 disposeEditing 残留误拦新告警)
+  disposeEditing.value = false
   // [POPUP-AUTOCLOSE 2026-09-03] 立即清零自动关闭秒数, 防下一弹窗误用旧值
   currentPopupAutoCloseS.value = 0
   // 清理音频监听器
@@ -677,7 +718,9 @@ export async function openAlarmDetailById(id: string) {
       ElMessage.warning('未找到该告警的详情数据')
       return
     }
-    await showAlarmPopup(detail)
+    // [FIX situation-status 2026-09-14] force: 手动入口显式切换 (跳过防覆盖守卫),
+    //   保证弹窗最终显示本次点击的告警 — 见 showAlarmPopup options.force 注释。
+    await showAlarmPopup(detail, { force: true })
   } catch (e: any) {
     console.error('[useAlarmPopup] openAlarmDetailById failed:', e)
     ElMessage.error('打开告警详情失败: ' + (e?.message || ''))
@@ -700,6 +743,7 @@ if (typeof window !== 'undefined') {
         popupVisible: popupVisible.value,
         currentPopupAutoCloseS: currentPopupAutoCloseS.value,
         currentAlarmId: currentAlarm.value?.id || null,
+        disposeEditing: disposeEditing.value,
       }),
     }
     console.log('[useAlarmPopup] 调试钩子已挂载 (window.__popupTest), popuptest=1 模式')
