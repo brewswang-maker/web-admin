@@ -1,4 +1,7 @@
 <template>
+  <!-- [EDIT-DIRECT 2026-09-14] 本组件已从 LinkageRuleView 编辑链整块下线 (choice 模式
+       选择页移除, 点击「编辑」直入简易模式): 挂载点/import 已删除, 组件文件保留
+       (useSimpleRuleEdit 类型依赖 TuneForm/SimpleCommit* + 历史查阅); 以下为下线前行为记录。 -->
   <!-- ═══ [vp8 双模式 2026-09-01] 简易创建抽屉: choice → template/tune 状态机 ═══
        [FINAL 2026-09-02] 按用户最终确认: choice 页三张并列卡片 (同一样式),
        「简易模式」与「高级模式」卡片均直开 vp8 之前的全功能表单抽屉 (switch-advanced),

@@ -116,6 +116,16 @@
       </div>
     </el-card>
 
+    <!-- [TRIGGER-DETAIL 2026-09-14] 规则触发详情过滤徽章: 场景规则实例页「触发详情」
+         跳转带入 ?rule_id=&rule_name= (见各 RulesView.openTriggerDetail);
+         服务端按 matched_rule_ids 快照过滤, × 清除恢复全量 -->
+    <div v-if="ruleIdFilter" class="rule-filter-bar">
+      <el-tag type="primary" effect="light" size="large" closable @close="clearRuleFilter">
+        触发规则: {{ ruleNameFilter || ruleIdFilter }}
+      </el-tag>
+      <span class="rule-filter-hint">已按联动规则过滤事件列表 (当前 {{ totalAlarms }} 条)</span>
+    </div>
+
     <!-- ===== [安检对标优化 2026-08-30] 复核质控统计条 ===== -->
     <el-alert
       v-if="fbStats"
@@ -742,7 +752,7 @@
       :close-on-press-escape="false"
       @close="inlineVideoUrl = ''; inlineVideoMode = 'none'"
     >
-      <div v-loading="inlineVideoLoading" style="min-height:300px">
+      <div v-loading="inlineVideoLoading && !inlineVideoTimedOut" style="min-height:300px">
         <!-- 模式1: 录像片段直接播放 -->
         <video
           v-if="inlineVideoMode === 'clip' && inlineVideoUrl"
@@ -764,9 +774,10 @@
           />
         </div>
         <!-- 模式3: 无可用视频 -->
-        <div v-else-if="inlineVideoMode === 'none' && !inlineVideoLoading" style="text-align:center;padding:60px 20px">
+        <div v-else-if="inlineVideoMode === 'none' && (!inlineVideoLoading || inlineVideoTimedOut)" style="text-align:center;padding:60px 20px">
           <el-icon :size="48" color="#555"><VideoPlay /></el-icon>
-          <p style="margin-top:16px;color:#909399">该告警暂无录像片段</p>
+          <!-- [C1 2026-09-14 P2-A] >5min 无片 / 加载超时 →「无录像可用」(替换永久加载态) -->
+          <p style="margin-top:16px;color:#909399">{{ (inlineVideoStale || inlineVideoTimedOut) ? '无录像可用' : '该告警暂无录像片段' }}</p>
           <el-button type="primary" style="margin-top:12px" @click="inlineVideoVisible = false; jumpToAlarmPlayback(inlineVideoItem)">
             去回放页面查看设备录像
           </el-button>
@@ -816,7 +827,7 @@ import AlarmCard from '@/components/alarm/AlarmCard.vue'
 import { showAlarmPopup } from '@/composables/useAlarmPopup'
 import SnapshotAnnotated from '@/views/perimeter/SnapshotAnnotated.vue'
 import EvidenceFrames from '@/components/EvidenceFrames.vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import flvjs from 'flv.js'
 
 // ── 严重等级中文映射 ──
@@ -840,6 +851,14 @@ const selected = ref<any[]>([])
 const currentPage = ref(1)
 const pageSize = ref(20)
 const loading = ref(false)
+
+// ── [TRIGGER-DETAIL 2026-09-14] 规则触发详情过滤 ──
+//   场景规则实例页「触发详情」跳转带入 ?rule_id=&rule_name= (见各
+//   RulesView.openTriggerDetail); 非空 → 服务端按 matched_rule_ids
+//   快照过滤 (GET /alarms?rule_id=, 后端 filter_rule_id 参数), 徽章可清除。
+const route = useRoute()
+const ruleIdFilter = ref(String(route.query.rule_id ?? ''))
+const ruleNameFilter = ref(String(route.query.rule_name ?? ''))
 
 // ── 告警数据 ──
 const alarms = shallowRef<any[]>([])
@@ -1001,6 +1020,26 @@ const inlineVideoLoading = ref(false)
 const inlineVideoMode = ref<'clip' | 'live' | 'none'>('none')
 const inlineVideoItem = ref<any>(null)
 const inlineVideoIsPlayback = ref(false)  // true=设备录像回放, false=实时流
+// [C1 2026-09-14 时间语义治理 P2-A] 无 clip 降级语义 (列表侧最小版):
+//   ①降级链 5 级全失败后的「暂无录像片段」文案 — 老告警 (>5min) 升级为
+//      「无录像可用」(与弹窗侧 AlarmPopup 同口径, 对齐对标报告 §10 P2-A);
+//   ②加载态 12s 监护 — 证据/录像请求挂起时强制落入降级占位, 不做无限加载。
+const INLINE_CLIP_STALE_MS = 5 * 60 * 1000
+const inlineVideoTimedOut = ref(false)
+let inlineVideoTimer: ReturnType<typeof setTimeout> | null = null
+const inlineVideoStale = computed(() => {
+  const it = inlineVideoItem.value
+  if (!it || it.videoClip) return false
+  const age = Date.now() - new Date(it.createdAt).getTime()
+  return Number.isFinite(age) && age > INLINE_CLIP_STALE_MS
+})
+watch(inlineVideoLoading, (v) => {
+  if (inlineVideoTimer) { clearTimeout(inlineVideoTimer); inlineVideoTimer = null }
+  if (v) {
+    inlineVideoTimedOut.value = false
+    inlineVideoTimer = setTimeout(() => { inlineVideoTimedOut.value = true }, 12_000)
+  }
+})
 
 async function openInlineVideo(item: any) {
   inlineVideoItem.value = item
@@ -1254,6 +1293,8 @@ async function fetchAlarms() {
       params.alarm_type = typeFilter.value  // 后端用 alarm_type 字段
     }
     if (statusFilter.value) params.status = statusFilter.value
+    // [TRIGGER-DETAIL 2026-09-14] 规则触发详情过滤 (服务端 matched_rule_ids 快照)
+    if (ruleIdFilter.value) params.rule_id = ruleIdFilter.value
     if (search.value) params.search = search.value
 
     if (dateRange.value && dateRange.value.length === 2 && dateRange.value[0] && dateRange.value[1]) {
@@ -1639,6 +1680,15 @@ function formatTime(isoString: string | undefined) {
 function handleFilterChange() {
   currentPage.value = 1
   fetchAlarms()
+}
+
+// [TRIGGER-DETAIL 2026-09-14] 清除规则触发详情过滤: 清 ref + 清路由 query
+//   (replace 不留历史栈) → 回到未过滤全量列表
+function clearRuleFilter() {
+  ruleIdFilter.value = ''
+  ruleNameFilter.value = ''
+  router.replace({ path: route.path, query: { ...route.query, rule_id: undefined, rule_name: undefined } })
+  handleFilterChange()
 }
 
 function handlePageChange() {
@@ -2093,6 +2143,7 @@ onUnmounted(() => {
     clearInterval(exportPollTimer)
     exportPollTimer = null
   }
+  if (inlineVideoTimer) { clearTimeout(inlineVideoTimer); inlineVideoTimer = null }  // [C1] 加载监护定时器
 })
 </script>
 
@@ -2188,6 +2239,18 @@ onUnmounted(() => {
 .toolbar-card {
   border-radius: var(--radius-lg, 8px);
   margin-bottom: 0;
+}
+
+/* [TRIGGER-DETAIL 2026-09-14] 规则触发详情过滤徽章 (场景规则实例页跳转带入) */
+.rule-filter-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 12px 0;
+}
+.rule-filter-hint {
+  font-size: 12px;
+  color: var(--app-text-secondary);
 }
 
 .toolbar-card :deep(.el-card__body) {

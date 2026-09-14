@@ -62,6 +62,13 @@ const lastPopupTime = new Map<string, number>()  // key: "channelId:alarmType" �
 //   (pushWithRetry); 双写期两帧同 alarm_id。linkage_alarm 走兜底链弹窗后,
 //   alarm.new 的 verdict.matched 路径不看本地防抖 → 同一告警双弹。此图按
 //   alarm_id 记录已弹告警, 窗口内复现 → 跳过 (弹窗打点记 'debounced')。
+// [B3 2026-09-14 时间语义治理 P1-C] 记账升级 (断网重推帧治理):
+//   原 30s 窗口内去重 — 断线重连后重推帧 (backfill 帧除外) 超窗仍可能重弹;
+//   改为 alarm_id 记账 + 天级 TTL (已弹过不再弹, 跨重连/刷新会话内全局生效);
+//   原 30s 时间窗保留为次要条件 (lastPopupTime 兜底链通道+类型窗不变);
+//   Map 加 LRU 上限 + 惰性过期清理 (防长期运行内存增长)。
+const POPUP_LEDGER_TTL_MS = 24 * 60 * 60 * 1000  // 天级 TTL (B3)
+const POPUP_LEDGER_MAX = 1000                    // LRU 上限 (B3)
 const recentPopupAlarmIds = new Map<string, number>()  // alarm_id → timestamp
 
 async function loadAlarmConfig() {
@@ -75,18 +82,27 @@ async function loadAlarmConfig() {
   } catch { /* 使用默认值 */ }
 }
 
-// [SSOT R11] 双帧去重判定/记录 (窗口 = popupDebounceMs, 与兜底链同参;
-//   空 id / 窗口 <=0 不参与; 记录时顺带惰性清理过期条目)
+// [SSOT R11 + B3] 弹窗记账判定/写入 (主条件 = alarm_id 记账 + 天级 TTL;
+//   空 id 不参与; 与 popupDebounceMs 解耦 — dedupWindow=0 时其余链路透传但
+//   记账仍生效, 保证双帧/重推不重弹的正确性约束)。
+//   写入时顺带惰性清理 (过期条目) + LRU 淘汰 (超上限删最旧)。
 function wasPopupRecentlyPopped(alarmId: string, now: number): boolean {
-  if (!alarmId || popupDebounceMs <= 0) return false
-  const ts = recentPopupAlarmIds.get(alarmId) || 0
-  return now - ts < popupDebounceMs
+  if (!alarmId) return false
+  const ts = recentPopupAlarmIds.get(alarmId)
+  if (ts === undefined) return false
+  return now - ts < POPUP_LEDGER_TTL_MS
 }
 function markPopupPopped(alarmId: string, now: number): void {
   if (!alarmId) return
+  recentPopupAlarmIds.delete(alarmId)  // 重新插入保持 LRU 最新序
   recentPopupAlarmIds.set(alarmId, now)
   for (const [k, ts] of recentPopupAlarmIds) {
-    if (now - ts >= popupDebounceMs) recentPopupAlarmIds.delete(k)
+    if (now - ts >= POPUP_LEDGER_TTL_MS) recentPopupAlarmIds.delete(k)
+  }
+  while (recentPopupAlarmIds.size > POPUP_LEDGER_MAX) {
+    const oldest = recentPopupAlarmIds.keys().next().value
+    if (oldest === undefined) break
+    recentPopupAlarmIds.delete(oldest)
   }
 }
 
@@ -359,9 +375,13 @@ async function handleAlarm(alarm: any) {
     console.log('[useGlobalAlarm] normalized alarm:', normalized.id, 'type:', normalized.type)
 
     // [P0-4-d] 记录最新告警时间戳 (补拉断点; since 排他语义保证不重复拉到本条)
-    const ts = Date.parse(normalized.createdAt)
-    if (!Number.isNaN(ts)) lastAlarmTs = Math.max(lastAlarmTs, ts)
-    else lastAlarmTs = Date.now()
+    // [A2 2026-09-14 时间语义治理] 补推帧不参与断点前移 (状态同步帧非新事件;
+    //   A1 修复后其 createdAt 本就是原值, 此条件为纵深防御)
+    if (!(normalized as any).backfill) {
+      const ts = Date.parse(normalized.createdAt)
+      if (!Number.isNaN(ts)) lastAlarmTs = Math.max(lastAlarmTs, ts)
+      else lastAlarmTs = Date.now()
+    }
 
     // 2. 推入 alarmStore（更新 realtimeAlarms + unhandledCount）
     try {
@@ -377,6 +397,16 @@ async function handleAlarm(alarm: any) {
     if ((normalized as any).eventEnded) {
       console.log('[useGlobalAlarm] event end frame (no popup/tts), type:',
         normalized.type, 'ch:', normalized.channelId)
+      return
+    }
+
+    // [A2 2026-09-14 时间语义治理 P0-B] 补推帧 (clip 回填状态同步帧):
+    //   列表 clip_url 已在 pushRealtimeAlarm 内富化更新 — 状态同步帧不是
+    //   新事件, 跳过弹窗判定三态链/TTS 整链 (对齐 ONVIF 同步帧 Initialized
+    //   语义: 不冒泡为新事件; 历史行为: 超 30s 防重窗的补推帧会「复活」弹窗)。
+    if ((normalized as any).backfill) {
+      console.log('[useGlobalAlarm] backfill frame (clip enrich only, no popup/tts), id:',
+        normalized.id)
       return
     }
 

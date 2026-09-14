@@ -1,9 +1,11 @@
 <template>
   <div class="linkage-page">
     <!-- [SCENE-EDIT-INPLACE 2026-09-03] 嵌入编辑模式 (embedEditRuleId): 场景页/算法页
-         就地渲染本组件编辑规则 — 列表外壳 (tabs) CSS 隐藏, 仅呈现编辑抽屉链
-         (choice → vp6 全功能表单), 编辑器单一来源, 宿主页不跳转 /linkage。
-         注: 编辑链 DOM (vp6 抽屉/SimpleRuleDrawer/paramDialog) 嵌于外壳内部,
+         就地渲染本组件编辑规则 — 列表外壳 (tabs) CSS 隐藏, 仅呈现编辑抽屉
+         (直达 vp6 全功能表单), 编辑器单一来源, 宿主页不跳转 /linkage。
+         [EDIT-DIRECT 2026-09-14] 编辑入口直入简易模式: 原 choice 选择页整块移除
+         (SimpleRuleDrawer 挂载下线, 组件文件保留)。
+         注: 编辑链 DOM (vp6 抽屉/paramDialog) 嵌于外壳内部,
          不能用 v-if 卸载外壳 (会连编辑链一起卸载), 故 display:none + 抽屉
          append-to-body 脱离隐藏祖先 -->
     <!-- ===== 主页面 Tabs ===== -->
@@ -84,7 +86,8 @@
           </el-button>
           <!-- [P11-CONVERGE 2026-09-13] 新建入口归一: 主体=简易直达 (vp6 纯净单页,
                原 choice 三卡页随新建链下线 — 「简易模式」卡真实形态即本直达,
-               「高级/模板库」两卡由下拉承接); SimpleRuleDrawer 挂载保留服务编辑链 -->
+               「高级/模板库」两卡由下拉承接); [EDIT-DIRECT 2026-09-14] 编辑链改直入
+               简易模式, SimpleRuleDrawer 已整块下线 (挂载点已移除) -->
           <el-dropdown split-button type="primary" class="new-rule-split" @click="onNewRuleSimple" @command="onNewCommand">
             <span class="new-rule-label"><el-icon><Plus /></el-icon>新建规则</span>
             <template #dropdown>
@@ -230,9 +233,9 @@
         </el-table-column>
         <el-table-column label="操作" width="320" fixed="right">
           <template #default="{ row }">
-            <!-- [SIMPLE-EDIT 2026-09-03] 行内编辑改走简易抽屉 (高频字段一键编辑);
+            <!-- [EDIT-DIRECT 2026-09-14] 行内「编辑」直入简易模式编辑表单 (跳过原 choice 选择页);
                  完整 VLM/互斥/抑制/动作编排到「高级模式新建」或模拟调试入口 -->
-            <el-button size="small" type="primary" link @click="openSimpleEdit(row)">编辑</el-button>
+            <el-button size="small" type="primary" link @click="openEditRule(row)">编辑</el-button>
             <el-button size="small" type="success" link @click="openRuleTest(row)">🧪 测试</el-button>
             <el-button size="small" type="success" link @click="handleCloneRule(row)">复制</el-button>
             <el-button size="small" type="info" link @click="openVersionHistory(row)">历史</el-button>
@@ -246,7 +249,9 @@
 
     <!-- ===== 规则编辑抽屉 ===== (append-to-body: 嵌入模式下外壳 display:none,
          抽屉须 teleport 到 body 才可见 — [SCENE-EDIT-INPLACE]) -->
-    <el-drawer v-model="drawerVisible" :title="editingRule ? '编辑联动规则' : '新建联动规则'" size="520px" direction="rtl" :close-on-click-modal="false" destroy-on-close append-to-body>
+    <!-- [SPATIAL-SPLIT 2026-09-14] 抽屉加宽 520→min(900px,视口-48): 空间条件
+         「左树右画板」双栏布局 (用户设计图) 需要画板横向空间; min() 兜底窄屏不溢出 -->
+    <el-drawer v-model="drawerVisible" :title="editingRule ? '编辑联动规则' : '新建联动规则'" size="min(900px, calc(100vw - 48px))" direction="rtl" :close-on-click-modal="false" destroy-on-close append-to-body>
       <div class="editor-body">
         <el-form :model="form" label-position="top" size="default" :rules="formRules" ref="formRef">
           <!-- [UI-CONVERGE 2026-09-12 P10] el-steps 分步向导与「分步/全览」开关下线:
@@ -457,7 +462,7 @@
                     </div>
                     <el-alert v-if="hasUnguarded" type="warning" :closable="false" style="margin-top:4px">
                       <template #title>
-                        标红通道无任何启用的检测区/绊线 — 周界类算法(入侵/攀爬/越界)不会产生告警 (未布防=不触发, 对标海康/大华语义); 可在上方画板点「⛶ 满屏」一键布防后再叠加排除区
+                        标红通道无任何启用的检测区/绊线 — 周界类算法(入侵/攀爬/越界)不会产生告警 (未布防=不触发, 对标海康/大华语义); 可在右侧画板点「⛶ 满屏」一键布防后再叠加排除区
                       </template>
                     </el-alert>
                   </div>
@@ -476,6 +481,12 @@
                      树勾选经 onBoundTreeCheck 展开写入并走原画板底图派生链;
                      未归属区域的设备/通道挂虚拟根兜底 (全量可勾不留死角)。
                      替代同日早版 DEV-FLAT 设备分组多选下拉。 -->
+                <!-- [SPATIAL-SPLIT 2026-09-14] 空间卡「左树右画板」双栏 (用户设计图):
+                     左=通道圈定树 (固定 280px), 右=ROI 画板 (吃满剩余宽度) — 圈定
+                     与绘制单屏并排完成, 替代原上下堆叠; 窄屏回落堆叠 (见 CSS)。
+                     树勾选契约不变 (bound_channel_ids 级联复选), 仅布局重排。 -->
+                <div class="spatial-split">
+                <div class="spatial-split__left">
                 <el-form-item label="设备 / 通道" label-position="top" class="cond-form-item">
                   <div class="bound-ch-tree">
                     <div class="bound-ch-tree__head">
@@ -504,6 +515,8 @@
                   <p v-if="boundNarrowHint" class="cond-hint" style="margin-top:2px; color: var(--el-color-warning)">{{ boundNarrowHint }}<el-button v-if="locationNarrowActive" size="small" text type="primary" style="margin-left:6px" @click="clearRegionLocationNarrow">恢复全量</el-button></p>
                   <p class="cond-hint" style="margin-top:4px">圈定触发通道（空间/位置条件启用时同步作为事件源通道 — 无规则的通道不启动推理，省 TPU 算力）；画板底图自动取首个摄像头通道，勾选 ≥2 路出现「绘制通道」页签（可逐通道绘制）。</p>
                 </el-form-item>
+                </div>
+                <div class="spatial-split__right">
                 <el-form-item label="ROI绘制区域" label-position="top" class="cond-form-item">
                   <!-- [FIX 2026-09-02] 形状范式 (对标海康 iVMS/大华 DSS 联动规则编辑器);
                        绘制提示在画布下方状态栏 (画布内零提示文字)。
@@ -550,10 +563,13 @@
                   <p class="cond-hint" style="margin-top:4px">
                     触发双层判定: ①通道圈定（绑定通道 ∪ 安保区域[位置条件]，并集）②本画板形状（逐通道模式下仅对已绘通道生效）。
                   </p>
+                  <!-- [SPATIAL-SPLIT 2026-09-14] 画板位图分辨率 640x360 (原 440x248):
+                       对齐设计图大画板; 显示宽自适应右栏 (画布 CSS width:100%, 交互
+                       按 canvas.width/rect.width 缩放, 坐标链不受影响) -->
                   <RoiPolygonEditor
                     v-model="form.conditions.region.config.roiPolygon"
                     :background-image-url="roiBackgroundUrl"
-                    :canvas-width="440" :canvas-height="248"
+                    :canvas-width="640" :canvas-height="360"
                     :types="legalRoiTypes"
                   />
                   <!-- [ROI-GAP 2026-09-06] 多区域组合语义 (引擎 matchRoiShapes v2):
@@ -567,6 +583,8 @@
                     </el-radio-group>
                   </div>
                 </el-form-item>
+                </div>
+                </div>
                 <!-- [FIX 2026-08-27 P0-PERIMETER v3] 绊线 (Tripwire) 联动
                      [FIX tw-route 2026-09-12] 同契约 gate: 绊线/方向按消费算法集显示
                      (tripwire/boundary/客流/违停 4 类事件; 其余事件选绊线 id 不参与
@@ -829,17 +847,9 @@
       </template>
     </el-drawer>
 
-    <!-- ═══ [vp8 双模式 / REVERT 2026-09-02] 简易创建抽屉: 新建默认入口,
-         choice 页仅剩 从模板库选择(tune 微调) 与 切换到高级模式(全功能抽屉) 两入口 -->
-    <SimpleRuleDrawer
-      v-model="editVisible"
-      :committing="editSaving"
-      :editing-rule-id="editRuleId"
-      :initial-tune="editTune"
-      edit-simple-advanced
-      @commit="commitSimpleEdit"
-      @switch-advanced="onSimpleSwitchAdvanced"
-    />
+    <!-- [EDIT-DIRECT 2026-09-14] SimpleRuleDrawer (choice 模式选择页) 已从本视图整块下线:
+         编辑入口直入简易模式 (openEditRule → vp6 整包回显编辑), 不再经模式选择。
+         组件文件保留 (useSimpleRuleEdit 的类型依赖), 供历史查阅 -->
 
     <!-- ===== 专用动作参数弹窗 ===== -->
     <el-dialog v-model="paramDialogVisible" :title="paramDialogTitle" width="520px" destroy-on-close append-to-body>
@@ -1455,6 +1465,8 @@ import { linkageApi, ACTION_TYPE_MAP, ACTION_TYPE_REVERSE_MAP, getTargetForActio
 import { regionApi } from '@/api/region'  // [FIX 2026-08-28] 画板绊线自动创建 (createTripwireWithMirror)
 import type { LinkageRule, LinkageAction, LinkageLog, ActionLogEntry, TimeTemplate, LinkagePlan, CEPPattern, ConditionNode, RuleConflict, RuleTriggerStat } from '@/api/linkage'
 import { useLinkageOptions, type ChannelOption } from '@/composables/useLinkageOptions'
+// [TRIGGER-DETAIL 2026-09-14] 触发条件标签 SSOT (场景规则实例页「触发条件」列共用)
+import { ruleTriggerTags } from '@/composables/useRuleTriggerTags'
 // [FIX area-cascade-label 2026-09-11] 通道友好 label/回显反查兑底/区域收窄 纯函数 (自内联提取)
 // [FIX ghost-chan 2026-09-12] locationFilterKind: 位置树节点类型判定 (区域/设备),
 //   设备节点时已选绑定通道严格跟随收窄 (消除幽灵通道)
@@ -1488,7 +1500,7 @@ import DeviceChannelPicker from '@/components/linkage/DeviceChannelPicker.vue'
 // [r25 2026-09-02] 删除 RuleNlgInput/AiEnhancePanel/RulePreviewPanel 三个 import:
 //   步 3/4/5 整段隐藏 (WIZARD_STEPS 3 步化), 三个组件本身已全部删除。
 //   VLM 二次验证保留在「冲突处理与高级配置」折叠里 (后端 LinkageEngine.cpp:3579 真触发)
-import SimpleRuleDrawer from '@/components/linkage/SimpleRuleDrawer.vue'
+// [EDIT-DIRECT 2026-09-14] SimpleRuleDrawer 挂载下线 (choice 选择页整块移除), import 移除
 import { useSimpleRuleEdit } from '@/composables/useSimpleRuleEdit'
 import { securityAreaApi } from '@/api/securityAreas'
 import type { SecurityArea, DeviceLocation } from '@/api/securityAreas'
@@ -2817,7 +2829,16 @@ watch(() => form.conditions.region.config.roiPolygon, () => {
 //   主形态 option value, 同物理通道只留一项); 区域节点/未选/旧版值不干预 (现状不变)。
 //   防误伤: 池未就绪 (编辑回显早期 fetchOptions 未完成) 跳过, 选项就绪后用户
 //   下次改选位置时自然收齐; 回显本身不改草稿 (打开编辑器零静默变更)。
+// [FIX bound-tree-echo 2026-09-14] 回显抑制窗口 (兑现上一行契约): resetEditorState
+//   回显写 config.location (ui 残留) 同样触发本 watch — 残留设备与绑定通道归属
+//   设备不一致时收窄集与草稿零交集 → 草稿被静默清空 (实测「周界踩点徘徊预警」:
+//   location=3402..0002 [华盾展厅 device] vs 绑定 [..2001,..2002] → 树无勾选/
+//   保存丢圈定)。回显期间的变化非用户改选, 一律跳过 (同款先例: suppressPickerSync/
+//   restoringCascade)。注: location 用户编辑入口已随位置树下线, 本 watch 现实
+//   唯一触发源即回显与「恢复全量」清空 (后者 loc='' → kind=null 自然跳过)。
+let suppressLocationNarrow = false
 watch(() => form.conditions.region.config.location, (loc) => {
+  if (suppressLocationNarrow) return
   const pool = channelOptionsDynamic.value
   if (!pool.length) return
   if (locationFilterKind(loc, areaByIdMap.value, deviceGroups.value.map(g => g.device_ids || [])) !== 'device') return
@@ -3262,20 +3283,9 @@ function conditionLabel(type: string) {
 }
 
 function getActiveConditions(rule: LinkageRule): Array<{ key: string; label: string }> {
-  const tags: Array<{ key: string; label: string }> = []
-  const tc = rule.time_cond
-  if (tc && (tc.time_start || tc.time_end || tc.weekdays?.length || tc.monthdays?.length))
-    tags.push({ key: 'time', label: '🕐 时间' })
-  const sc = rule.spatial_cond
-  if (sc && (sc.region_id || sc.location_id || sc.area_id || (sc as any).device_group_id || sc.roi_polygon?.length || sc.tripwire_id || sc.direction || (sc as any).roi_shapes_json))
-    tags.push({ key: 'spatial', label: '📍 空间' })
-  const src = rule.source_cond
-  if (src && (src.event_types?.length || src.channel_ids?.length || src.algorithm_ids?.length))
-    tags.push({ key: 'source', label: '🎯 事件源' })
-  const mc = rule.merge_cond
-  if (mc && mc.enabled)
-    tags.push({ key: 'merge', label: '🔄 合并' })
-  return tags
+  // [TRIGGER-DETAIL 2026-09-14] 逻辑抽取至 useRuleTriggerTags SSOT —
+  //   场景规则实例页「触发条件」列与本页列表项共用同一实现, 渲染永不漂移
+  return ruleTriggerTags(rule)
 }
 
 function formatTime(ts?: number | string) {
@@ -3396,6 +3406,12 @@ function resetEditorState(rule: LinkageRule | null) {
   areaCascadeDeviceIds.value = new Set()
   areaCascadeChannelIds.value = new Set()
   nextTick(() => { restoringCascade.value = false })
+  // [FIX bound-tree-echo 2026-09-14] location 收窄抑制窗口: 下方 region 回显写入
+  //   config.location (ui 残留) 不触发「设备节点收窄」watch — 防残留位置把绑定
+  //   草稿静默清空 (树勾选态与绑定集同步根修, 详见 watch 处锚点)。watch pre-flush
+  //   在本次 flush 执行, nextTick 释放在其后 → 窗口覆盖整个回显赋值。
+  suppressLocationNarrow = true
+  nextTick(() => { suppressLocationNarrow = false })
   // [ROI-PER-CHANNEL 2026-09-12] 逐通道状态清空 (编辑态稍后由回显重建; 新建态保持空)
   //   suppress 覆盖整个 reset (回显/清空赋值不误标 touched), 函数尾 nextTick 释放
   roiSuppressTouch = true
@@ -3660,21 +3676,27 @@ function openEditor(rule: LinkageRule | null) {
   drawerVisible.value = true
 }
 
-// ═══ [vp8 双模式 2026-09-01] 简易创建抽屉 (choice 页: 模板 / 高级两入口) ═══
-// [REVERT 2026-09-02] 按用户要求移除 'custom' 高频字段子表单 (SimpleRuleDrawer 卡片 2):
-//   仅保留 模板微调 (tune → commit 回填高级表单) 与 切换到高级模式 两条链路; 新建仍默认开选择抽屉。
-// [SIMPLE-EDIT 2026-09-03] 行内编辑统一走简易抽屉: 与新建共享同一挂载; [UX-ALIGN]
-//   编辑也从 choice 入口进, 且「简易/高级模式」卡片均复用新建同一 vp6 表单回显编辑
-//   (resetEditorState 整包回显 + handleSave 原生 update 分支), 不另建编辑表单。
+// ═══ [SIMPLE-EDIT 2026-09-03 → EDIT-DIRECT 2026-09-14] 规则行内编辑链 ═══
+// 历史: 编辑原从 choice 选择页进 (模板卡禁用 / 简易卡 / 高级卡), 简易卡复用新建
+//   同一 vp6 表单回显编辑 (resetEditorState 整包回显 + handleSave 原生 update 分支)。
+// 现状 [EDIT-DIRECT 2026-09-14]: 按用户要求 choice 选择页整块移除 — 点击「编辑」
+//   直入简易模式 vp6 表单 (openEditRule); SimpleRuleDrawer 挂载随之下线。
 //   注: composable 的 editingRule 别名为 editSourceRule (本地 L1664 已有同名编辑器状态)。
-//   [P11-CLEANUP 2026-09-13] simpleDrawerVisible/simpleCommitting/simpleDrawerOpen 桥
-//   随新建链下线移除: 挂载开关退化为 editVisible 直绑 (新建链已无置 true 点)。
-const { editVisible, editSaving, editRuleId, editTune, editingRule: editSourceRule, openSimpleEdit, clearSimpleEdit, commitSimpleEdit } =
+//   [P11-CLEANUP 2026-09-13] simpleDrawerVisible/simpleCommitting 桥随新建链下线移除。
+const { editRuleId, editingRule: editSourceRule, openSimpleEdit, clearSimpleEdit } =
   useSimpleRuleEdit({ onSaved: () => fetchRules() })
+
+/** [EDIT-DIRECT 2026-09-14] 「编辑」直入简易模式编辑表单: 跳过原 choice 选择页
+ *  (原「简易模式」卡同链路 — vp6 整包回显编辑 + simpleEntryMode=true) */
+function openEditRule(row: LinkageRule) {
+  openSimpleEdit(row)
+  onSimpleSwitchAdvanced('simple')
+}
 
 /** [P11-CONVERGE 2026-09-13] 新建主体=简易直达: 开 vp6 纯净单页 (原 choice「简易模式」
  *  卡同形态), 跳过 choice 三卡页; 清编辑态防上一轮预填残留。
- *  (choice 另两卡「高级/模板库」由下拉直达承接; SimpleRuleDrawer 新建链下线, 编辑链保留) */
+ *  (choice 另两卡「高级/模板库」由下拉直达承接; [EDIT-DIRECT 2026-09-14]
+ *  SimpleRuleDrawer 新建/编辑两链均已下线) */
 function onNewRuleSimple() {
   resetEditorState(null)
   clearSimpleEdit()
@@ -3686,17 +3708,15 @@ function onNewRuleSimple() {
 //   唯一消费方均为新建态分支 (commitSimple create/onSimpleSwitchAdvanced 非 编辑分支),
 //   编辑态回显走 resetEditorState 整包回显, 高频草稿合入链路不再被引用。
 
-/** [UX-ALIGN 2026-09-03] 编辑态简易/高级卡片: 复用新建同一 vp6 表单回显编辑
- *  (resetEditorState 整包回显; 不走 openEditor 因其写死 simpleEntryMode=false;
- *  handleSave 原生支持 update)
- *  [P11-CLEANUP 2026-09-13] 收缩为编辑态单分支: 新建链下线后非编辑分支不可达
- *  (emit 签名收缩为仅 mode; 草稿 p/模板整包 p.template 随 applyTemplateToForm 一并移除) */
+/** [EDIT-DIRECT 2026-09-14] 编辑态直开 vp6 表单回显编辑 (resetEditorState 整包回显;
+ *  不走 openEditor 因其写死 simpleEntryMode=false; handleSave 原生支持 update)。
+ *  原 choice「简易/高级」两卡分流收缩为 'simple' 单一入口 (选择页已整块移除);
+ *  'full' 签名保留兼容 (高级全览形态防外部引用)。 */
 function onSimpleSwitchAdvanced(mode: 'simple' | 'full') {
-  if (!editVisible.value || !editSourceRule.value) return
+  if (!editSourceRule.value) return
   const row = editSourceRule.value
-  editVisible.value = false
   resetEditorState(row)
-  simpleEntryMode.value = mode !== 'full' // 简易卡片=vp6 纯净单页; 高级卡片=全功能全览
+  simpleEntryMode.value = mode !== 'full' // 简易模式=vp6 纯净单页; 'full'=全功能全览
   drawerVisible.value = true
 }
 
@@ -4871,9 +4891,9 @@ const emit = defineEmits<{ (e: 'edit-closed'): void }>()
 const embedMode = computed(() => !!props.embedEditRuleId)
 /** 深链已打开过编辑 (防初始 both-false 误触发 edit-closed) */
 const embedStarted = ref(false)
-// [P11-CLEANUP] simpleDrawerOpen → editVisible (挂载开关退化后同一编辑链半径)
-watch([editVisible, drawerVisible], ([a, b]) => {
-  if (embedMode.value && embedStarted.value && !a && !b) emit('edit-closed')
+// [EDIT-DIRECT 2026-09-14] 编辑链仅剩 vp6 抽屉 (SimpleRuleDrawer 下线) → 单源判定闭环
+watch(drawerVisible, (v) => {
+  if (embedMode.value && embedStarted.value && !v) emit('edit-closed')
 })
 
 onMounted(() => {
@@ -4885,8 +4905,8 @@ onMounted(() => {
   if (!embedMode.value && qTag) tagFilter.value = [String(qTag)]
   // [SCENE-EDIT-UNIFY 2026-09-03] 场景页/算法页「编辑」入口; [SCENE-EDIT-INPLACE]
   //   改为嵌入模式就地渲染 (embedEditRuleId prop), 平台 ?editRuleId= 深链保留:
-  //   规则列表加载完成后自动打开该规则编辑 (choice 三卡片 → 简易/高级卡片 →
-  //   vp6 全功能表单), 与平台行内编辑同链路 — 编辑器单一来源
+  //   规则列表加载完成后自动打开该规则编辑 ([EDIT-DIRECT 2026-09-14] 直达简易
+  //   模式 vp6 表单, 原 choice 三卡片页已下线), 与平台行内编辑同链路 — 编辑器单一来源
   const qEditRuleId = props.embedEditRuleId || route.query.editRuleId
   if (qEditRuleId) {
     // 防刷新重复打开: 清地址栏 query (仅平台 URL 深链; 嵌入模式无 query 可清)。注:
@@ -4904,7 +4924,7 @@ onMounted(() => {
       stopEditWatch()
       const row = list.find(r => r.id === qEditRuleId)
       if (row) {
-        openSimpleEdit(row)
+        openEditRule(row)
         embedStarted.value = true // 嵌入模式: 编辑链已启动, 全关后通知宿主卸载
       }
       else ElMessage.warning('未找到目标规则, 可能已被删除')
@@ -5173,8 +5193,21 @@ watch(mainTab, (tab) => {
 .bound-ch-tree { width: 100%; border: 1px solid var(--el-border-color-lighter); border-radius: 6px; padding: 8px 10px; background: var(--el-bg-color); }
 .bound-ch-tree__head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; padding-bottom: 4px; border-bottom: 1px solid var(--el-border-color-lighter); }
 .bound-ch-tree__title { font-weight: 600; font-size: 13px; }
-.bound-ch-tree__body { max-height: 260px; overflow: auto; }
+.bound-ch-tree__body { max-height: 420px; overflow: auto; }
 .bound-ch-tree :deep(.el-tree-node__content) { height: 26px; }
+/* [SPATIAL-SPLIT 2026-09-14] 空间卡「左树右画板」双栏 (用户设计图): 左=圈定树
+   (固定 280px), 右=ROI 画板 (吃满剩余); 抽屉已加宽 (900px) 保证画板横向空间;
+   窄屏 (<760px) 回落上下堆叠, 画板不被挤扁 */
+.spatial-split { display: flex; gap: 12px; align-items: flex-start; }
+.spatial-split__left { width: 280px; flex-shrink: 0; }
+.spatial-split__right { flex: 1; min-width: 0; }
+/* 左栏树窄: 节点文案省略防换行撑破 26px 行高 (设备名较长) */
+.spatial-split__left :deep(.el-tree-node__content) { overflow: hidden; }
+.spatial-split__left :deep(.el-tree-node__label) { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 760px) {
+  .spatial-split { flex-direction: column; }
+  .spatial-split__left { width: 100%; }
+}
 .casc-node { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .casc-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
 .is-rotated { transform: rotate(180deg); }

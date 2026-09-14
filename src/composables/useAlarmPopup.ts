@@ -126,6 +126,14 @@ export function normalizeAlarmPayload(raw: any): AlarmEvent {
   //   person_detected 等, 原图像素坐标) 等原始键被丢弃 → 弹窗快照标注兜底链断。
   //   原始键保留 (camel 标准键优先), AlarmPopup 据此回退 detections 提取标注框。
   n.metadata = { ...unpackRawMetadata(raw?.metadata), ...n.metadata } as typeof n.metadata
+  // [A2 2026-09-14 时间语义治理 P0-B] 补推帧分类标记透传 (normalizeAlarmCore
+  //   白名单重建不含该字段, 此处补挂 — 与上方 metadata 兜底同模式, 红线文件零触碰):
+  //   WS backfill/backfill_ts → camel; useGlobalAlarm 据此早退不弹窗。
+  if (raw?.backfill === true || raw?.backfill === 1) {
+    ;(n as any).backfill = true
+    const bt = Number(raw?.backfill_ts ?? raw?.backfillTs)
+    if (Number.isFinite(bt) && bt > 0) (n as any).backfillTs = bt
+  }
   return n
 }
 
@@ -594,6 +602,11 @@ export async function showAlarmPopup(
       deviceName: alarm.deviceName || cur.deviceName,
       channelName: alarm.channelName || cur.channelName,
       metadata: mergedMeta,
+      // [A3 2026-09-14 时间语义治理 P0-C] 时间锚不可回退: 同 id 后到帧
+      //   (富化/精简/补推) 不刷新显示时间 — 保留首帧 createdAt
+      //   (对齐腾讯云监控「重复触发不覆盖 FirstOccurTime」; 历史行为:
+      //   后到帧 createdAt 覆盖首帧 → 弹窗「发生时间」被推后)。
+      createdAt: cur.createdAt,
     } as typeof alarm
     console.log('[useAlarmPopup] same-alarm enrich merged, id:', alarm.id,
       'meta keys:', Object.keys(mergedMeta).length)

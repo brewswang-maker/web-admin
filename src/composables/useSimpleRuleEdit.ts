@@ -8,6 +8,10 @@
  * [UX-ALIGN 2026-09-03] 编辑与新建统一 choice 入口: editRuleId 非空即编辑上下文
  * 标志 (SimpleRuleDrawer.isEdit 据此分流卡片行为); editingRule 暴露给父视图
  * 处理编辑态「高级模式」卡片 (覆盖式转全功能编辑 / 跳平台 /linkage)。
+ * [EDIT-DIRECT 2026-09-14] choice 选择页下线: 点击「编辑」直入简易模式
+ * (父视图 openEditRule → vp6 整包回显编辑), SimpleRuleDrawer 挂载已移除;
+ * 本 composable 现仅承担编辑态数据源 (openSimpleEdit 预填 + editingRule/
+ * editRuleId 供父视图消费) 与 clearSimpleEdit 新建态清理职责。
  *
  * PATCH 语义: 后端 PUT /linkage/rules/{id} 为字段级 merge — payload 以原
  * source_cond 浅拷贝起底, 仅覆盖 name/事件类型/通道/设备/时段 高频字段,
@@ -116,7 +120,9 @@ export function useSimpleRuleEdit(opts: UseSimpleRuleEditOptions = {}) {
   // 打开编辑时刷新; 暴露为 ref 供父视图读取 (LinkageRuleView 覆盖式 openEditor 等)
   const editingRule = ref<LinkageRule | null>(null)
 
-  /** 行内「编辑」→ 简易抽屉 ([UX-ALIGN] 与新建同 choice 入口, 仅预填 tune 高频字段) */
+  /** 行内「编辑」→ 直入简易模式 ([EDIT-DIRECT 2026-09-14] 原 choice 选择页下线;
+   *  父视图 openEditRule 后续走 vp6 整包回显编辑; editVisible 字段保留兼容不再
+   *  被父视图消费) */
   function openSimpleEdit(rule: LinkageRule) {
     editingRule.value = rule
     editRuleId.value = rule.id

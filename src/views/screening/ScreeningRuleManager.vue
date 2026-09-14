@@ -15,7 +15,7 @@
           <el-option v-for="e in SCREENING_EVENTS" :key="e.key" :label="`${e.name} (${e.key})`" :value="e.key" />
         </el-select>
         <el-select v-model="filters.severity" placeholder="最低级别" clearable style="width: 130px">
-          <el-option v-for="s in SEVERITY_LEVELS" :key="s.value" :label="s.label" :value="s.value" />
+          <el-option v-for="s in RULE_SEVERITY_LEVELS" :key="s.value" :label="s.label" :value="s.value" />
         </el-select>
         <el-select v-model="filters.state" placeholder="状态" clearable style="width: 110px">
           <el-option label="已启用" :value="1" />
@@ -37,7 +37,7 @@
           <el-option v-for="e in SCREENING_EVENTS" :key="e.key" :label="`${e.name} (${e.key})`" :value="e.key" />
         </el-select>
         <el-select v-model="dry.severity" placeholder="级别" style="width: 110px">
-          <el-option v-for="s in SEVERITY_LEVELS" :key="s.value" :label="s.label" :value="s.value" />
+          <el-option v-for="s in RULE_SEVERITY_LEVELS" :key="s.value" :label="s.label" :value="s.value" />
         </el-select>
         <el-button size="small" type="warning" plain :disabled="!dry.eventType" @click="runDry">
           模拟匹配
@@ -52,13 +52,19 @@
     <!-- ===== 规则表 ===== -->
     <el-table :data="pagedRules" v-loading="loading" size="small" stripe
               :row-class-name="dryRowClass" data-test="rule-table">
-      <el-table-column label="规则" min-width="220">
+      <!-- [TRIGGER-DETAIL 2026-09-14] 列重排: 序号/报警级别/事件类型/联动规则名称/
+           绑定设备通道/状态/触发条件/操作 (触发条件与平台联动规则页同款;
+           操作新增「触发详情」→ 告警中心按本规则过滤事件) -->
+      <el-table-column type="index" label="序号" width="60" align="center"
+                       :index="(i: number) => (page - 1) * pageSize + i + 1" />
+      <el-table-column label="报警级别" width="90" align="center">
         <template #default="{ row }">
-          <div class="r-name">{{ row.name }}</div>
-          <div class="r-id">{{ row.id }}</div>
+          <el-tag size="small" effect="plain" :type="ruleLevelInfo(row.source_cond?.min_severity).tagType">
+            {{ ruleLevelInfo(row.source_cond?.min_severity).label }}
+          </el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="触发事件" min-width="200">
+      <el-table-column label="事件类型" min-width="200">
         <template #default="{ row }">
           <template v-if="(row.source_cond?.event_types || []).length">
             <el-tag v-for="e in (row.source_cond.event_types as string[]).slice(0, 2)" :key="e"
@@ -71,33 +77,55 @@
           <el-tag v-else size="small" type="warning" effect="plain">通配 (全部事件)</el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="级别" width="80">
+      <el-table-column label="联动规则名称" min-width="220">
         <template #default="{ row }">
-          <el-tag size="small" :type="sevTagType(row.source_cond?.min_severity)" effect="light">
-            {{ sevName(row.source_cond?.min_severity) }}
-          </el-tag>
+          <div class="r-name">{{ row.name }}</div>
+          <div class="r-id">{{ row.id }}</div>
         </template>
       </el-table-column>
-      <el-table-column label="优先级" width="70">
-        <template #default="{ row }"><span class="mono">P{{ row.priority }}</span></template>
-      </el-table-column>
-      <el-table-column label="抑制" width="80">
-        <template #default="{ row }"><span class="mono">{{ formatCooldown(row.cooldown_ms) }}</span></template>
-      </el-table-column>
-      <el-table-column label="动作" min-width="160">
+      <el-table-column label="绑定设备通道" width="200">
         <template #default="{ row }">
-          <span class="act-cell">{{ (row.actions || []).filter((a: any) => a.enabled).map((a: any) => a.name).join(' / ') || '—' }}</span>
+          <!-- [CH-BINDING-DISPLAY 2026-09-14] 真实绑定展示 (缺陷修复):
+               原只读 source_cond.channel_ids — 布防通道写在 bound_channel_ids /
+               device_ids / location_id, channel_ids 恒空 ⇒ 一律误判「全部通道」。
+               现综合四源 (useRuleChannelDisplay, 与 LinkageEngine 运行时收窄同口径)。 -->
+          <template v-if="!boundInfoOf(row).allChannels">
+            <el-tooltip :content="boundInfoOf(row).tooltip" placement="top">
+              <span class="ch-bound-cell">
+                <el-tag v-for="it in boundInfoOf(row).items.slice(0, 3)"
+                        :key="it.raw" size="small" type="warning" effect="plain" class="ch-tag">
+                  <span class="ch-tag-txt">{{ it.label }}</span>
+                </el-tag>
+                <span v-if="boundInfoOf(row).items.length > 3" class="more-ch">
+                  +{{ boundInfoOf(row).items.length - 3 }}
+                </span>
+              </span>
+            </el-tooltip>
+          </template>
+          <el-tag v-else size="small" type="success" effect="plain">全部通道</el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="启用" width="70">
+      <el-table-column label="状态" width="70">
         <template #default="{ row }">
           <el-switch :model-value="row.enabled" :loading="toggling[row.id]"
                      @change="(v: any) => toggleRule(row, v)" />
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="130" fixed="right">
+      <el-table-column label="触发条件" min-width="200">
+        <template #default="{ row }">
+          <!-- [TRIGGER-DETAIL 2026-09-14] 与平台联动规则页同款 (useRuleTriggerTags SSOT):
+               时间/空间/事件源/合并 四类标签; 全空 = 无条件 -->
+          <div class="condition-tags">
+            <el-tag v-for="tag in ruleTriggerTags(row)" :key="tag.key" size="small" effect="plain" class="cond-tag">{{ tag.label }}</el-tag>
+            <span v-if="ruleTriggerTags(row).length === 0" class="text-secondary">无条件</span>
+          </div>
+        </template>
+      </el-table-column>
+      <el-table-column label="操作" width="200" fixed="right">
         <template #default="{ row }">
           <el-button size="small" text type="primary" @click="openEdit(row)">编辑</el-button>
+          <!-- [TRIGGER-DETAIL 2026-09-14] 触发详情: 跳转告警中心按本规则过滤事件列表 -->
+          <el-button size="small" text type="primary" @click="openTriggerDetail(row)">触发详情</el-button>
           <el-button size="small" text type="danger" @click="removeRule(row)">删除</el-button>
         </template>
       </el-table-column>
@@ -126,7 +154,7 @@
           </el-form-item>
           <el-form-item label="最低级别">
             <el-select v-model="editForm.min_severity" style="width: 160px">
-              <el-option v-for="s in SEVERITY_LEVELS" :key="s.value" :label="s.label" :value="s.value" />
+              <el-option v-for="s in RULE_SEVERITY_LEVELS" :key="s.value" :label="s.label" :value="s.value" />
             </el-select>
             <span class="form-hint">低于该级别的事件不触发</span>
           </el-form-item>
@@ -157,9 +185,16 @@
  * 精确/通配) 与 min_severity, 不发请求不触发联动。
  */
 import { computed, onMounted, reactive, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { Search, Refresh, Promotion } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { screeningApi, type LinkageRuleInfo } from '@/api/screening'
+// [TRIGGER-DETAIL 2026-09-14] 触发条件标签 + 报警级别渲染 (平台页同款 SSOT);
+//   RULE_SEVERITY_LEVELS 为原本地 SEVERITY_LEVELS 的共享升级 (词汇同源, 删本地重复)
+import { ruleTriggerTags, ruleLevelInfo, RULE_SEVERITY_LEVELS } from '@/composables/useRuleTriggerTags'
+// [CH-BINDING-DISPLAY 2026-09-14] 绑定通道真实展示 (四源综合 + 目录名称反查)
+import { displayRuleBoundChannels, type BoundChannelDisplay } from '@/composables/useRuleChannelDisplay'
+import { loadAlarmNameDirectory } from '@/composables/useAlarmDeviceLabel'
 
 /** 安检场景事件集 (与 EventTypeAliases.h scene_tags security_screening 对齐) */
 const SCREENING_EVENTS: Array<{ key: string; name: string }> = [
@@ -200,15 +235,8 @@ const SCREENING_EVENTS: Array<{ key: string; name: string }> = [
   { key: 'lpr_violation', name: '车牌违规' },
 ]
 
-const SEVERITY_LEVELS = [
-  { value: 1, label: '1 通知' },
-  { value: 2, label: '2 低危' },
-  { value: 3, label: '3 中危' },
-  { value: 4, label: '4 高危' },
-  { value: 5, label: '5 严重' },
-]
-
 const screeningKeys = new Set(SCREENING_EVENTS.map(e => e.key))
+const router = useRouter()
 const loading = ref(false)
 const rules = ref<LinkageRuleInfo[]>([])
 const toggling = reactive<Record<string, boolean>>({})
@@ -354,20 +382,27 @@ async function saveEdit() {
 }
 
 // ── 展示辅助 ──
-function sevName(v?: number): string {
-  return SEVERITY_LEVELS.find(s => s.value === v)?.label.split(' ')[1] || (v ? `L${v}` : '不限')
-}
-function sevTagType(v?: number): 'danger' | 'warning' | 'success' | 'info' {
-  if ((v ?? 0) >= 4) return 'danger'
-  if (v === 3) return 'warning'
-  return 'info'
-}
-function formatCooldown(ms?: number): string {
-  if (!ms) return '—'
-  return ms >= 1000 ? `${Math.round(ms / 1000)}s` : `${ms}ms`
+// [CH-BINDING-DISPLAY 2026-09-14] 绑定通道列展示映射 (按 rules 预计算; 目录异步就绪后
+//   chNameById/devChsById ref 变更自动重算 — 未就绪窗口期内展示原始标识不误判全通道)
+const boundMap = computed(() => {
+  const m = new Map<string, BoundChannelDisplay>()
+  for (const r of rules.value) m.set(r.id, displayRuleBoundChannels(r))
+  return m
+})
+function boundInfoOf(row: LinkageRuleInfo): BoundChannelDisplay {
+  return boundMap.value.get(row.id) ?? { allChannels: true, items: [], tooltip: '' }
 }
 
-onMounted(loadRules)
+// [TRIGGER-DETAIL 2026-09-14] 触发详情: 跳转告警中心 (事件报警列表),
+//   按本规则 ID 过滤 — 告警中心读取 route.query.rule_id 服务端过滤
+function openTriggerDetail(row: LinkageRuleInfo) {
+  router.push({ path: '/alarms', query: { rule_id: row.id, rule_name: row.name || '' } })
+}
+
+onMounted(() => {
+  loadRules()
+  loadAlarmNameDirectory() // [CH-BINDING-DISPLAY] 通道/设备目录预热 (绑定通道列名称反查)
+})
 </script>
 
 <style scoped>
@@ -382,8 +417,15 @@ onMounted(loadRules)
 .r-name { font-weight: 500; }
 .r-id { font-family: monospace; font-size: 11px; color: #909399; }
 .evt-tag { margin-right: 4px; font-family: monospace; }
-.mono { font-family: monospace; }
-.act-cell { font-size: 12px; color: #606266; }
+/* [CH-BINDING-DISPLAY 2026-09-14] 绑定通道列: 长通道名截断 + 多 chip 换行 (tooltip 全名) */
+.ch-bound-cell { display: inline-flex; flex-wrap: wrap; align-items: center; }
+.ch-tag { margin: 0 2px 2px 0; }
+.ch-tag-txt { display: inline-block; max-width: 96px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: middle; }
+.more-ch { font-size: 11px; color: #909399; }
+/* [TRIGGER-DETAIL 2026-09-14] 触发条件列 (与平台联动规则页标签组同款) */
+.condition-tags { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.cond-tag { font-size: 11px; }
+.text-secondary { color: #909399; font-size: 12px; }
 .pager { margin-top: 12px; justify-content: flex-end; }
 .edit-body { padding: 0 8px; }
 .edit-footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }

@@ -118,13 +118,15 @@
                     </div>
                     <p class="alarm-popup__hint">告警事件录像正在录制中，预计 30~40 秒后完成</p>
                   </div>
-                  <div v-else-if="recordingsLoading" class="alarm-popup__recording-state">
+                  <!-- [C1 2026-09-14 P2-A] 加载态 12s 监护: 超时 → 落入下方降级占位 -->
+                  <div v-else-if="recordingsLoading && !clipLoadTimedOut" class="alarm-popup__recording-state">
                     <el-icon class="is-loading" :size="20"><Loading /></el-icon>
                     <span style="margin-left:8px">加载录像中...</span>
                   </div>
                   <div v-else class="alarm-popup__recording-state">
                     <p><i class="iconfont1 icon1-luxianghuifang_" aria-hidden="true"></i> 录像回放</p>
-                    <p class="alarm-popup__hint">该告警暂无录像片段</p>
+                    <!-- [C1 2026-09-14 P2-A] >5min 无片 / 加载超时 →「无录像可用」(替换永久加载态) -->
+                    <p class="alarm-popup__hint">{{ (clipUnavailable || clipLoadTimedOut) ? '无录像可用' : '该告警暂无录像片段' }}</p>
                     <el-button type="primary" size="small" @click="loadPlayback">加载设备录像</el-button>
                   </div>
                   <!-- [POPUP-3MIN 2026-09-11] 连播进度: 已播段数 + 播完重播 (替代原人工选片列表) -->
@@ -1335,6 +1337,33 @@ const isRecordingInProgress = computed(() => {
   return age < 120_000
 })
 
+// [C1 2026-09-14 时间语义治理 P2-A] 无 clip 降级语义 (最小版, 承接对标报告
+//   §10 P2-A / §9 D4): 35.6% (875/2459) 告警最终拿不到 clip — 历史行为下
+//   弹窗在「录像中/加载中」态间打转, 用户等到的是"永远加载中的视频"。
+//   ①videoClipUrl 空 && 事件超 5min → 判定「无录像可用」(不再呈现加载态,
+//      保留下方手动「加载设备录像」重试入口);
+//   ②加载态 12s 监护: 证据请求挂起 (无超时通道) 时强制退出 spinner —
+//      不做无限加载。后端 clip_status 显式字段 (可选版) 待后端侧另行评估。
+const CLIP_UNAVAILABLE_AGE_MS = 5 * 60 * 1000
+const clipLoadTimedOut = ref(false)
+let clipLoadTimer: ReturnType<typeof setTimeout> | null = null
+const clipUnavailable = computed(() => {
+  const a = currentAlarm.value
+  if (!a || a.videoClipUrl) return false
+  if (queueActive.value && playbackQueue.value.length) return false
+  const age = Date.now() - new Date(a.createdAt).getTime()
+  return Number.isFinite(age) && age > CLIP_UNAVAILABLE_AGE_MS
+})
+watch(recordingsLoading, (v) => {
+  if (clipLoadTimer) { clearTimeout(clipLoadTimer); clipLoadTimer = null }
+  if (v) {
+    clipLoadTimedOut.value = false
+    clipLoadTimer = setTimeout(() => { clipLoadTimedOut.value = true }, 12_000)
+  }
+})
+// 切换告警 → 复位超时标记 (新告警重新计时)
+watch(() => currentAlarm.value?.id, () => { clipLoadTimedOut.value = false })
+
 let recordingPollTimer: ReturnType<typeof setInterval> | null = null
 // [P1 2026-09-13] 轮询硬上限: 56mf 实测弹窗挂机整夜 → 8s 轮询无限持续
 //   (nginx 证据: 同一条告警 evidence 4311 次/9.6h; queryRecordings 每次
@@ -1750,6 +1779,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('alarm-clip-updated', onAlarmClipUpdated)
   stopAutoCloseCountdown(); stopRecordingPoll(); stopHeartbeat(); stopLiveFailTimer()
   stopTailRefresh()  // [POPUP-3MIN] 连播尾段补片定时器
+  if (clipLoadTimer) { clearTimeout(clipLoadTimer); clipLoadTimer = null }  // [C1] 加载监护定时器
   popupClosing = true  // [FIX p1-heal] 卸载后禁止自愈异步回写
   void stopGbPlayback()  // [FIX p1-session 2026-09-12] 卸载释放 GB 回放会话
 })

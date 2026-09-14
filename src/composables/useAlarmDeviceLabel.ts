@@ -14,6 +14,8 @@
 import { ref } from 'vue'
 import { channelApi } from '@/api/channel'
 import { deviceApi } from '@/api/device'
+// [CH-BINDING-DISPLAY 2026-09-14] int32 哈希反投影 (规则 channel_ids 老口径展示反查)
+import { safeChannelHash } from '@/utils/channelHash'
 
 /** [chan-tree 2026-09-11] 通道条目 (三级树叶子 + 通道列展示共用)
  *  raw=通道 id 原值 (含 _chN 子码流形态) / base=剥后缀互认键 / name=可读名 (空由显示层占位) */
@@ -127,6 +129,20 @@ export function chNameOf(id: unknown): string {
 export function devChannelsOf(id: unknown): ChannelBrief[] {
   loadAlarmNameDirectory()
   return devChsById.value.get(baseChannelId(id)) ?? []
+}
+/** [CH-BINDING-DISPLAY 2026-09-14] int32 哈希通道反投影 (规则 source_cond.channel_ids 老口径):
+ *   channel_ids 存 FNV-1a &0x7FFFFFFF 投影 (与 safeChannelHash / 后端 safeChannelHash 同源),
+ *   目录通道 raw/base 双形态逐一试算, 命中即返回 (O(N) N=目录通道数 ≤500)。
+ *   供规则列表「绑定通道」列名称反查 — int32 口径不再裸显数字/误判「全部通道」。 */
+export function findChannelByHash(hash: number): ChannelBrief | undefined {
+  loadAlarmNameDirectory()
+  if (!hash) return undefined
+  for (const arr of devChsById.value.values()) {
+    for (const c of arr) {
+      if (safeChannelHash(c.raw) === hash || safeChannelHash(c.base) === hash) return c
+    }
+  }
+  return undefined
 }
 /** [t3-tree-channel 2026-09-11] 通道 → 父设备码 (目录反查; 通道叶谓词补值用):
  *  告警列表 channelId 归一 = channel_id_str (列表端 = device_id 列值), 多通道设备

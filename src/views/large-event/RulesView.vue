@@ -5,7 +5,7 @@
       <div>
         <h2 class="rules-title">事件规则</h2>
         <div class="rules-sub">
-          大型活动联动规则实例 — 启用状态 / 事件类型 / 通道绑定 / 触发统计; 由场景包「校验并布防」实例化 LE 模板生成
+          大型活动联动规则实例 — 启用状态 / 事件类型 / 通道绑定 / 触发条件; 由场景包「校验并布防」实例化 LE 模板生成
         </div>
       </div>
       <el-button :icon="Refresh" :loading="loading" @click="reload">刷新</el-button>
@@ -81,12 +81,15 @@
                   :empty-text="rules.length === 0
                     ? '暂无大型活动规则 — 先在「场景包」页执行 校验并布防'
                     : '该场景下暂无规则'">
-          <el-table-column label="规则" min-width="240">
+          <!-- [TRIGGER-DETAIL 2026-09-14] 列重排: 序号/报警级别/事件类型/联动规则名称/
+               绑定设备通道/状态/触发条件/操作 (触发条件与平台联动规则页同款;
+               操作新增「触发详情」→ 告警中心按本规则过滤事件) -->
+          <el-table-column type="index" label="序号" width="60" align="center" />
+          <el-table-column label="报警级别" width="90" align="center">
             <template #default="{ row }">
-              <div class="rule-cell">
-                <span class="rule-name">{{ row.name }}</span>
-                <span class="rule-id mono">{{ row.id }}</span>
-              </div>
+              <el-tag size="small" effect="plain" :type="ruleLevelInfo(row.source_cond?.min_severity).tagType">
+                {{ ruleLevelInfo(row.source_cond?.min_severity).label }}
+              </el-tag>
             </template>
           </el-table-column>
           <el-table-column label="事件类型" min-width="200">
@@ -101,23 +104,34 @@
               </el-tooltip>
             </template>
           </el-table-column>
-          <el-table-column label="绑定通道" width="150">
+          <el-table-column label="联动规则名称" min-width="240">
             <template #default="{ row }">
-              <template v-if="(row.source_cond?.channel_ids?.length ?? 0) > 0">
-                <el-tag v-for="c in row.source_cond.channel_ids.slice(0, 3)"
-                        :key="c" size="small" type="warning" effect="plain" class="ch-tag">
-                  ch{{ c }}
-                </el-tag>
-                <span v-if="row.source_cond.channel_ids.length > 3" class="more-ch">
-                  +{{ row.source_cond.channel_ids.length - 3 }}
-                </span>
-              </template>
-              <el-tag v-else size="small" type="success" effect="plain">全部通道</el-tag>
+              <div class="rule-cell">
+                <span class="rule-name">{{ row.name }}</span>
+                <span class="rule-id mono">{{ row.id }}</span>
+              </div>
             </template>
           </el-table-column>
-          <el-table-column label="来源" min-width="130">
+          <el-table-column label="绑定设备通道" width="200">
             <template #default="{ row }">
-              <span class="pack-name">{{ packNameOf(row) || '—' }}</span>
+              <!-- [CH-BINDING-DISPLAY 2026-09-14] 真实绑定展示 (缺陷修复):
+                   原只读 source_cond.channel_ids — 布防通道写在 bound_channel_ids /
+                   device_ids / location_id, channel_ids 恒空 ⇒ 一律误判「全部通道」。
+                   现综合四源 (useRuleChannelDisplay, 与 LinkageEngine 运行时收窄同口径)。 -->
+              <template v-if="!boundInfoOf(row).allChannels">
+                <el-tooltip :content="boundInfoOf(row).tooltip" placement="top">
+                  <span class="ch-bound-cell">
+                    <el-tag v-for="it in boundInfoOf(row).items.slice(0, 3)"
+                            :key="it.raw" size="small" type="warning" effect="plain" class="ch-tag">
+                      <span class="ch-tag-txt">{{ it.label }}</span>
+                    </el-tag>
+                    <span v-if="boundInfoOf(row).items.length > 3" class="more-ch">
+                      +{{ boundInfoOf(row).items.length - 3 }}
+                    </span>
+                  </span>
+                </el-tooltip>
+              </template>
+              <el-tag v-else size="small" type="success" effect="plain">全部通道</el-tag>
             </template>
           </el-table-column>
           <el-table-column label="状态" width="90" align="center">
@@ -130,18 +144,22 @@
                 @change="toggleRule(row)" />
             </template>
           </el-table-column>
-          <el-table-column label="触发统计" width="170">
+          <el-table-column label="触发条件" min-width="200">
             <template #default="{ row }">
-              <div class="stat-cell">
-                <span class="trig-count">{{ statOf(row)?.trigger_count ?? 0 }} 次触发</span>
-                <span class="trig-last">最近 {{ fmtTime(statOf(row)?.last_trigger_ms) }}</span>
+              <!-- [TRIGGER-DETAIL 2026-09-14] 与平台联动规则页同款 (useRuleTriggerTags SSOT):
+                   时间/空间/事件源/合并 四类标签; 全空 = 无条件 -->
+              <div class="condition-tags">
+                <el-tag v-for="tag in ruleTriggerTags(row)" :key="tag.key" size="small" effect="plain" class="cond-tag">{{ tag.label }}</el-tag>
+                <span v-if="ruleTriggerTags(row).length === 0" class="text-secondary">无条件</span>
               </div>
             </template>
           </el-table-column>
-          <el-table-column label="操作" width="100" align="center">
+          <el-table-column label="操作" width="150" align="center">
             <template #default="{ row }">
               <!-- [FEAT 2026-09-02] 单条就地编辑: 点哪条只编辑哪条 -->
               <el-button size="small" link type="primary" @click="openRuleEdit(row)">编辑</el-button>
+              <!-- [TRIGGER-DETAIL 2026-09-14] 触发详情: 跳转告警中心按本规则过滤事件列表 -->
+              <el-button size="small" link type="primary" @click="openTriggerDetail(row)">触发详情</el-button>
             </template>
           </el-table-column>
         </el-table>
@@ -170,7 +188,8 @@
       </el-card>
 
       <!-- [SCENE-EDIT-INPLACE 2026-09-03] 就地编辑: 内嵌平台 LinkageRuleView 嵌入模式
-           (embedEditRuleId, 同一编辑器单一来源: choice → vp6 全功能表单), 不再跳转
+           (embedEditRuleId, 同一编辑器单一来源: [EDIT-DIRECT 2026-09-14] 编辑直入
+           简易模式 → vp6 编辑表单, 原 choice 选择页已下线), 不再跳转
            /linkage; 编辑抽屉链关闭 (edit-closed) 后卸载并刷新本页列表 -->
       <LinkageRuleView v-if="editEmbedVisible" :embed-edit-rule-id="editEmbedRuleId" @edit-closed="onEditEmbedClosed" />
     </template>
@@ -185,7 +204,9 @@
  *   - 规则实例: GET /linkage/rules?tag=large_event (apply v2 布防产物, 稳定 rule_id)
  *   - 触发统计: GET /linkage/rule-stats (trigger_count / last_trigger_ms)
  *   - LE 模板落地对照: GET /linkage/rule-templates 中 LE-* × 规则 tags 交叉
- *   - 通道绑定: source_cond.channel_ids (空 = 全部通道)
+ *   - 通道绑定: bound_channel_ids ∪ device_ids ∪ channel_ids ∪ location_id (四源全空 = 全部通道)
+ *     [CH-BINDING-DISPLAY 2026-09-14] 原只读 source_cond.channel_ids, 布防通道恒空误判全通道;
+ *     现由 useRuleChannelDisplay 统一解析 (与 LinkageEngine 运行时收窄同口径)
  * 编辑跳转系统联动规则页 /linkage (不在本页重复实现编辑器)。
  */
 import { computed, onMounted, ref } from 'vue'
@@ -195,6 +216,11 @@ import { CircleCheckFilled, Refresh, Box } from '@element-plus/icons-vue'
 
 import { linkageApi, unwrapRuleTemplates } from '@/api/linkage'
 import type { LinkageRule, RuleTriggerStat, RuleTemplate } from '@/api/linkage'
+// [CH-BINDING-DISPLAY 2026-09-14] 绑定通道真实展示 (四源综合 + 目录名称反查)
+import { displayRuleBoundChannels, type BoundChannelDisplay } from '@/composables/useRuleChannelDisplay'
+// [TRIGGER-DETAIL 2026-09-14] 触发条件标签 + 报警级别渲染 (平台页同款 SSOT)
+import { ruleTriggerTags, ruleLevelInfo } from '@/composables/useRuleTriggerTags'
+import { loadAlarmNameDirectory } from '@/composables/useAlarmDeviceLabel'
 // [SCENE-EDIT-INPLACE 2026-09-03] 就地编辑: 内嵌平台编辑器 (嵌入模式, 编辑器单一来源)
 import LinkageRuleView from '@/views/LinkageRuleView.vue'
 import { largeEventApi } from '@/api/largeEvent'
@@ -214,6 +240,17 @@ const enabledCount = computed(() => rules.value.filter(r => r.enabled).length)
 const totalTriggers = computed(() =>
   rules.value.reduce((sum, r) => sum + (statOf(r)?.trigger_count ?? 0), 0))
 
+// [CH-BINDING-DISPLAY 2026-09-14] 绑定通道列展示映射 (按 rules 预计算; 目录异步就绪后
+//   chNameById/devChsById ref 变更自动重算 — 未就绪窗口期内展示原始标识不误判全通道)
+const boundMap = computed(() => {
+  const m = new Map<string, BoundChannelDisplay>()
+  for (const r of rules.value) m.set(r.id, displayRuleBoundChannels(r))
+  return m
+})
+function boundInfoOf(row: LinkageRule): BoundChannelDisplay {
+  return boundMap.value.get(row.id) ?? { allChannels: true, items: [], tooltip: '' }
+}
+
 const sceneOptions = computed(() => {
   const seen = new Map<string, string>()
   for (const p of packs.value) if (!seen.has(p.scene_tag)) seen.set(p.scene_tag, p.display_name)
@@ -230,23 +267,8 @@ function statOf(rule: LinkageRule): RuleTriggerStat | undefined {
   return stats.value.find(s => s.rule_id === rule.id)
 }
 
-function packNameOf(rule: LinkageRule): string {
-  const pid = (rule.tags ?? []).find(t => t.startsWith('large_event_') && t.endsWith('_v1'))
-  return packs.value.find(p => p.scene_pack_id === pid)?.display_name ?? ''
-}
-
 function isLanded(templateId: string): boolean {
   return rules.value.some(r => r.tags?.includes(templateId))
-}
-
-function fmtTime(ms?: number): string {
-  if (!ms || ms <= 0) return '—'
-  const d = new Date(ms)
-  const now = new Date()
-  const hm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
-  return d.toDateString() === now.toDateString()
-    ? hm
-    : `${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${hm}`
 }
 
 // ─── [SCENE-RULE-TOGGLE 2026-09-08] 行内启停 (对齐 perimeter/RulesView 范式) ───
@@ -304,7 +326,8 @@ async function fetchAll() {
 
 function reload() { fetchAll() }
 // ─── [SCENE-EDIT-INPLACE 2026-09-03] 单条规则就地编辑: 内嵌平台 LinkageRuleView 嵌入模式
-//     (embedEditRuleId → choice 三卡片 → 简易/高级卡片 → vp6 全功能表单), 与平台行内编辑
+//     (embedEditRuleId → [EDIT-DIRECT 2026-09-14] 直入简易模式 → vp6 编辑表单;
+//     原 choice 三卡片链已下线), 与平台行内编辑
 //     同组件同表单同链路 — 编辑器单一来源且不跳转 (用户停留在本场景页) ──
 const editEmbedVisible = ref(false)
 const editEmbedRuleId = ref('')
@@ -317,9 +340,18 @@ function onEditEmbedClosed() {
   fetchAll()
 }
 
+/** [TRIGGER-DETAIL 2026-09-14] 触发详情: 跳转告警中心 (事件报警列表),
+ *  按本规则 ID 过滤 — 告警中心读取 route.query.rule_id 服务端过滤 */
+function openTriggerDetail(row: LinkageRule) {
+  router.push({ path: '/alarms', query: { rule_id: row.id, rule_name: row.name || '' } })
+}
+
 function goPacks() { router.push('/large-event/scene-packs') }
 
-onMounted(() => { fetchAll() })
+onMounted(() => {
+  fetchAll()
+  loadAlarmNameDirectory() // [CH-BINDING-DISPLAY] 通道/设备目录预热 (绑定通道列名称反查)
+})
 </script>
 
 <style scoped>
@@ -342,11 +374,14 @@ onMounted(() => { fetchAll() })
 .mono { font-family: 'JetBrains Mono', Consolas, monospace; }
 .evt-tag { margin: 0 4px 2px 0; }
 .ch-tag { margin: 0 2px 2px 0; }
+/* [CH-BINDING-DISPLAY 2026-09-14] 绑定通道列: 长通道名截断 + 多 chip 换行 (tooltip 全名) */
+.ch-bound-cell { display: inline-flex; flex-wrap: wrap; align-items: center; }
+.ch-tag-txt { display: inline-block; max-width: 96px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: middle; }
 .more-ch { font-size: 11px; color: var(--el-text-color-secondary); }
-.pack-name { font-size: 12px; }
-.stat-cell { display: flex; flex-direction: column; }
-.trig-count { font-size: 12px; }
-.trig-last { font-size: 11px; color: var(--el-text-color-secondary); }
+/* [TRIGGER-DETAIL 2026-09-14] 触发条件列 (与平台联动规则页标签组同款) */
+.condition-tags { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.cond-tag { font-size: 11px; }
+.text-secondary { color: var(--el-text-color-secondary); font-size: 12px; }
 .tpl-card { margin-top: 12px; }
 .tpl-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 6px 14px; }
 .tpl-item { display: flex; align-items: center; gap: 6px; padding: 4px 6px; border-radius: 4px;

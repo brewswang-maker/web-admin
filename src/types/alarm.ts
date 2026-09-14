@@ -298,6 +298,7 @@ export interface AlarmQuery {
   since?: number         // [P0-4-d] WS 断线重连补拉: 只返回 created_at > since 的告警 (ms, 排他)
   include_merged?: number // [MERGE-VIS 2026-09-13] 同窗合并明细开关: 1=含被合并行 (默认), 0=仅聚合首行 (WS 补拉用, 避免弹窗角标计数与列表行重复)
   scene?: string         // [校园方案 2026-08-30] 场景过滤 (逗号分隔多值, 后端 SSOT 展开 SQL IN); [2026-09-07] 各场景事件页数据源统一走此参数 (与 scene_tags 登记自动同步)
+  rule_id?: string       // [TRIGGER-DETAIL 2026-09-14] 联动规则触发详情过滤: 服务端按 matched_rule_ids_json 快照 LIKE 匹配 (规则实例页「触发详情」跳转带入, /alarms rule_id 参数)
   search?: string
   dateRange?: [string, string]
 }

@@ -190,6 +190,9 @@ describe('stores/alarm', () => {
         handledBy: '', handledAt: '', handleNote: '', ticketId: '', appendLogs: [],
         // [FIX-P0-1/P1-1 2026-09-12] 目标轨迹 + 合并计数归一字段 (REST/WS 顶层下发)
         trackId: -1, aggregatedCount: 1,
+        // [P0-4 2026-09-14] 事件生命周期字段族 (normalizeAlarmCore 归一输出):
+        //   QA 全量测试发现 P0-4 落地后本快照未同步 → 本次补齐 (二次回归锁)
+        eventStartMs: 0, lastSeenMs: 0, eventEndMs: 0, eventEnded: false,
       }))
       expect(store.alarms).toEqual(expected)
       expect(store.total).toBe(2)

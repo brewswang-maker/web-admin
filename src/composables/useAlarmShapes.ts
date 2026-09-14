@@ -24,6 +24,7 @@ import { ElMessage } from 'element-plus'
 import { linkageApi } from '@/api/linkage'
 import { regionApi } from '@/api/region'
 import { safeChannelHash } from '@/utils/channelHash'
+import { normalizePoint, clamp01 } from './roiSchema'  // [P2-1] ROI 坐标刻度 SSOT 镜像
 
 /** 叠加形状类型 (RoiType 全集; 渲染层五类区分色) */
 export type OverlayShapeType =
@@ -80,10 +81,11 @@ function stripChSuffix(chId: string): string {
  *   ③ 非有限值顶点丢弃 (原逻辑保留)。 */
 function normPoints(raw: Array<[number, number]>): Array<[number, number]> {
   if (!raw.length) return []
+  // [P2-1] 判像素阈值/回退基准收敛至 roiSchema.ts (与后端 RoiCoordinateSchema.h 对账同步)
   return raw
     .map(([x, y]) => {
-      if (x > 1.5 || y > 1.5) { x /= 1920; y /= 1080 }
-      return [Math.min(Math.max(x, 0), 1), Math.min(Math.max(y, 0), 1)] as [number, number]
+      const [nx, ny] = normalizePoint(x, y)  // 无帧尺寸 → 写入侧基准 1920×1080 回退
+      return [clamp01(nx), clamp01(ny)] as [number, number]
     })
     .filter(([x, y]) => Number.isFinite(x) && Number.isFinite(y))
 }
