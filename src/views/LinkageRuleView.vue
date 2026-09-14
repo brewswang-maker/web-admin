@@ -512,8 +512,8 @@
                   <!-- [DEV-FILTER 2026-09-13] 收窄透明化 (用户诉求「通道列表只有 1 个」):
                        收窄是圈定语义而非 bug, 但 UI 无解释形似故障 — 动态显示收窄来源与
                        解除路径 (历史位置残留可一键恢复全量, 区域收窄指路位置条件卡) -->
-                  <p v-if="boundNarrowHint" class="cond-hint" style="margin-top:2px; color: var(--el-color-warning)">{{ boundNarrowHint }}<el-button v-if="locationNarrowActive" size="small" text type="primary" style="margin-left:6px" @click="clearRegionLocationNarrow">恢复全量</el-button></p>
-                  <p class="cond-hint" style="margin-top:4px">圈定触发通道（空间/位置条件启用时同步作为事件源通道 — 无规则的通道不启动推理，省 TPU 算力）；画板底图自动取首个摄像头通道，勾选 ≥2 路出现「绘制通道」页签（可逐通道绘制）。</p>
+                  <!-- <p v-if="boundNarrowHint" class="cond-hint" style="margin-top:2px; color: var(--el-color-warning)">{{ boundNarrowHint }}<el-button v-if="locationNarrowActive" size="small" text type="primary" style="margin-left:6px" @click="clearRegionLocationNarrow">恢复全量</el-button></p> -->
+                  <!-- <p class="cond-hint" style="margin-top:4px">圈定触发通道（空间/位置条件启用时同步作为事件源通道 — 无规则的通道不启动推理，省 TPU 算力）；画板底图自动取首个摄像头通道，勾选 ≥2 路出现「绘制通道」页签（可逐通道绘制）。</p> -->
                 </el-form-item>
                 </div>
                 <div class="spatial-split__right">
@@ -531,56 +531,57 @@
                        绑定 ≥2 通道时列出通道页签, 点击切换画布+快照底图; 首次在页签下
                        编辑即进入逐通道模式 (保存写 roi_shapes_by_channel, 未绘通道不
                        触发 — 与引擎严格模式同契约; 单通道/未点击页签 = 通用模式)。 -->
-                  <div v-if="roiTabChannels.length >= 2 || roiStrictMode" class="roi-ch-tabs">
-                    <span class="roi-ch-tabs__label">绘制通道</span>
-                    <!-- [UX-UNPAINTED 2026-09-12] 未绘通道红色警示 (对标海康"警戒面必填"强反馈):
-                         激活=primary / 已绘=info / 未绘=danger (与引擎严格模式"不绘不触发"同口径) -->
-                    <el-tag
-                      v-for="t in roiTabChannels"
-                      :key="t.value"
-                      size="small"
-                      :effect="t.value === activeRoiChannel ? 'dark' : 'plain'"
-                      :type="t.value === activeRoiChannel ? 'primary' : (isChannelUnpainted(t.value) ? 'danger' : 'info')"
-                      class="roi-ch-tag"
-                      @click="switchRoiChannel(t.value)"
-                    >{{ t.label }} · {{ roiPackBadge(t.value) }}</el-tag>
-                    <el-button v-if="roiStrictMode" size="small" text type="info" @click="clearRoiPerChannel">清除逐通道数据</el-button>
-                  </div>
-                  <div v-if="roiTabChannels.length >= 2 || roiStrictMode" class="roi-ch-toolbar">
-                    <el-button size="small" @click="openCopyRoiDialog">复制到其他通道</el-button>
-                    <el-button size="small" @click="fillRoiFromBaseline">填充通用形状</el-button>
-                    <span class="roi-ch-hint">
-                      {{ roiStrictMode
-                        ? '逐通道模式: 各通道独立绘制与判定, 未绘制通道不会触发本规则 (保存前会提示)'
-                        : '点击通道名开始逐通道绘制 (未进入 = 所有绑定通道共用同一份形状)' }}
-                    </span>
-                  </div>
-                  <!-- [FE-BOUNDARY 2026-09-12] 双入口边界厘清: 通道圈定 (空间条件 bound∪area / 位置条件级联)
-                       与逐通道形状 (本画板) 是两个维度; 触发 = 两层 AND。
-                       实测证据 (.tmp/bound_area_probe_result.log, 真机 3d8e1223e5):
-                       {area+勾选c1} 对区域内未勾选 c2/c3 的 spatial 仍 =true → area∪bound 并集,
-                       勾选不缩窄区域; 纯绑定 (area 空) 对区域外通道 =false → 收窄路径成立。 -->
-                  <p class="cond-hint" style="margin-top:4px">
-                    触发双层判定: ①通道圈定（绑定通道 ∪ 安保区域[位置条件]，并集）②本画板形状（逐通道模式下仅对已绘通道生效）。
-                  </p>
-                  <!-- [SPATIAL-SPLIT 2026-09-14] 画板位图分辨率 640x360 (原 440x248):
-                       对齐设计图大画板; 显示宽自适应右栏 (画布 CSS width:100%, 交互
-                       按 canvas.width/rect.width 缩放, 坐标链不受影响) -->
-                  <RoiPolygonEditor
-                    v-model="form.conditions.region.config.roiPolygon"
-                    :background-image-url="roiBackgroundUrl"
-                    :canvas-width="640" :canvas-height="360"
-                    :types="legalRoiTypes"
-                  />
-                  <!-- [ROI-GAP 2026-09-06] 多区域组合语义 (引擎 matchRoiShapes v2):
-                       并集=任一检测区命中即通过 / 交集=全部命中才通过;
-                       排除区恒为拦截语义 (命中即拦) 不参与组合计数。 -->
-                  <div v-if="activeAreaRoiCount >= 2" style="display:flex; align-items:center; gap:8px; margin-top:6px; flex-wrap:wrap">
-                    <span class="cond-sub-label">多区域组合</span>
-                    <el-radio-group v-model="form.conditions.region.config.roiCombine" size="small">
-                      <el-radio-button value="union">并集 (任一命中)</el-radio-button>
-                      <el-radio-button value="intersection">交集 (全部命中)</el-radio-button>
-                    </el-radio-group>
+                  <div class="roi-workspace">
+                    <aside v-if="roiTabChannels.length >= 2 || roiStrictMode" class="roi-channel-panel">
+                      <div class="roi-ch-tabs__label">绘制通道</div>
+                      <div class="roi-ch-tabs">
+                        <div
+                          v-for="t in roiTabChannels"
+                          :key="t.value"
+                          class="roi-ch-tag"
+                          :class="{
+                            'roi-ch-tag--active': t.value === activeRoiChannel && isChannelUnpainted(t.value),
+                            'roi-ch-tag--unpainted': t.value !== activeRoiChannel && isChannelUnpainted(t.value),
+                          }"
+                          @click="switchRoiChannel(t.value)"
+                        >
+                          <i class="iconfont1 icon1-shexiangtou1-copy roi-ch-tag__icon" aria-hidden="true" />
+                          <span class="roi-ch-tag__name">
+                            <span class="roi-ch-tag__title"  :title="t.label">{{ t.label }}</span>
+                            <span v-if="t.detail" class="roi-ch-tag__detail" :title="t.detail">{{ t.detail }}</span>
+                          </span>
+                          <span class="roi-ch-tag__status">{{ roiPackBadge(t.value) }}</span>
+                        </div>
+                      </div>
+                      <div class="roi-ch-toolbar">
+                        <el-button size="small" @click="openCopyRoiDialog">复制到其他通道</el-button>
+                        <!-- <el-button size="small" @click="fillRoiFromBaseline">填充通用形状</el-button> -->
+                        <el-button v-if="roiStrictMode" class="roi-clear-button" size="small" type="danger" plain @click="clearRoiPerChannel">清除逐通道数据</el-button>
+                        <span class="roi-ch-hint">
+                          {{ roiStrictMode
+                            ? '逐通道模式: 各通道独立绘制与判定, 未绘制通道不会触发本规则 (保存前会提示)'
+                            : '点击通道名开始逐通道绘制 (未进入 = 所有绑定通道共用同一份形状)' }}
+                        </span>
+                      </div>
+                    </aside>
+                    <div class="roi-canvas-panel">
+                      <p class="cond-hint roi-workspace__hint">
+                        触发双层判定: ①通道圈定（绑定通道 ∪ 安保区域[位置条件]，并集）②本画板形状（逐通道模式下仅对已绘通道生效）。
+                      </p>
+                      <RoiPolygonEditor
+                        v-model="form.conditions.region.config.roiPolygon"
+                        :background-image-url="roiBackgroundUrl"
+                        :canvas-width="640" :canvas-height="360"
+                        :types="legalRoiTypes"
+                      />
+                      <div v-if="activeAreaRoiCount >= 2" class="roi-combine-row">
+                        <span class="cond-sub-label">多区域组合</span>
+                        <el-radio-group v-model="form.conditions.region.config.roiCombine" size="small">
+                          <el-radio-button value="union">并集 (任一命中)</el-radio-button>
+                          <el-radio-button value="intersection">交集 (全部命中)</el-radio-button>
+                        </el-radio-group>
+                      </div>
+                    </div>
                   </div>
                 </el-form-item>
                 </div>
@@ -2152,7 +2153,7 @@ let roiSuppressTouch = false
 const roiBaseOf = (ch: string) => String(ch || '').replace(/_ch\d+$/, '')
 const roiClone = <T,>(v: T): T => JSON.parse(JSON.stringify(v))
 /** 通道页签集: 绑定通道 ∪ 快照通道 ∪ 已序列化/回显通道 (基准码去重) */
-const roiTabChannels = computed<Array<{ value: string; label: string }>>(() => {
+const roiTabChannels = computed<Array<{ value: string; label: string; detail: string }>>(() => {
   const seen = new Map<string, string>()
   const push = (raw: string) => {
     const base = roiBaseOf(raw)
@@ -2165,7 +2166,11 @@ const roiTabChannels = computed<Array<{ value: string; label: string }>>(() => {
   const labeled = [...seen.keys()].map(base => {
     const hit = [...boundChannelOptions.value, ...snapshotChannelOptions.value]
       .find(o => roiBaseOf(String(o.value)) === base)
-    return { value: base, label: hit?.label || base }
+    const detail = hit?.deviceName || hit?.deviceIp || ''
+    const label = detail && hit
+      ? String(hit.label).replace(` (${detail})`, '')
+      : (hit?.label || base)
+    return { value: base, label, detail }
   })
   return labeled
 })
@@ -5190,23 +5195,160 @@ watch(mainTab, (tab) => {
 .cascade-tree :deep(.el-tree-node__content:hover) { background: var(--el-fill-color-light); }
 .cascade-tree :deep(.el-tree__empty-block) { background: transparent; color: var(--el-text-color-secondary); }
 /* [AREA-TREE 2026-09-13] 「区域 / 设备 / 通道」复选树卡片 (告警中心面板同款范式) */
-.bound-ch-tree { width: 100%; border: 1px solid var(--el-border-color-lighter); border-radius: 6px; padding: 8px 10px; background: var(--el-bg-color); }
-.bound-ch-tree__head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; padding-bottom: 4px; border-bottom: 1px solid var(--el-border-color-lighter); }
-.bound-ch-tree__title { font-weight: 600; font-size: 13px; }
-.bound-ch-tree__body { max-height: 420px; overflow: auto; }
-.bound-ch-tree :deep(.el-tree-node__content) { height: 26px; }
-/* [SPATIAL-SPLIT 2026-09-14] 空间卡「左树右画板」双栏 (用户设计图): 左=圈定树
-   (固定 280px), 右=ROI 画板 (吃满剩余); 抽屉已加宽 (900px) 保证画板横向空间;
-   窄屏 (<760px) 回落上下堆叠, 画板不被挤扁 */
-.spatial-split { display: flex; gap: 12px; align-items: flex-start; }
-.spatial-split__left { width: 280px; flex-shrink: 0; }
-.spatial-split__right { flex: 1; min-width: 0; }
-/* 左栏树窄: 节点文案省略防换行撑破 26px 行高 (设备名较长) */
-.spatial-split__left :deep(.el-tree-node__content) { overflow: hidden; }
+.bound-ch-tree {
+  width: 100%;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 6px;
+  background: var(--el-bg-color);
+}
+.bound-ch-tree__head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  min-height: 38px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--el-border-color-lighter);
+  background: var(--el-fill-color-extra-light);
+}
+.bound-ch-tree__title { font-weight: 600; font-size: 13px; color: var(--el-text-color-primary); }
+.bound-ch-tree__body { max-height: 280px; padding: 6px 10px; overflow: auto; }
+.bound-ch-tree :deep(.el-tree) { background: transparent; }
+.bound-ch-tree :deep(.el-tree-node__content) { height: 28px; }
+.bound-ch-tree :deep(.el-tree-node__content:hover) { background: var(--el-fill-color-light); }
+/* 空间条件工作区: 先圈定通道，再在下方完成 ROI 绘制。保持原有树和画板交互不变。 */
+.spatial-split { display: flex; flex-direction: column; gap: 14px; width: 100%; }
+.spatial-split__left,
+.spatial-split__right { width: 100%; min-width: 0; }
+.spatial-split__left :deep(.el-form-item__content),
+.spatial-split__right :deep(.el-form-item__content) { display: block; width: 100%; }
+.spatial-split__left :deep(.el-tree-node__content) { overflow: hidden; border-radius: 4px; }
 .spatial-split__left :deep(.el-tree-node__label) { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.spatial-split__right {
+  /*padding: 12px;*/
+  /*border: 1px solid var(--el-border-color-lighter);*/
+  border-radius: 6px;
+  background: var(--el-fill-color-extra-light);
+}
+.spatial-split__right :deep(.el-form-item) { margin-bottom: 0; }
+.spatial-split__right :deep(.roi-editor) {
+  padding: 10px;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 6px;
+  background: var(--el-bg-color);
+}
+.spatial-split__right :deep(.roi-toolbar) { margin-bottom: 10px; }
+.spatial-split__right :deep(.roi-toolbar__row) {
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--el-border-color-lighter);
+}
+.spatial-split__right :deep(.roi-toolbar__row:last-child) {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+.spatial-split__right :deep(.roi-canvas-wrap) { border-color: var(--el-border-color); }
+.spatial-split__right :deep(.roi-statusbar) { background: var(--el-fill-color-extra-light); }
+.roi-workspace {
+  display: flex;
+  min-height: 430px;
+  overflow: hidden;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 4px;
+  background: var(--el-bg-color);
+}
+.roi-channel-panel {
+  display: flex;
+  flex: 0 0 230px;
+  flex-direction: column;
+  min-width: 0;
+  border-right: 1px solid var(--el-border-color-lighter);
+  background: var(--el-fill-color-extra-light);
+}
+.roi-ch-tabs__label {
+  height: 38px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--el-border-color-lighter);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 38px;
+  color: var(--el-text-color-primary);
+}
+.roi-ch-tabs {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  overflow-y: auto;
+}
+.roi-ch-tag {
+  display: flex !important;
+  align-items: center;
+  box-sizing: border-box;
+  width: 100%;
+  /*min-height: 56px;*/
+  padding: 3px 8px;
+  overflow: hidden;
+  border: 1px solid var(--el-border-color, #dcdfe6);
+  border-radius: 0;
+  background: var(--el-bg-color, #fff);
+  color: var(--el-text-color-regular, #606266);
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+  line-height: 16px;
+}
+.roi-ch-tag--unpainted { border-color: #ff8a8a; color: #f56c6c; }
+.roi-ch-tag--active { border-color: #409eff; background: #409eff; color: #fff; }
+.roi-ch-tag__icon { flex: 0 0 16px; margin-right: 7px; font-size: 15px; font-style: normal; }
+.roi-ch-tag__name { display: flex; flex: 1 1 0; flex-direction: column; width: 0; min-width: 0; overflow: hidden; line-height: 18px; }
+.roi-ch-tag__title,
+.roi-ch-tag__detail { overflow: hidden; text-overflow: ellipsis; white-space: nowrap;  font-size: 12px;}
+.roi-ch-tag__title { color: #666; font-size: 13px; }
+.icon1-shexiangtou1-copy{
+    font-size:15px;
+}
+.roi-ch-tag--active .roi-ch-tag__title {
+    color: #fff;
+}
+.roi-ch-tag--active .roi-ch-tag__detail {
+    color: #fff;
+    opacity: 0.6;
+}
+.roi-ch-tag__detail { color: #999; font-size: 12px; }
+.roi-ch-tag__status {
+  flex: 0 0 52px;
+  width: 52px;
+  margin-left: 8px;
+  padding-left: 9px;
+  border-left: 1px solid currentColor;
+  text-align: center;
+  font-size: 12px;
+}
+.roi-ch-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px;
+  border-top: 1px solid var(--el-border-color-lighter);
+  background: var(--el-bg-color);
+}
+.roi-ch-toolbar :deep(.el-button) { flex: 1; min-width: 96px; margin: 0; }
+.roi-ch-toolbar :deep(.roi-clear-button) {
+  border-color: var(--el-color-danger);
+  background: #fff;
+  color: var(--el-color-danger);
+}
+.roi-ch-hint { display: none; }
+.roi-canvas-panel { flex: 1; min-width: 0; padding: 10px; }
+.roi-workspace__hint { display: none; }
+.roi-combine-row { display: flex; align-items: center; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+.roi-combine-row .cond-sub-label { margin-bottom: 0; }
 @media (max-width: 760px) {
-  .spatial-split { flex-direction: column; }
-  .spatial-split__left { width: 100%; }
+  .roi-workspace { flex-direction: column; }
+  .roi-channel-panel { flex-basis: auto; border-right: 0; border-bottom: 1px solid var(--el-border-color-lighter); }
+  .roi-ch-tabs { max-height: 180px; }
 }
 .casc-node { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .casc-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
@@ -5301,10 +5443,4 @@ watch(mainTab, (tab) => {
 .pw-toolbar-row { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
 .pw-mig-hint { font-size: 12px; color: #909399; }
 
-/* ── [ROI-PER-CHANNEL 2026-09-12] 逐通道绘制页签/工具栏 (海康式多通道 ROI) ── */
-.roi-ch-tabs { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 6px; }
-.roi-ch-tabs__label { font-size: 12px; color: var(--app-text-secondary); }
-.roi-ch-tag { cursor: pointer; user-select: none; }
-.roi-ch-toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 6px; }
-.roi-ch-hint { font-size: 12px; color: var(--app-text-secondary); }
 </style>

@@ -101,7 +101,7 @@ const levelLabel = computed(() => ({
 
 // ── 处理状态 ──
 const STATUS_CN: Record<string, { label: string; tone: string }> = {
-  unhandled: { label: '未处理', tone: 'warning' },
+  unhandled: { label: '未处理', tone: 'danger' },
   acknowledged: { label: '已确认收到', tone: 'primary' },
   disposed: { label: '处置中', tone: 'primary' },
   escalated: { label: '已升级', tone: 'danger' },

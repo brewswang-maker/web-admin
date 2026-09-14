@@ -297,7 +297,7 @@
                       </div>
                       <div>
                            <span class="alarm-popup__detail-key">状态:</span>
-                          <span class="alarm-popup__status">{{ statusLabel(currentAlarm.status) }}</span>
+                          <span class="alarm-popup__status" :class="{ 'alarm-popup__status--unhandled': isUnhandledStatus }">{{ statusLabel(currentAlarm.status) }}</span>
                       </div>
 
                     </div>
@@ -341,6 +341,27 @@
                     <div class="alarm-popup__detail-row">
                       <span class="alarm-popup__detail-key">设备编号:</span>
                       <span class="alarm-popup__detail-val">{{ currentAlarm.deviceId || '-' }}</span>
+                    </div>
+                    <!-- 人脸比对: 放在告警图片前，便于先核对抓拍与注册照。 -->
+                    <div v-if="faceCompare" class="alarm-popup__detail-section">
+                      <div class="alarm-popup__detail-section-title alarm-popup__accent-title">人脸比对</div>
+                      <div class="alarm-popup__face-compare">
+                        <div class="alarm-popup__face-compare-item">
+                          <img :src="faceCompare.snapshot" alt="现场抓拍" />
+                          <span>现场抓拍</span>
+                        </div>
+                        <div class="alarm-popup__face-compare-item">
+                          <img v-if="faceCompare.enroll" :src="faceCompare.enroll" alt="注册照" />
+                          <div v-else class="alarm-popup__face-compare-none">未注册</div>
+                          <span>注册照片</span>
+                        </div>
+                        <div class="alarm-popup__face-compare-info">
+                          <div class="alarm-popup__face-compare-sim">相似度: {{ faceCompare.similarityPct }}</div>
+                          <div class="alarm-popup__face-compare-verdict" :class="{ 'is-known': faceCompare.known }">
+                            判定: {{ faceCompare.verdict }}
+                          </div>
+                        </div>
+                      </div>
                     </div>
                     <!-- 告警图片: 本次事件的快照, 多张可翻页, 点击跳转「图片」Tab -->
                     <div class="alarm-popup__detail-images">
@@ -395,27 +416,6 @@
                         </div>
                       </div>
                     </div>
-                    <!-- [P0-8 2026-09-04 人脸比对] 抓拍 vs 注册照并列对比 (大华式) -->
-                    <div v-if="faceCompare" class="alarm-popup__detail-section">
-                      <div class="alarm-popup__detail-section-title alarm-popup__accent-title">人脸比对</div>
-                      <div class="alarm-popup__face-compare">
-                        <div class="alarm-popup__face-compare-item">
-                          <img :src="faceCompare.snapshot" alt="现场抓拍" />
-                          <span>现场抓拍</span>
-                        </div>
-                        <div class="alarm-popup__face-compare-item">
-                          <img v-if="faceCompare.enroll" :src="faceCompare.enroll" alt="注册照" />
-                          <div v-else class="alarm-popup__face-compare-none">未注册</div>
-                          <span>注册照片</span>
-                        </div>
-                        <div class="alarm-popup__face-compare-info">
-                          <div class="alarm-popup__face-compare-sim">相似度: {{ faceCompare.similarityPct }}</div>
-                          <div class="alarm-popup__face-compare-verdict" :class="{ 'is-known': faceCompare.known }">
-                            判定: {{ faceCompare.verdict }}
-                          </div>
-                        </div>
-                      </div>
-                    </div>
                     <div v-if="currentAlarm.aiConclusion" class="alarm-popup__detail-section">
                       <div class="alarm-popup__detail-section-title" style="color:#6C5CE7">🧠 AI研判</div>
                       <div class="alarm-popup__ai-box">{{ currentAlarm.aiConclusion }}</div>
@@ -457,8 +457,8 @@
                         </el-select>
                       </div>
                       <div class="alarm-popup__dispose-row alarm-popup__dispose-row--col">
-                        <span class="alarm-popup__dispose-key alarm-popup__dispose-key--required">误报备注:</span>
-                        <el-input v-model="handleNote" type="textarea" :rows="3" resize="none" placeholder="请输入备注" class="alarm-popup__dispose-textarea" />
+                        <span class="alarm-popup__dispose-key alarm-popup__dispose-key--required">备注:</span>
+                        <el-input v-model="handleNote" type="textarea" :rows="12" resize="none" placeholder="请输入备注" class="alarm-popup__dispose-textarea" />
                       </div>
                     </template>
                     <!-- 只读态: 已处置 -->
@@ -468,7 +468,7 @@
                         <span class="alarm-popup__dispose-val">{{ disposeTypeLabel }}</span>
                       </div>
                       <div class="alarm-popup__dispose-row">
-                        <span class="alarm-popup__dispose-key">误报备注:</span>
+                        <span class="alarm-popup__dispose-key">备注:</span>
                         <span class="alarm-popup__dispose-val">{{ originalNote }}</span>
                       </div>
                       <div class="alarm-popup__dispose-row">
@@ -627,6 +627,7 @@ const activePrimaryTab = ref<PrimaryTabName>('preview')
 // ── 二级 Tab ──
 type SecondaryTabName = 'detail' | 'dispose'
 const activeSecondaryTab = ref<SecondaryTabName>('detail')
+const isUnhandledStatus = computed(() => ['unhandled', 'new', 'pending'].includes(String(currentAlarm.value?.status || '')))
 
 // ── 优先级单选（持久化 localStorage） ──
 type PriorityMode = 'newest' | 'highest'
@@ -1504,13 +1505,18 @@ async function probeStreamAlive() {
 function startHeartbeat() { stopHeartbeat(); heartbeatFails = 0; heartbeatStopped = false; rebuildTicks = 0; heartbeatTimer = setInterval(probeStreamAlive, HEARTBEAT_INTERVAL_MS) }
 function stopHeartbeat() { if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null } }
 watch(() => currentAlarm.value?.id, () => {
+  activeSecondaryTab.value = 'detail' //  下一个弹窗要是详情 不是 处警
   playerError.value = ''; stopLiveFailTimer(); switchedAwayFromLive = false; liveFallbackHint.value = ''
   healedAlarmId = ''  // [FIX p1-heal] 新告警重新允许一次失败自愈
   void stopGbPlayback()  // [FIX p1-session] 切告警 → 释放上一 GB 回放会话
   if (popupVisible.value) startHeartbeat()
 })
 watch(popupVisible, (v) => {
-  if (!v) { playerError.value = ''; stopLiveFailTimer(); stopHeartbeat(); switchedAwayFromLive = false; liveFallbackHint.value = '' }
+  if (v) {
+    activePrimaryTab.value = 'preview'
+    activeSecondaryTab.value = 'detail'
+  }
+  else { playerError.value = ''; stopLiveFailTimer(); stopHeartbeat(); switchedAwayFromLive = false; liveFallbackHint.value = '' }
 })
 function onPlayerSnapshot(_blob: Blob) { ElMessage.success('截图已保存') }
 
@@ -2531,11 +2537,12 @@ void jumpToPlayback; void openImageTab
 
 .alarm-popup__status {
   display: inline-block;
-  color: #3294ED;
+  color: #666;
   font-size: 14px;
   padding: 1px 8px;
   border-radius: 8px;
 }
+.alarm-popup__status--unhandled { color: #f56c6c; }
 
 /* [OCC-POPUP 2026-09-13] ×N 角标可点 + 合并明细弹层 */
 .alarm-popup__merged-badge {

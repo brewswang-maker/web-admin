@@ -12,33 +12,38 @@
         </el-radio-group>
 
         <div class="roi-toolbar__actions">
-          <el-button size="small" @click="toggleDrawing" :disabled="disabled">
+          <!-- <el-button size="small" @click="toggleDrawing" :disabled="disabled">
             {{ drawing ? '完成绘制' : '开始绘制' }}
           </el-button>
           <el-button size="small" text @click="clearCurrentPoints" :disabled="disabled || points.length === 0">
             清除当前
-          </el-button>
+          </el-button> -->
           <!-- [ROI-FEEDBACK 2026-09-03] disabled 放宽: 简单形状 (绊线/矩形/点/计数区) 画满即自动入列表
                (points 草稿清零), 原条件 points<min 会让按钮在完成后回灰 — 用户无法区分「已加入」
                与「失败」, 外层保存链被误判为不可用。改为: 草稿不足且列表为空才灰; 列表已有形状
                (含刚自动加入的) 按钮可点, 点击无草稿时给 info 提示 (非 dead-click)。 -->
+               <div class="roi-toolbar__edit">
+                 <el-button size="small" text :disabled="disabled || !canUndo" title="撤销 (栈深 ≤50)" @click="undo">↶ 撤销</el-button>
+                 <el-button size="small" text :disabled="disabled || !canRedo" title="重做" @click="redo">↷ 重做</el-button>
+                 <el-button size="small" text :disabled="disabled || visibleRois.length === 0" title="清空当前类型形状 (可撤销; 其他类型形状不受影响)" @click="clearAll">清空</el-button>
+               </div>
           <el-button size="small" text @click="confirmAndAdd" :disabled="disabled || (points.length < minPoints && visibleRois.length === 0)" type="primary">
             确认添加
           </el-button>
           <!-- [FEAT fullscreen-roi 2026-09-10] 区域类形状一键满屏 (对标华为入侵检测
                "满屏绘制"/海康默认警戒面: 消灭"未配置=不布防"状态)。绊线/关注点无
                满屏语义不显示; 生成后可拖角继续编辑 (复用普通形状路径)。 -->
-          <el-button v-if="isAreaType" size="small" text :disabled="disabled" title="一键生成覆盖画面的检测区域 (留 2% 边距防贴边目标漏检), 可拖角微调"
+          <!-- <el-button v-if="isAreaType" size="small" text :disabled="disabled" title="一键生成覆盖画面的检测区域 (留 2% 边距防贴边目标漏检), 可拖角微调"
             @click="addFullscreenRoi">
             ⛶ 满屏
-          </el-button>
+          </el-button> -->
         </div>
       </div>
 
       <!-- Row2: 编辑操作 (左) + 底图操作 (右) -->
       <div class="roi-toolbar__row">
         <!-- [FIX 2026-09-02] 编辑操作: 撤销/重做/清空/吸附 (对标海康 iVMS 工具栏范式) -->
-        <div class="roi-toolbar__edit">
+        <!-- <div class="roi-toolbar__edit">
           <el-button size="small" text :disabled="disabled || !canUndo" title="撤销 (栈深 ≤50)" @click="undo">↶ 撤销</el-button>
           <el-button size="small" text :disabled="disabled || !canRedo" title="重做" @click="redo">↷ 重做</el-button>
           <el-button size="small" text :disabled="disabled || visibleRois.length === 0" title="清空当前类型形状 (可撤销; 其他类型形状不受影响)" @click="clearAll">清空</el-button>
@@ -48,25 +53,23 @@
             title="绘制落点/拖动顶点吸附栅格"
             @click="snapEnabled = !snapEnabled"
           >⊞ 吸附</el-button>
-        </div>
+        </div> -->
 
-        <div class="roi-toolbar__snapshot">
+        <!-- <div class="roi-toolbar__snapshot">
           <el-button v-if="deviceId" size="small" @click="fetchSnapshot" :loading="snapshotLoading" text>
             获取快照
           </el-button>
-          <!-- [FIX 2026-09-02] 导入本地底图 (地图/平面图叠加 ROI, 对标海康电子地图) -->
           <el-button size="small" text title="导入本地图片作为绘制底图 (仅当前编辑会话)" @click="fileInputRef?.click()">
             导入底图
           </el-button>
           <el-button v-if="backgroundImageUrl" size="small" text title="清除底图" @click="emit('update:backgroundImageUrl', '')">
             清除底图
           </el-button>
-          <!-- [FEAT 2026-09-01] 导出标注结果: canvas 已合成背景+标注, 直接 toBlob 下载 PNG -->
           <el-button size="small" @click="downloadAnnotated" text title="导出当前画面与标注为 PNG 图片">
             下载标注图
           </el-button>
           <input ref="fileInputRef" type="file" accept="image/*" style="display: none" @change="onImportBackground" />
-        </div>
+        </div> -->
       </div>
 
       <!-- 方向选择 (绊线/方向线: [FIX 2026-09-02] 绊线也支持 A→B/B→A/双向, 对标海康绊线方向范式) -->
@@ -273,7 +276,7 @@ const vertexDrag = ref<{ roiIdx: number; vIdx: number } | null>(null)
 //   厂商对标矩阵 docs/audit/algo_roi_vendor_benchmark_20260909.md), 默认工具栏
 //   不再出现「方向线」。唯一不传 types 的调用方 (PipelineEditorView 节点 ROI)
 //   自动收紧。VALID_TYPES 保留全集: 存量规则的方向线 ROI 仍随 modelValue
-//   全量渲染/保存 (visibleRois 仅按 currentType 过滤显示, 数据不丢)。 
+//   全量渲染/保存 (visibleRois 仅按 currentType 过滤显示, 数据不丢)。
 const ALL_TYPES: RoiType[] = [
   RoiType.DETECTION_ZONE, RoiType.EXCLUSION_ZONE, RoiType.TRIPWIRE,
   RoiType.COUNTING_ZONE,
