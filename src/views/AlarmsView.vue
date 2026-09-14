@@ -279,6 +279,7 @@
         @row-click="onRowClickDetail"
         :default-sort="{ prop: 'createdAt', order: 'descending' }"
         row-key="id"
+        :row-class-name="alarmRowClass"
         v-loading="loading"
       >
         <!-- 选择 -->
@@ -368,7 +369,17 @@
           </template>
         </el-table-column>
 
-        <!-- [chan-col 2026-09-11] 所属区域 (安保区域反查; 列头口径由「所属分组」正名,
+        <!-- [P0-4 2026-09-14] 事件态 (后端事件生命周期: event_start/end_ms + end 帧;
+             进行中/已结束, 与 AlarmEventsPanel 同构列) -->
+        <el-table-column label="事件" width="88" align="center">
+          <template #default="{ row }">
+            <el-tag v-if="row.eventEnded" size="small" type="info" effect="plain">已结束</el-tag>
+            <el-tag v-else-if="row.eventStartMs > 0" size="small" type="success" effect="light">进行中</el-tag>
+            <span v-else class="text-secondary" style="font-size:11px">—</span>
+          </template>
+        </el-table-column>
+
+        <!-- [chan-col 2026-09-11] 所属区域 (安保区域反查; 列头口径由「所属分组 」正名,
              数据源同为 securityAreaApi, 与 AlarmEventsPanel 列序/宽度逐列同构) -->
         <el-table-column label="所属区域" width="120" show-overflow-tooltip>
           <template #default="{ row }">
@@ -895,6 +906,10 @@ function groupNameOf(row: any): string {
   if (!groupFilter.value && deviceGroups.value.length === 0) return '-'
   const hit = deviceGroups.value.find((g) => groupHasAlarm(g, row))
   return hit?.name || '-'
+}
+/** [P0-4 2026-09-14] 已结束事件行样式类 (结束态置灰; end 帧/REST event_end_ms 归一) */
+function alarmRowClass({ row }: { row: AlarmEvent }): string {
+  return (row as any)?.eventEnded ? 'alarm-event-ended' : ''
 }
 const totalAlarms = ref(0)
 
@@ -2447,6 +2462,10 @@ onUnmounted(() => {
   padding-left: 8px;
 }
 .text-secondary { color: var(--app-text-secondary); }
+/* [P0-4 2026-09-14] 已结束事件行置灰 (结束态弱化): 行级 class 由
+   alarmRowClass 注入; 仅内容降透明度, hover 回升便于查阅 */
+:deep(.alarm-event-ended) { opacity: 0.55; }
+:deep(.alarm-event-ended:hover) { opacity: 0.85; }
 </style>
 
 <!-- [chan-col 2026-09-11 完成锚点] 同构列升级+状态列移位+pageTotal 收敛批次 · 部署产物 entry=index-wS8-Hc--kp.js tgz md5=57e4f6f0d728c29eeca8f2a8f6dd629b -->

@@ -371,6 +371,15 @@ async function handleAlarm(alarm: any) {
       console.warn('[useGlobalAlarm] pushRealtimeAlarm failed:', e)
     }
 
+    // [P0-4 2026-09-14] 事件结束帧 (后端 event_ended, 事件生命周期收尾):
+    //   列表结束态已在 pushRealtimeAlarm 内刷新, 结束帧不是新事件 —
+    //   跳过拉流预热/弹窗判定三态链/TTS 播报整链 (否则会误弹「事件已结束」告警)。
+    if ((normalized as any).eventEnded) {
+      console.log('[useGlobalAlarm] event end frame (no popup/tts), type:',
+        normalized.type, 'ch:', normalized.channelId)
+      return
+    }
+
     // [P0-A 2026-08-24] 告警到达即预热拉流 (fire-and-forget): SIP INVITE 与弹窗渲染并行
     //   原时序: WS 告警 → 弹窗渲染 → MiniPlayer mount → multi-urls 轮询 2.4s 无果 → 才发 /start
     //           (INVITE 在告警后 ~3s 才发出, 用户再等 INVITE 2-5s → 弹窗视频打开慢)

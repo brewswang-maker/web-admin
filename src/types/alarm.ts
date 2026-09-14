@@ -164,6 +164,15 @@ export interface AlarmEvent {
    *  该首行的明细行 (时间/置信度/快照完整保留); 列表行恒空 (后端默认滤明细),
    *  仅详情 fallback (直接打开明细 id) 场景下发 */
   mergedInto?: string
+  /** [P0-4 2026-09-14] 事件生命周期 (后端 WS 帧顶层/REST 三列, 0=未参与契约或缺省):
+   *  eventStartMs = 事件起点 (first_seen, 达 min_duration 后回填);
+   *  lastSeenMs = 最近存活证据 (每帧刷新); eventEndMs > 0 = 事件已结束
+   *  (静默超时收尾时刻); eventEnded = WS end 帧标记 / 结束态归一结果
+   *  (eventEndMs>0 亦置 true — 列表/卡片渲染「进行中/已结束」数据源)。 */
+  eventStartMs?: number
+  lastSeenMs?: number
+  eventEndMs?: number
+  eventEnded?: boolean
 }
 
 /** [SSOT R1/R2 2026-09-12] 后端判定结果 (LinkageEngine::matchAndVerdict 序列化形态).
@@ -827,6 +836,18 @@ export function normalizeAlarmCore(raw: any): AlarmEvent {
   const mergedIntoRaw = raw.merged_into ?? raw.mergedInto
   const mergedInto =
     typeof mergedIntoRaw === 'string' && mergedIntoRaw ? mergedIntoRaw : undefined
+  // [P0-4 2026-09-14] 事件生命周期归一 (WS 帧顶层 snake_case / REST 三列):
+  //   event_start_ms/last_seen_ms/event_end_ms 数值非法一律归 0 (模板零判空);
+  //   eventEnded 双源: WS end 帧标记 (event_ended=true) 或 event_end_ms>0
+  //   (REST 已收尾行) 均视为已结束态。旧后端无这些字段 → 全 0/false,
+  //   渲染显示占位「—」, 零回归。
+  const evStartNum = Number(raw.event_start_ms ?? raw.eventStartMs ?? 0)
+  const eventStartMs = Number.isFinite(evStartNum) && evStartNum > 0 ? evStartNum : 0
+  const evLastNum = Number(raw.last_seen_ms ?? raw.lastSeenMs ?? 0)
+  const lastSeenMs = Number.isFinite(evLastNum) && evLastNum > 0 ? evLastNum : 0
+  const evEndNum = Number(raw.event_end_ms ?? raw.eventEndMs ?? 0)
+  const eventEndMs = Number.isFinite(evEndNum) && evEndNum > 0 ? evEndNum : 0
+  const eventEnded = raw.event_ended === true || raw.eventEnded === true || eventEndMs > 0
 
   return {
     id: raw.id || raw.alarm_id || `${raw.device_id || ''}_${channelId}_${raw.timestamp_ms || Date.now()}`,
@@ -945,6 +966,11 @@ export function normalizeAlarmCore(raw: any): AlarmEvent {
     aggregatedCount,
     // [AGG-DETAIL 2026-09-12] 明细归属 (详情 fallback 直开明细行时非空)
     mergedInto,
+    // [P0-4 2026-09-14] 事件生命周期 (进行中/已结束态渲染数据源)
+    eventStartMs,
+    lastSeenMs,
+    eventEndMs,
+    eventEnded,
   }
 }
 // [t3-tree-channel 2026-09-11 完成锚点] 三级树通道级服务端下钻(单值直传+多值 fan-out)批次 · 部署产物 entry=index-CvT0U9Nv4f.js tgz md5=07a2e26224ed93a40c47f987c04b7bb5

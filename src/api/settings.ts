@@ -39,6 +39,22 @@ export interface AlarmPolicySettings {
   dedupWindowSeconds: number
 }
 
+/** [P1-1 2026-09-13] 事件级尺寸过滤 (round2 P1-1): 全局统一门 bbox 归一化面积过滤 */
+export interface SizeFilterOverride {
+  min_area: number
+  max_area: number
+}
+export interface SizeFilterSettings {
+  enabled: boolean
+  /** 归一化面积下限 (0=关) */
+  default_min_area: number
+  /** 归一化面积上限 (0=关) */
+  default_max_area: number
+  /** 按 alarm_type 覆盖默认 (键=alarm_type 如 intrusion/tripwire) */
+  overrides: Record<string, SizeFilterOverride>
+  stats?: { size_filtered: number; size_filter_skipped: number }
+}
+
 /** 系统信息 */
 export interface SystemInfo {
   productName: string
@@ -80,6 +96,14 @@ export const settingsApi = {
   /** 保存告警策略 */
   saveAlarmPolicy(data: AlarmPolicySettings) {
     return http.put<ApiResponse<void>>('/settings/alarm-policy', data)
+  },
+  /** [P1-1 2026-09-13] 获取事件级尺寸过滤配置 (alarm.size_filter) */
+  getSizeFilter() {
+    return http.get<ApiResponse<SizeFilterSettings>>('/alarm/size-filter')
+  },
+  /** [P1-1 2026-09-13] 保存事件级尺寸过滤配置 (即时生效 + 持久化 box_config) */
+  saveSizeFilter(data: Partial<SizeFilterSettings>) {
+    return http.put<ApiResponse<SizeFilterSettings>>('/alarm/size-filter', data)
   },
   /** 获取系统信息 */
   getSystemInfo() {

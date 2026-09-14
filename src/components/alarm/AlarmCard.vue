@@ -1,5 +1,5 @@
 <template>
-  <div class="alarm-card" @click="emit('click', alarm)">
+  <div class="alarm-card" :class="{ 'is-event-ended': alarmEnded }" @click="emit('click', alarm)">
     <!-- 上部 16:9 快照 (无图占位); 级别 tag 左上覆盖 -->
     <div class="alarm-card__snap">
       <img v-if="snapUrl" :src="snapUrl" loading="lazy" alt="" />
@@ -21,6 +21,9 @@
             class="alarm-card__merged"
             :title="`长窗口内已合并 ${mergedCount} 条同类事件`"
           >×{{ mergedCount }}</span>
+          <!-- [P0-4 2026-09-14] 事件态角标 (后端事件生命周期: end 帧/REST 归一) -->
+          <span v-if="alarmEnded" class="alarm-card__event is-ended" title="事件已结束">已结束</span>
+          <span v-else-if="alarmOngoing" class="alarm-card__event" title="事件进行中">进行中</span>
         </span>
         <el-tag class="alarm-card__status" size="small" :type="statusTone as any" effect="plain">{{ statusLabel }}</el-tag>
       </div>
@@ -77,6 +80,11 @@ const mergedCount = computed(() => {
   const n = Number((props.alarm as any).aggregatedCount ?? 1)
   return Number.isFinite(n) && n > 1 ? n : 1
 })
+
+/** [P0-4 2026-09-14] 事件生命周期态 (end 帧 eventEnded / REST event_end_ms 归一) */
+const alarmEnded = computed(() => (props.alarm as any).eventEnded === true)
+const alarmOngoing = computed(() =>
+  !alarmEnded.value && Number((props.alarm as any).eventStartMs ?? 0) > 0)
 
 // ── 级别 (severity/level 兜底链) ──
 const levelTone = computed(() => {
@@ -203,6 +211,25 @@ const timeText = computed(() => {
   line-height: 16px;
   cursor: default;
 }
+/* [P0-4 2026-09-14] 事件态角标 (进行中绿 / 已结束灰) */
+.alarm-card__event {
+  flex-shrink: 0;
+  padding: 0 5px;
+  border-radius: 8px;
+  background: rgba(16, 185, 129, 0.12);
+  color: #10B981;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 16px;
+  cursor: default;
+}
+.alarm-card__event.is-ended {
+  background: rgba(144, 147, 153, 0.14);
+  color: #909399;
+}
+/* [P0-4] 已结束事件卡片置灰 (hover 回升) */
+.alarm-card.is-event-ended { opacity: 0.75; }
+.alarm-card.is-event-ended:hover { opacity: 1; }
 .alarm-card__status { font-size: 14px; }
 .alarm-card__row--meta {
   margin-top: 6px;

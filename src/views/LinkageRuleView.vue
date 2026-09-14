@@ -386,7 +386,7 @@
                   inactive-text="OFF"
                   :active-color="'#67c23a'"
                   :inactive-color="'#dcdfe6'"
-                  @change="(v: any) => { if (v) collapsedConditions[cond.type] = false }"
+                  @change="(v: any) => onCondSwitchChange(cond.type, !!v)"
                 />
               </div>
               <el-icon v-if="cond.type !== 'eventType'" class="cond-arrow" :class="{ 'is-rotated': condBodyVisible(cond.type) }" @click.stop="toggleCollapse(cond.type)"><ArrowDown /></el-icon>
@@ -435,6 +435,11 @@
 
               <!-- 空间条件 -->
               <template v-if="cond.type === 'region'">
+                <!-- [P1-4-EXPAND 2026-09-13] 自动展开说明条: 解释空间卡为何被打开 (可手动关闭) -->
+                <el-alert v-if="spatialAutoExpandNotice" type="info" :closable="true" show-icon
+                  class="spatial-auto-alert" style="margin-bottom: 8px"
+                  title="已按所选事件类型自动展开「空间条件」— 可直接配置 ROI 绘制 / 绊线 / 方向 / 圈定通道；全画面触发可关闭本卡片"
+                  @close="spatialAutoExpandNotice = false" />
                 <!-- [FEAT guard-badge 2026-09-10] 绑定通道插件层布防状态:
                      规则空间条件(引擎过滤)与算法检测区(插件触发)是两层, 徽标把
                      "插件层未布防"暴露给规则编辑者 — 消灭"规则开好了却永远无
@@ -681,7 +686,8 @@
                   <span class="legend-item"><i class="legend-dot" style="background:#67C23A"></i>低</span>
                   <span class="legend-item"><i class="legend-dot" style="background:#909399"></i>提示</span>
                 </div>
-                <el-checkbox-group v-model="form.conditions.eventType.config.types" class="event-type-grid" v-loading="optionsLoading">
+                <!-- [P1-4-EXPAND 2026-09-13] @change 仅用户交互触发 (回显赋值不触发) → 自动展开入口 -->
+                <el-checkbox-group v-model="form.conditions.eventType.config.types" @change="onEventTypesChanged" class="event-type-grid" v-loading="optionsLoading">
                   <template v-if="eventTypeOptions.length > 0">
                     <div v-for="(group, cat) in eventTypeGrouped" :key="cat" class="event-type-group">
                       <div class="event-type-group__title">{{ cat }}</div>
@@ -1913,7 +1919,10 @@ function clearRegionLocationNarrow() {
 //    设备的通道归「区域直绑通道」虚拟节点 (resolved 语义完整性, 同 areaCascadeTreeData)。
 //    未归属任何区域的设备挂「未分组设备」虚拟根, 无 deviceId 通道挂「其他 / 历史
 //    绑定」虚拟根 — 全量可勾不留死角 (替代 DEV-FLAT 分组下拉)。
-interface BoundTreeNode { key: string; label: string; type: 'area' | 'device' | 'channel'; children: BoundTreeNode[] }
+// [P1-4-EXPAND 2026-09-13] interface→type 别名: areaTreeToElTreeData childrenOf 目标类型带
+//   [k: string]: unknown 索引签名, interface 无隐式索引签名 (TS2345) — type 别名可隐式满足
+//   (AREA-TREE 2026-09-13 引入; 保行为零变更)
+type BoundTreeNode = { key: string; label: string; type: 'area' | 'device' | 'channel'; children: BoundTreeNode[] }
 const boundChannelTreeData = computed<BoundTreeNode[]>(() => {
   // 设备层工厂: 区域 device_ids → 设备节点 → 通道叶子 (key=裸通道 id, 与契约直通)
   const childrenOf = (n: { area: SecurityArea }): BoundTreeNode[] => {
@@ -2931,6 +2940,52 @@ function isTailgatingEvent(t: string): boolean {
 const isTailgatingRule = computed(() =>
   (form.conditions.eventType?.config?.types ?? []).some(t => isTailgatingEvent(String(t).trim())))
 
+// ═══ [P1-4-EXPAND 2026-09-13] 简易模式按事件类型自动展开 spatial_cond ═══
+//   round3 差距: 简易模式不显示空间条件配置 → 用户须切高级模式才能配 ROI/绊线/分组,
+//   且未配空间收窄的规则会被「误存」(绊线类事件不配绊线 = 引擎「空=不限」→ 任意绊线触发)。
+//   机制: 简易模式 (simpleEntryMode: 新建主体直达 / 编辑简易卡) 下用户勾选
+//   「空间敏感事件」(绊线消费集 ∪ 尾随类 ∪ 周界区域类) → 自动启用并展开「空间条件」卡,
+//   按事件类型显隐的绊线/方向/尾随字段与 ROI 画板随即可见; 用户手动动过空间卡开关后
+//   不再自动展开 (尊重显式意图)。保存侧 spatial_cond 恒输出完整字段集 (handleSave
+//   两分支字面量) + ui_state_json 记录 region.enabled 精确态, 保证「保存 → 编辑」往返一致。
+const SPATIAL_SENSITIVE_KEYS = new Set([
+  'intrusion', 'loiter', 'loitering', 'climb', 'fence_climb',           // 周界区域类
+  'tripwire', 'boundary', 'people_count', 'parking_violation',          // 绊线消费类
+  'illegal_parking', 'crowd', 'gathering',                              // 区域计数/交通类
+  'tailgating', 'tailgate', 'face_tailgate',                            // 尾随类
+])
+/** 事件类型 → 是否空间敏感 (覆盖率矩阵优先, 未就绪短名兜底) */
+function isSpatiallySensitiveEvent(t: string): boolean {
+  if (isTripwireConsumerEvent(t) || isTailgatingEvent(t)) return true
+  const c = eventCoverageMap.value[t]
+  if (c?.algo_id) return String(c.algo_id).startsWith('shield.algo.perimeter.')
+  const seg = String(t).split('.').pop() || String(t)
+  return SPATIAL_SENSITIVE_KEYS.has(seg)
+}
+/** 用户手动操作过空间卡开关 (自动展开让位显式意图; el-switch change 仅用户交互触发) */
+const regionUserToggled = ref(false)
+/** 自动展开说明条 (用户手动动卡后消失) */
+const spatialAutoExpandNotice = ref(false)
+/** 事件类型用户变更 (el-checkbox-group change 仅用户交互触发, 回显赋值不触发) */
+function onEventTypesChanged() {
+  if (!simpleEntryMode.value || regionUserToggled.value) return
+  if (form.conditions.region.enabled) return
+  void loadEventCoverage()
+  const types = form.conditions.eventType.config.types as string[]
+  if (!types.some((t) => isSpatiallySensitiveEvent(String(t).trim()))) return
+  form.conditions.region.enabled = true
+  collapsedConditions.region = false
+  spatialAutoExpandNotice.value = true
+}
+/** 条件卡开关变更 (用户交互): 开卡自动展开卡体; 空间卡标记用户意图并收起说明条 */
+function onCondSwitchChange(type: string, v: boolean) {
+  if (v) collapsedConditions[type] = false
+  if (type === 'region') {
+    regionUserToggled.value = true
+    spatialAutoExpandNotice.value = false
+  }
+}
+
 const rulePassageways = ref<PassagewayDef[]>([])
 /** 显示层过滤 _ch0 结尾 (防御存量形态; 通道库无自动镜像机制 — 见模板注释。
  *  toggle 的镜像同步翻转仍基于全量 rulePassageways, 不随显示过滤丢失) */
@@ -3308,6 +3363,9 @@ async function toggleRule(rule: LinkageRule) {
 // [vp8 双模式] 表单重置与抽屉打开解耦: 简易模式 commit 需在后台重置表单后
 // 直接复用 handleSave 唯一保存链, 不打开高级抽屉 (校验失败时才落高级表单补全)。
 function resetEditorState(rule: LinkageRule | null) {
+  // [P1-4-EXPAND 2026-09-13] 自动展开状态随编辑会话重置 (新会话重新评估用户意图)
+  regionUserToggled.value = false
+  spatialAutoExpandNotice.value = false
   editingRule.value = rule
   form.name = rule?.name || ''
   form.description = rule?.description || ''
@@ -3674,6 +3732,15 @@ async function handleSave(): Promise<boolean> {
     //   deriveTripwireAlgoId 在多处同源消费, 就绪后 'crowd'(algo=people_count)
     //   等覆盖率形态不被短名兑底误判。
     await loadEventCoverage()
+    // [P1-4-EXPAND 2026-09-13] 防误存警示: 绊线消费事件未配绊线/方向且画板无绊线形状 —
+    //   引擎侧「空=不限」语义会让任意绊线触发本规则 (非阻塞警示, 不阻断保存)
+    if (isTripwireRule.value) {
+      const twCfg = form.conditions.region.config
+      const hasDrawnTw = twCfg.roiPolygon.some((r) => r.is_active && r.roi_type === 'tripwire')
+      if (!twCfg.tripwireId && !twCfg.direction && !hasDrawnTw) {
+        ElMessage.warning('当前事件为绊线类，未配置绊线/方向 — 任意绊线均会触发本规则；可在「空间条件」中补配')
+      }
+    }
     // 构建 conditions: 内部 6 条件 → 后端 4 条件
     const tc = form.conditions.time
     const time_cond = tc.enabled ? {

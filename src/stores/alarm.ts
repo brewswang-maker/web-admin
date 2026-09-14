@@ -189,6 +189,29 @@ export const useAlarmStore = defineStore('alarm', () => {
     // 防御性兜底: 如果调用方忘了 normalize, 内部补一次.
     // 否则 store 里的 status 为 undefined, 依赖 status==='unhandled' 的过滤全部失败.
     const norm = (alarm as any)?.status ? alarm : normalizeAlarmCore(alarm)
+    // [P0-4 2026-09-14] 事件结束帧分支 (后端 event_ended, P0-4 事件生命周期):
+    //   end 帧 alarm_id 是 'event_end_<track>_<ts>' 新 id (同 id 合并链不命中),
+    //   按 ch+track+type 匹配列表已有条目更新结束态 — 不新增条目/不重复计数
+    //   (end 帧不落库不推未处理数, 仅列表态刷新); 两侧列表 (实时+已拉取)
+    //   均刷新; 匹配未结束条目 (eventEnded 未置) 才改写, 未命中静默丢弃。
+    if ((norm as any).eventEnded) {
+      const tid = Number((norm as any).trackId ?? -1)
+      const matches = (a: AlarmEvent) =>
+        String(a.channelId) === String(norm.channelId)
+        && Number((a as any).trackId ?? -1) === tid
+        && a.type === norm.type
+      for (const list of [realtimeAlarms.value, alarms.value]) {
+        for (const a of list) {
+          if (!matches(a) || (a as any).eventEnded) continue
+          const cur = a as any
+          if (norm.eventStartMs) cur.eventStartMs = norm.eventStartMs
+          if (norm.lastSeenMs) cur.lastSeenMs = norm.lastSeenMs
+          if (norm.eventEndMs) cur.eventEndMs = norm.eventEndMs
+          cur.eventEnded = true
+        }
+      }
+      return
+    }
     // [FIX prevnext-shape 2026-09-11] 同告警双帧去重富化 — 后端双推送
     //   (alarm.new 全量 metadata 含 alarm_shapes / BoxService WEB_POPUP executor
     //   平铺精简字段无 metadata) 原各自 unshift → 队列同 id 两条, 弹窗
@@ -214,6 +237,12 @@ export const useAlarmStore = defineStore('alarm', () => {
       cur.videoClipUrl = norm.videoClipUrl || cur.videoClipUrl
       cur.channelName = norm.channelName || cur.channelName
       cur.deviceName = norm.deviceName || cur.deviceName
+      // [P0-4 2026-09-14] 进行中帧的生命周期富化 (start/last_seen 刷新;
+      //   end 在 end 帧分支写入, 此处不覆盖已有结束态)
+      if (!cur.eventEnded) {
+        if (norm.eventStartMs) cur.eventStartMs = norm.eventStartMs
+        if (norm.lastSeenMs) cur.lastSeenMs = norm.lastSeenMs
+      }
       return
     }
     realtimeAlarms.value.unshift(norm)

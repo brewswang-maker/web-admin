@@ -239,6 +239,38 @@
             <el-input-number v-model="alarm.dedupWindowSeconds" :min="5" :max="300" />
             <span class="form-tip">{{ $t('settings.dedupWindowSecondsTip') }}</span>
           </el-form-item>
+          <!-- [P1-1 2026-09-13] 事件级尺寸过滤 (round2 P1-1): 全局统一门 —
+               bbox 归一化面积 min/max (0=关) 覆盖所有事件类型; 即时生效+持久化 -->
+          <el-divider content-position="left">{{ $t('settings.sizeFilter') }}</el-divider>
+          <el-form-item :label="$t('settings.sizeFilterEnabled')">
+            <el-switch v-model="sizeFilter.enabled" />
+            <span class="form-tip">{{ $t('settings.sizeFilterEnabledTip') }}</span>
+          </el-form-item>
+          <template v-if="sizeFilter.enabled">
+            <el-form-item :label="$t('settings.sizeFilterMin')">
+              <el-input-number v-model="sizeFilter.default_min_area" :min="0" :max="1" :step="0.0005" :precision="4" />
+            </el-form-item>
+            <el-form-item :label="$t('settings.sizeFilterMax')">
+              <el-input-number v-model="sizeFilter.default_max_area" :min="0" :max="1" :step="0.05" :precision="4" />
+            </el-form-item>
+            <el-form-item :label="$t('settings.sizeFilterOverrides')">
+              <div style="width:100%">
+                <div v-for="(row, idx) in sizeFilterOverrideRows" :key="idx" style="display:flex;gap:8px;margin-bottom:8px;align-items:center">
+                  <el-input v-model="row.type" placeholder="intrusion" style="width:200px" />
+                  <el-input-number v-model="row.min_area" :min="0" :max="1" :step="0.0005" :precision="4" />
+                  <el-input-number v-model="row.max_area" :min="0" :max="1" :step="0.05" :precision="4" />
+                  <el-button type="danger" circle size="small" @click="sizeFilterOverrideRows.splice(idx, 1)">-</el-button>
+                </div>
+                <el-button size="small" @click="sizeFilterOverrideRows.push({ type: '', min_area: 0, max_area: 0 })">{{ $t('settings.sizeFilterAddOverride') }}</el-button>
+              </div>
+            </el-form-item>
+          </template>
+          <el-form-item>
+            <el-button type="primary" @click="saveSizeFilter" :loading="sizeFilterSaving">{{ $t('settings.save') }}</el-button>
+            <span v-if="sizeFilterStats" class="form-tip">
+              {{ $t('settings.sizeFilterStats', { filtered: sizeFilterStats.size_filtered, skipped: sizeFilterStats.size_filter_skipped }) }}
+            </span>
+          </el-form-item>
           <el-form-item :label="$t('settings.dedupWindow')">
             <el-input-number v-model="alarm.dedupWindow" :min="5" :max="300" />
           </el-form-item>
@@ -658,6 +690,51 @@ const alarmDefaults: AlarmPolicySettings = {
 }
 const alarm = reactive<AlarmPolicySettings>({ ...alarmDefaults })
 
+// ---- [P1-1 2026-09-13] 事件级尺寸过滤 (round2 P1-1): 全局统一门 bbox 归一化
+//   面积 min/max (0=关) + 按 alarm_type 覆盖; 即时生效 + 持久化 box_config
+const sizeFilterSaving = ref(false)
+const sizeFilter = reactive({ enabled: false, default_min_area: 0, default_max_area: 0 })
+const sizeFilterOverrideRows = ref<Array<{ type: string; min_area: number; max_area: number }>>([])
+const sizeFilterStats = ref<{ size_filtered: number; size_filter_skipped: number } | null>(null)
+
+async function loadSizeFilter() {
+  try {
+    const res = await settingsApi.getSizeFilter()
+    const d = res.data.data
+    sizeFilter.enabled = d.enabled
+    sizeFilter.default_min_area = d.default_min_area
+    sizeFilter.default_max_area = d.default_max_area
+    sizeFilterOverrideRows.value = Object.entries(d.overrides || {}).map(
+      ([type, v]: [string, any]) => ({ type, min_area: v.min_area, max_area: v.max_area }))
+    sizeFilterStats.value = d.stats || null
+  } catch (e) {
+    console.error('loadSizeFilter failed', e)
+  }
+}
+
+async function saveSizeFilter() {
+  sizeFilterSaving.value = true
+  try {
+    const overrides: Record<string, { min_area: number; max_area: number }> = {}
+    for (const r of sizeFilterOverrideRows.value) {
+      const tk = (r.type || '').trim()
+      if (tk) overrides[tk] = { min_area: r.min_area || 0, max_area: r.max_area || 0 }
+    }
+    await settingsApi.saveSizeFilter({
+      enabled: sizeFilter.enabled,
+      default_min_area: sizeFilter.default_min_area,
+      default_max_area: sizeFilter.default_max_area,
+      overrides,
+    })
+    ElMessage.success(t('settings.saveAlarmOk'))
+    await loadSizeFilter()  // 回读生效配置 + 最新过滤计数 (REST 往返一致)
+  } catch (e: any) {
+    ElMessage.error(t('settings.saveFail') + ': ' + (e.message || t('settings.unknownError')))
+  } finally {
+    sizeFilterSaving.value = false
+  }
+}
+
 // ---- AI 模型配置 (本地/云端切换) ----
 const llmStatusLoading = ref(false)
 const llmSwitching = ref(false)
@@ -1051,6 +1128,7 @@ async function calculateStorage() {
 onMounted(async () => {
   loading.value = true
   refreshLlmStatus()  // AI 模型状态 (异步, 不阻塞)
+  loadSizeFilter()    // [P1-1 2026-09-13] 尺寸过滤配置 (异步, 不阻塞)
   try {
     const [basicRes, cloudRes, alarmRes, infoRes, netRes] = await Promise.allSettled([
       settingsApi.getBasic(),

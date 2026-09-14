@@ -607,6 +607,8 @@ import { useFloorMap } from '@/composables/useFloorMap'
 // [FIX dev-name-num 2026-09-11] 设备名称数字形态治理 (face 插件 channel_id 截断等历史数据)
 import { resolveAlarmDeviceName } from '@/composables/useAlarmDeviceLabel'
 import type { MapChannelPair, CameraMapBinding } from '@/types/floorMap'
+// [P3 轮 2026-09-14 §6.2 W-7] 弹窗 E2E 埋点 (渲染/处置确认/关闭; 纯日志不改业务语义)
+import { trackPopupShow, trackPopupDispose, trackPopupClose } from '@/utils/alarmPopupTelemetry'
 
 const { getCategoryName, getTargetName, getAlarmTypeName } = useObjectLabel()
 
@@ -874,6 +876,8 @@ async function confirmDispose() {
     handleNote.value || undefined,
     auth.username || undefined,
   )
+  // [P3 轮 2026-09-14 §6.2 W-7] 处置确认埋点 (含后端提交结果)
+  trackPopupDispose(currentAlarm.value, String(disposeType.value), !!ok)
   if (ok) appendEditing.value = false
 }
 
@@ -1504,11 +1508,15 @@ function startAutoCloseCountdown(totalSeconds: number) {
 function stopAutoCloseCountdown() { if (countdownTimer) { clearInterval(countdownTimer); countdownTimer = null } }
 watch(popupVisible, (v) => {
   if (v) {
+    // [P3 轮 2026-09-14 §6.2 W-7] 弹窗渲染埋点 (created→可见延迟)
+    trackPopupShow(currentAlarm.value)
     // 条件启动: autoCloseSeconds > 0 才倒计时, =0 不启动 (默认永不自动关闭)
     startAutoCloseCountdown(currentPopupAutoCloseS.value)
     healedAlarmId = ''  // [FIX p1-heal] 重开弹窗重新允许一次失败自愈
     loadPlayback(); startHeartbeat(); if (!currentAlarm.value?.videoClipUrl) startRecordingPoll()
   } else {
+    // [P3 轮 2026-09-14 §6.2 W-7] 弹窗关闭埋点 (驻留时长)
+    trackPopupClose()
     stopAutoCloseCountdown(); stopRecordingPoll()
     void stopGbPlayback()  // [FIX p1-session 2026-09-12] 关弹窗释放 GB 回放会话
   }

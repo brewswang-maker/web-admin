@@ -32,6 +32,7 @@
       @row-click="onRowClickDetail"
       :default-sort="{ prop: 'createdAt', order: 'descending' }"
       row-key="id"
+      :row-class-name="alarmRowClass"
       v-loading="loading"
     >
       <!-- 选择 -->
@@ -124,6 +125,16 @@
               class="merged-detail-tag"
             >合并明细</el-tag>
           </span>
+        </template>
+      </el-table-column>
+
+      <!-- [P0-4 2026-09-14] 事件态 (后端事件生命周期: event_start/end_ms + end 帧):
+           进行中 = 绿 tag; 已结束 = info 灰 tag (同行列置灰); 无事件字段 — 占位 -->
+      <el-table-column label="事件" width="88" align="center">
+        <template #default="{ row }">
+          <el-tag v-if="row.eventEnded" size="small" type="info" effect="plain">已结束</el-tag>
+          <el-tag v-else-if="row.eventStartMs > 0" size="small" type="success" effect="light">进行中</el-tag>
+          <span v-else class="text-secondary" style="font-size:11px">—</span>
         </template>
       </el-table-column>
 
@@ -525,6 +536,11 @@ const emit = defineEmits<{
 const page = defineModel<number>('page', { default: 1 })
 const pageSize = defineModel<number>('pageSize', { default: 20 })
 
+/** [P0-4 2026-09-14] 已结束事件行样式类 (结束态置灰; end 帧/REST event_end_ms 归一) */
+function alarmRowClass({ row }: { row: AlarmEvent }): string {
+  return (row as any)?.eventEnded ? 'alarm-event-ended' : ''
+}
+
 const { zh, ensure: ensureEventTypes } = useEventTypeZh()
 
 // [AGG-DETAIL 2026-09-12] ×N 角标展开: 同窗被合并事件明细 (popover 懒加载,
@@ -813,6 +829,10 @@ onMounted(() => {
   border-left: 3px solid var(--color-ai-400);
 }
 .text-secondary { color: var(--app-text-secondary); }
+/* [P0-4 2026-09-14] 已结束事件行置灰 (结束态弱化): 行级 class 由
+   alarmRowClass 注入; 仅内容降透明度, hover 回升便于查阅 */
+:deep(.alarm-event-ended) { opacity: 0.55; }
+:deep(.alarm-event-ended:hover) { opacity: 0.85; }
 </style>
 
 <!-- [chan-col 2026-09-11 完成锚点] 列结构升级（所属区域+设备+通道）批次 · 部署产物 entry=index-wS8-Hc--kp.js tgz md5=57e4f6f0d728c29eeca8f2a8f6dd629b -->
