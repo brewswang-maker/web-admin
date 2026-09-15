@@ -443,8 +443,10 @@
       </el-header>
 
       <!-- [场景 Tab 2026-09-15] 场景子页顶部页签 (三级菜单): 点击切路由, 激活高亮;
-           数据源 = 当前路由命中场景的 tabs (scenarioMenus), 固定于内容区上方 -->
-      <nav v-if="activeScenario" class="scenario-tabs" aria-label="场景页签">
+           数据源 = 当前路由命中场景的 tabs (scenarioMenus), 固定于内容区上方。
+           [SIMPLE-SC-SIDEBAR 2026-09-15] 单场景账号子菜单已改左侧纵向展示,
+           顶部 Tab 仅对多场景用户 (admin 等) 保留 -->
+      <nav v-if="activeScenario && !isSingleScenarioUser" class="scenario-tabs" aria-label="场景页签">
         <button
           v-for="tab in activeScenario.tabs"
           :key="tab.path"
@@ -556,9 +558,6 @@ type PrimaryMenu = {
   label: string
   items: SidebarItem[]
   roles?: string[]
-  // [场景直达 2026-09-15] 单场景用户场景提升为一级菜单时: items 置空 + entryPath
-  //   指向该场景 overview, 点击一级直达 (子页由内容区顶部 Tab 切换)
-  entryPath?: string
 }
 
 // [场景菜单重构 2026-09-15] 6 场景数据源: 原 6 个独立一级菜单收敛为「应用场景」组。
@@ -767,9 +766,9 @@ const primaryMenus = computed<PrimaryMenu[]>(() => {
 
   // [场景菜单重构 2026-09-15] 「应用场景」组拼装: 多场景用户 (admin 等) 显示组 +
   //   侧边栏场景入口 (按任务书顺序); 单场景用户 (仅持一个 scenario_*;
-  //   普通 user/viewer 仅周界可见) 场景直达一级 (items 空 + entryPath →
-  //   overview, 点击直达 + 顶部 Tab 切子页); 无任何场景权限不插入。
-  //   插入位置: 'ai' 之后、'platform' 之前。
+  //   普通 user/viewer 仅周界可见) 场景一级菜单 items = 该场景全部 tabs
+  //   (子菜单左侧纵向展示, 体验与 admin 二级一致; 顶部 Tab 对单场景账号隐藏);
+  //   无任何场景权限不插入。插入位置: 'ai' 之后、'platform' 之前。
   const visibleScenarios = scenarioMenus.value.filter(s => matchMenuRoles(s.roles))
   if (visibleScenarios.length > 0) {
     const insertAt = Math.max(0, menus.findIndex(m => m.key === 'ai') + 1)
@@ -784,33 +783,40 @@ const primaryMenus = computed<PrimaryMenu[]>(() => {
         })),
       })
     } else {
+      // [SIMPLE-SC-SIDEBAR 2026-09-15] 单场景账号取消 entryPath 直达:
+      //   一级 key/label 沿用场景 key/文案, items = 场景全部 tabs (纵向子菜单);
+      //   路由 path 不变 (历史链接/收藏不受影响)
       const only = visibleScenarios[0]
       menus.splice(insertAt, 0, {
         key: only.key,
         label: t(`menuSecondary.${only.entryKey}`),
-        items: [],
-        entryPath: only.tabs[0].path,
+        items: only.tabs.map(tab => ({ ...tab })),
       })
     }
   }
   return menus
     .filter(menu => matchMenuRoles(menu.roles))
     .map(menu => ({ ...menu, items: menu.items.filter(item => matchMenuRoles(item.roles)) }))
-    // [场景直达 2026-09-15] 单场景用户场景一级 items 为空但持 entryPath, 不能被剔除
-    .filter(menu => menu.items.length > 0 || !!menu.entryPath)
+    .filter(menu => menu.items.length > 0)
 })
 
 const activePrimaryKey = ref<PrimaryMenuKey>('home')
 const activePrimaryMenu = computed(() =>
   primaryMenus.value.find(item => item.key === activePrimaryKey.value) ?? primaryMenus.value[0]
 )
-// [场景直达 2026-09-15] 单场景用户场景页 (items 空菜单) 侧边栏隐藏: 内容全宽 + 顶部 Tab
+// [SIMPLE-SC-SIDEBAR 2026-09-15] 单场景账号场景页 items = 全部子菜单 (非空) →
+//   侧边栏正常展示; home 页仍隐藏侧边栏
 const showSidebar = computed(() =>
   activePrimaryKey.value !== 'home' && (activePrimaryMenu.value?.items.length ?? 0) > 0
 )
 // [场景 Tab 2026-09-15] 当前路由命中的场景 (内容区顶部页签数据源)
 const activeScenario = computed(() =>
   scenarioMenus.value.find(s => route.path === s.prefix || route.path.startsWith(`${s.prefix}/`))
+)
+// [SIMPLE-SC-SIDEBAR 2026-09-15] 单场景账号 (仅持一个可见场景): 子菜单在侧边栏
+//   纵向展示, 顶部 Tab 隐藏; admin (多场景) 保持现状 Tab 交互
+const isSingleScenarioUser = computed(() =>
+  scenarioMenus.value.filter(s => matchMenuRoles(s.roles)).length === 1
 )
 const pendingMenuPath = ref<string | null>(null)
 const routeLoading = ref(false)
@@ -837,8 +843,8 @@ watch(primaryMenus, () => nextTick(updateNavOverflow))
 
 function findPrimaryKey(path: string): PrimaryMenuKey | undefined {
   // [场景 Tab 2026-09-15] 场景页优先按 section 归组: 多场景用户激活 'scenarios'
-  //   (侧边栏显示场景入口列表, 当前场景入口高亮), 单场景用户激活其场景一级;
-  //   未命中场景段再回退原 items path 匹配。
+  //   (侧边栏显示场景入口列表, 当前场景入口高亮); 单场景用户激活其场景一级
+  //   (items = 子菜单, 当前子菜单高亮); 未命中场景段再回退原 items path 匹配。
   const hit = scenarioMenus.value.find(s => path === s.prefix || path.startsWith(`${s.prefix}/`))
   if (hit) {
     if (primaryMenus.value.some(m => m.key === 'scenarios')) return 'scenarios'
@@ -871,12 +877,6 @@ async function navigateToMenu(path: string) {
 
 async function selectPrimary(key: PrimaryMenuKey) {
   const menu = primaryMenus.value.find(item => item.key === key)
-  // [场景直达 2026-09-15] 单场景用户场景一级 (items 空): 按 entryPath 直达 overview
-  if (menu && menu.items.length === 0 && menu.entryPath) {
-    activePrimaryKey.value = key
-    await navigateToMenu(menu.entryPath)
-    return
-  }
   const firstItem = menu?.items[0]
   if (!firstItem) return
 
