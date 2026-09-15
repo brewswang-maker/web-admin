@@ -42,7 +42,7 @@
         <rect :x="d.x * 100" :y="d.y * 100" :width="d.w * 100" :height="d.h * 100"
               :stroke="detColor(d)" class="ann-det-rect" />
         <text :x="Math.max(1, d.x * 100)" :y="Math.max(2.5, d.y * 100 - 1)"
-              class="ann-det-text" :fill="detColor(d)">{{ d.label }} {{ Math.round(d.confidence * 100) }}%</text>
+              class="ann-det-text" :fill="detColor(d)">{{ zhLabel(d.label) }} {{ Math.round(d.confidence * 100) }}%</text>
       </g>
       <!-- 回退: 无 detections 数组的旧告警单 bbox 桓星红框 -->
       <g v-if="!detBoxes.length && box" class="ann-det" data-det-danger="true">
@@ -50,7 +50,7 @@
               :width="(box[2] - box[0]) * 100" :height="(box[3] - box[1]) * 100"
               class="ann-det-rect" stroke="#f56c6c" />
         <text v-if="label" :x="Math.max(1, box[0] * 100)" :y="Math.max(2.5, box[1] * 100 - 1)"
-              class="ann-det-text" fill="#f56c6c">{{ label }}</text>
+              class="ann-det-text" fill="#f56c6c">{{ zhLabel(label) }}</text>
       </g>
     </svg>
     <!-- [FEAT 2026-09-02] 下载标注图: 导出原始分辨率合成图 (快照+检测框标注) PNG,
@@ -90,7 +90,7 @@ import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
 import {
   CLASS_COLORS, SHAPE_STYLES, drawDetsOnCtx, drawShapesOnCtx, downloadPngWithFallback,
-  markTriggerDet, parseDetections, useAlarmShapes,
+  markTriggerDet, parseDetections, useAlarmShapes, zhLabel,
   type OverlayShape, type OverlayShapeType, type ParsedDet,
 } from '@/composables/useAlarmShapes'
 
