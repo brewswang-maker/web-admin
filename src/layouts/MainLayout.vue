@@ -1592,7 +1592,8 @@ function handleUserCommand(command: string) {
   left: 12px;
   right: 12px;
   height: 2px;
-  background: var(--app-sidebar-active);
+  /*background: var(--app-sidebar-active);*/
+  background-color: #409eff;
   content: '';
   opacity: 0;
   transform: scaleX(0.5);
@@ -1604,8 +1605,9 @@ function handleUserCommand(command: string) {
 }
 
 .scenario-tab.is-active {
-  color: var(--app-sidebar-active);
+  /*color: var(--app-sidebar-active);*/
   font-weight: 600;
+  color:#409eff
 }
 
 .scenario-tab.is-active::after {

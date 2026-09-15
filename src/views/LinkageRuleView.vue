@@ -380,6 +380,7 @@
                 <span class="cond-icon">{{ cond.icon }}</span>
                 <span class="cond-label">{{ cond.label }}</span>
               </div>
+              <div class="cond-actions">
               <div v-if="cond.type !== 'eventType'" class="cond-switch-zone" @click.stop>
                 <span class="cond-switch-label">{{ form.conditions[cond.type].enabled ? '已启用' : '已禁用' }}</span>
                 <el-switch
@@ -395,7 +396,8 @@
                 />
               </div>
               <el-icon v-if="cond.type !== 'eventType'" class="cond-arrow" :class="{ 'is-rotated': condBodyVisible(cond.type) }" @click.stop="toggleCollapse(cond.type)"><ArrowDown /></el-icon>
-            </div>
+              </div>
+              </div>
 
             <!-- 条件体可见性: 事件类型常显; 其他 = 开关启用 且 未手动折叠 -->
             <div v-show="condBodyVisible(cond.type)" class="cond-body">
@@ -540,7 +542,7 @@
                           :key="t.value"
                           class="roi-ch-tag"
                           :class="{
-                            'roi-ch-tag--active': t.value === activeRoiChannel && isChannelUnpainted(t.value),
+                            'roi-ch-tag--active': t.value === activeRoiChannel,
                             'roi-ch-tag--unpainted': t.value !== activeRoiChannel && isChannelUnpainted(t.value),
                           }"
                           @click="switchRoiChannel(t.value)"
@@ -569,6 +571,7 @@
                         触发双层判定: ①通道圈定（绑定通道 ∪ 安保区域[位置条件]，并集）②本画板形状（逐通道模式下仅对已绘通道生效）。
                       </p>
                       <RoiPolygonEditor
+                        :key="activeRoiChannel || 'roi-general'"
                         v-model="form.conditions.region.config.roiPolygon"
                         :background-image-url="roiBackgroundUrl"
                         :canvas-width="640" :canvas-height="360"
@@ -2160,13 +2163,20 @@ const roiTabChannels = computed<Array<{ value: string; label: string; detail: st
     if (base && !seen.has(base)) seen.set(base, '')
   }
   for (const c of form.conditions.region.config.boundChannelIds || []) push(String(c))
-  push(String(form.conditions.region.config.channelId || ''))
+  // 有明确勾选通道时，画板底图通道不额外作为绘制通道展示；无勾选时才用它兜底。
+  if ((form.conditions.region.config.boundChannelIds || []).length === 0) {
+    push(String(form.conditions.region.config.channelId || ''))
+  }
   for (const k of roiEchoed.value) push(k)
   for (const k of roiTouched.value) push(k)
   const labeled = [...seen.keys()].map(base => {
-    const hit = [...boundChannelOptions.value, ...snapshotChannelOptions.value]
-      .find(o => roiBaseOf(String(o.value)) === base)
-    const detail = hit?.deviceName || hit?.deviceIp || ''
+    const candidates = [...boundChannelOptions.value, ...snapshotChannelOptions.value, ...channelOptionsDynamic.value]
+    const hit = candidates.find(o => roiBaseOf(String(o.value)) === base && (o.deviceName || o.deviceIp || o.deviceId))
+      || candidates.find(o => roiBaseOf(String(o.value)) === base)
+    const deviceMeta = hit?.deviceId
+      ? cascadeDevices.value.get(String(hit.deviceId))
+      : undefined
+    const detail = hit?.deviceName || hit?.deviceIp || deviceMeta?.name || deviceMeta?.ip || ''
     const label = detail && hit
       ? String(hit.label).replace(` (${detail})`, '')
       : (hit?.label || base)
@@ -2175,6 +2185,7 @@ const roiTabChannels = computed<Array<{ value: string; label: string; detail: st
   return labeled
 })
 /** 严格模式 (逐通道生效): 回显含 by_channel 或本次会话有触碰 */
+//新增 绘制通道默认选中第一路。
 const roiStrictMode = computed(() => roiEchoed.value.size > 0 || roiTouched.value.size > 0)
 /** 保存序列化集 = 回显通道 ∪ 本次触碰通道 */
 const roiSerializeKeys = computed(() => new Set<string>([...roiEchoed.value, ...roiTouched.value]))
@@ -2806,6 +2817,10 @@ const form = reactive({
   mapIds: [] as number[],
   conditions: defaultConditions(),
 })
+// 绘制通道出现后默认激活第一路，避免首次绘制仍落在通用画布。
+watch(roiTabChannels, (tabs) => {
+  if (!activeRoiChannel.value && tabs.length > 0) roiEnsureActive(tabs[0].value)
+}, { flush: 'post' })
 // [FIX tdz 2026-09-10] guard-badge 的 watch 从 guard-badge 块投至此 (form 之后):
 //   Vue watch 建立即同步取 source 初值, boundChannelDraft getter 读 form,
 //   声明顺序错误 = setup 崩溃。挂载后回填/勾选/重置均自然触发刷新。
@@ -3525,7 +3540,10 @@ function resetEditorState(rule: LinkageRule | null) {
                 ? e.tripwire_refs.filter((r: any) => r && r.id !== undefined && r.id !== null)
                     .map((r: any) => ({ id: String(r.id), direction: String(r.direction || '') }))
                 : []
-              byChPacksEcho[k] = { list, combine: e.combine === 'intersection' ? 'intersection' : 'union', tripwireRefs: refs }
+              const baseKey = roiBaseOf(k)
+              if (baseKey) {
+                byChPacksEcho[baseKey] = { list, combine: e.combine === 'intersection' ? 'intersection' : 'union', tripwireRefs: refs }
+              }
             }
           }
         } catch { /* 损坏忽略 → 通用模式 */ }
@@ -5195,6 +5213,7 @@ watch(mainTab, (tab) => {
 
 /* ── 抽屉编辑器 ── */
 .editor-body { padding-right: 8px; }
+:deep(.el-drawer__header) { padding-top: 10px; }
 
 /* ── 条件卡片 ── */
 .condition-card {
@@ -5217,7 +5236,8 @@ watch(mainTab, (tab) => {
 .cond-icon { font-size: 14px; }
 .cond-label { font-size: 13px; font-weight: 600; }
 /* [任务5] 开关区域: 「全部 / switch / 单个设备」 水平布局 */
-.cond-switch-zone { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; padding: 2px 8px; border: 1px solid var(--app-border); border-radius: 6px; background: var(--el-fill-color-extra-light); cursor: pointer; }
+.cond-actions { display: flex; align-items: center; }
+.cond-switch-zone { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; margin-right: 8px; padding: 2px 8px; border: 1px solid var(--app-border); border-radius: 6px; background: var(--el-fill-color-extra-light); cursor: pointer; }
 .cond-switch-label { font-size: 12px; font-weight: 600; color: var(--el-color-primary); min-width: 36px; text-align: center; }
 /* [FIX 2026-09-02] 事件类型核心条件卡: 头部不可折叠, 移除手型/hover */
 .cond-header.is-static { cursor: default; }

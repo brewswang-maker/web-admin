@@ -143,5 +143,5 @@ function isDashboard(route: RouteLocationNormalized) {
 }
 
 /* 全局样式: el-drawer teleport 到 body, scoped 作用不到, 用非 scoped 块 */
-.el-drawer__header { margin-bottom: 0 !important ;}
+.el-drawer__header { margin-bottom: 14px !important ;}
 </style>

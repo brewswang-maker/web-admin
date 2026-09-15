@@ -167,7 +167,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, nextTick, computed } from 'vue'
+import { ref, watch, nextTick, computed, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import {
   drawPolygon, drawTripwire, drawDirectionalLine, drawRectangle, drawPoint, rectFromDiagonal,
@@ -943,6 +943,10 @@ function renderCanvas(previewPoint?: { x: number; y: number }) {
 }
 
 /** [FIX 2026-09-02] 选中 ROI 顶点控制点 (统一叠画, 不依赖各 draw 函数) */
+onMounted(() => {
+  renderCanvas()
+})
+
 function drawVertexHandles(ctx: CanvasRenderingContext2D, roi: RoiData) {
   const canvas = canvasRef.value
   if (!canvas) return
@@ -1054,6 +1058,10 @@ function renderRoi(ctx: CanvasRenderingContext2D, roi: RoiData, alpha: number) {
   color: #fff;
 }
 .roi-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 6px;
   max-height: 160px;
   overflow-y: auto;
   margin-bottom: 8px;
@@ -1062,9 +1070,13 @@ function renderRoi(ctx: CanvasRenderingContext2D, roi: RoiData, alpha: number) {
 }
 .roi-list__item {
   display: flex;
+  flex: 0 0 calc(50% - 4px);
+  box-sizing: border-box;
   align-items: center;
   gap: 6px;
   padding: 4px 8px;
+  border: 1px solid var(--el-border-color);
+  border-radius: 4px;
   cursor: pointer;
   transition: background 0.15s;
 }

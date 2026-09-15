@@ -370,7 +370,7 @@
                         </div>
                         <div class="alarm-popup__face-compare-item">
                           <img v-if="faceCompare.enroll" :src="faceCompare.enroll" alt="注册照" />
-                          <div v-else class="alarm-popup__face-compare-none">未注册</div>
+                          <img v-else :src="defaultFacePhoto" alt="未注册" />
                           <span>注册照片</span>
                         </div>
                         <div class="alarm-popup__face-compare-info">
@@ -477,7 +477,10 @@
                         </el-select>
                       </div>
                       <div class="alarm-popup__dispose-row alarm-popup__dispose-row--col">
-                        <span class="alarm-popup__dispose-key alarm-popup__dispose-key--required">备注:</span>
+                        <span
+                          class="alarm-popup__dispose-key"
+                          :class="{ 'alarm-popup__dispose-key--required': ['confirmed', 'unsure'].includes(disposeType) }"
+                        >备注:</span>
                         <el-input v-model="handleNote" type="textarea" :rows="12" resize="none" placeholder="请输入备注" class="alarm-popup__dispose-textarea" />
                       </div>
                     </template>
@@ -612,6 +615,7 @@ import { ElMessage } from 'element-plus'
 import { Loading } from '@element-plus/icons-vue'
 import MiniPlayer from '@/components/video/MiniPlayer.vue'
 import AlarmSnapshot from '@/components/alarm/AlarmSnapshot.vue'
+import defaultFacePhoto from '@/assets/photo.jpg'
 import EvidenceFrames from '@/components/EvidenceFrames.vue' // [POPUP-EV-MERGE 2026-09-07] 弹窗内已并入画廊, import 保留给未来复用 (无副作用)
 import { buildEvidenceFrames, isEvidencePostPending } from '@/utils/evidenceFrames' // [EV-TRIPLE 2026-09-14] 取证帧语义/时间戳共享模块
 import {
