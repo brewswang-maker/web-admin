@@ -162,10 +162,17 @@ async function handleLogin() {
   authError.value = null
 
   try {
-    await auth.login({
+    // [FIX login-toast 2026-09-15] store.login 吞错返回 {success}, 必须检查;
+    //   失败时页面内 authError + ElMessage.error 双提示, 不再静默跳转
+    const result = await auth.login({
       username: form.username,
       password: form.password,
     })
+    if (!result?.success) {
+      authError.value = result?.message || '登录失败，请检查用户名和密码'
+      ElMessage.error(authError.value ?? '登录失败，请检查用户名和密码')
+      return
+    }
 
     ElMessage.success({
       message: `欢迎回来，${auth.username || form.username}`,
@@ -177,6 +184,7 @@ async function handleLogin() {
     router.push(redirect)
   } catch (err: any) {
     authError.value = err?.message || '登录失败，请检查用户名和密码'
+    ElMessage.error(authError.value ?? '登录失败，请检查用户名和密码')
   } finally {
     loading.value = false
   }

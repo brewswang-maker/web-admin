@@ -180,7 +180,10 @@ async function fetchRoles() {
   loading.value = true
   try {
     const res = await rbacApi.getRoles()
-    roles.value = (res.data as any)?.data?.items || (res.data as any)?.data || []
+    // [FIX 2026-09-15] 规范化 permissions 数组: 列表接口历史不带该字段, 模板读
+    //   role.permissions.length 曾致渲染 TypeError 整页空白
+    roles.value = (((res.data as any)?.data?.items || (res.data as any)?.data || []) as any[])
+      .map((r) => ({ ...r, permissions: Array.isArray(r.permissions) ? r.permissions : [] }))
   } catch (e: any) {
     ElMessage.error('获取角色列表失败: ' + e.message)
   } finally {

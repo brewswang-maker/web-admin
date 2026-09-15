@@ -39,9 +39,19 @@ export const useUserStore = defineStore('user', () => {
     isLoading.value = true
     try {
       const response = await userApi.login(loginForm)
-      const resData = response.data as any
-      const authData: AuthResponse = resData.data ?? resData
-      let { token: newToken, user } = authData
+      const body: any = (response as any)?.data
+      // [FIX login-toast 2026-09-15] 后端约定: 登录端点 HTTP 恒 200, 业务成败在 body.code
+      //   (0=成功, 401=凭据错误)。原逻辑直接解构 body.data, 密码错误时 data={} →
+      //   user.roles 抛 TypeError 被 catch 吞掉 → 返回 {success:false} 不 throw →
+      //   LoginView 走成功分支 (欢迎回来+跳转) 被守卫踢回 → 用户看不到任何错误提示
+      if (!body || body.code !== 0) {
+        return { success: false, message: body?.message || '用户名或密码错误' }
+      }
+      const authData: AuthResponse | undefined = body.data
+      if (!authData?.token || !authData?.user) {
+        return { success: false, message: '登录响应缺少凭据, 请稍后重试' }
+      }
+      const { token: newToken, user } = authData
 
       // 后端返回 roleIds 而非 roles，做字段映射
       if (!user.roles && (user as any).roleIds) {

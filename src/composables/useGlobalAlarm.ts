@@ -13,6 +13,7 @@ import { settingsApi } from '@/api/settings'
 import { alarmApi } from '@/api/alarm'
 import { showAlarmPopup, pushLinkageLog, normalizeAlarmPayload, playAlarmSound, findMatchingRule, ensureRulesLoaded, invalidateRuleCache, popupVisible, currentAlarm } from './useAlarmPopup'
 import { useChannelStore } from '@/stores/channel'
+import { useUserStore } from '@/stores/user'
 import { http } from '@/api/http'
 import type { AlarmEvent } from '@/types/alarm'
 
@@ -367,6 +368,14 @@ async function handleAlarm(alarm: any) {
     console.warn('[useGlobalAlarm] handleAlarm called with null payload')
     return
   }
+  // [FIX alarm-unauth 2026-09-15] 未登录不弹窗不入队: /ws 广播不区分认证态,
+  //   未登录打开登录页时告警推送曾直接触发弹窗 (报警弹窗出现在登录前)
+  try {
+    if (!useUserStore().isLoggedIn) {
+      console.log('[useGlobalAlarm] 未登录, 丢弃告警推送')
+      return
+    }
+  } catch { /* pinia 未就绪时保守放行 (与原行为一致) */ }
   try {
     console.log('[useGlobalAlarm] handleAlarm type:', alarm.alarm_type || alarm.type, 'ch:', alarm.channel_id || alarm.channelId)
 

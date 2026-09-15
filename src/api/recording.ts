@@ -242,6 +242,33 @@ export async function exportRangeRecording(params: {
   return out
 }
 
+/**
+ * [REC-EXPORT-ASYNC 2026-09-15] 异步区间导出: 远程访问链路 (花生壳映射) ~30s 响应截断,
+ *   同步端点长窗 (实测 8min 窗 ≈131s) 必断; 此处提交后台任务后轮询状态直到完成。
+ *   服务端 copy 级导出 30min 窗实测 <2min, 轮询上限 12min 已覆盖。
+ */
+export async function exportRangeRecordingAsync(params: {
+  device_id?: string
+  channel_id: string
+  start_time: string
+  end_time: string
+}): Promise<{ download_url: string; filename: string; file_size?: number; segments_used?: number }> {
+  const { data } = await recordingHttp.post('/export-range-async', params, { timeout: 15000 })
+  const taskId = data?.data?.task_id
+  if (!taskId) throw new Error(data?.message || '后端未返回导出任务 id')
+  const deadline = Date.now() + 12 * 60_000
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 2500))
+    const st = await recordingHttp.get('/export-range-status', { params: { task_id: taskId }, timeout: 15000 })
+    const d = st.data?.data || {}
+    if (d.status === 'done') {
+      return { download_url: d.download_url, filename: d.filename, file_size: d.file_size, segments_used: d.segments_used }
+    }
+    if (d.status === 'failed') throw new Error(d.error || '导出任务失败')
+  }
+  throw new Error('导出超时 (超过 12 分钟), 请缩小时间范围')
+}
+
 /** 删除录像 */
 export function deleteRecording(id: string) {
   return recordingHttp.delete<ApiResponse<void>>(`/${id}`)

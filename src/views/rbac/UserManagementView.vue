@@ -221,8 +221,9 @@
         </el-row>
         <el-row :gutter="12">
           <el-col :span="12">
-            <el-form-item v-if="!isEditing" label="密码" prop="password">
-              <el-input v-model="userForm.password" type="password" placeholder="留空则默认 用户名@123" show-password />
+            <!-- [FIX 2026-09-15] 编辑态开放重置密码 (后端 resetPassword 已同步认证库, 留空不修改) -->
+            <el-form-item :label="isEditing ? '重置密码' : '密码'" prop="password">
+              <el-input v-model="userForm.password" type="password" :placeholder="isEditing ? '留空则不修改密码' : '留空则默认 用户名@123'" show-password />
             </el-form-item>
           </el-col>
           <el-col :span="12">

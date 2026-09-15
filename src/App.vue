@@ -32,12 +32,13 @@
  *  3. Auth 初始化 (在路由守卫中完成)
  *  5. 首次用户交互时解锁音频/语音合成 (autoplay policy)
  */
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { ElConfigProvider } from 'element-plus'
 import zhCn from 'element-plus/es/locale/lang/zh-cn'
 import en from 'element-plus/es/locale/lang/en'
 import SkeletonLoader from '@/components/SkeletonLoader.vue'
 import { usePreferenceStore } from '@/stores/preference'
+import { useUserStore } from '@/stores/user'
 import { startGlobalAlarm, stopGlobalAlarm } from '@/composables/useGlobalAlarm'
 // [SOUND-ORIGIN 2026-09-11] 解锁用静音 wav (替代 alarm.wav 0.001 音量播放):
 //   首次手势解锁动作零告警音, 手动入口 (列表/规则页/弹窗) 点击不再有声
@@ -88,8 +89,18 @@ function unlockMediaOnFirstGesture() {
 }
 
 onMounted(() => {
-  // 启动全局告警 WebSocket（全页面共用，弹窗不依赖 LiveView）
-  startGlobalAlarm()
+  // [FIX alarm-unauth 2026-09-15] 全局告警 WS 改由登录态驱动:
+  //   原无条件 startGlobalAlarm() → 未登录也连 /ws 收告警推送 → 登录页弹报警弹窗。
+  //   现在: 已登录才连接 (含刷新恢复), 登出即断开; handleAlarm 内另有二道守卫
+  const userStore = useUserStore()
+  watch(
+    () => userStore.isLoggedIn,
+    (loggedIn) => {
+      if (loggedIn) startGlobalAlarm()
+      else stopGlobalAlarm()
+    },
+    { immediate: true },
+  )
   // 注册首次交互解锁监听器 (passive, 不阻塞)
   document.addEventListener('click', unlockMediaOnFirstGesture, { once: true, passive: true })
   document.addEventListener('keydown', unlockMediaOnFirstGesture, { once: true, passive: true })

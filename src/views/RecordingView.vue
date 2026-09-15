@@ -4,7 +4,7 @@ import { useRouter, useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { deviceHttp, recordingHttp } from '@/api/http'
 import { alarmApi } from '@/api/alarm'  // [P3-VP1] 时间轴告警标记
-import { getRecordings, playRecording, stopPlayback as stopRecordingPlayback, controlPlayback, downloadRecording, recordUrlCandidates, toLocalISOString, exportRangeRecording, fetchAndDownload, ensureRecordTranscoded, type RecordingSegment as ApiRecordingSeg } from '@/api/recording'
+import { getRecordings, playRecording, stopPlayback as stopRecordingPlayback, controlPlayback, downloadRecording, recordUrlCandidates, toLocalISOString, exportRangeRecordingAsync, fetchAndDownload, ensureRecordTranscoded, type RecordingSegment as ApiRecordingSeg } from '@/api/recording'
 import {
   getWatermark, updateWatermark,
   downloadSegment as downloadSegmentApi,
@@ -593,8 +593,9 @@ async function finishMarkRecording() {
     return
   }
   markExporting.value = true
+  ElMessage.success('已提交导出任务，大区间可能需要 1-2 分钟，完成后自动下载')
   try {
-    const out = await exportRangeRecording({
+    const out = await exportRangeRecordingAsync({
       device_id: selectedDeviceId.value || undefined,
       channel_id: String(selectedChannelId.value),
       start_time: toLocalISOString(new Date(startMs)),
@@ -603,7 +604,13 @@ async function finishMarkRecording() {
     await fetchAndDownload(out.download_url, out.filename || `clip_${Date.now()}.mp4`)
     ElMessage.success(`录像已下载${out.segments_used ? ` (拼接 ${out.segments_used} 个切片)` : ''}`)
   } catch (e: any) {
-    ElMessage.error('录像导出失败: ' + (e?.response?.data?.message || e?.message || ''))
+    const raw = e?.response?.data?.message || e?.message || ''
+    // [REC-MARK FIX 2026-09-15] 无覆盖切片 → 可行动指引 (回放源可能选在设备存储段)
+    if (/no recordings cover/i.test(raw)) {
+      ElMessage.error('该时段无中心存储录像切片, 无法导出; 请回放时间轴绿色中心存储段后再试')
+    } else {
+      ElMessage.error('录像导出失败: ' + raw)
+    }
   } finally {
     markExporting.value = false
   }
@@ -613,6 +620,16 @@ function toggleMarkRecording() {
   if (markActive.value) { finishMarkRecording(); return }
   if (!isPlaying.value || !currentSegmentStartMs.value) {
     ElMessage.warning('请先开始回放再录像')
+    return
+  }
+  // [REC-MARK FIX 2026-09-15] 起点必须是中心存储 (zlm) 覆盖段: export-range 仅能裁
+  //   ZLM 中心切片, 设备存储 (gb28181) 回放位置提交导出必 failed (no recordings cover)。
+  //   zlm 覆盖段优先匹配: gb 长段与 zlm 段重叠时 (start 更靠前) 不得误拦 zlm 回放。
+  const nowMs = markClockMs()
+  const covNow = (x: TlSeg) => x.s <= nowMs && nowMs <= x.e + 5000
+  const startHit = buildSegs().find((x) => covNow(x) && x.r.source === 'zlm') || buildSegs().find(covNow)
+  if (!startHit || startHit.r.source !== 'zlm') {
+    ElMessage.warning('当前回放位置无中心存储录像 (可能为设备存储录像段), 标记录像仅支持中心存储, 请点击时间轴绿色录像块回放后再录')
     return
   }
   markStartMs.value = markClockMs()
@@ -663,7 +680,7 @@ async function tlRangeExport() {
   }
   tlExporting.value = true
   try {
-    const out = await exportRangeRecording({
+    const out = await exportRangeRecordingAsync({
       device_id: selectedDeviceId.value || undefined,
       channel_id: String(selectedChannelId.value),
       start_time: toLocalISOString(new Date(lo)),
