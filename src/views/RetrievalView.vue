@@ -6,6 +6,23 @@
         <span class="sub">混合检索 (P4-E) / 以文搜图 / 以图搜图 [P0-B] / 跨镜轨迹 [校园二期]</span>
         </div>
 
+        <!-- [P1-1 2026-09-15] 能力状态面板 (G4/RA-3): 检索链路真实能力一览,
+             口径如实: embed_mode 行为级探测 / last_rebuild_ms 内存态 (0=未重建,
+             重启即失) / VLM 复核取 effective_enabled。加载失败时静默隐藏。 -->
+        <div v-if="panel" class="cap-bar">
+          <el-tag :type="panel.embed_mode === 'real' ? 'success' : 'warning'" size="small">
+            CLIP 塔: {{ panel.embed_mode === 'real' ? 'real (语义嵌入)' : 'hash_fallback (降级)' }}
+          </el-tag>
+          <el-tag type="info" size="small">图像向量 {{ panel.image_vector_count ?? 0 }} / {{ panel.index_size ?? 0 }}</el-tag>
+          <el-tag :type="vlmEnabled ? 'success' : 'info'" size="small">VLM 复核: {{ vlmEnabled ? '已启用' : '未启用' }}</el-tag>
+          <el-tag type="info" size="small">
+            索引 {{ panel.index_size ?? 0 }} 条 · {{ panel.last_rebuild_ms ? `重建于 ${formatTs(panel.last_rebuild_ms)}` : '未重建' }}
+          </el-tag>
+          <el-tooltip content="hash_fallback = CLIP 语义塔未部署, 检索退化为词法哈希向量: 英文关键词可用, 中文与跨模态语义受限。图像塔与文本塔同源部署, 降级状态一致。">
+            <span class="hint" style="cursor: help">口径说明</span>
+          </el-tooltip>
+        </div>
+
         <el-tabs v-model="activeTab" class="retrieval-tabs">
         <!-- ════ Tab 1: P4-E 混合检索 ════ -->
         <el-tab-pane label="混合检索" name="hybrid">
@@ -221,6 +238,19 @@
         </el-tab-pane>
         </el-tabs>
 
+        <!-- [P1-2 2026-09-15] hash 降级提示: 降级态下结果语义质量受限, 如实告知 -->
+        <el-alert
+        v-if="degraded && activeTab !== 'trajectory'"
+        type="warning"
+        :closable="false"
+        class="tower-alert"
+        title="当前检索运行在 hash 降级模式 (CLIP 语义塔未部署)"
+        >
+        词法哈希向量仅支持英文关键词字面匹配; 中文查询与跨模态语义检索受限,
+        结果质量如实降级 (本地评测基线 mean_recall@10=0.4, 中文 0 命中)。
+        部署 CLIP bmodel 后自动恢复语义检索 (见口径说明)。
+        </el-alert>
+
         <!-- ════ 结果栅格 (共用; 跨镜轨迹 tab 独立时间轴呈现, 不复用) ════ -->
         <template v-if="items.length && activeTab !== 'trajectory'">
         <el-divider content-position="left">
@@ -249,6 +279,10 @@
                 <div class="line">通道: {{ it.channel_id_str || it.channel_id || '—' }}</div>
                 <div class="line">时间: {{ formatTs(it.timestamp) }}</div>
                 <div class="line id">{{ it.image_id || it.alarm_id || it.person_id || '—' }}</div>
+                <!-- [P2-3 2026-09-15] 检索→布控贯通 (§5.4-14): 一键转布控草稿 -->
+                <div class="line">
+                  <el-button size="small" type="primary" link class="surv-btn" @click.stop="toSurveillance(it)">→ 布控</el-button>
+                </div>
                 </div>
             </el-card>
             </el-col>
@@ -278,7 +312,7 @@
  * 思路 (kind → 算子收敛); 结果栅格点击联动告警详情; 后端 501 时 UI 显式展示
  * CLIP 图像塔激活指引 (诚实降级口径)。
  */
-import { computed, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import type { UploadFile } from 'element-plus'
@@ -290,6 +324,8 @@ import {
   type AttrCondition,
   type RetrievalMode,
   type RetrievalItem,
+  type RetrievalStats,
+  type VlmStatus,
   type ImageSearchItem,
   type ImageTowerUnavailable,
   type TrajectoryResult,
@@ -303,6 +339,18 @@ const router = useRouter()
 const activeTab = ref<'hybrid' | 'nl' | 'image' | 'trajectory'>('hybrid')
 const loading = ref(false)
 const searched = ref(false)
+
+// ── [P1-1 2026-09-15] 能力状态面板 (G4/RA-3) ───────────────
+// 面板加载失败静默 (null → 状态条隐藏), 核心检索不受影响。
+const panel = ref<RetrievalStats | null>(null)
+const vlm = ref<VlmStatus | null>(null)
+const vlmEnabled = computed(() => vlm.value?.effective_enabled === true)
+const degraded = computed(() => panel.value?.embed_mode === 'hash_fallback')
+onMounted(async () => {
+  const [s, v] = await Promise.allSettled([retrievalApi.getStats(), retrievalApi.getVlmStatus()])
+  if (s.status === 'fulfilled') panel.value = s.value.data ?? null
+  if (v.status === 'fulfilled') vlm.value = v.value.data ?? null
+})
 
 // ── Tab 1 混合检索 ──────────────────────────────────────────────
 const hybridForm = reactive({
@@ -550,6 +598,30 @@ async function doSearch(fn: () => Promise<{ data?: unknown }>) {
   }
 }
 
+// ── [P2-3 2026-09-15] 检索→布控贯通 (§5.4-14) ──────────────
+// 结果项一键转入布控草稿: 跳联动规则页预填 (nl 描述/时间窗)。复用现有规则
+// API, LinkageEngine.cpp 判定逻辑零改动 (计划口径)。nl 来源: 以文搜图用查询
+// 词, 其余模式用条目 alarm_type/描述; 时间窗取条目时间 ±30min (LinkageRule
+// 侧转当日 HH:MM)。
+function toSurveillance(it: AnyItem) {
+  const nl = activeTab.value === 'nl'
+    ? nlForm.nl.trim()
+    : String(it.alarm_type || it.description || it.image_id || '')
+  if (!nl) {
+    ElMessage.warning('该条目无可用于布控的描述信息')
+    return
+  }
+  const raw = Number(it.timestamp || 0)
+  const ts = raw > 1e12 ? raw : raw * 1000  // 秒→毫秒兑底 (formatTs 同口径)
+  router.push({
+    path: '/linkage',
+    query: {
+      prefill_nl: nl,
+      ...(ts ? { prefill_start_ms: String(ts - 1800_000), prefill_end_ms: String(ts + 1800_000) } : {}),
+    },
+  })
+}
+
 // ── 详情联动 ────────────────────────────────────────────────────
 const detailVisible = ref(false)
 const detailJson = ref('')
@@ -577,6 +649,8 @@ void valueControlKind
 .page-header { margin-bottom: 12px; }
 .page-header h2 { margin: 0 0 4px; font-size: 20px; }
 .page-header .sub { color: var(--el-text-color-secondary); font-size: 12px; }
+/* [P1-1] 能力状态面板条 */
+.cap-bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 4px 0 12px; }
 .query-form { max-width: 760px; }
 .cond-row { display: flex; gap: 8px; margin-bottom: 8px; }
 .cond-key { width: 320px; }
@@ -592,6 +666,8 @@ void valueControlKind
 .meta { font-size: 12px; }
 .meta .sim { display: flex; align-items: center; gap: 6px; }
 .meta .line { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* [P2-3] 布控入口按钮 (可换行不被 ellipsis 截断) */
+.meta .line .surv-btn { padding: 0; height: auto; }
 .detail-json { max-height: 380px; overflow: auto; background: var(--el-fill-color-light); padding: 8px; border-radius: 4px; }
 /* [校园二期增强] 跨镜轨迹时间轴 */
 .traj-timeline { max-width: 760px; padding-left: 4px; }

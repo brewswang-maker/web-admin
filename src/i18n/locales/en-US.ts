@@ -784,6 +784,9 @@ const enUS: MessageSchema = {
     video: 'Video',
     alarm: 'Alarm',
     ai: 'AI',
+    // [场景菜单重构 2026-09-15] 「应用场景」一级组
+    scenarios: 'Scenarios',
+    // ── Legacy keys from old per-scenario primary menus (entries moved to menuSecondary) ──
     screening: 'Security Screening',
     school: 'Campus',
         // [加油站方案 2026-08-30] 一级菜单加油站
@@ -794,6 +797,16 @@ const enUS: MessageSchema = {
     // [Video perimeter 2026-08-31] primary menu (vp)
     videoPerimeter: 'Video Perimeter',
     platform: 'Platform Management'
+  },
+
+  // [场景菜单重构 2026-09-15] 6 scenario entries under the Scenarios group (order = menu order)
+  menuSecondary: {
+    smartPerimeter: 'Smart Perimeter',
+    unattended: 'Unattended',
+    smartGasStation: 'Smart Gas Station',
+    smartCampus: 'Smart Campus',
+    smartScreening: 'Smart Screening',
+    largeEvent: 'Large Event'
   },
 
 

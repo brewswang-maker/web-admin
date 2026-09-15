@@ -98,8 +98,16 @@
                    取代旧「找到 N 段录像, 点击播放」人工选片列表 (用户反馈要求) -->
               <div v-show="activePrimaryTab === 'playback'" class="alarm-popup__pane">
                 <div class="alarm-popup__playback-wrap">
+                  <!-- [FIX rec-tc 2026-09-15 排查 R1] 转码等待占位: 本地录像片为 HEVC/PCMA,
+                       浏览器无法直解 (联动回放黑屏主根因) → 播放前先转码 H264 (60s 片
+                       实测 ≈6~12s); 等待期显示「回放生成中」替代黑屏, 杜绝误导性失败文案 -->
+                  <div v-if="queuePreparing" class="alarm-popup__recording-state">
+                    <el-icon class="is-loading" :size="20"><Loading /></el-icon>
+                    <span style="margin-left:8px">回放生成中…</span>
+                    <p class="alarm-popup__hint">录像正在转为浏览器兼容格式，首次播放约需 10 秒</p>
+                  </div>
                   <MiniPlayer
-                    v-if="playerSrc"
+                    v-else-if="playerSrc"
                     :key="`pb-${currentAlarm?.id || 'none'}-${queueEpoch}-${playerSrc}`"
                     :src="playerSrc" :channel-id="currentAlarm.channelId"
                     :src-fallbacks="playbackFallbackUrls"
@@ -396,8 +404,8 @@
                         <span class="alarm-popup__ai-review-title">AI 复核</span>
                         <span
                           class="alarm-popup__ai-review-tag"
-                          :class="`alarm-popup__ai-review-tag--${aiReviewTagKind}`"
-                        >{{ aiReviewVerdictLabel(currentAlarm?.aiReview) }}</span>
+                          :class="`alarm-popup__ai-review-tag--${aiReviewStageKind}`"
+                        >{{ aiReviewStageText }}</span>
                       </div>
                       <div class="alarm-popup__ai-review-body">
                         <div class="alarm-popup__ai-review-row">
@@ -616,15 +624,16 @@ import {
 import { ACTION_TYPE_REVERSE_MAP } from '@/api/linkage'
 import { alarmApi, type AlarmOccurrence } from '@/api/alarm'
 import { useAuthStore } from '@/stores/auth'  // [接警单号 2026-09-09] 处置提交带当前登录用户 (handled_by)
-import { queryRecordings, toLocalISOString, recordUrlCandidates, type DeviceRecording } from '@/api/recording'
-import { recordingHttp } from '@/api/http'
+import { queryRecordings, toLocalISOString, recordUrlCandidates, ensureRecordTranscoded, type DeviceRecording } from '@/api/recording'
+import { recordingHttp, http } from '@/api/http'
 import { checkStreamAlive, stopStream } from '@/api/stream'
 import { useObjectLabel, type ObjectLabelMeta } from '@/composables/useObjectLabel'
 // [P0-14 2026-09-04 SSOT] 弹窗类型名优先走 canonical zh (与列表/规则页同源), 本地映射降为 fallback
 import { useEventTypeZh } from '@/composables/useEventTypeZh'
 import { useChannelStore } from '@/stores/channel'
 // [AI 复核恢复 2026-09-10 P4] verdict 短标 (真事件/误报/未复核)
-import { aiReviewVerdictLabel } from '@/types/alarm'
+// [P1-2 2026-09-15] 三态透出 (reviewed/pending/disabled) 归类
+import { aiReviewVerdictLabel, aiReviewStage } from '@/types/alarm'
 import { useRouter } from 'vue-router'
 // [FLOOR-MAP 2026-09-03] 地图 Tab 真实渲染: 只读画布 + 通道反查 (复用共享缓存)
 import FloorMapCanvas from '@/components/map/FloorMapCanvas.vue'
@@ -799,8 +808,14 @@ const activeMapBindings = computed(() => {
 // 非摄像头设备无视频可跳, 提示即可; 告警切换/关闭时自动回归告警通道
 const previewChannelOverride = ref('')
 const previewChannelOverrideLabel = ref('')
+// [PREV-CHFIX 2026-09-15] GB 告警的 channelId 可能被后端归并为父设备码 (NVR 自查形态:
+//   REST channel_id==device_id==NVR 码), 直接预览会拉 NVR 主设备码 (无流/错通道),
+//   而联动回放却按快照流名走真实通道 → 预览/回放通道不一致。
+//   快照/切片 URL 内嵌真实告警通道 (gb_<裸码>), 优先反解; 无线索时回退 channelId。
 const previewChannelId = computed(() =>
-  previewChannelOverride.value || String(currentAlarm.value?.channelId || ''))
+  previewChannelOverride.value
+  || alarmStreamName(currentAlarm.value)?.replace(/^gb_/, '')
+  || String(currentAlarm.value?.channelId || ''))
 function onMapDeviceClick(b: CameraMapBinding) {
   if (b.device_type && b.device_type !== 'camera') {
     ElMessage.info(`${camDeviceLabel(b)} · 非视频设备, 无实时预览`)
@@ -1013,6 +1028,12 @@ const queueSrc = ref('')
 const queueSeekStart = ref(0)
 const queueStopAt = ref<number | undefined>(undefined)
 const queueEpoch = ref(0)
+// [FIX rec-tc 2026-09-15 排查 R1] 回放转码等待态 + 播放尝试序号:
+//   本地录像片 HEVC/PCMA → 播放前先经 ensureRecordTranscoded 转 H264 (队列/直链两路径);
+//   queuePreparing=true 期间模板显示「回放生成中」占位 (替代黑屏); pbAttempt 守卫异步
+//   转码回调 — 快速切段/重播/切告警时旧回调整体作废 (不覆盖新状态)。
+const queuePreparing = ref(false)
+let pbAttempt = 0
 // [NVR-PB 2026-09-13] 当前播放源的显式格式/直播语义 (绑 MiniPlayer src-format/src-is-live):
 //   ZLM mp4 直链段留 '' (URL 后缀推断命中 mp4); NVR 回放流段显式 'flv'+'非直播' —
 //   NVR 流 URL 后缀不可靠且 /rtp/... 形态常被后缀推断误判 mp4, 显式格式是弹窗
@@ -1026,7 +1047,9 @@ const skippedSegments = ref(0)
 //   避免弹窗打开 (默认联动预览 tab) 时后台空播, 切到回放 tab 才从头 (T-90s) 开始.
 const playerSrc = computed(() => {
   if (activePrimaryTab.value !== 'playback') return ''
-  if (queueActive.value && queueSrc.value) return queueSrc.value
+  // [FIX rec-tc 2026-09-15] 队列接管时只看 queueSrc (转码等待期为 ''): 占位分支
+  //   v-if="queuePreparing" 在链首, 此处不再回落 videoClipUrl 错播旧源
+  if (queueActive.value) return queueSrc.value
   return currentAlarm.value?.videoClipUrl || ''
 })
 // [POPUP-3MIN] 回放区间提示 (播放器下方进度条): "HH:mm:ss ~ HH:mm:ss"
@@ -1085,19 +1108,32 @@ function pickCoveringRecording(recs: DeviceRecording[], tMs: number): DeviceReco
   }).sort((a, b) => (b.covers - a.covers) || (a.dist - b.dist))
   return scored[0]?.r ?? null
 }
-function playQueueItem(i: number) {
+// [FIX rec-tc 2026-09-15 排查 R1] 段播放前先转码为浏览器兼容 H264 (原片 HEVC/PCMA
+//   直链在 Chrome/Linux 恒黑屏 — 连播黑屏主根因); 等待期 queuePreparing 占位;
+//   转码不可用 → 原片兜底 (行为不劣于旧版, 由候选链自然报错)。异步竞态由 pbAttempt 守卫。
+async function playQueueItem(i: number) {
   const item = playbackQueue.value[i]
   if (!item) return
+  const attempt = ++pbAttempt
   queueIndex.value = i
-  const cands = recordUrlCandidates(item.url)
-  const src = cands[0] || item.url
-  playbackFallbackUrls.value = cands.slice(1)
   queueSeekStart.value = item.seekStart
   queueStopAt.value = item.stopAt
-  queueSrc.value = src
+  playbackFallbackUrls.value = []
+  queueSrc.value = ''
+  queuePreparing.value = true
   // [NVR-PB] 队列段恒为 ZLM mp4 直链 → 后缀推断即可, 直播语义标志复位
   playerSrcFormat.value = ''
   playerSrcIsLive.value = true
+  const h264 = await ensureRecordTranscoded(item.url)
+  if (attempt !== pbAttempt || popupClosing) return  // 期间已切段/重播/关窗 → 整体作废
+  queuePreparing.value = false
+  const playUrl = h264 || item.url
+  const cands = recordUrlCandidates(playUrl)
+  queueSrc.value = cands[0] || playUrl
+  playbackFallbackUrls.value = cands.slice(1)
+  // 预转下一段 (后端单并发队列; 播完当前段时下一段通常已就绪 — 消除段间等待)
+  const nx = playbackQueue.value[i + 1]
+  if (nx) void ensureRecordTranscoded(nx.url)
 }
 function startQueuePlayback(items: PlaybackQueueItem[]) {
   playbackQueue.value = items
@@ -1149,6 +1185,17 @@ function onPlaybackError() {
   queueFinished.value = true
   maybeRefreshQueueTail()
 }
+// [FIX rec-snapstream 2026-09-15 排查 verify1] 联动回放查询需真实 ZLM 流名:
+//   channel_id 常为 NVR 国标码, 后端据此拼 gb_<NVR码> 猜不中流目录; 告警的
+//   clip / 快照路径本身携带真实流名 (/record|/snapshots/rtp/gb_.../), 提取兑底。
+function alarmStreamName(alarm: any): string | undefined {
+  const clip = String(alarm?.videoClipUrl || '')
+  const snap = String(alarm?.snapshotUrl || '')
+  return clip.match(/\/record\/(?:record\/)?rtp\/([^/]+)\//)?.[1]
+    || snap.match(/\/snapshots\/rtp\/([^/]+)\//)?.[1]
+    || undefined
+}
+
 // [FIX p1-heal 2026-09-12] 非队列失败自愈 (每告警一次, 防错误循环; 见 onPlaybackError 注释)
 let healedAlarmId = ''
 let healing = false
@@ -1164,6 +1211,7 @@ async function healPlaybackFailure() {
     const recs = await queryRecordings({
       device_id: alarm.deviceId,
       channel_id: alarm.channelId || undefined,
+      stream_name: alarmStreamName(alarm),
       start_time: toLocalISOString(new Date(t - CLIP_QUERY_PAD_MS)),
       end_time: toLocalISOString(new Date(t + CLIP_QUERY_PAD_MS)),
     })
@@ -1187,6 +1235,9 @@ function resetQueue() {
   queueFinished.value = false
   skippedSegments.value = 0
   queueSrc.value = ''
+  // [FIX rec-tc 2026-09-15] 复位转码等待态 + 作废在途转码回调 (切告警时防旧源覆盖)
+  queuePreparing.value = false
+  pbAttempt++
   queueSeekStart.value = 0
   queueStopAt.value = undefined
   tailRefreshes = 0
@@ -1213,6 +1264,7 @@ async function refreshQueueTail() {
     const recs = await queryRecordings({
       device_id: alarm.deviceId,
       channel_id: alarm.channelId || undefined,
+      stream_name: alarmStreamName(alarm),
       start_time: toLocalISOString(new Date(t - CLIP_QUERY_PAD_MS)),
       end_time: toLocalISOString(new Date(t + CLIP_QUERY_PAD_MS)),
     })
@@ -1273,6 +1325,7 @@ function loadPlayback() {
     queryRecordings({
       device_id: currentAlarm.value.deviceId,
       channel_id: currentAlarm.value.channelId || undefined,
+      stream_name: alarmStreamName(currentAlarm.value),
       start_time: toLocalISOString(new Date(t.getTime() - CLIP_QUERY_PAD_MS)),
       end_time: toLocalISOString(new Date(t.getTime() + CLIP_QUERY_PAD_MS)),
     }).then((recs) => {
@@ -1320,10 +1373,20 @@ async function playSelectedRecording(rec: DeviceRecording, opts?: { silent?: boo
     // [NVR-PB] 直链分支: 格式/直播语义标志复位 (URL 后缀推断命中 mp4)
     playerSrcFormat.value = ''
     playerSrcIsLive.value = true
-    const cands = recordUrlCandidates(mp4Direct)
+    // [FIX rec-tc 2026-09-15 排查 R1] 直链播放前先转码为 H264 (原片 HEVC/PCMA 恒黑屏);
+    //   等待期 queuePreparing 占位「回放生成中」; 转码不可用 → 原片兜底 (候选链自然降级)。
+    const attempt = ++pbAttempt
+    playbackFallbackUrls.value = []
+    queuePreparing.value = true
+    if (!silent) ElMessage.info('正在准备录像回放…')
+    const h264 = await ensureRecordTranscoded(mp4Direct)
+    if (attempt !== pbAttempt || popupClosing) return
+    queuePreparing.value = false
+    const playUrl = h264 || mp4Direct
+    const cands = recordUrlCandidates(playUrl)
     playbackFallbackUrls.value = cands.slice(1)
     currentAlarm.value!.videoClipUrl = cands[0]
-    if (!silent) ElMessage.info('已切换到录像文件直链播放')
+    if (!silent) ElMessage.success(h264 ? '录像已就绪，开始播放' : '已尝试直接播放原始录像')
     return
   }
   try {
@@ -1590,7 +1653,12 @@ watch(popupVisible, (v) => {
     activePrimaryTab.value = 'preview'
     activeSecondaryTab.value = 'detail'
   }
-  else { playerError.value = ''; stopLiveFailTimer(); stopHeartbeat(); switchedAwayFromLive = false; liveFallbackHint.value = '' }
+  else { playerError.value = ''; stopLiveFailTimer(); stopHeartbeat(); switchedAwayFromLive = false; liveFallbackHint.value = ''
+    // [FIX rec-tc 2026-09-15] 关弹窗作废在途转码回调/等待态 (组件为 App 常驻不卸载,
+    //   不同于 onBeforeUnmount 的 popupClosing 哨兵 — 需在此显式作废, 防静默回写旧源)
+    queuePreparing.value = false
+    pbAttempt++
+  }
 })
 function onPlayerSnapshot(_blob: Blob) { ElMessage.success('截图已保存') }
 
@@ -1711,6 +1779,38 @@ const aiReviewTagKind = computed(() => {
   if (v === 'confirmed') return 'success'
   if (v === 'retracted') return 'danger'
   return 'info'
+})
+// [P1-2 2026-09-15] AI 复核三态 (G4/R2 诚实透出): VLM 功能启用态拉取。
+//   模块级缓存会话内只拉一次; 失败静默 → null → 三态归 pending, 不误报"未启用"。
+//   注: 拦截器可能 snake→camel, 字段双键兼容; 字段缺失时保持 null 不猜。
+let vlmEnabledCache: boolean | null = null
+let vlmEnabledFetched = false
+async function fetchVlmEnabled(): Promise<boolean | null> {
+  if (vlmEnabledFetched) return vlmEnabledCache
+  vlmEnabledFetched = true
+  try {
+    const r = await http.get<{ data?: Record<string, unknown> }>('/alarm/vlm/status')
+    const d = r.data?.data
+    const raw = d?.effective_enabled ?? d?.effectiveEnabled
+    vlmEnabledCache = typeof raw === 'boolean' ? raw : null
+  } catch {
+    vlmEnabledCache = null
+  }
+  return vlmEnabledCache
+}
+const vlmEnabled = ref<boolean | null>(null)
+void fetchVlmEnabled().then((v) => { vlmEnabled.value = v })
+const aiReviewStageText = computed(() => {
+  const stage = aiReviewStage(currentAlarm.value?.aiReview, vlmEnabled.value)
+  if (stage === 'reviewed') return aiReviewVerdictLabel(currentAlarm.value?.aiReview)
+  if (stage === 'disabled') return 'AI 复核未启用'
+  return '复核中 / 待复核'
+})
+const aiReviewStageKind = computed(() => {
+  const stage = aiReviewStage(currentAlarm.value?.aiReview, vlmEnabled.value)
+  if (stage === 'reviewed') return aiReviewTagKind.value
+  if (stage === 'disabled') return 'info'
+  return 'warn'
 })
 const aiReviewConfidenceText = computed(() => {
   const c = currentAlarm.value?.aiReview?.confidence
@@ -2927,6 +3027,8 @@ void jumpToPlayback; void openImageTab
 .alarm-popup__ai-review-tag--success { background: rgba(0, 212, 170, 0.15); color: #00D4AA; border: 1px solid rgba(0, 212, 170, 0.5); }
 .alarm-popup__ai-review-tag--danger  { background: rgba(245, 108, 108, 0.15); color: #f56c6c; border: 1px solid rgba(245, 108, 108, 0.5); }
 .alarm-popup__ai-review-tag--info    { background: rgba(255, 255, 255, 0.08); color: #909399; border: 1px solid rgba(255, 255, 255, 0.15); }
+/* [P1-2] 三态之 pending (复核中) — warning 色, 与 disabled(info) 分色 */
+.alarm-popup__ai-review-tag--warn    { background: rgba(230, 162, 60, 0.15); color: #e6a23c; border: 1px solid rgba(230, 162, 60, 0.5); }
 .alarm-popup__ai-review-body { display: flex; flex-direction: column; gap: 4px; }
 .alarm-popup__ai-review-row {
   display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap;

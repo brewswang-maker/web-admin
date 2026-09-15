@@ -4,14 +4,15 @@ import { useRouter, useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { deviceHttp, recordingHttp } from '@/api/http'
 import { alarmApi } from '@/api/alarm'  // [P3-VP1] 时间轴告警标记
-import { getRecordings, playRecording, stopPlayback as stopRecordingPlayback, controlPlayback, downloadRecording, recordUrlCandidates, toLocalISOString, exportRangeRecording, fetchAndDownload, type RecordingSegment as ApiRecordingSeg } from '@/api/recording'
+import { getRecordings, playRecording, stopPlayback as stopRecordingPlayback, controlPlayback, downloadRecording, recordUrlCandidates, toLocalISOString, exportRangeRecording, fetchAndDownload, ensureRecordTranscoded, type RecordingSegment as ApiRecordingSeg } from '@/api/recording'
 import {
   getWatermark, updateWatermark,
   downloadSegment as downloadSegmentApi,
   type WatermarkConfig,
 } from '@/api/recording'
-import Hls from 'hls.js'
-import flvjs from 'flv.js'
+// [PERF 2026-09-14 R8] hls.js/flv.js 改动态加载 (原静态 import 拖 391KB gzip 进本页
+//   首屏依赖链; 见下方 ensurePlayerLibs 动态单例)
+import type flvjs from 'flv.js'   // 仅类型空间 (编译期擦除, 无运行时依赖)
 import axios from 'axios'
 // [REC-UI 2026-09-11] 设计图回放页控制条图标 (上一段/播放暂停/下一段/全屏)
 import { Search, VideoPlay, VideoPause, DArrowLeft, DArrowRight, FullScreen } from '@element-plus/icons-vue'
@@ -83,10 +84,34 @@ const timeSeekTime = ref('14:30:25')
 const timeSeekLoading = ref(false)
 const videoRef = ref<HTMLVideoElement>()
 const videoContainerRef = ref<HTMLElement>()  // [V4-X4 2026-07-08] 全屏容器
+// [FIX rec-tc 2026-09-15 排查 R1] 回放转码等待态 + 播放尝试序号:
+//   本地录像片 HEVC/PCMA → 浏览器原生 <video> 不可解码 (黑屏根因), 播放前须先经后
+//   端转码 H264; playerPreparing 期间模板显示「回放生成中」占位; playerAttempt 作废
+//   在途转码回调 (快速切段/停止/连播时旧回调不覆盖新段)。
+const playerPreparing = ref(false)
+let playerAttempt = 0
 const canvasRef = ref<HTMLCanvasElement>()
 // [REC-FUSE 2026-09-11] 智能检索抽屉内时间分布画布 (独立 ref, 避免与回放时间轴 canvasRef 冲突)
 const smartCanvasRef = ref<HTMLCanvasElement>()
-let playerInstance: Hls | flvjs.Player | null = null
+// ── [PERF 2026-09-14 R8] hls.js/flv.js 按需加载 (静态 import 时期 vendor-players
+//   (391KB gzip) 是本页 chunk 静态依赖 → 路由懒加载 + Suspense 语义下页面 mount
+//   (录像列表数据请求发出点) 被迫等待其下载完成)。仅回放时需要, 动态单例。
+let HlsLib: typeof import('hls.js').default | null = null
+let flvjsLib: typeof import('flv.js').default | null = null
+let playerLibsLoading: Promise<void> | null = null
+function ensurePlayerLibs(): Promise<void> {
+  if (!playerLibsLoading) {
+    playerLibsLoading = Promise.all([
+      import('hls.js').then(m => { HlsLib = m.default }),
+      import('flv.js').then(m => { flvjsLib = m.default }),
+    ]).then(() => undefined).catch((err) => {
+      playerLibsLoading = null  // 失败允许下次重试
+      throw err
+    })
+  }
+  return playerLibsLoading
+}
+let playerInstance: import('hls.js').default | flvjs.Player | null = null
 
 // [V4-X4 2026-07-08] 进度条与全屏状态
 const currentTime = ref(0)
@@ -530,6 +555,83 @@ function tlZoomOut() { zoomAt(tlView.startMs + tlView.spanMs / 2, 1.25) }
 //   选区高亮 + 导出/清除; 导出走后端 ffmpeg -c copy 裁剪 (POST /recordings/export-range)。
 const tlRange = reactive({ mode: false, has: false, dragging: false, startMs: 0, endMs: 0 })
 const tlExporting = ref(false)
+
+// ── [REC-MARK 2026-09-15] 回放标记录像: 「开始录像」记回放钟起点, 「结束录像」取当前
+//   播放位置为终点 → 复用区间导出链 (export-range: ZLM MP4 切片 ffmpeg -c copy 裁剪
+//   拼接 → blob 落盘)。与时间轴拖选导出同后端, 交互所见即所得; 上限 30 分钟 (后端限制)。
+const markActive = ref(false)
+const markStartMs = ref(0)
+const markElapsed = ref('')
+const markExporting = ref(false)
+let markTimer: ReturnType<typeof setInterval> | null = null
+const MARK_MAX_MS = 30 * 60 * 1000
+/** 回放钟绝对时刻 (与 playbackClockLabel 同算式: 段起点 + 播放进度) */
+function markClockMs(): number {
+  return currentSegmentStartMs.value + currentTime.value * 1000
+}
+function stopMarkTimer() {
+  if (markTimer) { clearInterval(markTimer); markTimer = null }
+}
+async function finishMarkRecording() {
+  stopMarkTimer()
+  const startMs = markStartMs.value
+  markActive.value = false
+  markStartMs.value = 0
+  markElapsed.value = ''
+  if (!startMs) return
+  const endMs = markClockMs()
+  if (endMs - startMs < 1000) {
+    ElMessage.warning('录制过短 (至少 1 秒), 已取消')
+    return
+  }
+  if (endMs - startMs > MARK_MAX_MS) {
+    ElMessage.error('录制跨度超过 30 分钟上限, 请缩小范围后重试')
+    return
+  }
+  if (!selectedChannelId.value) {
+    ElMessage.warning('未选择通道, 无法导出')
+    return
+  }
+  markExporting.value = true
+  try {
+    const out = await exportRangeRecording({
+      device_id: selectedDeviceId.value || undefined,
+      channel_id: String(selectedChannelId.value),
+      start_time: toLocalISOString(new Date(startMs)),
+      end_time: toLocalISOString(new Date(endMs)),
+    })
+    await fetchAndDownload(out.download_url, out.filename || `clip_${Date.now()}.mp4`)
+    ElMessage.success(`录像已下载${out.segments_used ? ` (拼接 ${out.segments_used} 个切片)` : ''}`)
+  } catch (e: any) {
+    ElMessage.error('录像导出失败: ' + (e?.response?.data?.message || e?.message || ''))
+  } finally {
+    markExporting.value = false
+  }
+}
+function toggleMarkRecording() {
+  if (markExporting.value) return
+  if (markActive.value) { finishMarkRecording(); return }
+  if (!isPlaying.value || !currentSegmentStartMs.value) {
+    ElMessage.warning('请先开始回放再录像')
+    return
+  }
+  markStartMs.value = markClockMs()
+  markActive.value = true
+  markElapsed.value = '00:00'
+  markTimer = setInterval(() => {
+    const dur = markClockMs() - markStartMs.value
+    if (dur > MARK_MAX_MS) {
+      ElMessage.warning('已达 30 分钟上限, 自动结束并下载')
+      finishMarkRecording()
+      return
+    }
+    const s = Math.max(0, Math.round(dur / 1000))
+    markElapsed.value = `${p2(Math.floor(s / 60))}:${p2(s % 60)}`
+  }, 1000)
+  ElMessage.success('录像中: 范围跟随播放位置, 再次点击红点结束并下载')
+}
+// 回放停止 (段起点钟清零) 时自动收尾导出; 切段换起点不中断 (范围按日历时间跨段有效)
+watch(currentSegmentStartMs, (v) => { if (markActive.value && !v) finishMarkRecording() })
 const tlRangeLabel = computed(() => {
   if (!tlRange.has) return ''
   const lo = Math.min(tlRange.startMs, tlRange.endMs)
@@ -866,6 +968,7 @@ async function stopGbSession() {
 }
 
 async function playSegment(rec: RecordingSegment, opts?: { startAtMs?: number; _retry?: boolean }): Promise<boolean> {
+  const attempt = ++playerAttempt  // [FIX rec-tc] 本次播放尝试序号 (作废在途转码回调)
   try {
     await stopGbSession()  // [FIX p2-session] 切源前释放旧 GB 回放会话
     // [FIX p2-clock 2026-09-12] 切段重置回放钟进度: 原残留上一段 currentTime (含异常 seek
@@ -896,9 +999,16 @@ async function playSegment(rec: RecordingSegment, opts?: { startAtMs?: number; _
       await nextTick()
       const video = videoRef.value
       if (!video) return false
+      // [FIX rec-tc 2026-09-15 排查 R1] 本地录像片 HEVC/PCMA → 浏览器原生 <video>
+      //   不可解码 (联动回放黑屏同根因); 播放前先经后端转码为 H264 直链 (实测 60s
+      //   片 ≈6~12s), 等待期显示「回放生成中」; 转码不可用 → 原片候选链兜底。
+      playerPreparing.value = true
+      const h264 = await ensureRecordTranscoded(rec.url)
+      if (attempt !== playerAttempt) return false  // 期间已切段/停止 → 本轮回调作废
+      playerPreparing.value = false
       // [FIX rec-url 2026-09-11] 相对路径 /record/... 在 nginx 未配路由时 404 →
       //   候选链: 同源双层优先, 失败 (video error) 回退 8088 双层 (LAN 兜底)
-      const cands = recordUrlCandidates(rec.url)
+      const cands = recordUrlCandidates(h264 || rec.url)
       let candIdx = 0
       video.onerror = () => {
         if (candIdx + 1 < cands.length) {
@@ -987,25 +1097,27 @@ async function playSegment(rec: RecordingSegment, opts?: { startAtMs?: number; _
       playUrl = fbUrl
     }
 
-    if (playUrl.endsWith('.flv') && flvjs.isSupported()) {
-      const player = flvjs.createPlayer({
+    // [PERF 2026-09-14 R8] 播放器库懒加载 (仅回放时; 与 /play API 请求并行, 此处通常已就绪)
+    await ensurePlayerLibs()
+    if (playUrl.endsWith('.flv') && flvjsLib && flvjsLib.isSupported()) {
+      const player = flvjsLib.createPlayer({
         type: 'flv', url: playUrl, isLive: false,
         hasAudio: true, hasVideo: true,
       }, { enableStashBuffer: false })
       player.attachMediaElement(video)
       player.load()
       player.play()
-      player.on(flvjs.Events.ERROR, () => {
+      player.on(flvjsLib.Events.ERROR, () => {
         // [FIX p2-flv-guard 2026-09-12] 旧实例守护: flv.js destroy 后有异步 emit 残留
         //   (库已如 bug) + 用户已切段时旧回调不得摧毁新实例。
         if (playerInstance !== player) return
         player.destroy()
         playerInstance = null
-        if (urls.hls) attachHls(urls.hls)
+        if (urls.hls) void attachHls(urls.hls)
       })
       playerInstance = player
     } else if (playUrl.includes('.m3u8') || playUrl.includes('hls')) {
-      attachHls(playUrl)
+      await attachHls(playUrl)
     } else {
       video.src = playUrl
       video.play().catch(() => {})
@@ -1024,22 +1136,26 @@ async function playSegment(rec: RecordingSegment, opts?: { startAtMs?: number; _
   return true
 }
 
-function attachHls(hlsUrl: string) {
+async function attachHls(hlsUrl: string) {
   const video = videoRef.value
   if (!video) return
-  if (Hls.isSupported()) {
-    const hls = new Hls({ enableWorker: true, maxBufferLength: 30 })
+  // [PERF 2026-09-14 R8] hls.js 动态加载 (同 ensurePlayerLibs 单例)
+  await ensurePlayerLibs()
+  if (!HlsLib) return
+  const hlsCls = HlsLib
+  if (hlsCls.isSupported()) {
+    const hls = new hlsCls({ enableWorker: true, maxBufferLength: 30 })
     // [FIX p2-hls-guard 2026-09-12] 重试上限: H265 等解码不兼容触发 fatal MEDIA_ERROR 时
     //   原无限 recoverMediaError → 持续 playerError / MSE 反复重建; 现每类 fatal 上限 2 次,
     //   超限销毁停止重试 (保留可诊断最终态, 用户可切段/切格式)。
     let netRetries = 0, mediaRetries = 0
     hls.loadSource(hlsUrl)
     hls.attachMedia(video)
-    hls.on(Hls.Events.MANIFEST_PARSED, () => video.play().catch(() => {}))
-    hls.on(Hls.Events.ERROR, (_e, data) => {
+    hls.on(hlsCls.Events.MANIFEST_PARSED, () => video.play().catch(() => {}))
+    hls.on(hlsCls.Events.ERROR, (_e, data) => {
       if (!data.fatal) return
-      if (data.type === Hls.ErrorTypes.NETWORK_ERROR && netRetries < 2) { netRetries++; hls.startLoad() }
-      else if (data.type === Hls.ErrorTypes.MEDIA_ERROR && mediaRetries < 2) { mediaRetries++; hls.recoverMediaError() }
+      if (data.type === hlsCls.ErrorTypes.NETWORK_ERROR && netRetries < 2) { netRetries++; hls.startLoad() }
+      else if (data.type === hlsCls.ErrorTypes.MEDIA_ERROR && mediaRetries < 2) { mediaRetries++; hls.recoverMediaError() }
       else {
         hls.destroy()
         if (playerInstance === hls) playerInstance = null
@@ -1244,6 +1360,8 @@ async function changeSpeed(speed: number) {
 }
 
 async function stopPlay() {
+  playerAttempt++  // [FIX rec-tc] 作废在途转码回调 (停止后不得回写播放源)
+  playerPreparing.value = false
   syncStopAll()  // [P2-1] 主通道停止 → 全部从窗一并停止 (下次播放按 syncChannels 自动重建)
   if (currentSessionId.value) {
     try { await recordingHttp.post(`/${currentSessionId.value}/stop`) } catch { /* ignore */ }
@@ -1470,16 +1588,18 @@ async function syncPlayWinAt(w: SyncWinState, ms: number) {
   await nextTick()
   const v = syncVideos.get(w.chId)
   if (!v) return
-  if (playUrl.endsWith('.flv') && flvjs.isSupported()) {
-    const player = flvjs.createPlayer({
+  // [PERF 2026-09-14 R8] 播放器库懒加载 (同步回放窗; 主路径已触发过 ensure, 此处保险)
+  await ensurePlayerLibs()
+  if (playUrl.endsWith('.flv') && flvjsLib && flvjsLib.isSupported()) {
+    const player = flvjsLib.createPlayer({
       type: 'flv', url: playUrl, isLive: false, hasAudio: true, hasVideo: true,
     }, { enableStashBuffer: false })
     player.attachMediaElement(v)
     player.load()
     player.play()
     w.player = player
-  } else if (playUrl.includes('.m3u8') && Hls.isSupported()) {
-    const hls = new Hls({ enableWorker: true })
+  } else if (playUrl.includes('.m3u8') && HlsLib && HlsLib.isSupported()) {
+    const hls = new HlsLib({ enableWorker: true })
     hls.loadSource(playUrl)
     hls.attachMedia(v)
     w.player = hls
@@ -2274,6 +2394,7 @@ onMounted(() => {
 onUnmounted(() => {
   stopPlay()
   stopOfflineCheck()
+  stopMarkTimer()  // [REC-MARK 2026-09-15] 标记录像计时器清理
   // [V4-X4 2026-07-08] 注销快捷键 + 全屏监听 (避免内存泄漏)
   window.removeEventListener('keydown', handleKeydown)
   document.removeEventListener('fullscreenchange', onFullscreenChange)
@@ -2397,7 +2518,13 @@ onUnmounted(() => {
               @timeupdate="onTimeUpdate"
               @ended="onSegmentEnded"
             />
-            <div v-if="!isPlaying" class="player-empty">
+            <!-- [FIX rec-tc 2026-09-15 排查 R1] 转码等待占位: HEVC/PCMA 原片浏览器不可
+                 直解, 播放前转码 H264 (≈6~12s) — 等待期替代黑屏 -->
+            <div v-if="playerPreparing" class="player-empty">
+              <div>回放生成中…</div>
+              <div style="font-size:12px;margin-top:4px">录像正在转换为浏览器兼容格式，首次播放约需 10 秒</div>
+            </div>
+            <div v-else-if="!isPlaying" class="player-empty">
               <div>请选择左侧通道并点击「查询」</div>
               <div style="font-size:12px;margin-top:4px">点击时间轴上的蓝色录像块开始回放</div>
             </div>
@@ -2487,6 +2614,13 @@ onUnmounted(() => {
                 <button class="pc-icon-btn" title="录像片段列表" @click="clipDrawerVisible = true"><span class="pc-list-glyph">☰</span></button>
                 <button class="pc-icon-btn" :title="muted ? '打开声音' : '静音'" @click="toggleMute"><i class="iconfont1" :class="muted ? 'icon1-a-shengyinguan' : 'icon1-a-shengyinkai'" /></button>
                 <button class="pc-icon-btn" title="截图" @click="takeSnapshot"><i class="iconfont1 icon1-zhuapai" /></button>
+                <!-- [REC-MARK 2026-09-15] 标记录像: 开始/结束以播放位置圈定范围 → 裁剪导出下载 -->
+                <button class="pc-icon-btn" :class="{ 'pc-rec-active': markActive }" :disabled="markExporting"
+                  :title="markExporting ? '导出中…' : markActive ? `结束录像并下载 (已录 ${markElapsed})` : '开始录像: 从当前播放位置圈定范围'"
+                  @click="toggleMarkRecording">
+                  <span class="pc-rec-dot" />
+                </button>
+                <span v-if="markActive" class="pc-rec-time">REC {{ markElapsed }}</span>
               </div>
               <div class="pc-group pc-center-group">
               <div class="pc-group pc-nav-group">
@@ -2976,6 +3110,12 @@ onUnmounted(() => {
 .pc-icon-btn { width: 32px; height: 32px; padding: 0; border: 0; border-radius: 3px; color: #00cfff; background: transparent; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; font-size: 19px; }
 .pc-icon-btn:hover { color: #fff; background: rgba(0,190,255,.2); }
 .pc-icon-btn:disabled { opacity: .35; cursor: not-allowed; }
+/* [REC-MARK 2026-09-15] 标记录像红点: 灰态待机, 录制中红点闪烁 + 时长显 示 */
+.pc-rec-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: #6b7a8f; }
+.pc-icon-btn.pc-rec-active .pc-rec-dot { background: #f56c6c; animation: pcRecBlink 1s ease-in-out infinite; }
+.pc-icon-btn.pc-rec-active:hover { background: rgba(245,108,108,.18); color: #f56c6c; }
+@keyframes pcRecBlink { 50% { opacity: .25; } }
+.pc-rec-time { color: #f56c6c; font-size: 12px; white-space: nowrap; letter-spacing: .5px; }
 .pc-play-btn {
     width: 34px; height: 34px;
     border-radius: 50%;

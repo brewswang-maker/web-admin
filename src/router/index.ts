@@ -732,6 +732,19 @@ const router = createRouter({
 })
 
 // 路由导航守卫 - 权限验证
+// [场景隔离 2026-09-15] 场景 URL 段 → 允许角色映射 (红线四.4 双重校验的守卫侧):
+//   每个场景 section 仅 admin 与持对应 scenario_* 角色的用户可进, 防跨场景越权;
+//   周界例外: 普通 user/viewer 保持可见 (与菜单可见性对齐)。
+//   集中映射单点维护, 与 MainLayout scenarioMenus.roles 对齐; 路由 path 不变。
+const SCENARIO_SECTION_ROLES: Array<[string, string[]]> = [
+  ['/screening', ['admin', 'scenario_screening']],
+  ['/school', ['admin', 'scenario_school']],
+  ['/gas-station', ['admin', 'scenario_gas_station']],
+  ['/large-event', ['admin', 'scenario_large_event']],
+  ['/hotel-unattended', ['admin', 'scenario_hotel']],
+  ['/video-perimeter', ['admin', 'user', 'viewer', 'scenario_perimeter']],
+]
+
 router.beforeEach(async (to, _from, next) => {
   const userStore = useUserStore()
   const permissionStore = usePermissionStore()
@@ -772,6 +785,16 @@ router.beforeEach(async (to, _from, next) => {
   // 如果是超级管理员，直接放行
   if (userStore.roles.includes('admin')) {
     return next()
+  }
+
+  // [场景隔离 2026-09-15] 场景 section 越权拦截: 用原始 userStore.roles 判定
+  //   (先于下方 scenario_* 追加 user/viewer 的宽放行, 防注入穿透场景段)
+  const scenarioSection = SCENARIO_SECTION_ROLES.find(
+    ([prefix]) => to.path === prefix || to.path.startsWith(`${prefix}/`)
+  )
+  if (scenarioSection && !scenarioSection[1].some(role => userStore.roles.includes(role))) {
+    console.warn('[Router] 场景越权拦截:', to.path)
+    return next('/404')
   }
 
   // 检查角色权限

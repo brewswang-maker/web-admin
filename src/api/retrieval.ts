@@ -97,6 +97,38 @@ export interface ImageTowerUnavailable {
   bmodel_expected: string
 }
 
+/** [P1-1 2026-09-15] 能力状态面板字段 (GET /images/stats, G4/RA-3):
+ *  embed_mode 行为级探测 (real=CLIP 语义塔 / hash_fallback=词法哈希降级,
+ *  与查询路径 vec_src 同判定); image_vector_count 图像向量条数;
+ *  last_rebuild_ms 最近重建时刻 (内存态, 0=未重建, 重启即失 — 口径如实)。 */
+export interface RetrievalStats {
+  total_indexed: number
+  total_queries?: number
+  total_searched?: number
+  avg_query_ms?: number
+  avg_similarity?: number
+  index_memory_bytes?: number
+  index_size: number
+  embed_mode?: 'real' | 'hash_fallback' | string
+  image_vector_count?: number
+  last_rebuild_ms?: number
+  [k: string]: unknown
+}
+
+/** [P1-1 2026-09-15] VLM 复核状态 (GET /alarm/vlm/status, P0-4 路线 B):
+ *  effective_enabled = worker 就绪 && (运行时开关 || 环境变量), 面板三态
+ *  (未启用/复核中/已复核) 的启用判定源。 */
+export interface VlmStatus {
+  linkage_ready?: boolean
+  worker_injected?: boolean
+  worker_ready?: boolean
+  queue_depth?: number
+  runtime_enabled?: boolean
+  env_enabled?: boolean
+  effective_enabled?: boolean
+  [k: string]: unknown
+}
+
 /** 条件白名单前端拦截 (计划 P0-B 验收: 非法 key 拦截) */
 export function validateConditions(conds: AttrCondition[]): string | null {
   for (const c of conds) {
@@ -171,6 +203,18 @@ export const retrievalApi = {
     const r = await http.post<ApiResponse<{ items: ImageSearchItem[]; total?: number }>>(
       '/images/search-by-image', body, { skipRetry: true }
     )
+    return r.data
+  },
+
+  /** [P1-1 2026-09-15] 检索索引统计 (含能力状态面板字段) */
+  async getStats(): Promise<ApiResponse<RetrievalStats>> {
+    const r = await http.get<ApiResponse<RetrievalStats>>('/images/stats')
+    return r.data
+  },
+
+  /** [P1-1 2026-09-15] VLM 复核运行状态 (告警域端点, 面板借用) */
+  async getVlmStatus(): Promise<ApiResponse<VlmStatus>> {
+    const r = await http.get<ApiResponse<VlmStatus>>('/alarm/vlm/status')
     return r.data
   },
 

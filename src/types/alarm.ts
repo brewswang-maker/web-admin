@@ -765,6 +765,7 @@ export function aiReviewText(v: AiReviewInfo | undefined): string {
   const reason = v.reason ? `：${v.reason}` : ''
   if (v.verdict === 'retracted') return `误报${reason}`
   if (v.verdict === 'confirmed') return `真告警${reason}`
+  if (v.verdict === 'false_alarm_automated') return `自动判定误报${reason}`
   if (v.verdict === 'unverified') return ''
   return v.reason
 }
@@ -773,8 +774,27 @@ export function aiReviewText(v: AiReviewInfo | undefined): string {
 export function aiReviewVerdictLabel(v: AiReviewInfo | undefined): string {
   if (!v || v.verdict === 'unverified') return '未复核'
   if (v.verdict === 'retracted') return '误报'
+  if (v.verdict === 'false_alarm_automated') return '自动误报'
   if (v.verdict === 'confirmed') return '真事件'
   return '已复核'
+}
+
+/** [P1-2 2026-09-15] AI 复核三态 (G4/R2 诚实透出):
+ *  reviewed = 已有明确复核结论 (confirmed/retracted/false_alarm_automated,
+ *             弹窗透出 verifier/置信度/结论);
+ *  pending  = 功能开启但该告警暂无结论 (排队中/处理中/队列内存态重启即失);
+ *  disabled = VLM 复核功能未启用 (GET /alarm/vlm/status effective_enabled=false,
+ *             ai_review 恒缺 — 区别于排队中, 如实告知能力边界)。
+ *  vlmEnabled 未知 (拉取失败/null) 时向 pending 兑底, 不误报"未启用"。 */
+export type AiReviewStage = 'reviewed' | 'pending' | 'disabled'
+export function aiReviewStage(
+  v: AiReviewInfo | undefined,
+  vlmEnabled?: boolean | null,
+): AiReviewStage {
+  if (v && (v.verdict === 'confirmed' || v.verdict === 'retracted' ||
+            v.verdict === 'false_alarm_automated')) return 'reviewed'
+  if (vlmEnabled === false) return 'disabled'
+  return 'pending'
 }
 
 /**

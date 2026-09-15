@@ -4949,6 +4949,34 @@ onMounted(() => {
       else ElMessage.warning('未找到目标规则, 可能已被删除')
     })
   }
+  // [P2-3 2026-09-15] 检索→布控贯通 (§5.4-14): RetrievalView 结果项「布控」入口
+  //   ?prefill_nl=<描述>[&prefill_start_ms=&prefill_end_ms=] → 打开新建 vp6 表单,
+  //   预填描述 + 时间窗 (毫秒→当日 HH:MM)。复用现有规则 API, LinkageEngine.cpp
+  //   判定逻辑零改动 (计划口径); query 清理沿用上方 editRuleId 先例。
+  const qNl = route.query.prefill_nl
+  if (!embedMode.value && qNl) {
+    onNewRuleSimple()
+    form.description = String(qNl)
+    if (!form.name) form.name = `检索布控 ${new Date().toLocaleDateString()}`
+    const sMs = Number(route.query.prefill_start_ms) || 0
+    const eMs = Number(route.query.prefill_end_ms) || 0
+    if (sMs || eMs) {
+      const hhmm = (ms: number) => {
+        const d = new Date(ms)
+        return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+      }
+      form.conditions.time.enabled = true
+      form.conditions.time.config.startTime = hhmm(sMs || eMs)
+      form.conditions.time.config.endTime = hhmm(eMs || sMs)
+    }
+    ElMessage.info('已从检索结果预填布控草稿 (描述/时间窗), 请确认条件后保存')
+    const cleaned = { ...route.query }
+    delete cleaned.prefill_nl
+    delete cleaned.prefill_start_ms
+    delete cleaned.prefill_end_ms
+    const qs = new URLSearchParams(cleaned as Record<string, string>).toString()
+    window.history.replaceState(window.history.state, '', route.path + (qs ? '?' + qs : ''))
+  }
   fetchRules(); fetchOptions(); loadDeviceGroups()
   if (mainTab.value === 'plans') fetchPlans()
   if (mainTab.value === 'cep') fetchCEPPatterns()

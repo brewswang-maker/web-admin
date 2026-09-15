@@ -15,7 +15,7 @@ import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { alarmApi } from '@/api/alarm'
 import { screeningApi, type AlarmFeedbackItem } from '@/api/screening'
-import { queryRecordings, toLocalISOString, recordUrlCandidates, type DeviceRecording } from '@/api/recording'
+import { queryRecordings, toLocalISOString, recordUrlCandidates, ensureRecordTranscoded, type DeviceRecording } from '@/api/recording'
 import { recordingHttp } from '@/api/http'
 import type { AlarmEvidence } from '@/types/alarm'
 import { useAuthStore } from '@/stores/auth'
@@ -188,6 +188,14 @@ export function useAlarmLifecycle(onMutated?: () => void) {
         //   → 补双层同源候选, 修复事件面板证据视频 404 黑屏 (同弹窗直显根因)
         if (ev.videoClipUrl) ev.videoClipUrl = recordUrlCandidates(ev.videoClipUrl)[0] || ev.videoClipUrl
         evidenceData.value = ev
+        // [FIX rec-tc 2026-09-15 排查 R1] 本地片 HEVC/PCMA 直链浏览器不可解 (黑屏) →
+        //   后台转码 H264 后热替换播放 src (不阻塞面板其余内容呈现; 失败保留原 clip 原行为)
+        const clip0 = ev.videoClipUrl || ''
+        if (clip0) {
+          void ensureRecordTranscoded(clip0).then((h264) => {
+            if (h264 && evidenceData.value === ev && ev.videoClipUrl === clip0) ev.videoClipUrl = h264
+          })
+        }
       } else {
         const clip = row.videoClipUrl ? recordUrlCandidates(row.videoClipUrl)[0] || row.videoClipUrl : row.videoClipUrl
         evidenceData.value = { snapshotUrl: getSnapshotUrl(row), videoClipUrl: clip }
@@ -205,7 +213,11 @@ export function useAlarmLifecycle(onMutated?: () => void) {
     const clipUrl = evidenceData.value?.videoClipUrl || row.videoClipUrl || ''
     // [FIX rec-layer2 2026-09-11] clipUrl 可能是绝对 URL / 双层形态 → 宽容匹配
     //   提取流名 (原 ^/record/rtp/ 形态在绝对 URL 下永不命中, stream_name 丢失)
+    // [FIX rec-snapstream 2026-09-15 排查 verify1] 无 clip 告警 (规则未配录像动作)
+    //   stream_name 为空 → 后端只能拿 channel_id (=NVR 国标码) 猜流名 → miss,
+    //   而快照路径本身就携带真实流名 (/snapshots/rtp/gb_.../) → 双形态兜底提取。
     const streamMatch = clipUrl.match(/\/record\/(?:record\/)?rtp\/([^/]+)\//)
+      || String(row.snapshotUrl || row.snapshot_url || '').match(/\/snapshots\/rtp\/([^/]+)\//)
     if (row.deviceId) {
       try {
         const alarmTime = new Date(row.createdAt)
@@ -230,12 +242,21 @@ export function useAlarmLifecycle(onMutated?: () => void) {
 
   async function playEvidenceRecording(rec: DeviceRecording) {
     try {
-      const { data } = await recordingHttp.post(`/${rec.id}/play`, {
+      // [FIX rec-tc 2026-09-15 排查 R1/R5] 本地片 (带 url) 直链+转码后新窗口播放
+      //   (浏览器原生播 mp4; 原直接 window.open(flv) 无法播放, 且 zlm 条目 id 含 '/'
+      //   拼 /:id/play 必 404); GB28181 条目补 id 段走回放流。
+      if (rec.url) {
+        const h264 = await ensureRecordTranscoded(recordUrlCandidates(rec.url)[0] || rec.url)
+        if (h264) { window.open(h264, '_blank'); return }
+        ElMessage.warning('录像转码未就绪，请稍后重试')
+        return
+      }
+      const { data } = await recordingHttp.post(`/${encodeURIComponent(rec.id)}/play`, {
         device_id: rec.device_id,
         channel_id: rec.channel_id,
         start_time: rec.start_time,
         end_time: rec.end_time,
-      })
+      }, { timeout: 15000 })
       const result = data?.data || data
       if (result?.urls) {
         const url = result.urls.flv || result.urls.hls || result.urls.wsFlv || ''

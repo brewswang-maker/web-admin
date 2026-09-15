@@ -780,6 +780,9 @@ const zhCN = {
     video: '视频',
     alarm: '报警',
     ai: 'AI 智能',
+    // [场景菜单重构 2026-09-15] 「应用场景」一级组
+    scenarios: '应用场景',
+    // ── 以下 6 键为旧场景一级菜单遗留 (入口文案已迁至 menuSecondary), 保留防他处引用破坏 ──
     screening: '安检',
     school: '校园',
         // [加油站方案 2026-08-30] 一级菜单加油站
@@ -790,6 +793,16 @@ const zhCN = {
     // [视频周界 2026-08-31] 一级菜单 (vp)
     videoPerimeter: '视频周界',
     platform: '平台管理'
+  },
+
+  // [场景菜单重构 2026-09-15] 「应用场景」组下 6 个场景入口文案 (顺序即菜单顺序)
+  menuSecondary: {
+    smartPerimeter: '智慧周界',
+    unattended: '无人值守',
+    smartGasStation: '智慧加油站',
+    smartCampus: '智慧校园',
+    smartScreening: '智慧安检',
+    largeEvent: '大型活动'
   },
 
 

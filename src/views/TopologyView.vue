@@ -35,18 +35,35 @@
 import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import { Refresh } from '@element-plus/icons-vue'
 import { useDeviceStore } from '@/stores/device'
-import * as echarts from 'echarts/core'
-import { GraphChart } from 'echarts/charts'
-import { TooltipComponent, LegendComponent } from 'echarts/components'
-import { CanvasRenderer } from 'echarts/renderers'
 
-echarts.use([GraphChart, TooltipComponent, LegendComponent, CanvasRenderer])
+// ── [PERF 2026-09-14 R8] echarts 按需加载 (原静态 import 使 437KB gzip 的 vendor-echarts
+//   成为本页 chunk 静态依赖 → 路由懒加载 + Suspense 语义下页面 mount (即设备数据请求
+//   发出点) 被迫等待其下载完成)。设备列表到达后才需渲染拓扑图, 改动态单例。
+let echartsLib: typeof import('echarts/core') | null = null
+let echartsLoading: Promise<void> | null = null
+function ensureEcharts(): Promise<void> {
+  if (!echartsLoading) {
+    echartsLoading = Promise.all([
+      import('echarts/core'),
+      import('echarts/charts'),
+      import('echarts/components'),
+      import('echarts/renderers'),
+    ]).then(([core, charts, comps, renderers]) => {
+      core.use([charts.GraphChart, comps.TooltipComponent, comps.LegendComponent, renderers.CanvasRenderer])
+      echartsLib = core
+    }).catch((err) => {
+      echartsLoading = null  // 失败允许下次重试
+      throw err
+    })
+  }
+  return echartsLoading
+}
 
 const deviceStore = useDeviceStore()
 const chartRef = ref<HTMLDivElement>()
 const layoutMode = ref<'force' | 'circular'>('force')
 const refreshing = ref(false)
-let chart: echarts.ECharts | null = null
+let chart: import('echarts/core').ECharts | null = null
 
 const onlineCount = computed(() => deviceStore.devices.filter(d => d.status === 'online').length)
 
@@ -122,10 +139,18 @@ function buildOption() {
   }
 }
 
-function render() {
+async function render() {
   if (!chartRef.value) return
-  if (!chart) chart = echarts.init(chartRef.value)
-  chart.setOption(buildOption(), true)
+  try {
+    await ensureEcharts()
+    const lib = echartsLib
+    if (!lib) return
+    if (!chart) chart = lib.init(chartRef.value)
+    chart.setOption(buildOption(), true)
+  } catch (e) {
+    // watch/onMounted 多处调用: 吞掉加载失败避免 unhandled rejection (控制台告警即可)
+    console.warn('[TopologyView] render failed:', e)
+  }
 }
 
 async function refreshTopology() {
@@ -143,10 +168,11 @@ function handleResize() { chart?.resize() }
 watch(layoutMode, render)
 watch(() => deviceStore.devices, render, { deep: true })
 
-onMounted(() => {
-  render()
+onMounted(async () => {
   window.addEventListener('resize', handleResize)
+  // [PERF 2026-09-14 R8] 设备数据请求先行 (不再等 echarts 下载); devices 更新后 watch 触发 render
   if (!deviceStore.devices.length) deviceStore.fetchDevices()
+  await render()
 })
 
 onBeforeUnmount(() => {

@@ -804,9 +804,10 @@ import { alarmApi } from '@/api/alarm'
 import type { AlarmOccurrence } from '@/api/alarm'
 import { screeningApi, type AlarmFeedbackItem } from '@/api/screening'
 import { exportApi } from '@/api/export'
-import { queryRecordings, toLocalISOString, recordUrlCandidates, type DeviceRecording } from '@/api/recording'
+import { queryRecordings, toLocalISOString, recordUrlCandidates, ensureRecordTranscoded, type DeviceRecording } from '@/api/recording'
 import { securityAreaApi } from '@/api/securityAreas'
-import { recordingHttp } from '@/api/http'
+import { recordingHttp, streamHttp } from '@/api/http'
+import { normalizeStreamUrl } from '@/utils/streamUrl'
 import type { AlarmHandleForm, AlarmEvidence, AlarmEvent } from '@/types/alarm'
 import { normalizeAlarmCore } from '@/types/alarm'
 import { useAuthStore } from '@/stores/auth'
@@ -828,7 +829,11 @@ import { showAlarmPopup } from '@/composables/useAlarmPopup'
 import SnapshotAnnotated from '@/views/perimeter/SnapshotAnnotated.vue'
 import EvidenceFrames from '@/components/EvidenceFrames.vue'
 import { useRoute, useRouter } from 'vue-router'
-import flvjs from 'flv.js'
+// ── [PERF 2026-09-14 R8] flv.js 改动态加载 (原静态 import 使 391KB gzip 的 vendor-players
+//   成为本页 chunk 静态依赖 → 路由懒加载 + Suspense 语义下 fetchAlarms (onMounted 首个
+//   请求) 被迫等待其下载完成; 慢网进入告警页骨架屏多停数秒。仅内嵌预览首播需要, 见
+//   ensureFlvjs 动态单例。
+import type flvjs from 'flv.js'   // 仅类型空间 (编译期擦除, 无运行时依赖)
 
 // ── 严重等级中文映射 ──
 const SEVERITY_LABELS: Record<string, string> = {
@@ -1041,6 +1046,16 @@ watch(inlineVideoLoading, (v) => {
   }
 })
 
+// [FIX rec-tc 2026-09-15 排查 R1] 内联「clip」装载: 本地录像片为 HEVC/PCMA, 浏览器
+//   无法直解 (黑屏根因) → 播放前先经后端转码为 H264 直链; 转码不可用 → 原片兜底。
+async function loadInlineClip(url: string): Promise<void> {
+  const h264 = await ensureRecordTranscoded(url)
+  inlineVideoUrl.value = h264 || url
+  inlineVideoMode.value = 'clip'
+  inlineVideoTimedOut.value = false  // 转码耗时可能越过 12s 监护 → 复位防误显「无录像」
+  inlineVideoLoading.value = false
+}
+
 async function openInlineVideo(item: any) {
   inlineVideoItem.value = item
   // [FIX dev-name-num 2026-09-11] 视频弹窗标题同口径治理 (不裸显数字编号)
@@ -1049,13 +1064,13 @@ async function openInlineVideo(item: any) {
   inlineVideoLoading.value = true
   inlineVideoUrl.value = ''
   inlineVideoMode.value = 'none'
+  inlineVideoIsPlayback.value = false  // [FIX rec-tc] 重开复位直播语义 (防上轮回放态残留)
 
   // 1. 如果已有 videoClip URL，直接用
   if (item.videoClip) {
     // [FIX rec-layer2 2026-09-11] 单层 /record/rtp 恒 404 → 同源双层候选首选
-    inlineVideoUrl.value = recordUrlCandidates(item.videoClip)[0] || item.videoClip
-    inlineVideoMode.value = 'clip'
-    inlineVideoLoading.value = false
+    const direct = recordUrlCandidates(item.videoClip)[0] || item.videoClip
+    await loadInlineClip(direct)
     return
   }
 
@@ -1063,9 +1078,8 @@ async function openInlineVideo(item: any) {
   try {
     const ev = await alarmApi.getEvidence(item.id)
     if (ev?.videoClipUrl) {
-      inlineVideoUrl.value = recordUrlCandidates(ev.videoClipUrl)[0] || ev.videoClipUrl
-      inlineVideoMode.value = 'clip'
-      inlineVideoLoading.value = false
+      const direct = recordUrlCandidates(ev.videoClipUrl)[0] || ev.videoClipUrl
+      await loadInlineClip(direct)
       return
     }
   } catch { /* 继续降级 */ }
@@ -1098,9 +1112,19 @@ async function openInlineVideo(item: any) {
         ...(streamName ? { stream_name: streamName } : {}),
       })
       if (recs && recs.length > 0) {
-        // 调用 play 获取回放 URL
+        // [FIX rec-tc 2026-09-15] 优先本地片直链 (带 url; 无需 NVR 回放会话, 不受设备侧
+        //   5002/会话数限制): 直链经双层归一 + 转码后浏览器原生播放, 稳定优于回放流;
+        //   GB28181 条目 (无 url) → 原 /play 回放流路径。
+        const localRec = recs.find((r: DeviceRecording) => !!r.url)
+        if (localRec?.url) {
+          await loadInlineClip(recordUrlCandidates(localRec.url)[0] || localRec.url)
+          return
+        }
+        // 调用 play 获取回放 URL; [FIX rec-play-404 2026-09-15] 原 post('/play') 请求
+        //   /api/v1/recordings/play — 后端无此路由 (仅 /:id/play) → 恒 404 (排查 R5);
+        //   补 id 段 (GB 条目 id 含空格/冒号 → encodeURIComponent)。
         const rec = recs[0]
-        const playRes = await recordingHttp.post('/play', {
+        const playRes = await recordingHttp.post(`/${encodeURIComponent(rec.id)}/play`, {
           id: rec.id,
           device_id: deviceId,
           channel_id: channelId,
@@ -1132,11 +1156,14 @@ async function openInlineVideo(item: any) {
   // 4. 最终降级: 查询通道是否有实时流
   if (channelId) {
     try {
-      const { data } = await recordingHttp.get(`/streams/${encodeURIComponent(channelId)}/multi-urls`)
-      const urls = data?.data?.urls || data?.data || {}
-      const flvUrl = urls.flv || urls['ws-flv'] || urls.wsFlv || urls.ws_flv || ''
+      // [FIX rec-streams-404 2026-09-15] 原 recordingHttp.get('/streams/...') 请求
+      //   /api/v1/recordings/streams/... — 路由不存在恒 404 (排查 R5); multi-urls 归属
+      //   /api/v1/streams → streamHttp; 且响应字段是 flvUrl/wsFlvUrl (非 urls.flv)。
+      const { data } = await streamHttp.get(`/${encodeURIComponent(channelId)}/multi-urls`)
+      const d = data?.data || data
+      const flvUrl = d?.streamAlive ? String(d.flvUrl || d.wsFlvUrl || '') : ''
       if (flvUrl) {
-        inlineVideoUrl.value = flvUrl
+        inlineVideoUrl.value = normalizeStreamUrl(flvUrl)
         inlineVideoMode.value = 'live'
         inlineVideoLoading.value = false
         return
@@ -1147,6 +1174,20 @@ async function openInlineVideo(item: any) {
   // 5. 全部失败 — 提示用户去回放页面
   inlineVideoMode.value = 'none'
   inlineVideoLoading.value = false
+}
+
+// ── [PERF 2026-09-14 R8] flv.js 动态单例 (仅内嵌预览首播时拉取; 与 SituationScreen
+//   同款模式: 失败置 null 允许下次重试) ──
+let flvjsLib: typeof import('flv.js').default | null = null
+let flvjsLoading: Promise<void> | null = null
+function ensureFlvjs(): Promise<void> {
+  if (!flvjsLoading) {
+    flvjsLoading = import('flv.js').then(m => { flvjsLib = m.default }).catch((err) => {
+      flvjsLoading = null  // 失败允许下次重试
+      throw err
+    })
+  }
+  return flvjsLoading
 }
 
 // [FIX 2026-07-15] FLV 直播流播放器: 当 mode=live 时自动初始化 flv.js
@@ -1163,8 +1204,9 @@ watch(inlineVideoMode, async (mode) => {
   await nextTick()
   const video = inlineFlvVideoRef.value
   if (!video || !inlineVideoUrl.value) return
-  if (flvjs.isSupported()) {
-    const player = flvjs.createPlayer({
+  await ensureFlvjs()
+  if (flvjsLib && flvjsLib.isSupported()) {
+    const player = flvjsLib.createPlayer({
       type: 'flv',
       url: inlineVideoUrl.value,
       isLive: !inlineVideoIsPlayback.value,
@@ -1929,18 +1971,29 @@ async function showEvidence(row: any) {
   evidenceData.value = null
   deviceRecordings.value = []
   recordingsLoading.value = true
+  let rawClip = ''  // [FIX rec-tc 2026-09-15] 保留转码前原始 clip (流名提取用, 转码产物无流名)
   try {
     const ev = await alarmApi.getEvidence(row.id)
     if (ev) {
       // [FIX rec-layer2 2026-09-11] 证据 videoClipUrl 是绝对单层 → 补双层同源 (视频 404 黑屏)
       if (ev.videoClipUrl) ev.videoClipUrl = recordUrlCandidates(ev.videoClipUrl)[0] || ev.videoClipUrl
+      rawClip = ev.videoClipUrl || ''
       evidenceData.value = ev
+      // [FIX rec-tc 2026-09-15 排查 R1] 本地片 HEVC/PCMA 直链浏览器不可解 (黑屏) →
+      //   后台转码 H264 后热替换播放 src (不阻塞面板呈现; 失败保留原 clip 原行为)
+      if (rawClip) {
+        void ensureRecordTranscoded(rawClip).then((h264) => {
+          if (h264 && evidenceData.value === ev && ev.videoClipUrl === rawClip) ev.videoClipUrl = h264
+        })
+      }
     } else {
       const clip = row.videoClipUrl ? recordUrlCandidates(row.videoClipUrl)[0] || row.videoClipUrl : row.videoClipUrl
+      rawClip = clip || ''
       evidenceData.value = { snapshotUrl: getSnapshotUrl(row), videoClipUrl: clip }
     }
   } catch {
     const clip = row.videoClipUrl ? recordUrlCandidates(row.videoClipUrl)[0] || row.videoClipUrl : row.videoClipUrl
+    rawClip = clip || ''
     evidenceData.value = { snapshotUrl: getSnapshotUrl(row), videoClipUrl: clip }
   } finally {
     evidenceLoading.value = false
@@ -1949,9 +2002,12 @@ async function showEvidence(row: any) {
   // 自动查询告警设备在报警时间前后的录像
   // [FIX evidence-AI 2026-08-18] 从证据 video_clip URL 提取 ZLM 流名 (gb_131...) 传入,
   // 避免 channel_id (国标 340 开头) 与实际流名 (设备注册 131 开头) 不匹配导致查不到录像
-  const clipUrl = evidenceData.value?.videoClipUrl || row.videoClipUrl || ''
-  // [FIX rec-layer2 2026-09-11] 绝对 URL / 双层形态宽容匹配 (原 ^/record/rtp/ 永不命中)
+  const clipUrl = rawClip || row.videoClipUrl || ''
+  // [FIX rec-layer2 2026-09-11] 绝对 URL / 双层形态宽容匹配 (原 ^/record/rtp/  永不命中)
+  // [FIX rec-snapstream 2026-09-15 排查 verify1] 无 clip 告警从快照路径兑底提取流名
+  //   (channel_id 常为 NVR 国标码猜不中 ZLM 流目录, 快照路径携带真实 gb_ 流名)
   const streamMatch = clipUrl.match(/\/record\/(?:record\/)?rtp\/([^/]+)\//)
+    || String(row.snapshotUrl || row.snapshot_url || '').match(/\/snapshots\/rtp\/([^/]+)\//)
   if (row.deviceId) {
     try {
       const alarmTime = new Date(row.createdAt)
@@ -1975,27 +2031,43 @@ async function showEvidence(row: any) {
 }
 
 async function playEvidenceRecording(rec: DeviceRecording) {
+  // [FIX rec-tc 2026-09-15 排查 R1/R5] 原实现 window.open(flv/flv 不可直达浏览器播放) +
+  //   zlm 条目 id 为磁盘路径 (含 '/') 拼 /:id/play 必 404。现改为复用内联播放弹窗:
+  //   本地片 (带 url) 直链+转码后原生 <video> 播放; GB28181 条目 /:id/play 回放流走 flv.js。
+  inlineVideoItem.value = evidenceAlarmRow.value
+  inlineVideoTitle.value = `录像回放 · ${rec.start_time?.replace('T', ' ').substring(0, 19) || ''}`
+  inlineVideoVisible.value = true
+  inlineVideoLoading.value = true
+  inlineVideoUrl.value = ''
+  inlineVideoMode.value = 'none'
+  inlineVideoIsPlayback.value = true
+  if (rec.url) {
+    await loadInlineClip(recordUrlCandidates(rec.url)[0] || rec.url)
+    return
+  }
   try {
-    const { data } = await recordingHttp.post(`/${rec.id}/play`, {
+    const { data } = await recordingHttp.post(`/${encodeURIComponent(rec.id)}/play`, {
       device_id: rec.device_id,
       channel_id: rec.channel_id,
       start_time: rec.start_time,
       end_time: rec.end_time,
-    })
+    }, { timeout: 15000 })
     const result = data?.data || data
-    if (result?.urls) {
-      const url = result.urls.flv || result.urls.hls || result.urls.wsFlv || ''
-      if (url) {
-        window.open(url, '_blank')
-      } else {
-        ElMessage.warning('无可用播放地址')
-      }
-    } else {
-      ElMessage.warning('设备不支持回放')
+    const urls = result?.urls || {}
+    const flvUrl = urls.flv || urls.wsFlv || urls.hls || ''
+    if (flvUrl) {
+      inlineVideoUrl.value = flvUrl
+      inlineVideoMode.value = 'live'
+      inlineVideoTimedOut.value = false
+      inlineVideoLoading.value = false
+      return
     }
+    ElMessage.warning('无可用播放地址')
   } catch (e: any) {
-    ElMessage.error('回放失败: ' + (e.message || ''))
+    ElMessage.error('回放失败: ' + (e?.message || '设备可能离线'))
   }
+  inlineVideoMode.value = 'none'
+  inlineVideoLoading.value = false
 }
 
 function goToRecording(recordingId: string) {

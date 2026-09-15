@@ -103,14 +103,32 @@
 import { ref, reactive, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Wallet, Coin, Warning, Tickets, Download as DownloadIcon } from '@element-plus/icons-vue'
-import * as echarts from 'echarts/core'
-import { BarChart } from 'echarts/charts'
-import { GridComponent, TooltipComponent } from 'echarts/components'
-import { CanvasRenderer } from 'echarts/renderers'
 import type { BillingRecord, BillingSummary } from '@/types/billing'
 import { fetchBillingSummary, fetchBillingList, exportBilling } from '@/api/billing'
 
-echarts.use([BarChart, GridComponent, TooltipComponent, CanvasRenderer])
+// ── [PERF 2026-09-14 R8] echarts 按需加载 (原静态 import 使 437KB gzip 的 vendor-echarts
+//   成为本页 chunk 静态依赖 → 路由懒加载 + Suspense 语义下页面 mount (即账单数据请求
+//   发出点) 被迫等待其下载完成; 慢网进入账单页骨架屏多停数秒)。数据到达后才需渲染
+//   图表, 改为 ensureEcharts 动态单例 (与 SituationScreen 同款模式, 失败允许重试)。
+let echartsLib: typeof import('echarts/core') | null = null
+let echartsLoading: Promise<void> | null = null
+function ensureEcharts(): Promise<void> {
+  if (!echartsLoading) {
+    echartsLoading = Promise.all([
+      import('echarts/core'),
+      import('echarts/charts'),
+      import('echarts/components'),
+      import('echarts/renderers'),
+    ]).then(([core, charts, comps, renderers]) => {
+      core.use([charts.BarChart, comps.GridComponent, comps.TooltipComponent, renderers.CanvasRenderer])
+      echartsLib = core
+    }).catch((err) => {
+      echartsLoading = null  // 失败允许下次重试
+      throw err
+    })
+  }
+  return echartsLoading
+}
 
 const statusLabels: Record<string, string> = { paid: '已支付', pending: '待支付', overdue: '已逾期' }
 const statusMap: Record<string, 'primary' | 'success' | 'warning' | 'info' | 'danger'> = { paid: 'success', pending: 'warning', overdue: 'danger' }
@@ -197,11 +215,14 @@ async function handleExport() {
 }
 
 const chartRef = ref<HTMLDivElement>()
-let chart: echarts.ECharts | null = null
+let chart: import('echarts/core').ECharts | null = null
 
-function initChart() {
+async function initChart() {
   if (!chartRef.value) return
-  chart = echarts.init(chartRef.value)
+  await ensureEcharts()
+  const lib = echartsLib
+  if (!lib) return
+  chart = lib.init(chartRef.value)
   const trend = summary.monthlyTrend
   chart.setOption({
     tooltip: { trigger: 'axis' },
@@ -209,7 +230,7 @@ function initChart() {
     yAxis: { type: 'value', name: '费用 (¥)' },
     series: [{
       type: 'bar', data: trend.map(t => t.amount),
-      itemStyle: { color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [{ offset: 0, color: '#409EFF' }, { offset: 1, color: '#79bbff' }]), borderRadius: [4, 4, 0, 0] },
+      itemStyle: { color: new lib.graphic.LinearGradient(0, 0, 0, 1, [{ offset: 0, color: '#409EFF' }, { offset: 1, color: '#79bbff' }]), borderRadius: [4, 4, 0, 0] },
       barWidth: 36,
     }],
     grid: { left: 60, right: 20, top: 30, bottom: 30 },
@@ -219,7 +240,7 @@ function initChart() {
 onMounted(async () => {
   await fetchBillingData()
   await nextTick()
-  initChart()
+  await initChart()
 })
 
 onBeforeUnmount(() => { chart?.dispose() })

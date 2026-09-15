@@ -452,8 +452,9 @@ import { ptzControl as ptzApi, ptzStop as ptzStopApi, startCruise as ptzStartCru
 import { ElMessage } from 'element-plus'
 import { Lock, Unlock } from '@element-plus/icons-vue'
 import type { Channel, DeviceItem } from '@/types/device'
-import Hls from 'hls.js'
-import flvjs from 'flv.js'
+// [PERF 2026-09-14 R8] hls.js/flv.js 改动态加载 (原静态 import 拖 391KB gzip 进本页首屏
+//   依赖链; 见下方 ensurePlayerLibs 动态单例)
+import type flvjs from 'flv.js'   // 仅类型空间 (编译期擦除, 无运行时依赖)
 import { useStreamHealth } from '@/composables/useStreamHealth'
 import { useAdaptiveBitrate } from '@/composables/useAdaptiveBitrate'
 import StreamStatsPanel from '@/components/StreamStatsPanel.vue'
@@ -467,6 +468,31 @@ import type { PlayerFormat as StorePlayerFormat, ActiveSlotData } from '@/stores
 import { e2eLatencyStats } from '@/composables/useGlobalAlarm'
 
 type PlayerFormat = 'flv' | 'ws-flv' | 'hls' | 'webrtc'
+
+// ── [PERF 2026-09-14 R8] hls.js/flv.js 按需加载 (原静态 import 使 391KB gzip 的 vendor-players
+//   成为本页 chunk 静态依赖 → 路由懒加载 + Suspense 语义下页面 mount (频道数据请求发出点)
+//   被迫等待其下载完成)。视频墙仍需播放器, 但改为 mount 后与数据并行拉取, 页面框架/数据
+//   不再被其阻塞; 失败允许下次重试 (与 SituationScreen 同款模式)。
+let HlsLib: typeof import('hls.js').default | null = null
+let flvjsLib: typeof import('flv.js').default | null = null
+// [Fix 2026-09-15] mpegts.js: H.265(Enhanced-FLV hvc1) 播放必需 — flv.js@1.6.2 对 0x90 tag
+//   解出 codecId=0≠7 直接 CODEC_UNSUPPORTED (flv-demuxer.js L840)，FLV 在 H265 通道必然失败。
+//   mpegts.js API 兼容 flv.js 且真正实现了 liveBufferLatencyChasing (flv.js 未实现该参数)。
+let mpegtsLib: typeof import('mpegts.js').default | null = null
+let playerLibsLoading: Promise<void> | null = null
+function ensurePlayerLibs(): Promise<void> {
+  if (!playerLibsLoading) {
+    playerLibsLoading = Promise.all([
+      import('hls.js').then(m => { HlsLib = m.default }),
+      import('flv.js').then(m => { flvjsLib = m.default }),
+      import('mpegts.js').then(m => { mpegtsLib = ((m as any).default ?? m) as typeof import('mpegts.js').default }),
+    ]).then(() => undefined).catch((err) => {
+      playerLibsLoading = null  // 失败允许下次重试
+      throw err
+    })
+  }
+  return playerLibsLoading
+}
 
 const FORMAT_LABELS: Record<PlayerFormat, string> = {
   'flv': 'HTTP-FLV',
@@ -492,7 +518,9 @@ interface GridSlot {
   loading: boolean
   muted: boolean
   deviceId: string
-  playerInstance: Hls | flvjs.Player | null
+  // [Fix 2026-09-15] mpegts.js d.ts 仅导出 default, import('mpegts.js').Player 报 TS2694;
+  //   从 createPlayer 签名反取实例类型
+  playerInstance: import('hls.js').default | flvjs.Player | ReturnType<typeof import('mpegts.js').default.createPlayer> | null
   recording: boolean
   talking: boolean
   currentFormat: PlayerFormat | ''
@@ -1452,7 +1480,14 @@ function closeSlot(idx: number, hard: boolean = true) {
 }
 
 // 根据选定格式播放
-function attachPlayerByFormat(slotIdx: number, fmt: PlayerFormat) {
+async function attachPlayerByFormat(slotIdx: number, fmt: PlayerFormat) {
+  // [PERF 2026-09-14 R8] 播放器库懒加载 (视频墙 mount 后与数据并行; 失败静默降级)
+  try { await ensurePlayerLibs() } catch (e) {
+    console.warn('[LiveView] 播放器库加载失败:', e)
+    const s = gridSlots[slotIdx] as GridSlot
+    if (s) s.loading = false
+    return
+  }
   const slot = gridSlots[slotIdx] as GridSlot
   const video = videoRefs.value[slotIdx]
   if (!video) return
@@ -1492,8 +1527,10 @@ function attachPlayerByFormat(slotIdx: number, fmt: PlayerFormat) {
 
   switch (fmt) {
     case 'flv':
-      if (flvjs.isSupported()) {
-        const player = flvjs.createPlayer({
+      // [Fix 2026-09-15] 优先 mpegts.js (H.265 Enhanced-FLV 必需); 加载失败回退 flv.js (H264 通道)
+      if ((mpegtsLib || flvjsLib) && (mpegtsLib || flvjsLib)!.isSupported()) {
+        const flvLib = (mpegtsLib || flvjsLib)!
+        const player = flvLib.createPlayer({
           type: 'flv', url, isLive: true,
           hasAudio: false, hasVideo: true,
         }, {
@@ -1562,7 +1599,7 @@ function attachPlayerByFormat(slotIdx: number, fmt: PlayerFormat) {
             console.warn('[LiveView] flv play() rejected (autoplay policy):', e?.message || e)
           })
         }
-        player.on(flvjs.Events.ERROR, (errorType: any, errorDetail: any, errorInfo: any) => {
+        player.on(flvLib.Events.ERROR, (errorType: any, errorDetail: any, errorInfo: any) => {
           console.error('[LiveView] flv.js ERROR:', errorType, errorDetail, errorInfo)
           player.destroy()
           slot.playerInstance = null
@@ -1570,7 +1607,7 @@ function attachPlayerByFormat(slotIdx: number, fmt: PlayerFormat) {
           const nextFmt = getNextFallbackFormat('flv', slot.codec, slot.urls)
           if (nextFmt) {
             console.debug(`[LiveView] FLV 失败，降级到 ${nextFmt}`)
-            attachPlayerByFormat(slotIdx, nextFmt)
+            void attachPlayerByFormat(slotIdx, nextFmt)
           } else {
             ElMessage.warning('视频播放失败（不支持此编码格式），请刷新重试')
           }
@@ -1591,8 +1628,8 @@ function attachPlayerByFormat(slotIdx: number, fmt: PlayerFormat) {
               const sbList = (video as any).srcObject
               // 通过 MSE 直接操作 SourceBuffer
               // [TS 修复] flvjs 官方类型不包含 Features 字段，运行时通过 as any 访问
-              const flvjsAny = flvjs as any
-              const mediaSrc = flvjsAny.Features?.mseBase?._ms
+              const flvjsAny = flvLib as any
+              const mediaSrc = flvjsAny?.Features?.mseBase?._ms
               // flv.js 内部管理 MediaSource, 通过 player._mediaDataSource 获取
               const buffered = video.buffered
               if (buffered.length > 0) {
@@ -1614,13 +1651,15 @@ function attachPlayerByFormat(slotIdx: number, fmt: PlayerFormat) {
         slot._timers = slot._timers || []
         slot._timers.push(sbCleanupTimer as any)
       } else {
-        attachPlayerByFormat(slotIdx, 'hls')
+        await attachPlayerByFormat(slotIdx, 'hls')
       }
       break
 
     case 'ws-flv':
-      if (flvjs.isSupported()) {
-        const player = flvjs.createPlayer({
+      // [Fix 2026-09-15] 同 flv: 优先 mpegts.js (H.265), 回退 flv.js
+      if ((mpegtsLib || flvjsLib) && (mpegtsLib || flvjsLib)!.isSupported()) {
+        const flvLib = (mpegtsLib || flvjsLib)!
+        const player = flvLib.createPlayer({
           type: 'flv', url, isLive: true,
           hasAudio: false, hasVideo: true,
         }, {
@@ -1655,13 +1694,13 @@ function attachPlayerByFormat(slotIdx: number, fmt: PlayerFormat) {
         slot._videoEventCleanups.push(() => video.removeEventListener('playing', onWsFlvFirstFrame))
 
         // H.265/编码错误降级（flv.js 不支持 H.265 MSE 解码）
-        player.on(flvjs.Events.ERROR, (_errorType: string, _errorDetail: string, _errorInfo: any) => {
+        player.on(flvLib.Events.ERROR, (_errorType: string, _errorDetail: string, _errorInfo: any) => {
           console.error(`[LiveView] ws-flv ERROR:`, _errorType, _errorDetail, _errorInfo)
           player.destroy()
           slot.playerInstance = null
           const nextFmt = getNextFallbackFormat('ws-flv', slot.codec, slot.urls)
           if (nextFmt) {
-            attachPlayerByFormat(slotIdx, nextFmt)
+            void attachPlayerByFormat(slotIdx, nextFmt)
           }
         })
 
@@ -1676,13 +1715,14 @@ function attachPlayerByFormat(slotIdx: number, fmt: PlayerFormat) {
         slot.playerInstance = player
         streamHealth.startMonitoring(slotIdx, player, video)
       } else {
-        attachPlayerByFormat(slotIdx, 'hls')
+        await attachPlayerByFormat(slotIdx, 'hls')
       }
       break
 
     case 'hls':
-      if (Hls.isSupported()) {
-        const hls = new Hls({
+      if (HlsLib && HlsLib.isSupported()) {
+        const hlsCls = HlsLib
+        const hls = new hlsCls({
           enableWorker: true,
           // 低延迟模式核心配置
           lowLatencyMode: true,
@@ -1699,17 +1739,17 @@ function attachPlayerByFormat(slotIdx: number, fmt: PlayerFormat) {
         })
         hls.loadSource(url)
         hls.attachMedia(video)
-        hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        hls.on(hlsCls.Events.MANIFEST_PARSED, () => {
           console.debug(`[LiveView] slot${slotIdx} HLS MANIFEST_PARSED，开始播放`)
           video.play().catch(() => {})
         })
-        hls.on(Hls.Events.LEVEL_SWITCHED, (_event, data) => {
+        hls.on(hlsCls.Events.LEVEL_SWITCHED, (_event, data) => {
           console.debug(`[LiveView] slot${slotIdx} HLS 切换到级别 ${data.level}`)
         })
-        hls.on(Hls.Events.ERROR, (_e, data) => {
+        hls.on(hlsCls.Events.ERROR, (_e, data) => {
           if (data.fatal) {
-            if (data.type === Hls.ErrorTypes.NETWORK_ERROR) hls.startLoad()
-            else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) hls.recoverMediaError()
+            if (data.type === hlsCls.ErrorTypes.NETWORK_ERROR) hls.startLoad()
+            else if (data.type === hlsCls.ErrorTypes.MEDIA_ERROR) hls.recoverMediaError()
           }
         })
         slot.playerInstance = hls

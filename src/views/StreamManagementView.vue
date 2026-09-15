@@ -198,8 +198,30 @@ import { ElMessage } from 'element-plus'
 import { http, streamHttp } from '@/api/http'
 import type { ApiResponse } from '@/types/common'
 import { getInferenceDemandStatus, type DemandStatusResponse } from '@/api/inference'
-import Hls from 'hls.js'
-import flvjs from 'flv.js'
+import type flvjs from 'flv.js'   // 仅类型空间 (编译期擦除, 无运行时依赖)
+// ── [PERF 2026-09-14 R8] hls.js/flv.js 按需加载 (原静态 import 使 391KB gzip 的
+//   vendor-players 成为本页 chunk 静态依赖 → 路由懒加载 + Suspense 语义下页面 mount
+//   (流列表数据请求发出点) 被迫等待其下载完成)。仅点播预览时需要, 动态单例
+//   (与 SituationScreen 同款模式, 失败允许重试)。
+let HlsLib: typeof import('hls.js').default | null = null
+let flvjsLib: typeof import('flv.js').default | null = null
+// [Fix 2026-09-15] mpegts.js: ZLM H.265 输出 Enhanced-FLV 封装 (video tag 0x90+hvc1),
+//   flv.js@1.6.2 不支持会抛 CODEC_UNSUPPORTED → FLV 无画面。mpegts.js API 兼容且原生支持。
+let mpegtsLib: typeof import('mpegts.js').default | null = null
+let playerLibsLoading: Promise<void> | null = null
+function ensurePlayerLibs(): Promise<void> {
+  if (!playerLibsLoading) {
+    playerLibsLoading = Promise.all([
+      import('hls.js').then(m => { HlsLib = m.default }),
+      import('flv.js').then(m => { flvjsLib = m.default }),
+      import('mpegts.js').then(m => { mpegtsLib = ((m as any).default ?? m) as typeof import('mpegts.js').default }),
+    ]).then(() => undefined).catch((err) => {
+      playerLibsLoading = null  // 失败允许下次重试
+      throw err
+    })
+  }
+  return playerLibsLoading
+}
 
 // ===== 类型 =====
 
@@ -319,8 +341,11 @@ const playingStream = ref<StreamInfo | null>(null)
 const playerMode = ref<'flv' | 'webrtc'>('webrtc')
 const playerLoading = ref(false)
 let peerConnection: RTCPeerConnection | null = null
-let flvPlayer: flvjs.Player | null = null
-let hlsPlayer: Hls | null = null
+// [Fix 2026-09-15] mpegts.js d.ts 仅导出 default, import('mpegts.js').Player 报 TS2694;
+//   从 createPlayer 签名反取实例类型
+type MpegtsPlayer = ReturnType<typeof import('mpegts.js').default.createPlayer>
+let flvPlayer: flvjs.Player | MpegtsPlayer | null = null
+let hlsPlayer: import('hls.js').default | null = null
 
 async function playStream(row: StreamInfo) {
   playingStream.value = row
@@ -353,7 +378,7 @@ async function playStream(row: StreamInfo) {
       setTimeout(() => startWebRTC(row), 100)
     } else {
       playerMode.value = 'flv'
-      setTimeout(() => startFlvPlay(row), 100)
+      setTimeout(() => { void startFlvPlay(row) }, 100)
     }
   } catch {
     // API调用失败，默认尝试WebRTC
@@ -366,7 +391,7 @@ async function playStream(row: StreamInfo) {
 // [一次性设计修正 2026-06-21] 必须用 flv.js MSE 解码，浏览器原生 video 不支持 .flv 流封装
 //   之前直接 video.src=flvUrl 会导致 'DEMUXER_ERROR' → srcObject=null 黑屏循环
 //   对标海康/大华：DSS 客户端同样使用 flv.js (MSE) 而非 video.src
-function startFlvPlay(row: StreamInfo) {
+async function startFlvPlay(row: StreamInfo) {
   if (!videoRef.value) return
   stopWebRTC()
   stopFlv()  // [Fix] 清理旧的 flv 实例，避免内存泄漏
@@ -381,12 +406,21 @@ function startFlvPlay(row: StreamInfo) {
   video.removeAttribute('src')
   video.load()
 
-  if (!flvjs.isSupported()) {
-    // 浏览器不支持 flv.js (老 Safari) — 退回 HLS
+  // [PERF 2026-09-14 R8] flv.js 动态加载 (仅点播时拉取)
+  try { await ensurePlayerLibs() } catch (e) {
+    console.warn('[StreamMgmt] 播放器库加载失败:', e)
+    playerLoading.value = false
+    return
+  }
+  // [Fix 2026-09-15] 优先 mpegts.js (H.265 Enhanced-FLV 必需, flv.js 对 0x90 抛 CODEC_UNSUPPORTED); 回退 flv.js (H264)
+  const flvLib = mpegtsLib || flvjsLib
+  if (!flvLib) return
+  if (!flvLib.isSupported()) {
+    // 浏览器不支持 (老 Safari) — 退回 HLS
     return startHlsPlay(row)
   }
 
-  const player = flvjs.createPlayer({
+  const player = flvLib.createPlayer({
     type: 'flv', url: flvUrl, isLive: true,
     hasAudio: false, hasVideo: true,
   }, {
@@ -406,24 +440,24 @@ function startFlvPlay(row: StreamInfo) {
     playPromise.catch(() => {})
   }
 
-  player.on(flvjs.Events.LOADING_COMPLETE, () => {
+  player.on(flvLib.Events.LOADING_COMPLETE, () => {
     playerLoading.value = false
   })
 
-  player.on(flvjs.Events.ERROR, (errorType: any, errorDetail: any) => {
+  player.on(flvLib.Events.ERROR, (errorType: any, errorDetail: any) => {
     console.error('[StreamMgmt] flv.js ERROR:', errorType, errorDetail)
     playerLoading.value = false
     try { player.destroy() } catch {}
     // FLV 失败 → 自动回退 HLS
     ElMessage.warning('HTTP-FLV 播放失败，已切换到 HLS')
-    startHlsPlay(row)
+    void startHlsPlay(row)
   })
 
   flvPlayer = player
 }
 
 // HLS fallback (H.265 兼容)
-function startHlsPlay(row: StreamInfo) {
+async function startHlsPlay(row: StreamInfo) {
   if (!videoRef.value) return
   stopWebRTC()
   stopFlv()
@@ -431,8 +465,16 @@ function startHlsPlay(row: StreamInfo) {
   playerLoading.value = true
   const video = videoRef.value
   const hlsUrl = `/rtp/${row.stream}.live.m3u8`
-  if (Hls.isSupported()) {
-    hlsPlayer = new Hls({
+  // [PERF 2026-09-14 R8] hls.js 动态加载 (同 ensurePlayerLibs 单例)
+  try { await ensurePlayerLibs() } catch (e) {
+    console.warn('[StreamMgmt] 播放器库加载失败:', e)
+    playerLoading.value = false
+    return
+  }
+  if (!HlsLib) return
+  const hlsCls = HlsLib
+  if (hlsCls.isSupported()) {
+    hlsPlayer = new hlsCls({
       enableWorker: true,
       lowLatencyMode: true,
       liveSyncDurationCount: 1,
@@ -441,14 +483,14 @@ function startHlsPlay(row: StreamInfo) {
     })
     hlsPlayer.loadSource(hlsUrl)
     hlsPlayer.attachMedia(video)
-    hlsPlayer.on(Hls.Events.MANIFEST_PARSED, () => {
+    hlsPlayer.on(hlsCls.Events.MANIFEST_PARSED, () => {
       video.play().catch(() => {})
       playerLoading.value = false
     })
-    hlsPlayer.on(Hls.Events.ERROR, (_e, data) => {
+    hlsPlayer.on(hlsCls.Events.ERROR, (_e, data) => {
       if (data.fatal) {
-        if (data.type === Hls.ErrorTypes.NETWORK_ERROR) hlsPlayer?.startLoad()
-        else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) hlsPlayer?.recoverMediaError()
+        if (data.type === hlsCls.ErrorTypes.NETWORK_ERROR) hlsPlayer?.startLoad()
+        else if (data.type === hlsCls.ErrorTypes.MEDIA_ERROR) hlsPlayer?.recoverMediaError()
       }
     })
   } else if (video.canPlayType('application/vnd.apple.mpegurl')) {

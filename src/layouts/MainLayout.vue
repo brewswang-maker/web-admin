@@ -442,6 +442,21 @@
         </div>
       </el-header>
 
+      <!-- [场景 Tab 2026-09-15] 场景子页顶部页签 (三级菜单): 点击切路由, 激活高亮;
+           数据源 = 当前路由命中场景的 tabs (scenarioMenus), 固定于内容区上方 -->
+      <nav v-if="activeScenario" class="scenario-tabs" aria-label="场景页签">
+        <button
+          v-for="tab in activeScenario.tabs"
+          :key="tab.path"
+          type="button"
+          class="scenario-tab"
+          :class="{ 'is-active': route.path === tab.path || route.path.startsWith(`${tab.path}/`) }"
+          @click="navigateToMenu(tab.path)"
+        >
+          {{ tab.label }}
+        </button>
+      </nav>
+
       <!-- 页面内容 -->
       <el-main
         v-loading="routeLoading"
@@ -527,7 +542,7 @@ const alarmStore = useAlarmStore()
 const prefStore = usePreferenceStore()
 const { t } = useI18n()
 
-type PrimaryMenuKey = 'home' | 'location' | 'video' | 'alarm' | 'ai' | 'screening' | 'school' | 'gas-station' | 'large-event' | 'hotel-unattended' | 'video-perimeter' | 'platform'
+type PrimaryMenuKey = 'home' | 'location' | 'video' | 'alarm' | 'ai' | 'scenarios' | 'screening' | 'school' | 'gas-station' | 'large-event' | 'hotel-unattended' | 'video-perimeter' | 'platform'
 type SidebarItem = {
   path: string
   label: string
@@ -541,7 +556,120 @@ type PrimaryMenu = {
   label: string
   items: SidebarItem[]
   roles?: string[]
+  // [场景直达 2026-09-15] 单场景用户场景提升为一级菜单时: items 置空 + entryPath
+  //   指向该场景 overview, 点击一级直达 (子页由内容区顶部 Tab 切换)
+  entryPath?: string
 }
+
+// [场景菜单重构 2026-09-15] 6 场景数据源: 原 6 个独立一级菜单收敛为「应用场景」组。
+//   tabs = 原一级菜单 items 原样迁入 (内容区顶部 Tab 数据源, 路由 path 全部不变);
+//   Tab 文案沿用现有 menu.* 键; entryKey 为「应用场景」组下入口的 menuSecondary 键。
+type ScenarioDef = {
+  key: PrimaryMenuKey
+  entryKey: 'smartPerimeter' | 'unattended' | 'smartGasStation' | 'smartCampus' | 'smartScreening' | 'largeEvent'
+  prefix: string
+  roles: string[]
+  tabs: SidebarItem[]
+}
+const scenarioMenus = computed<ScenarioDef[]>(() => [
+  {
+    // [视频周界 2026-08-31 vp] 跨行业通用能力场景; 普通用户可见保持不变
+    //   (admin/user/viewer), 场景周界账号 scenario_perimeter 追加
+    key: 'video-perimeter',
+    entryKey: 'smartPerimeter',
+    prefix: '/video-perimeter',
+    roles: ['admin', 'user', 'viewer', 'scenario_perimeter'],
+    tabs: [
+      { path: '/video-perimeter/overview', label: t('menu.perimeterOverview'), icon: Odometer },
+      { path: '/video-perimeter/events', label: t('menu.perimeterEvents'), icon: Bell },
+      { path: '/video-perimeter/packs', label: t('menu.perimeterPacks'), icon: FolderOpened },
+      { path: '/video-perimeter/rules', label: t('menu.perimeterRules'), icon: List },
+    ],
+  },
+  {
+    // [酒店员工无人值守 2026-08-30 t8f] 方案 §5.7 四视图
+    key: 'hotel-unattended',
+    entryKey: 'unattended',
+    prefix: '/hotel-unattended',
+    roles: ['scenario_hotel'],
+    tabs: [
+      { path: '/hotel-unattended/overview', label: t('menu.hotelOverview'), icon: Odometer },
+      { path: '/hotel-unattended/corridor-events', label: t('menu.hotelCorridorEvents'), icon: Bell },
+      { path: '/hotel-unattended/scene-packs', label: t('menu.hotelPacks'), icon: FolderOpened },
+      { path: '/hotel-unattended/rules', label: t('menu.hotelRules'), icon: List },
+    ],
+  },
+  {
+    // [加油站方案 2026-08-30] 设计: docs/plans/加油站整体解决方案设计_v1.0.md §4
+    key: 'gas-station',
+    entryKey: 'smartGasStation',
+    prefix: '/gas-station',
+    roles: ['scenario_gas_station'],
+    tabs: [
+      { path: '/gas-station/overview',    label: t('menu.gasStationOverview'),    icon: DataAnalysis },
+      { path: '/gas-station/fueling',     label: t('menu.gasStationFueling'),     icon: TakeawayBox },
+      { path: '/gas-station/unloading',   label: t('menu.gasStationUnloading'),   icon: MagicStick },
+      { path: '/gas-station/perimeter',   label: t('menu.gasStationPerimeter'),   icon: Warning },
+      { path: '/gas-station/tank',        label: t('menu.gasStationTank'),        icon: Histogram },
+      { path: '/gas-station/dashboard',   label: t('menu.gasStationDashboard'),   icon: DataBoard },
+      { path: '/gas-station/gas3d',       label: t('menu.gasStationGas3D'),       icon: MapLocation },
+      { path: '/gas-station/scene-packs', label: t('menu.gasStationScenePacks'),  icon: Box },
+      { path: '/gas-station/rules',       label: t('menu.gasStationRules'),       icon: List },
+      { path: '/gas-station/events',      label: '加油站事件', icon: Bell },
+    ],
+  },
+  {
+    // [校园方案 2026-08-30] 9 子模块 + packs/rules/events
+    key: 'school',
+    entryKey: 'smartCampus',
+    prefix: '/school',
+    roles: ['scenario_school'],
+    tabs: [
+      { path: '/school/overview', label: t('menu.schoolOverview'), icon: School },
+      { path: '/school/access', label: t('menu.schoolAccess'), icon: Lock },
+      { path: '/school/perimeter', label: t('menu.schoolPerimeter'), icon: Warning },
+      { path: '/school/behavior', label: t('menu.schoolBehavior'), icon: Basketball },
+      { path: '/school/attendance', label: t('menu.schoolAttendance'), icon: Clock },
+      { path: '/school/visitor', label: t('menu.schoolVisitor'), icon: User },
+      { path: '/school/security', label: t('menu.campusSecurity'), icon: Aim },
+      { path: '/school/dashboard', label: t('menu.campusDashboard'), icon: DataBoard },
+      { path: '/school/campus3d', label: t('menu.campus3d'), icon: MapLocation },
+      { path: '/school/scene-packs', label: t('menu.schoolScenePacks'), icon: Box },
+      { path: '/school/rules', label: t('menu.schoolRules'), icon: List },
+      { path: '/school/events', label: '校园事件', icon: Bell },
+    ],
+  },
+  {
+    key: 'screening',
+    entryKey: 'smartScreening',
+    prefix: '/screening',
+    roles: ['scenario_screening'],
+    tabs: [
+      { path: '/screening/overview', label: t('menu.screeningOverview'), icon: DataAnalysis },
+      { path: '/screening/channel-order', label: t('menu.screeningChannelOrder'), icon: Connection },
+      { path: '/screening/personal-item', label: t('menu.screeningPersonalItem'), icon: ShoppingCart },
+      { path: '/screening/xray', label: t('menu.screeningXray'), icon: Aim },
+      { path: '/screening/rules', label: t('menu.screeningRules'), icon: DocumentChecked },
+      // [安检对标优化 2026-08-30] 安检专属事件规则列表入口
+      { path: '/screening/rule-manager', label: t('menu.screeningRuleManager'), icon: Setting },
+      // [UI-4b 2026-09-10] 安检事件列表 (SSOT scene=security_screening)
+      { path: '/screening/events', label: '安检事件', icon: Bell },
+    ],
+  },
+  {
+    key: 'large-event',
+    entryKey: 'largeEvent',
+    prefix: '/large-event',
+    roles: ['scenario_large_event'],
+    tabs: [
+      { path: '/large-event/overview', label: t('menu.largeEventOverview'), icon: DataAnalysis },
+      { path: '/large-event/density', label: t('menu.largeEventDensity'), icon: Position },
+      { path: '/large-event/events', label: t('menu.largeEventEvents'), icon: Bell },
+      { path: '/large-event/scene-packs', label: t('menu.largeEventPacks'), icon: FolderOpened },
+      { path: '/large-event/rules', label: t('menu.largeEventRules'), icon: List },
+    ],
+  },
+])
 
 // [场景账号 2026-08-31] 菜单角色过滤: 未声明 roles 恒可见; admin 恒通过;
 //   声明后要求与当前用户角色有交集 (场景用户 scenario_* 仅见本场景组)
@@ -609,103 +737,6 @@ const primaryMenus = computed<PrimaryMenu[]>(() => {
     ].filter(item => item.path !== '/algo-config' || auth.hasRole('admin')),
   },
   {
-    // [场景账号 2026-08-31] 场景组仅对持对应 scenario_* 角色的用户可见
-    key: 'screening',
-    label: t('menuPrimary.screening'),
-    roles: ['scenario_screening'],
-    items: [
-      { path: '/screening/overview', label: t('menu.screeningOverview'), icon: DataAnalysis },
-      { path: '/screening/channel-order', label: t('menu.screeningChannelOrder'), icon: Connection },
-      { path: '/screening/personal-item', label: t('menu.screeningPersonalItem'), icon: ShoppingCart },
-      { path: '/screening/xray', label: t('menu.screeningXray'), icon: Aim },
-      { path: '/screening/rules', label: t('menu.screeningRules'), icon: DocumentChecked },
-      // [安检对标优化 2026-08-30] 安检专属事件规则列表入口 (页面已存在, 此前漏接入菜单)
-      { path: '/screening/rule-manager', label: t('menu.screeningRuleManager'), icon: Setting },
-      // [UI-4b 2026-09-10] 安检事件列表 (SSOT scene=security_screening)
-      { path: '/screening/events', label: '安检事件', icon: Bell },
-    ],
-  },
-  {
-    // [校园方案 2026-08-30] 一级菜单「校园」: 9 子模块 (总览/门禁/周界/行为/考勤/访客/安检/大屏/3D)
-    key: 'school',
-    label: t('menuPrimary.school'),
-    roles: ['scenario_school'],
-    items: [
-      { path: '/school/overview', label: t('menu.schoolOverview'), icon: School },
-      { path: '/school/access', label: t('menu.schoolAccess'), icon: Lock },
-      { path: '/school/perimeter', label: t('menu.schoolPerimeter'), icon: Warning },
-      { path: '/school/behavior', label: t('menu.schoolBehavior'), icon: Basketball },
-      { path: '/school/attendance', label: t('menu.schoolAttendance'), icon: Clock },
-      { path: '/school/visitor', label: t('menu.schoolVisitor'), icon: User },
-      { path: '/school/security', label: t('menu.campusSecurity'), icon: Aim },
-      { path: '/school/dashboard', label: t('menu.campusDashboard'), icon: DataBoard },
-      { path: '/school/campus3d', label: t('menu.campus3d'), icon: MapLocation },
-      { path: '/school/scene-packs', label: t('menu.schoolScenePacks'), icon: Box },
-      { path: '/school/rules', label: t('menu.schoolRules'), icon: List },
-      // [UI-4b 2026-09-10] 校园事件列表 (SSOT scene=school_campus)
-      { path: '/school/events', label: '校园事件', icon: Bell },
-    ],
-  },
-  {
-    // [加油站方案 2026-08-30] 一级菜单「加油站」: 7 子模块 (总览/加油区/卸油区/周界/油罐区/态势大屏/3D)
-    //   设计: docs/plans/加油站整体解决方案设计_v1.0.md §4
-    //   T6 红线 (电话/吸烟不联锁) + EHS 闭环 + 安全 PLC 隔离
-    key: 'gas-station',
-    label: t('menuPrimary.gasStation'),
-    roles: ['scenario_gas_station'],
-    items: [
-      { path: '/gas-station/overview',    label: t('menu.gasStationOverview'),    icon: DataAnalysis },
-      { path: '/gas-station/fueling',     label: t('menu.gasStationFueling'),     icon: TakeawayBox },
-      { path: '/gas-station/unloading',   label: t('menu.gasStationUnloading'),   icon: MagicStick },
-      { path: '/gas-station/perimeter',   label: t('menu.gasStationPerimeter'),   icon: Warning },
-      { path: '/gas-station/tank',        label: t('menu.gasStationTank'),        icon: Histogram },
-      { path: '/gas-station/dashboard',   label: t('menu.gasStationDashboard'),   icon: DataBoard },
-      { path: '/gas-station/gas3d',       label: t('menu.gasStationGas3D'),       icon: MapLocation },
-      { path: '/gas-station/scene-packs', label: t('menu.gasStationScenePacks'),  icon: Box },
-      { path: '/gas-station/rules',      label: t('menu.gasStationRules'), icon: List },
-      // [UI-4b 2026-09-10] 加油站事件列表 (SSOT scene=gas_station)
-      { path: '/gas-station/events',     label: '加油站事件', icon: Bell },
-    ],
-  },
-  {
-    key: 'large-event',
-    label: t('menuPrimary.largeEvent'),
-    roles: ['scenario_large_event'],
-    items: [
-      { path: '/large-event/overview', label: t('menu.largeEventOverview'), icon: DataAnalysis },
-      { path: '/large-event/density', label: t('menu.largeEventDensity'), icon: Position },
-      { path: '/large-event/events', label: t('menu.largeEventEvents'), icon: Bell },
-      { path: '/large-event/scene-packs', label: t('menu.largeEventPacks'), icon: FolderOpened },
-      { path: '/large-event/rules', label: t('menu.largeEventRules'), icon: List },
-    ],
-  },
-  // [酒店员工无人值守 2026-08-30] 一级菜单 (t8f, 方案 §5.7 四视图)
-  {
-    key: 'hotel-unattended',
-    label: t('menuPrimary.hotelUnattended'),
-    roles: ['scenario_hotel'],
-    items: [
-      { path: '/hotel-unattended/overview', label: t('menu.hotelOverview'), icon: Odometer },
-      { path: '/hotel-unattended/corridor-events', label: t('menu.hotelCorridorEvents'), icon: Bell },
-      { path: '/hotel-unattended/scene-packs', label: t('menu.hotelPacks'), icon: FolderOpened },
-      { path: '/hotel-unattended/rules', label: t('menu.hotelRules'), icon: List },
-    ],
-  },
-  // [视频周界 2026-08-31] 一级菜单 (vp, 方案 §6; vp4 2026-09-01 补事件规则页四视图; 跨行业通用能力场景)
-  //   [场景账号 2026-08-31] 标 admin/user/viewer: 普通用户可见不变,
-  //   scenario_* 单角色用户无交集被隐藏 (需求: 场景菜单恰 6 项)
-  {
-    key: 'video-perimeter',
-    label: t('menuPrimary.videoPerimeter'),
-    roles: ['admin', 'user', 'viewer'],
-    items: [
-      { path: '/video-perimeter/overview', label: t('menu.perimeterOverview'), icon: Odometer },
-      { path: '/video-perimeter/events', label: t('menu.perimeterEvents'), icon: Bell },
-      { path: '/video-perimeter/packs', label: t('menu.perimeterPacks'), icon: FolderOpened },
-      { path: '/video-perimeter/rules', label: t('menu.perimeterRules'), icon: List },
-    ],
-  },
-  {
     key: 'platform',
     label: t('menuPrimary.platform'),
     items: [
@@ -733,17 +764,54 @@ const primaryMenus = computed<PrimaryMenu[]>(() => {
     ].filter(item => item.path !== '/projects' || auth.can('projects', 'read')),
   },
   ]
+
+  // [场景菜单重构 2026-09-15] 「应用场景」组拼装: 多场景用户 (admin 等) 显示组 +
+  //   侧边栏场景入口 (按任务书顺序); 单场景用户 (仅持一个 scenario_*;
+  //   普通 user/viewer 仅周界可见) 场景直达一级 (items 空 + entryPath →
+  //   overview, 点击直达 + 顶部 Tab 切子页); 无任何场景权限不插入。
+  //   插入位置: 'ai' 之后、'platform' 之前。
+  const visibleScenarios = scenarioMenus.value.filter(s => matchMenuRoles(s.roles))
+  if (visibleScenarios.length > 0) {
+    const insertAt = Math.max(0, menus.findIndex(m => m.key === 'ai') + 1)
+    if (visibleScenarios.length > 1) {
+      menus.splice(insertAt, 0, {
+        key: 'scenarios',
+        label: t('menuPrimary.scenarios'),
+        items: visibleScenarios.map(s => ({
+          path: s.tabs[0].path,
+          label: t(`menuSecondary.${s.entryKey}`),
+          icon: s.tabs[0].icon,
+        })),
+      })
+    } else {
+      const only = visibleScenarios[0]
+      menus.splice(insertAt, 0, {
+        key: only.key,
+        label: t(`menuSecondary.${only.entryKey}`),
+        items: [],
+        entryPath: only.tabs[0].path,
+      })
+    }
+  }
   return menus
     .filter(menu => matchMenuRoles(menu.roles))
     .map(menu => ({ ...menu, items: menu.items.filter(item => matchMenuRoles(item.roles)) }))
-    .filter(menu => menu.items.length > 0)
+    // [场景直达 2026-09-15] 单场景用户场景一级 items 为空但持 entryPath, 不能被剔除
+    .filter(menu => menu.items.length > 0 || !!menu.entryPath)
 })
 
 const activePrimaryKey = ref<PrimaryMenuKey>('home')
 const activePrimaryMenu = computed(() =>
   primaryMenus.value.find(item => item.key === activePrimaryKey.value) ?? primaryMenus.value[0]
 )
-const showSidebar = computed(() => activePrimaryKey.value !== 'home')
+// [场景直达 2026-09-15] 单场景用户场景页 (items 空菜单) 侧边栏隐藏: 内容全宽 + 顶部 Tab
+const showSidebar = computed(() =>
+  activePrimaryKey.value !== 'home' && (activePrimaryMenu.value?.items.length ?? 0) > 0
+)
+// [场景 Tab 2026-09-15] 当前路由命中的场景 (内容区顶部页签数据源)
+const activeScenario = computed(() =>
+  scenarioMenus.value.find(s => route.path === s.prefix || route.path.startsWith(`${s.prefix}/`))
+)
 const pendingMenuPath = ref<string | null>(null)
 const routeLoading = ref(false)
 let navigationSequence = 0
@@ -768,6 +836,14 @@ function scrollPrimaryNav(direction: 1 | -1) {
 watch(primaryMenus, () => nextTick(updateNavOverflow))
 
 function findPrimaryKey(path: string): PrimaryMenuKey | undefined {
+  // [场景 Tab 2026-09-15] 场景页优先按 section 归组: 多场景用户激活 'scenarios'
+  //   (侧边栏显示场景入口列表, 当前场景入口高亮), 单场景用户激活其场景一级;
+  //   未命中场景段再回退原 items path 匹配。
+  const hit = scenarioMenus.value.find(s => path === s.prefix || path.startsWith(`${s.prefix}/`))
+  if (hit) {
+    if (primaryMenus.value.some(m => m.key === 'scenarios')) return 'scenarios'
+    if (primaryMenus.value.some(m => m.key === hit.key)) return hit.key
+  }
   return primaryMenus.value.find(menu => menu.items.some(item => path === item.path || path.startsWith(`${item.path}/`)))?.key
 }
 
@@ -795,6 +871,12 @@ async function navigateToMenu(path: string) {
 
 async function selectPrimary(key: PrimaryMenuKey) {
   const menu = primaryMenus.value.find(item => item.key === key)
+  // [场景直达 2026-09-15] 单场景用户场景一级 (items 空): 按 entryPath 直达 overview
+  if (menu && menu.items.length === 0 && menu.entryPath) {
+    activePrimaryKey.value = key
+    await navigateToMenu(menu.entryPath)
+    return
+  }
   const firstItem = menu?.items[0]
   if (!firstItem) return
 
@@ -1470,6 +1552,69 @@ function handleUserCommand(command: string) {
 .primary-nav-item:focus-visible,
 .logo:focus-visible {
   outline: 2px solid #00E4FF;
+  outline-offset: -2px;
+}
+
+/* ── [场景 Tab 2026-09-15] 场景子页顶部页签 (三级菜单) ── */
+.scenario-tabs {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 14px 0;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--app-border-light);
+  background: var(--app-bg);
+  scrollbar-width: none;
+}
+
+.scenario-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.scenario-tab {
+  position: relative;
+  flex-shrink: 0;
+  padding: 8px 16px;
+  border: 0;
+  background: transparent;
+  color: var(--app-text-secondary);
+  font: inherit;
+  font-size: 14px;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color 0.18s ease;
+}
+
+.scenario-tab::after {
+  position: absolute;
+  bottom: 0;
+  left: 12px;
+  right: 12px;
+  height: 2px;
+  background: var(--app-sidebar-active);
+  content: '';
+  opacity: 0;
+  transform: scaleX(0.5);
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+
+.scenario-tab:hover {
+  color: var(--app-text-primary);
+}
+
+.scenario-tab.is-active {
+  color: var(--app-sidebar-active);
+  font-weight: 600;
+}
+
+.scenario-tab.is-active::after {
+  opacity: 1;
+  transform: scaleX(1);
+}
+
+.scenario-tab:focus-visible {
+  outline: 2px solid var(--app-sidebar-active);
   outline-offset: -2px;
 }
 

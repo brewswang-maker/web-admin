@@ -158,12 +158,29 @@ import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { getIRMStats, getSLMStats, getPluginTypes, getPipelines,
          getPipelineMetricsHistory,
          type IRMStats, type SLMStats, type PluginTypeInfo } from '@/api/pipeline'
-import * as echarts from 'echarts/core'
-import { LineChart } from 'echarts/charts'
-import { GridComponent, TooltipComponent, LegendComponent, DataZoomComponent } from 'echarts/components'
-import { CanvasRenderer } from 'echarts/renderers'
 
-echarts.use([LineChart, GridComponent, TooltipComponent, LegendComponent, DataZoomComponent, CanvasRenderer])
+// ── [PERF 2026-09-14 R8] echarts 按需加载 (原静态 import 使 437KB gzip 的 vendor-echarts
+//   成为本页 chunk 静态依赖 → 路由懒加载 + Suspense 语义下页面 mount (首屏多个统计/
+//   管线请求的发出点) 被迫等待其下载完成)。数据到达后才需渲染指标图, 改动态单例。
+let echartsLib: typeof import('echarts/core') | null = null
+let echartsLoading: Promise<void> | null = null
+function ensureEcharts(): Promise<void> {
+  if (!echartsLoading) {
+    echartsLoading = Promise.all([
+      import('echarts/core'),
+      import('echarts/charts'),
+      import('echarts/components'),
+      import('echarts/renderers'),
+    ]).then(([core, charts, comps, renderers]) => {
+      core.use([charts.LineChart, comps.GridComponent, comps.TooltipComponent, comps.LegendComponent, comps.DataZoomComponent, renderers.CanvasRenderer])
+      echartsLib = core
+    }).catch((err) => {
+      echartsLoading = null  // 失败允许下次重试
+      throw err
+    })
+  }
+  return echartsLoading
+}
 
 const loading = ref(true)
 
@@ -185,7 +202,7 @@ let refreshTimer: ReturnType<typeof setInterval> | null = null
 
 // P2-3: Pipeline metrics history
 const metricsChartEl = ref<HTMLElement>()
-let metricsChart: echarts.ECharts | null = null
+let metricsChart: import('echarts/core').ECharts | null = null
 const metricsLoading = ref(false)
 const metricsRange = ref('1h')
 const selectedPipelineId = ref('')
@@ -261,7 +278,7 @@ async function fetchMetricsHistory() {
     const d = (resp as any)?.data || resp
     if (!d || !d.timestamps || d.timestamps.length === 0) {
       metricsData.value = []
-      renderEmptyChart()
+      await renderEmptyChart()
       return
     }
     const xLabels = d.timestamps.map((ts: number) => {
@@ -270,18 +287,21 @@ async function fetchMetricsHistory() {
     })
     // 缓存最新数据供基线使用
     metricsData.value = d.fps.map((v: number, i: number) => ({ fps: v, latency: d.latency_ms[i], tpu: d.tpu_utilization[i] }))
-    renderChart(xLabels, d.fps, d.latency_ms, d.tpu_utilization)
+    await renderChart(xLabels, d.fps, d.latency_ms, d.tpu_utilization)
   } catch {
     metricsData.value = []
-    renderEmptyChart()
+    await renderEmptyChart()
   } finally {
     metricsLoading.value = false
   }
 }
 
-function renderChart(xLabels: string[], fps: number[], latency: number[], tpu: number[]) {
+async function renderChart(xLabels: string[], fps: number[], latency: number[], tpu: number[]) {
   if (!metricsChartEl.value) return
-  if (!metricsChart) metricsChart = echarts.init(metricsChartEl.value)
+  await ensureEcharts()
+  const lib = echartsLib
+  if (!lib) return
+  if (!metricsChart) metricsChart = lib.init(metricsChartEl.value)
   const tpuPct = tpu.map((v: number) => +(v).toFixed(1))
 
   // [P2-3] 基线对比 — 计算当前均值
@@ -330,9 +350,12 @@ function renderChart(xLabels: string[], fps: number[], latency: number[], tpu: n
   })
 }
 
-function renderEmptyChart() {
+async function renderEmptyChart() {
   if (!metricsChartEl.value) return
-  if (!metricsChart) metricsChart = echarts.init(metricsChartEl.value)
+  await ensureEcharts()
+  const lib = echartsLib
+  if (!lib) return
+  if (!metricsChart) metricsChart = lib.init(metricsChartEl.value)
   metricsChart.setOption({
     title: { text: 'No data', left: 'center', top: 'center', textStyle: { color: '#909399', fontSize: 14 } },
     xAxis: { type: 'category', data: [] },

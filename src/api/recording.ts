@@ -91,6 +91,84 @@ export function recordUrlCandidates(url: string): string[] {
   return [...new Set(cands)]
 }
 
+// ╒═════════════════════════════════════════════════════
+// [FIX rec-hevc 2026-09-15] 录像直链「浏览器兼容化」转码 (HEVC/PCMA mp4 → H264+AAC)
+// ═════════════════════════════════════════════════════
+
+/**
+ * 录像转码产物内存缓存 (归一化 URL → H264 直链) + in-flight 去重。
+ * 同源并发请求共享一次轮询; 成功结果永久缓存 (后端 24h 清理 + 源文件哈希缓存命中), 失败不缓存 (可重试)。
+ */
+const transcodeCache = new Map<string, string>()
+const transcodeInflight = new Map<string, Promise<string>>()
+
+/**
+ * [FIX rec-hevc 2026-09-15 排查 R1/R10] 录像文件「浏览器兼容化」转码。
+ *
+ * 背景: ZLM 本地录像片为 HEVC + PCMA (真机实测), Chrome/Linux 原生 video 无法
+ *   解码 → 联动回放 mp4 直链分支整段黑屏 / 20s 首帧超时 (黑屏问题主根因 R1)。
+ *   后端 /api/v1/recordings/transcode 任务化转码为 H264+AAC mp4, 落盘
+ *   /data/shield/record/export/tc/<hash>.mp4 并进程内缓存 (实测 1080p 60s 片 ≈12s,
+ *   H264 copy 转封装 ≈6s)。
+ *
+ * 语义: 返回可直接播放的 H264 直链; 转码不可用/失败/超时 → 返回空串, 由调用
+ *   方决定降级 (播原片或提示), 不抛异常不阻塞。归一化补层规则与 recordUrlCandidates
+ *   完全一致 (原片双层 / export 单层); GB28181 回放流等非 /record/ 形态直接返回 ''。
+ */
+export async function ensureRecordTranscoded(url: string, opts?: { timeoutMs?: number }): Promise<string> {
+  if (!url) return ''
+  const m = url.match(/^[a-z][a-z0-9+.-]*:\/\/[^/]+(\/.*)$/i)
+  const path = m ? m[1] : url
+  let filePath = ''
+  let recordUrl = ''
+  if (path.startsWith('/data/shield/record/')) {
+    filePath = path  // 磁盘绝对路径 (GB28181 条目 id 形态) → 直传 file_path 最精确
+  } else if (path.startsWith('/record/')) {
+    recordUrl = path.startsWith('/record/record/') || path.startsWith('/record/export/')
+      ? path
+      : '/record/record/' + path.slice('/record/'.length)
+  } else {
+    return ''
+  }
+  const cacheKey = filePath || recordUrl
+  const hit = transcodeCache.get(cacheKey)
+  if (hit) return hit
+  const existing = transcodeInflight.get(cacheKey)
+  if (existing) return existing
+  const task = (async (): Promise<string> => {
+    try {
+      const { data } = await recordingHttp.post('/transcode',
+        filePath ? { file_path: filePath } : { url: recordUrl }, { timeout: 15000 })
+      const d = data?.data ?? data
+      const taskId = String(d?.task_id || '')
+      if (!taskId) return ''
+      const settle = (status: string, outUrl: string): string => {
+        if (status === 'ready' && outUrl) { transcodeCache.set(cacheKey, outUrl); return outUrl }
+        return ''
+      }
+      const first = settle(String(d?.status || ''), String(d?.url || ''))
+      if (first) return first
+      if (String(d?.status || '') === 'failed') return ''
+      // 轮询: 800ms 间隔, 总预算默认 60s (实测 1080p 60s 片硬编 ≈12s; 连播队列预转下一段)
+      const deadline = Date.now() + (opts?.timeoutMs ?? 60_000)
+      while (Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 800))
+        const g = await recordingHttp.get(`/transcode/${encodeURIComponent(taskId)}`)
+        const t = g.data?.data ?? g.data
+        const done = settle(String(t?.status || ''), String(t?.url || ''))
+        if (done) return done
+        if (String(t?.status || '') === 'failed') return ''
+      }
+      return ''
+    } catch {
+      // 网络/后端不可用 (如固件未含转码端点 404) → 静默降级, 调用方走原片兜底
+      return ''
+    }
+  })()
+  transcodeInflight.set(cacheKey, task)
+  try { return await task } finally { transcodeInflight.delete(cacheKey) }
+}
+
 /** [P2-2] blob 下载公共体: 候选链 fetch→objectURL→<a download> 强制落盘 (downloadRecording 同源化逻辑抽出) */
 export async function fetchAndDownload(url: string, filename: string): Promise<void> {
   if (!/^https?:\/\//.test(url) && !url.startsWith('/record/')) {

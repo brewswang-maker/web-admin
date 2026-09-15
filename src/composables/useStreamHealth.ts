@@ -4,8 +4,15 @@
  */
 
 import { reactive, onUnmounted } from 'vue'
-import flvjs from 'flv.js'
-import Hls from 'hls.js'
+import type flvjs from 'flv.js'   // 仅类型空间 (编译期擦除, 无运行时依赖)
+// [PERF 2026-09-14 R8] 原静态 import flv.js/hls.js 使本 composable 的使用方 (LiveView)
+//   引入 vendor-players (391KB gzip) 静态依赖 — 页面 mount/数据请求被其下载阻塞。
+//   现已解耦: flv.js 事件名改字面量 (等价 flvjs.Events.*); 类型改 import() 类型查询
+//   (编译期擦除); HLS 检测改 duck typing (startLoad/recoverMediaError 为 Hls 特征)。
+
+/** flv.js Events 常量字面量 (等价 flvjs.Events.STATISTICS_INFO / LOADING_COMPLETE) */
+const FLV_EV_STATISTICS_INFO = 'statistics_info'
+const FLV_EV_LOADING_COMPLETE = 'loading_complete'
 
 export interface StreamHealthState {
   status: 'good' | 'warning' | 'error'
@@ -25,9 +32,14 @@ export interface StreamHealthState {
 
 type HealthStates = Record<number, StreamHealthState>
 
+// [Fix 2026-09-15] mpegts.js d.ts 仅导出 default (Player 藏于 namespace 未提升为命名导出),
+//   `import('mpegts.js').Player` 报 TS2694; 从 createPlayer 签名反取实例类型
+//   (createPlayer(...): Mpegts.Player → 等价 Mpegts.Player)
+type MpegtsPlayer = ReturnType<typeof import('mpegts.js').default.createPlayer>
+
   // 每个 slot 的监测上下文
 interface MonitorContext {
-  player: RTCPeerConnection | flvjs.Player | Hls | null
+  player: RTCPeerConnection | flvjs.Player | import('hls.js').default | MpegtsPlayer | null
   type: 'webrtc' | 'flv' | 'hls' | null
   intervalId: ReturnType<typeof setInterval> | null
   // WebRTC 统计快照
@@ -87,14 +99,21 @@ export function useStreamHealth(onStall?: StallCallback, onReconnectExhausted?: 
   }
 
   /** 开始监测某个 slot（支持 WebRTC/FLV/HLS） */
-  function startMonitoring(slotIdx: number, player: RTCPeerConnection | flvjs.Player | Hls, videoEl?: HTMLVideoElement) {
+  function startMonitoring(slotIdx: number, player: RTCPeerConnection | flvjs.Player | import('hls.js').default | MpegtsPlayer, videoEl?: HTMLVideoElement) {
     // 先停止旧监测
     stopMonitoring(slotIdx)
 
     const isWebRTC = player instanceof RTCPeerConnection
-    // flv.js 使用 createPlayer 创建，不存在 flvjs.Player 类，用 duck typing 检测
-    const isHls = !isWebRTC && !('on' in player && typeof (player as any).on === 'function') && player instanceof Hls
-    const isFlv = 'on' in player && typeof (player as any).on === 'function' && 'off' in player
+    // flv.js 使用 createPlayer 创建，不存在 flvjs.Player 类，用 duck typing 检 测
+    // [PERF 2026-09-14 R8] 改 duck typing 以解除对 hls.js 的静态 import 依赖。
+    // [Fix 2026-09-15] 原判定含 `!(有on)` 条件 — hls.js 实例继承 EventEmitter 必有 on,
+    //   导致 isHls 恒 false: hls 被误判为 flv → statistics_info 永不触发 → lastSpeed 恒 0
+    //   → noDataSeconds 每秒+1 → 宽限 25s 后约 58s 触发 error → onStall 重建循环。
+    //   经 git diff 核实该条件旧代码 (instanceof Hls 位于 !有on 之后) 同样恒 false,
+    //   属旧有 bug 非 R8 回归。现改 startLoad+recoverMediaError 双特征 (仅 hls.js 有;
+    //   flv.js/mpegts.js Player 均无), flv 判定显式排除 hls, 保持零静态 import。
+    const isHls = !isWebRTC && typeof (player as any).startLoad === 'function' && typeof (player as any).recoverMediaError === 'function'
+    const isFlv = !isWebRTC && !isHls && 'on' in player && typeof (player as any).on === 'function' && 'off' in player
 
     healthStates[slotIdx] = getDefaultState()
 
@@ -157,7 +176,7 @@ export function useStreamHealth(onStall?: StallCallback, onReconnectExhausted?: 
           }
         }
       }
-      flvPlayer.on(flvjs.Events.STATISTICS_INFO, onStatsInfo)
+      flvPlayer.on(FLV_EV_STATISTICS_INFO as any, onStatsInfo)
       ctx.flvOnStats = onStatsInfo
 
       // 监听首帧事件，记录首帧时间
@@ -171,13 +190,13 @@ export function useStreamHealth(onStall?: StallCallback, onReconnectExhausted?: 
           console.info(`[StreamHealth] slot${slotIdx} FLV首帧延迟=${now - ctx.createdAt}ms`)
         }
       }
-      flvPlayer.on(flvjs.Events.LOADING_COMPLETE, onLoadingComplete)
+      flvPlayer.on(FLV_EV_LOADING_COMPLETE as any, onLoadingComplete)
       ctx.flvOnLoadingComplete = onLoadingComplete
 
       ctx.intervalId = setInterval(() => pollFlvStats(slotIdx, ctx), 1000)
     } else if (isHls) {
       // HLS: 依赖 video 元素事件检测播放状态
-      const hlsPlayer = player as Hls
+      const hlsPlayer = player as import('hls.js').default
       const video = videoEl
 
       if (video) {
@@ -242,10 +261,10 @@ export function useStreamHealth(onStall?: StallCallback, onReconnectExhausted?: 
         try {
           const flvPlayer = ctx.player as flvjs.Player
           if (ctx.flvOnStats) {
-            flvPlayer.off(flvjs.Events.STATISTICS_INFO, ctx.flvOnStats)
+            flvPlayer.off(FLV_EV_STATISTICS_INFO as any, ctx.flvOnStats)
           }
           if (ctx.flvOnLoadingComplete) {
-            flvPlayer.off(flvjs.Events.LOADING_COMPLETE, ctx.flvOnLoadingComplete)
+            flvPlayer.off(FLV_EV_LOADING_COMPLETE as any, ctx.flvOnLoadingComplete)
           }
         } catch { /* ignore */ }
       }
