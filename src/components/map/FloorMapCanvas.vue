@@ -2,7 +2,7 @@
   <div
     ref="wrapEl"
     class="fm-canvas"
-    :class="{ 'fm-canvas--edit': editable, 'fm-canvas--pan': panEnabled }"
+    :class="{ 'fm-canvas--edit': editable, 'fm-canvas--pan': panEnabled, 'fm-canvas--tool': !!toolMode }"
     :tabindex="panEnabled ? 0 : -1"
     @click="onCanvasClick"
     @wheel.prevent="onWheel"
@@ -123,6 +123,22 @@
       </div>
       <div class="fm-canvas__approx-tip">近似定位 (无标定数据, FOV 扇形内投影)</div>
     </div>
+
+    <!-- ═══ [P1-3 2026-09-16 iSC「测距」工具对标] 测距层: 两点端点 + 线段 + 中点距离标签
+         (viewport 内跟随缩放平移; 线宽/字号经 --fmz 反向补偿视觉恒定) ═══ -->
+    <div v-if="measurePts.length" class="fm-canvas__measure">
+      <span
+        v-for="(p, i) in measurePts" :key="i"
+        class="fm-canvas__measure-pt"
+        :style="{ left: `${p.x * 100}%`, top: `${p.y * 100}%` }"
+      />
+      <span v-if="measurePts.length === 2" class="fm-canvas__measure-line" :style="measureLineStyle" />
+      <span
+        v-if="measurePts.length === 2 && measureText"
+        class="fm-canvas__measure-dist"
+        :style="measureLabelStyle"
+      >{{ measureText }}</span>
+    </div>
     </div><!-- /fm-canvas__viewport -->
 
     <!-- [FLOOR-MAP 2026-09-05 v2] 缩放控件 (海康/大宇对标; 只读缩放态显示) -->
@@ -199,6 +215,9 @@ const props = withDefaults(defineProps<{
   hiddenDeviceTypes?: string[]
   /** [P1-2 2026-09-16 iSC「名称显示」开关对标] 点位名称标签显隐 (default true) */
   showLabels?: boolean
+  /** [P1-3/P1-4 2026-09-16 iSC 测距/框选对标] 工具态: ''=默认平移; 'measure'=测距 (点击取点);
+   *  'marquee'=框选 (拖拽选点位)。非 '' 态空白拖拽平移短路, 滚轮缩放/zoombar 保留 */
+  toolMode?: string
 }>(), {
   editable: false,
   alarmChannelId: '',
@@ -214,6 +233,7 @@ const props = withDefaults(defineProps<{
   focusChannelId: '',
   hiddenDeviceTypes: () => [],
   showLabels: true,
+  toolMode: '',
 })
 
 const emit = defineEmits<{
@@ -223,6 +243,8 @@ const emit = defineEmits<{
   (e: 'device-click', binding: CameraMapBinding): void
   /** [P0-1 2026-09-16 iSC 初始视野对标] 视野变更 (缩放/平移/复位后防抖 emit; 宿主 PATCH 落库) */
   (e: 'viewport-change', v: { x: number; y: number; z: number }): void
+  /** [P1-3] 工具态下按 ESC → 请求宿主退出工具态 (清当前测量/选框) */
+  (e: 'tool-cancel'): void
 }>()
 
 const wrapEl = ref<HTMLElement | null>(null)
@@ -300,6 +322,12 @@ function onKeyDown(ev: KeyboardEvent) {
   if (ev.key === '+' || ev.key === '=') zoomBy(1.25)
   else if (ev.key === '-') zoomBy(1 / 1.25)
   else if (ev.key === '0') resetView()
+  else if (ev.key === 'Escape' && props.toolMode) {
+    // [P1-3] 工具态 ESC: 清当前测量/选框并退出工具态 (宿主同步按钮高亮复位)
+    measurePts.value = []
+    emit('tool-cancel')
+    ev.preventDefault()
+  }
   else return
   ev.preventDefault()
 }
@@ -307,6 +335,7 @@ function onKeyDown(ev: KeyboardEvent) {
 const panning = ref<{ sx: number; sy: number; vx: number; vy: number } | null>(null)
 function startPan(ev: MouseEvent) {
   if (!panEnabled.value || ev.button !== 0) return
+  if (props.toolMode) return // [P1-3/P1-4] 测距态点击=取点 / 框选态拖拽=选框 — 平移短路
   panning.value = { sx: ev.clientX, sy: ev.clientY, vx: view.x, vy: view.y }
   window.addEventListener('mousemove', onPanMove)
   window.addEventListener('mouseup', onPanEnd)
@@ -401,6 +430,50 @@ function fovStyle(b: CameraMapBinding) {
   }
 }
 
+// ── [P1-3 2026-09-16 iSC「测距」工具对标] 底图测距: 两点取点 → 线段 + 距离标签 ──
+// 归一化取点 (复用 toLocalNorm, 逆变换下任意缩放/平移态取点准确); 物理距离与
+// fovRadiusNormalized 同口径: Δnorm × map.width_px/height_px × scale_m_per_px = 米
+// (与画布显示尺寸/zoom 无关); 第三次点击重新起测 (新测量替换旧线段)。
+const measurePts = ref<{ x: number; y: number }[]>([])
+// 线段长度按容器宽百分比基准绘制 (dy 乘高宽比换算到宽基准), 测量开始时抓取一次
+const measureAr = ref(1)
+function onMeasureClick(ev: MouseEvent) {
+  if (!wrapEl.value) return
+  const rect = wrapEl.value.getBoundingClientRect()
+  measureAr.value = rect.height / (rect.width || 1)
+  const p = toLocalNorm(ev.clientX, ev.clientY)
+  const pt = { x: Math.min(1, Math.max(0, p.x)), y: Math.min(1, Math.max(0, p.y)) }
+  measurePts.value = measurePts.value.length >= 2 ? [pt] : [...measurePts.value, pt]
+}
+const measureLineStyle = computed(() => {
+  if (measurePts.value.length < 2) return {}
+  const [a, b] = measurePts.value
+  const dx = b.x - a.x
+  const dy = (b.y - a.y) * measureAr.value
+  return {
+    left: `${a.x * 100}%`,
+    top: `${a.y * 100}%`,
+    width: `${Math.hypot(dx, dy) * 100}%`,
+    transform: `rotate(${Math.atan2(dy, dx)}rad)`,
+  }
+})
+const measureLabelStyle = computed(() => {
+  if (measurePts.value.length < 2) return {}
+  const [a, b] = measurePts.value
+  return { left: `${((a.x + b.x) / 2) * 100}%`, top: `${((a.y + b.y) / 2) * 100}%` }
+})
+const measureText = computed(() => {
+  if (measurePts.value.length < 2) return ''
+  const [a, b] = measurePts.value
+  const m = props.map
+  if (!(m.width_px > 0) || !(m.scale_m_per_px > 0)) return ''
+  const meters = Math.hypot(
+    (b.x - a.x) * m.width_px * m.scale_m_per_px,
+    (b.y - a.y) * (m.height_px || m.width_px) * m.scale_m_per_px,
+  )
+  return meters >= 1000 ? `${(meters / 1000).toFixed(2)} km` : `${meters.toFixed(1)} m`
+})
+
 // ── 编辑交互: 画布点击落点 ──
 // [P0-2] 栅格吸附 (0.02 步长 ≈ 画布 2%; 密集落点防重叠, Intel OpenVINO 对标)
 const GRID_STEP = 0.02
@@ -409,6 +482,8 @@ function snap(v: number): number {
   return Math.round(v / GRID_STEP) * GRID_STEP
 }
 function onCanvasClick(ev: MouseEvent) {
+  // [P1-3] 测距态: 点击底图取点 (点位图标 @click.stop 不冒泡, 不会误采图标坐标)
+  if (props.toolMode === 'measure') { onMeasureClick(ev); return }
   if (!props.editable || !wrapEl.value) return
   const p = toLocalNorm(ev.clientX, ev.clientY)
   const x = Math.min(1, Math.max(0, p.x))
@@ -549,6 +624,39 @@ const bboxStyle = computed(() => {
 .fm-canvas--pan { cursor: grab; outline: none; }
 .fm-canvas--pan:active { cursor: grabbing; }
 .fm-canvas--pan:focus-visible { box-shadow: 0 0 0 1px rgba(0, 229, 255, 0.45) inset; }
+/* [P1-3/P1-4] 工具态: 十字光标提示取点/框选语义 */
+.fm-canvas--tool { cursor: crosshair; }
+
+/* ── [P1-3] 测距层: 端点 + 线段 + 距离标签 (#00E5FF 同 FOV/选中 token) ── */
+.fm-canvas__measure { position: absolute; inset: 0; z-index: 5; pointer-events: none; }
+.fm-canvas__measure-pt {
+  position: absolute;
+  width: calc(8px / var(--fmz, 1));
+  height: calc(8px / var(--fmz, 1));
+  margin: calc(-4px / var(--fmz, 1)) 0 0 calc(-4px / var(--fmz, 1));
+  border-radius: 50%;
+  background: #00E5FF;
+  box-shadow: 0 0 calc(6px / var(--fmz, 1)) rgba(0, 229, 255, 0.9);
+}
+.fm-canvas__measure-line {
+  position: absolute;
+  height: calc(2px / var(--fmz, 1));
+  margin-top: calc(-1px / var(--fmz, 1));
+  transform-origin: 0 0;
+  background: linear-gradient(90deg, #00E5FF, rgba(0, 229, 255, 0.55));
+}
+.fm-canvas__measure-dist {
+  position: absolute;
+  transform: translate(-50%, calc(-100% - 6px / var(--fmz, 1)));
+  padding: calc(2px / var(--fmz, 1)) calc(6px / var(--fmz, 1));
+  border: 1px solid rgba(0, 229, 255, 0.6);
+  border-radius: calc(3px / var(--fmz, 1));
+  background: rgba(5, 14, 48, 0.88);
+  color: #00E5FF;
+  font-size: calc(11px / var(--fmz, 1));
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
 
 /* ── [FLOOR-MAP 2026-09-05 v2] 视口层: 统一矩阵变换 (合成层, 100 点位一次变换) ── */
 .fm-canvas__viewport {

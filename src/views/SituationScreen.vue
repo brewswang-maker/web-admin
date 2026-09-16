@@ -269,6 +269,21 @@
                 <el-icon :size="13"><Tag /></el-icon>
                 名称
               </button>
+              <!-- [P1-3 2026-09-16 iSC「测距」工具对标] 底图两点测距 (未标定比例尺禁用;
+                    激活态青色高亮, ESC/再点退出) -->
+              <button
+                type="button"
+                class="floor-locate-toggle"
+                :class="{ 'is-active': mapToolMode === 'measure' }"
+                :disabled="!canMeasure"
+                :title="canMeasure
+                  ? (mapToolMode === 'measure' ? '退出测距（ESC）' : '底图测距：点击两点量取实际距离')
+                  : '当前平面图未标定比例尺，无法测距'"
+                @click="toggleMeasureTool"
+              >
+                <el-icon :size="13"><ScaleToOriginal /></el-icon>
+                测距
+              </button>
               <!-- [P1-1 2026-09-16 iSC「资源点搜索」对标] 图内搜索: 显示名/通道/类型中文匹配 →
                     选中金色光环+居中 (复用 focusBinding) -->
               <el-select
@@ -302,9 +317,11 @@
                 :focus-channel-id="floorFocusChannel"
                 :hidden-device-types="hiddenDeviceTypes"
                 :show-labels="showPointLabels"
+                :tool-mode="mapToolMode"
                 persist-viewport
                 @device-click="onFloorDeviceClick"
                 @viewport-change="onFloorViewportChange"
+                @tool-cancel="onToolCancel"
               />
               <div v-else class="floor-empty">
                 <span>暂无平面图</span>
@@ -543,7 +560,7 @@ import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
 // [P0-2 2026-09-16 iSC 报警定位对标] 定位开关图标
-import { Aim, Filter, Tag } from '@element-plus/icons-vue'
+import { Aim, Filter, Tag, ScaleToOriginal } from '@element-plus/icons-vue'
 // [PERF 2026-09-14] echarts 改动态 import (见 ensureEcharts): 解除本页 chunk 对
 //   vendor-echarts(1.5MB) 的静态依赖 (实测该下载拖慢首页框架渲染 3.9s@隧道带宽),
 //   图表库在 initCharts 数据就绪后才按需拉取。
@@ -1010,6 +1027,17 @@ const showPointLabels = ref(localStorage.getItem('fm_map_show_labels') !== '0')
 function togglePointLabels() {
   showPointLabels.value = !showPointLabels.value
   localStorage.setItem('fm_map_show_labels', showPointLabels.value ? '1' : '0')
+}
+// [P1-3 2026-09-16 iSC「测距」工具对标] toolMode 状态 ('' = 默认平移; 'measure' = 测距;
+//   P1-4 扩展 'marquee')。ESC 退出经 tool-cancel 事件同步高亮复位; scale_m_per_px<=0
+//   (未标定) 时按钮禁用 — 距离换算无意义。
+const mapToolMode = ref<'' | 'measure' | 'marquee'>('')
+const canMeasure = computed(() => !!currentFloorMap.value && currentFloorMap.value.scale_m_per_px > 0)
+function toggleMeasureTool() {
+  mapToolMode.value = mapToolMode.value === 'measure' ? '' : 'measure'
+}
+function onToolCancel() {
+  mapToolMode.value = ''
 }
 watch(() => latestAlarms.value[0]?.channelId, async (ch) => {
   if (!alarmLocateEnabled.value) return
