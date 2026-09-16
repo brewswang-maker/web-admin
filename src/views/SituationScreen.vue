@@ -100,10 +100,11 @@
           <div class="panel-title">
             <!-- <i class="iconfont1 icon1-yuanqu1 panel-title-icon" aria-hidden="true"></i> -->
             <div class="view-switcher" role="tablist" aria-label="中心视图切换">
-              <button class="view-switch-btn" :class="{ active: centerView === '3d' }" type="button" role="tab" :aria-selected="centerView === '3d'" @click="setCenterView('3d')">{{ t('situationScreen.sceneMap') }}</button>
-              <!-- [FLOOR-MAP 2026-09-05 v2] 首页平面图视图 (华为 IVS 多视图联动对标): 与 3D/视频并列 tab -->
+              <!-- [TAB-ORDER 2026-09-16] 首页中间 tab 顺序改为 平面地图→体育场3D态势图→视频轮巡,
+                   默认视图同步改为 floor (第一位); 滑动方向逻辑同步倒转 (setCenterView/onViewSelectChange) -->
               <button class="view-switch-btn" :class="{ active: centerView === 'floor' }" type="button" role="tab" :aria-selected="centerView === 'floor'" @click="setCenterView('floor')">平面地图</button>
-              <button class="view-switch-btn" :class="{ active: centerView === 'video' }" type="button" role="tab" :aria-selected="centerView === 'video'" @click="setCenterView('video')">视频监控</button>
+              <button class="view-switch-btn" :class="{ active: centerView === '3d' }" type="button" role="tab" :aria-selected="centerView === '3d'" @click="setCenterView('3d')">{{ t('situationScreen.sceneMap') }}</button>
+              <button class="view-switch-btn" :class="{ active: centerView === 'video' }" type="button" role="tab" :aria-selected="centerView === 'video'" @click="setCenterView('video')">视频轮巡</button>
             </div>
             <span v-if="sceneIsDemo && centerView === '3d'" style="font-size:11px;color:#F4B400;border-radius:3px;padding:1px 6px;margin-left:4px;">演示数据</span>
             <span v-if="!sceneIsDemo && sceneRealCount > 0 && centerView === '3d'" style="font-size:11px;color:#39C76F;border-radius:3px;padding:1px 6px;margin-left:4px;">实况接入 {{ sceneRealCount }} 台</span>
@@ -849,7 +850,8 @@ function onMinimapSelect(deviceId: string) {
 }
 
 // ── T2: 中间面板 3D/视频 手动切换 ──
-const centerView = ref<'3d' | 'video' | 'floor'>('3d')
+// [TAB-ORDER 2026-09-16] 默认视图改 'floor' (tab 首位=平面地图, 用户指定顺序 平面地图→体育场3D态势图→视频轮巡)
+const centerView = ref<'3d' | 'video' | 'floor'>('floor')
 
 // ═══ [FLOOR-MAP 2026-09-05 v2] 平面地图中央视图 (华为 IVS 多视图联动对标) ═══
 // 懒加载: 首次切到 floor 视图才拉 maps/通道 (首页首屏零增量请求);
@@ -894,6 +896,7 @@ async function loadFloorChannels() {
   } catch { /* ignore */ }
 }
 // 首次进入 floor 视图懒加载
+// [TAB-ORDER 2026-09-16] 默认视图已是 floor → watch 需 immediate:true 否则首屏不拉数据平面图白屏
 let floorLoaded = false
 watch(centerView, (v) => {
   if (v === 'floor' && !floorLoaded) {
@@ -903,7 +906,7 @@ watch(centerView, (v) => {
     })
     loadFloorChannels()
   }
-})
+}, { immediate: true })
 // 告警自动定位图 (海康告警源自动定位楼层对标): 最新告警通道未绑在当前图 → 反查切图
 watch(() => latestAlarms.value[0]?.channelId, async (ch) => {
   if (!ch || !floorMaps.value.length) return
@@ -932,12 +935,13 @@ const isFullscreen = ref(false)
 const fullscreenScene3dRef = ref<Scene3DExposed | null>(null)
 
 function setCenterView(view: '3d' | 'video' | 'floor') {
-  slideDirection.value = view === '3d' ? 'slide-right' : 'slide-left'
+  // [TAB-ORDER 2026-09-16] 首位已由 '3d' 换为 'floor' → 回首位向右滑, 离开首位向左滑
+  slideDirection.value = view === 'floor' ? 'slide-right' : 'slide-left'
   centerView.value = view
 }
 
 function onViewSelectChange(val: '3d' | 'video' | 'floor') {
-  slideDirection.value = val === '3d' ? 'slide-right' : 'slide-left'
+  slideDirection.value = val === 'floor' ? 'slide-right' : 'slide-left'
 }
 
 // 视图切换: 进入视频视图自动开始轮巡，离开则停止
