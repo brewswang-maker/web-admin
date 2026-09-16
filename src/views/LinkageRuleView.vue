@@ -713,7 +713,7 @@
                 <!-- [P1-4-EXPAND 2026-09-13] @change 仅用户交互触发 (回显赋值不触发) → 自动展开入口 -->
                 <el-checkbox-group v-model="form.conditions.eventType.config.types" @change="onEventTypesChanged" class="event-type-grid" :disabled="!!editingRule" v-loading="optionsLoading">
                   <template v-if="eventTypeOptions.length > 0">
-                    <div v-for="(group, cat) in eventTypeGrouped" :key="cat" class="event-type-group">
+                    <div v-for="(group, cat) in visibleEventTypeGrouped" :key="cat" class="event-type-group">
                       <div class="event-type-group__title">{{ cat }}</div>
                       <el-checkbox v-for="et in group" :key="et.value" :value="et.value" :disabled="!!editingRule" size="small">
                         <span class="event-type-label">
@@ -1570,6 +1570,25 @@ const selectedReservedEventLabels = computed(() => {
   return eventTypeOptions.value
     .filter((o) => o.coverageTier === 'C' && sel.has(o.value))
     .map((o) => o.label)
+})
+
+// [EVENT-TYPE-NARROW 2026-09-16] 编辑模式下事件类型列表收窄: 只展示当前规则已选事件
+//   所属分类与具体事件 (与 SELECTED 集外的 152 个无关分类/事件全部折叠掉, 减轻视觉负担)。
+//   新建模式: 全量展示 (用户需全量浏览选择)。
+//   备注: el-checkbox-group 在编辑态已 disabled, 此 narrow 仅作展示用途, 不影响数据链。
+const visibleEventTypeGrouped = computed<Record<string, typeof eventTypeOptions.value>>(() => {
+  if (!editingRule.value) return eventTypeGrouped.value
+  const selected = new Set(form.conditions.eventType.config.types)
+  if (selected.size === 0) {
+    // 兑底: 编辑态未选任何事件类型 (异常/历史脏数据), 全量展示让用户看到有问题的原因
+    return eventTypeGrouped.value
+  }
+  const result: Record<string, typeof eventTypeOptions.value> = {}
+  for (const [cat, items] of Object.entries(eventTypeGrouped.value)) {
+    const filtered = items.filter((it) => selected.has(it.value))
+    if (filtered.length > 0) result[cat] = filtered
+  }
+  return result
 })
 
 // [P1.3 2026-09-10 更名] 安保区域/位置远程实体 (独立管理页维护, 替代旧硬编码下拉)
