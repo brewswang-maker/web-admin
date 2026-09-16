@@ -321,6 +321,35 @@
                 <el-icon :size="13"><Flag /></el-icon>
                 标记
               </button>
+              <!-- [P2-11b 2026-09-16 iSC「收藏」对标] 收藏夹: 星标点位快速定位/批量预览
+                    (悬停点位点击左上星标收藏; 面板行点击定位居中, 一键预览收藏摄像头) -->
+              <el-popover placement="bottom-start" :width="248" trigger="click" popper-class="floor-fav-popper">
+                <template #reference>
+                  <button
+                    type="button"
+                    class="floor-locate-toggle"
+                    :title="favChannels.length ? `收藏点位 ${favChannels.length} 个` : '收藏夹（悬停点位点击左上星标添加）'"
+                  >
+                    <el-icon :size="13" color="#F4B400"><StarFilled /></el-icon>
+                    收藏
+                    <span v-if="favChannels.length" class="floor-fav-count">{{ favChannels.length }}</span>
+                  </button>
+                </template>
+                <div v-if="favBindings.length" class="floor-fav-list">
+                  <div
+                    v-for="b in favBindings" :key="b.channel_id"
+                    class="floor-fav-row"
+                    :title="`定位到「${previewNameOf(b)}」`"
+                    @click="locateFav(b)"
+                  >
+                    <span class="fm-layer-dot" :style="{ background: DEVICE_ICON_META[b.device_type || 'camera']?.color }" />
+                    <span class="floor-fav-name">{{ previewNameOf(b) }}</span>
+                    <span class="floor-fav-type">{{ deviceTypeLabel(b.device_type || 'camera') }}</span>
+                  </div>
+                  <button type="button" class="floor-fav-preview" @click="previewFavs">预览收藏摄像头</button>
+                </div>
+                <div v-else class="floor-fav-empty">暂无收藏<br><span>悬停点位点击左上角星标添加</span></div>
+              </el-popover>
               <!-- [P1-1 2026-09-16 iSC「资源点搜索」对标] 图内搜索: 显示名/通道/类型中文匹配 →
                     选中金色光环+居中 (复用 focusBinding) -->
               <el-select
@@ -357,6 +386,7 @@
                 :tool-mode="mapToolMode"
                 :defense-channels="defenseChannels"
                 :pins="currentPins"
+                :fav-channels="favChannels"
                 persist-viewport
                 @device-click="onFloorDeviceClick"
                 @viewport-change="onFloorViewportChange"
@@ -364,6 +394,7 @@
                 @marquee-select="onMarqueeSelect"
                 @pin-add="onPinAdd"
                 @pin-click="onPinClick"
+                @fav-toggle="onFavToggle"
               />
               <div v-else class="floor-empty">
                 <span>暂无平面图</span>
@@ -622,7 +653,7 @@ import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
 // [P0-2 2026-09-16 iSC 报警定位对标] 定位开关图标
-import { Aim, Filter, PriceTag, ScaleToOriginal, Grid, Lock, Flag } from '@element-plus/icons-vue'
+import { Aim, Filter, PriceTag, ScaleToOriginal, Grid, Lock, Flag, StarFilled } from '@element-plus/icons-vue'
 // [PERF 2026-09-14] echarts 改动态 import (见 ensureEcharts): 解除本页 chunk 对
 //   vendor-echarts(1.5MB) 的静态依赖 (实测该下载拖慢首页框架渲染 3.9s@隧道带宽),
 //   图表库在 initCharts 数据就绪后才按需拉取。
@@ -1219,6 +1250,47 @@ async function onPinClick(pin: MapPin) {
     [String(m.id)]: (mapPins.value[String(m.id)] || []).filter((p) => p.id !== pin.id),
   }
   savePinsStore(mapPins.value)
+}
+
+// ═══ [P2-11b 2026-09-16 iSC「收藏」对标] 点位收藏夹 (localStorage 全局 channel 集合) ═══
+// 星标收藏 → 收藏面板行点击定位居中 (focusBinding 复用 P1-1 内核) →
+// 一键预览收藏摄像头 (复用 P1-4 框选批量预览弹窗, 仅 camera 点位)。
+const FAVS_KEY = 'fm_map_favs_v1'
+function loadFavs(): string[] {
+  try {
+    const v = JSON.parse(localStorage.getItem(FAVS_KEY) || '[]')
+    return Array.isArray(v) ? v.filter((x) => typeof x === 'string') : []
+  } catch { return [] }
+}
+const favChannels = ref<string[]>(loadFavs())
+function onFavToggle(b: CameraMapBinding) {
+  const i = favChannels.value.indexOf(b.channel_id)
+  if (i >= 0) {
+    favChannels.value = favChannels.value.filter((c) => c !== b.channel_id)
+    ElMessage.info('已取消收藏')
+  } else {
+    favChannels.value = [...favChannels.value, b.channel_id]
+    ElMessage.success(`已收藏「${previewNameOf(b)}」`)
+  }
+  try { localStorage.setItem(FAVS_KEY, JSON.stringify(favChannels.value)) } catch { /* 存储满静默 */ }
+}
+// 收藏面板数据源: 全部图 bindings 中的收藏点位 (跨图; 换图自动跟随当前图可见项)
+const favBindings = computed(() =>
+  favChannels.value
+    .map((ch) => floorBindings.value.find((b) => b.channel_id === ch))
+    .filter((b): b is CameraMapBinding => !!b))
+function locateFav(b: CameraMapBinding) {
+  focusBinding(b.channel_id)
+}
+function previewFavs() {
+  const cams = favBindings.value.filter((b) => !b.device_type || b.device_type === 'camera')
+  if (!cams.length) {
+    ElMessage.warning('收藏点位中无可预览的摄像头')
+    return
+  }
+  previewBindings.value = cams.slice(0, 9)
+  if (cams.length > 9) ElMessage.info(`收藏摄像头 ${cams.length} 路，仅预览前 9 路`)
+  previewVisible.value = true
 }
 const canMeasure = computed(() => !!currentFloorMap.value && currentFloorMap.value.scale_m_per_px > 0)
 function toggleMeasureTool() {
@@ -4033,6 +4105,21 @@ onUnmounted(() => {
   font-size: 11px;
   color: #6b7f9e;
 }
+/* [P2-11b] 收藏徽标 (按钮内, scoped 生效; popover 面板样式在文件末尾全局块 —
+   popper teleport 到 body 后不吃 scoped) */
+.floor-fav-count {
+  margin-left: 4px;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: #f4b400;
+  color: #1f2d4a;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 15px;
+  text-align: center;
+}
 .floor-canvas-wrap {
   position: absolute;
   inset: 0;
@@ -4336,6 +4423,68 @@ onUnmounted(() => {
 .el-select__popper.title-view-popper .el-select-dropdown__item.is-selected {
   color: #00E4FF !important;
   font-weight: 600 !important;
+}
+/* [P2-11b] 收藏面板列表 (el-popover teleport 到 body, scoped 不生效 → 全局块);
+   面板深色底同 title-view-popper 款 (项目非暗黑主题, popper 默认白底与深色 UI 割裂) */
+.el-popper.floor-fav-popper {
+  background: rgba(3, 27, 78, 0.97) !important;
+  border: 1px solid rgba(0, 180, 255, 0.35) !important;
+}
+.el-popper.floor-fav-popper .el-popper__arrow::before {
+  background: rgba(3, 27, 78, 0.97) !important;
+  border-color: rgba(0, 180, 255, 0.35) !important;
+}
+.floor-fav-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.floor-fav-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  border-radius: 3px;
+  cursor: pointer;
+}
+.floor-fav-row:hover {
+  background: rgba(50, 148, 237, 0.15);
+}
+.floor-fav-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: #d7e4f4;
+}
+.floor-fav-type {
+  font-size: 10px;
+  color: #6b7f9e;
+}
+.floor-fav-preview {
+  margin-top: 6px;
+  padding: 4px 0;
+  border: 1px solid rgba(0, 228, 255, 0.5);
+  border-radius: 3px;
+  background: rgba(0, 65, 158, 0.35);
+  color: #00e4ff;
+  font-size: 12px;
+  cursor: pointer;
+}
+.floor-fav-preview:hover {
+  background: rgba(0, 65, 158, 0.6);
+}
+.floor-fav-empty {
+  padding: 10px 4px;
+  text-align: center;
+  font-size: 12px;
+  color: #d7e4f4;
+}
+.floor-fav-empty span {
+  font-size: 11px;
+  color: #6b7f9e;
 }
 .el-select__popper.title-view-popper .el-popper__arrow::before {
   background: rgba(3, 27, 78, 0.97) !important;

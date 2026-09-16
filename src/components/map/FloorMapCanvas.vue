@@ -99,6 +99,19 @@
           <span v-if="defenseRules(b).length" class="fm-canvas__cam-def">
             {{ defenseRules(b).length > 9 ? '9+' : defenseRules(b).length }}
           </span>
+          <!-- [P2-11b] 收藏星标: hover 点位显示 / 已收藏常显金 (左上; 与右下在线点、
+               右上布防角标错位; click.stop 不触发点位预览) -->
+          <span
+            class="fm-canvas__cam-fav"
+            :class="{ 'is-fav': isFav(b) }"
+            :title="isFav(b) ? '取消收藏' : '收藏点位'"
+            @click.stop="emit('fav-toggle', b)"
+            @mousedown.stop
+          >
+            <svg viewBox="0 0 24 24" width="11" height="11">
+              <path d="M12 2.6l2.9 5.9 6.5.9-4.7 4.6 1.1 6.4L12 17.4l-5.8 3 1.1-6.4L2.6 9.4l6.5-.9z" :fill="isFav(b) ? '#F4B400' : 'rgba(255,255,255,0.4)'" />
+            </svg>
+          </span>
         </div>
       </template>
       <!-- [P0-2] 栅格吸附对齐辅助线 (拖拽实时十字; Intel OpenVINO 对标) -->
@@ -255,6 +268,9 @@ const props = withDefaults(defineProps<{
   /** [P2-11a 2026-09-16 iSC「标记」对标] 自定义标记列表 (宿主 localStorage 按图持久化;
    *  纯显示层, 点击标记由宿主确认删除) */
   pins?: MapPin[]
+  /** [P2-11b 2026-09-16 iSC「收藏」对标] 收藏点位 channel_id 集合 (跨图全局;
+   *  点位左上星标 hover 显/已收藏常显金) */
+  favChannels?: string[]
 }>(), {
   editable: false,
   alarmChannelId: '',
@@ -273,6 +289,7 @@ const props = withDefaults(defineProps<{
   toolMode: '',
   defenseChannels: () => ({}),
   pins: () => [],
+  favChannels: () => [],
 })
 
 const emit = defineEmits<{
@@ -290,6 +307,8 @@ const emit = defineEmits<{
   (e: 'pin-add', x: number, y: number): void
   /** [P2-11a] 点击已有标记 → 宿主确认删除 */
   (e: 'pin-click', pin: MapPin): void
+  /** [P2-11b] 点位星标点击 → 宿主切换收藏 (localStorage) */
+  (e: 'fav-toggle', binding: CameraMapBinding): void
 }>()
 
 const wrapEl = ref<HTMLElement | null>(null)
@@ -440,6 +459,10 @@ function devStatus(b: CameraMapBinding): DevStatus {
 //    数据源宿主 getAllRules(enabled_only) → spatial_cond.bound_channel_ids 归一匹配) ──
 function defenseRules(b: CameraMapBinding): string[] {
   return props.defenseChannels[b.channel_id] || []
+}
+// [P2-11b] 收藏态 (channel_id 原样; 宿主 localStorage 全局集合)
+function isFav(b: CameraMapBinding): boolean {
+  return props.favChannels.includes(b.channel_id)
 }
 function isChannelOnline(ch: string): boolean {
   return !!props.channelOnline[ch]
@@ -977,6 +1000,28 @@ const bboxStyle = computed(() => {
   box-shadow: 0 0 calc(5px / var(--fmz, 1)) rgba(244, 180, 0, 0.8);
   pointer-events: none;
 }
+
+/* ── [P2-11b] 收藏星标: hover 点位显示, 已收藏常显金色 (左上; 容器不反向补偿 —
+     内部 svg 已被 .fm-canvas__cam svg 组选择器命中补偿, 双层补偿会叠加) ── */
+.fm-canvas__cam-fav {
+  position: absolute;
+  top: -7px;
+  left: -7px;
+  width: 17px;
+  height: 17px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: rgba(5, 14, 48, 0.78);
+  opacity: 0;
+  transition: opacity 0.15s;
+  cursor: pointer;
+  z-index: 2;
+}
+.fm-canvas__cam:hover .fm-canvas__cam-fav,
+.fm-canvas__cam-fav.is-fav { opacity: 1; }
+.fm-canvas__cam-fav:hover { background: rgba(50, 148, 237, 0.5); }
 
 /* ── [P0-2] 栅格吸附对齐辅助线 (拖拽十字虚线) ── */
 .fm-canvas__guide {
