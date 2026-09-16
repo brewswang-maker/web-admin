@@ -284,6 +284,8 @@
             <div v-if="floorAlarmCount > 0" class="floor-alarm-badge">
               <span class="floor-alarm-dot" />实时告警联动 {{ floorAlarmCount }} 通道
             </div>
+            <!-- [P0-4 2026-09-16 iSC「过滤资源点」对标] 点位计数徽标按过滤后口径显示 -->
+            <div class="floor-point-badge">点位 {{ visiblePointCount }}/{{ floorBindings.length }}</div>
           </div>
           </transition>
           </div><!-- /swipe-container -->
@@ -1040,6 +1042,12 @@ const hiddenDeviceTypes = ref<string[]>((() => {
 watch(hiddenDeviceTypes, (v) => {
   localStorage.setItem(LS_LAYER_KEY, JSON.stringify(v))
 }, { deep: true })
+// [P0-4] 点位计数徽标按过滤后口径 (spec: 设备计数徽标随图层过滤同步)
+const visiblePointCount = computed(() => {
+  const hidden = hiddenDeviceTypes.value
+  if (!hidden.length) return floorBindings.value.length
+  return floorBindings.value.filter((b) => !hidden.includes(b.device_type)).length
+})
 
 // 全屏状态
 const isFullscreen = ref(false)
@@ -3741,6 +3749,19 @@ onUnmounted(() => {
   border-radius: 50%;
   background: #F93A55;
   animation: floor-alarm-blink 1s ease-in-out infinite;
+}
+/* [P0-4] 点位计数徽标 (过滤后口径; 与告警徽标同款式灰蓝变体, 左下角并列) */
+.floor-point-badge {
+  position: absolute;
+  left: 8px;
+  bottom: 38px;
+  z-index: 5;
+  padding: 3px 10px;
+  background: rgba(5, 14, 48, 0.82);
+  border: 1px solid rgba(78, 110, 170, 0.45);
+  border-radius: 4px;
+  color: #8fa4c8;
+  font-size: 11px;
 }
 @keyframes floor-alarm-blink {
   0%, 100% { opacity: 1; }
