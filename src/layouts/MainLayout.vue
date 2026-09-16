@@ -579,7 +579,7 @@ const scenarioMenus = computed<ScenarioDef[]>(() => [
     prefix: '/video-perimeter',
     roles: ['admin', 'user', 'viewer', 'scenario_perimeter'],
     tabs: [
-      { path: '/video-perimeter/overview', label: t('menu.perimeterOverview'), icon: Odometer },
+      { path: '/video-perimeter/overview', label: t('menu.perimeterOverview'), icon: School },
       { path: '/video-perimeter/events', label: t('menu.perimeterEvents'), icon: Bell },
       { path: '/video-perimeter/packs', label: t('menu.perimeterPacks'), icon: FolderOpened },
       { path: '/video-perimeter/rules', label: t('menu.perimeterRules'), icon: List },
@@ -592,7 +592,7 @@ const scenarioMenus = computed<ScenarioDef[]>(() => [
     prefix: '/hotel-unattended',
     roles: ['scenario_hotel'],
     tabs: [
-      { path: '/hotel-unattended/overview', label: t('menu.hotelOverview'), icon: Odometer },
+      { path: '/hotel-unattended/overview', label: t('menu.hotelOverview'), icon: School },
       { path: '/hotel-unattended/corridor-events', label: t('menu.hotelCorridorEvents'), icon: Bell },
       { path: '/hotel-unattended/scene-packs', label: t('menu.hotelPacks'), icon: FolderOpened },
       { path: '/hotel-unattended/rules', label: t('menu.hotelRules'), icon: List },
@@ -605,7 +605,7 @@ const scenarioMenus = computed<ScenarioDef[]>(() => [
     prefix: '/gas-station',
     roles: ['scenario_gas_station'],
     tabs: [
-      { path: '/gas-station/overview',    label: t('menu.gasStationOverview'),    icon: DataAnalysis },
+      { path: '/gas-station/overview',    label: t('menu.gasStationOverview'),    icon: School },
       { path: '/gas-station/fueling',     label: t('menu.gasStationFueling'),     icon: TakeawayBox },
       { path: '/gas-station/unloading',   label: t('menu.gasStationUnloading'),   icon: MagicStick },
       { path: '/gas-station/perimeter',   label: t('menu.gasStationPerimeter'),   icon: Warning },
@@ -644,7 +644,7 @@ const scenarioMenus = computed<ScenarioDef[]>(() => [
     prefix: '/screening',
     roles: ['scenario_screening'],
     tabs: [
-      { path: '/screening/overview', label: t('menu.screeningOverview'), icon: DataAnalysis },
+      { path: '/screening/overview', label: t('menu.screeningOverview'), icon: School },
       { path: '/screening/channel-order', label: t('menu.screeningChannelOrder'), icon: Connection },
       { path: '/screening/personal-item', label: t('menu.screeningPersonalItem'), icon: ShoppingCart },
       { path: '/screening/xray', label: t('menu.screeningXray'), icon: Aim },
@@ -661,7 +661,7 @@ const scenarioMenus = computed<ScenarioDef[]>(() => [
     prefix: '/large-event',
     roles: ['scenario_large_event'],
     tabs: [
-      { path: '/large-event/overview', label: t('menu.largeEventOverview'), icon: DataAnalysis },
+      { path: '/large-event/overview', label: t('menu.largeEventOverview'), icon: School },
       { path: '/large-event/density', label: t('menu.largeEventDensity'), icon: Position },
       { path: '/large-event/events', label: t('menu.largeEventEvents'), icon: Bell },
       { path: '/large-event/scene-packs', label: t('menu.largeEventPacks'), icon: FolderOpened },

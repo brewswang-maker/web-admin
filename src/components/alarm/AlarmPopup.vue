@@ -2545,9 +2545,9 @@ void jumpToPlayback; void openImageTab
   padding: 0 12px;
   font-weight: bold;
 }
-.alarm-popup__side-tab:hover { color: #0088C1; }
+.alarm-popup__side-tab:hover { color: #3294ED; }
 .alarm-popup__side-tab--active {
-  color: #0088C1;
+  color: #409eff;
   font-weight: 600;
   background: transparent;
 }
@@ -2555,8 +2555,8 @@ void jumpToPlayback; void openImageTab
   content: '';
   position: absolute;
   bottom: 0; left: 0;
-  width: 100%; height: 1px;
-  background: #3294ED;
+  width: 100%; height: 3px;
+  background: #409eff;
 }
 .alarm-popup__side-body {
   flex: 1 1 auto;
@@ -2646,7 +2646,7 @@ void jumpToPlayback; void openImageTab
   cursor: pointer;
 }
 .alarm-popup__detail-images-nav button:hover:not(:disabled) {
-  color: #3294ED;
+  color: #409eff;
 }
 .alarm-popup__detail-images-nav button:disabled {
   opacity: 1; cursor: not-allowed;

@@ -30,7 +30,7 @@
         </div>
         <div class="ss-panel">
           <div class="panel-title">
-            <i class="iconfont1 icon1-jinritongji panel-title-icon" aria-hidden="true"></i>
+            <i class="iconfont1 icon1-jinritongji panel-title-icon" aria-hidden="true" style="font-size:13px;padding:0 5px;"></i>
             <span>{{ t('situationScreen.todayStats') }}</span>
           </div>
           <div class="stats-grid" v-if="!overviewFailed && todayStats.length">
