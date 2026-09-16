@@ -680,6 +680,13 @@ watch(() => props.map.id, () => {
 })
 // [P0-1] 首次挂载同样应用已存初始视野 (无 viewport → identity, 行为不变)
 onMounted(applyViewportFromMap)
+// [P0-1 v2 2026-09-16 iSC「可配置初始视野」对标 · 改显式配置] 自动持久化会让任意
+// 临时平移覆盖初始视野 (多人值班互覆), 改由宿主「设为初始视野」按钮触发落库:
+// 暴露当前视野给宿主; 普通浏览不再自动落库 (宿主不再传 persist-viewport →
+// scheduleViewportEmit 守卫直接 return, 行为与旧版查看模式一致)
+defineExpose({
+  getViewpoint: () => ({ x: view.x, y: view.y, z: view.z }),
+})
 onBeforeUnmount(() => clearTimeout(viewportEmitTimer))
 
 // ═══ [P0-3 2026-09-16 iSC「快速定位」对标] 聚焦通道 → 定位居中 ═══

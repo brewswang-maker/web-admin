@@ -309,6 +309,17 @@
                 <el-icon :size="13"><Lock /></el-icon>
                 防区
               </button>
+              <!-- [P0-1 v2 2026-09-16 iSC「可配置初始视野」对标 · 显式配置] 保存当前缩放平移
+                    为该图初始视野 (重进从此展示); 普通浏览不再自动落库, 避免多人值班互覆 -->
+              <button
+                type="button"
+                class="floor-locate-toggle"
+                title="设为初始视野：把当前缩放/平移状态保存为该图的默认进入视野"
+                @click="onSetInitialViewport"
+              >
+                <el-icon :size="13"><MapLocation /></el-icon>
+                视野
+              </button>
               <!-- [P2-11a 2026-09-16 iSC「标记」对标] 自定义标记工具 (与测距/框选共用
                     toolMode 互斥; 激活态青色高亮, 点击底图放置 → 命名 → localStorage 持久化) -->
               <button
@@ -387,9 +398,8 @@
                 :defense-channels="defenseChannels"
                 :pins="currentPins"
                 :fav-channels="favChannels"
-                persist-viewport
+                ref="floorCanvasRef"
                 @device-click="onFloorDeviceClick"
-                @viewport-change="onFloorViewportChange"
                 @tool-cancel="onToolCancel"
                 @marquee-select="onMarqueeSelect"
                 @pin-add="onPinAdd"
@@ -653,7 +663,7 @@ import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
 // [P0-2 2026-09-16 iSC 报警定位对标] 定位开关图标
-import { Aim, Filter, PriceTag, ScaleToOriginal, Grid, Lock, Flag, StarFilled } from '@element-plus/icons-vue'
+import { Aim, Filter, PriceTag, ScaleToOriginal, Grid, Lock, Flag, StarFilled, MapLocation } from '@element-plus/icons-vue'
 // [PERF 2026-09-14] echarts 改动态 import (见 ensureEcharts): 解除本页 chunk 对
 //   vendor-echarts(1.5MB) 的静态依赖 (实测该下载拖慢首页框架渲染 3.9s@隧道带宽),
 //   图表库在 initCharts 数据就绪后才按需拉取。
@@ -1340,17 +1350,30 @@ function onDeviceDetailClose() {
   detailBinding.value = null
   floorHighlight.value = ''
 }
-// [P0-1 2026-09-16 iSC 初始视野对标] 视野变更防抖 PATCH 落库 (iSC「可配置初始视野」:
-//   管理员/值班员调好的缩放平移重进后保留; fire-and-forget, 失败仅 console 不打扰)
-let viewportSaveTimer: ReturnType<typeof setTimeout> | undefined
-function onFloorViewportChange(v: { x: number; y: number; z: number }) {
+// [P0-1 v2 2026-09-16 iSC「可配置初始视野」对标 · 改显式配置] 原自动持久化
+//   (缩放平移防抖 PATCH) 会让任意临时浏览覆盖初始视野, 多人值班场景互覆;
+//   改为 iSC 管理模式: 「视野」按钮确认后落库当前视野, 普通浏览不写库
+const floorCanvasRef = ref<InstanceType<typeof FloorMapCanvas>>()
+async function onSetInitialViewport() {
   const m = currentFloorMap.value
-  if (!m) return
-  clearTimeout(viewportSaveTimer)
-  viewportSaveTimer = setTimeout(() => {
-    floorMapApi.updateMap(m.id, { name: m.name, viewport: JSON.stringify(v) })
-      .catch((e) => console.warn('[P0-1] viewport save failed', e))
-  }, 400)
+  const v = floorCanvasRef.value?.getViewpoint()
+  if (!m || !v) return
+  try {
+    await ElMessageBox.confirm(
+      `把「${m.name}」当前缩放/平移状态设为初始视野？下次进入将从此视野展示。`,
+      '设为初始视野',
+      { confirmButtonText: '设置', cancelButtonText: '取消', type: 'info' },
+    )
+  } catch {
+    return
+  }
+  try {
+    await floorMapApi.updateMap(m.id, { name: m.name, viewport: JSON.stringify(v) })
+    m.viewport = JSON.stringify(v) // 本地同步: 换图/重挂载立即生效, 无需重拉列表
+    ElMessage.success('初始视野已设置')
+  } catch {
+    ElMessage.error('保存失败，请重试')
+  }
 }
 const slideDirection = ref<'slide-left' | 'slide-right'>('slide-left')
 // [P0-3 2026-09-16 iSC「快速定位」对标] 告警列表行 → 图上定位 (任意行非仅最新;
