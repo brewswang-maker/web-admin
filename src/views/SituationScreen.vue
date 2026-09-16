@@ -269,6 +269,24 @@
                 <el-icon :size="13"><Tag /></el-icon>
                 名称
               </button>
+              <!-- [P1-1 2026-09-16 iSC「资源点搜索」对标] 图内搜索: 显示名/通道/类型中文匹配 →
+                    选中金色光环+居中 (复用 focusBinding) -->
+              <el-select
+                v-model="pointSearchPick"
+                class="floor-point-search"
+                size="small"
+                filterable
+                clearable
+                placeholder="搜索点位"
+                title="搜索点位名称/编号/类型并定位居中"
+                @change="onPointSearchPick"
+              >
+                <el-option v-for="o in pointSearchOptions" :key="o.b.channel_id" :value="o.b.channel_id" :label="o.match">
+                  <span class="fm-layer-dot" :style="{ background: DEVICE_ICON_META[o.b.device_type || 'camera']?.color }" />
+                  <span class="floor-search-name">{{ o.name }}</span>
+                  <span class="floor-search-meta">{{ o.type }} · {{ o.b.channel_id.length > 8 ? '…' + o.b.channel_id.slice(-6) : o.b.channel_id }}</span>
+                </el-option>
+              </el-select>
             </div>
             <div class="floor-canvas-wrap">
               <FloorMapCanvas
@@ -554,7 +572,7 @@ import { useFloorMap, channelIdVariants } from '@/composables/useFloorMap'
 import { floorMapApi } from '@/api/floorMap'
 import type { FloorMapWithCameras, CameraMapBinding } from '@/types/floorMap'
 // [P0-4 2026-09-16 iSC「过滤资源点」对标] 图层过滤选项 + 分类型色点
-import { FLOOR_MAP_DEVICE_TYPES, DEVICE_ICON_META } from '@/types/floorMap'
+import { FLOOR_MAP_DEVICE_TYPES, DEVICE_ICON_META, deviceTypeLabel } from '@/types/floorMap'
 import SceneEditPanel from '@/components/SceneEditPanel.vue'
 // [PERF 2026-09-14] hls.js/flv.js 改动态 import (见 ensurePlayerLibs): 解除本页
 //   chunk 对 vendor-players(1.7MB) 的静态依赖, 首次开播前才加载 (与拉流 API 并行,
@@ -1049,6 +1067,30 @@ async function locateAlarmOnMap(a: Alarm) {
   floorFocusChannel.value = ''
   await nextTick()
   floorFocusChannel.value = ch
+}
+
+// [P1-1 2026-09-16 iSC「资源点搜索」对标] 图内搜索框: 候选=当前图点位 (显示名/通道/类型中文
+//   匹配, el-select 内建 label 过滤), 选中复用 locateAlarmOnMap 尾部金色光环+居中双 trigger
+//   (提炼 focusBinding 共用; 当前图内定位, 不切图不懒加载)
+function focusBinding(ch: string) {
+  floorHighlight.value = ch
+  floorFocusChannel.value = ''
+  return nextTick().then(() => { floorFocusChannel.value = ch })
+}
+const pointSearchPick = ref('')
+const pointSearchOptions = computed(() => {
+  const labels = floorChannelLabels.value
+  return floorBindings.value.map((b) => {
+    const name = (b.device_type && b.device_type !== 'camera' ? (b.label || '') : (labels[b.channel_id] || '')) || b.channel_id
+    const type = deviceTypeLabel(b.device_type || 'camera')
+    return { b, name, type, match: `${name} ${type} ${b.channel_id}` }
+  })
+})
+function onPointSearchPick(ch: string) {
+  if (!ch) return
+  if (!floorBindings.value.some((x) => x.channel_id === ch)) { ElMessage.warning('当前平面图未找到该点位'); return }
+  void focusBinding(ch)
+  pointSearchPick.value = '' // 复位可重复定位同一点位
 }
 
 // [P0-4 2026-09-16 iSC「过滤资源点」对标] 隐藏的设备类型 (localStorage 持久; 空=全显;
@@ -3735,6 +3777,25 @@ onUnmounted(() => {
   color: #00e4ff;
   border-color: rgba(0, 228, 255, 0.5);
   background: rgba(0, 65, 158, 0.4);
+}
+/* [P1-1] 点位搜索下拉 (iSC 资源点搜索对标) */
+.floor-point-search {
+  width: 148px;
+}
+.floor-point-search :deep(.el-select__wrapper) {
+  background: rgba(7, 19, 62, 0.85);
+  box-shadow: 0 0 0 1px rgba(78, 110, 170, 0.4) inset;
+  min-height: 24px;
+  font-size: 12px;
+}
+.floor-search-name {
+  margin-left: 6px;
+}
+.floor-search-meta {
+  margin-left: auto;
+  padding-left: 12px;
+  font-size: 11px;
+  color: #6b7f9e;
 }
 .floor-canvas-wrap {
   position: absolute;
