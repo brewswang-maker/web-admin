@@ -4207,12 +4207,16 @@ onUnmounted(() => {
   vertical-align: -1px;
 }
 /* [P1-4 2026-09-16] 框选批量预览 dialog (append-to-body → 全局块):
-     深色主题 + 宫格子码流 16:9 格 + 底部名称条 */
+     深色主题 (同 DeviceDetailDialog ddd-dialog 款) + 宫格子码流 16:9 格 + 底部名称条 */
 .marquee-preview-dialog {
-  --el-dialog-bg-color: rgba(7, 19, 62, 0.97);
-  --el-dialog-border-radius: 8px;
+  background: rgba(10, 22, 40, 0.97);
+  border: 1px solid #2A3F66;
+  border-radius: 10px;
+  box-shadow: 0 12px 48px rgba(0, 0, 0, 0.55);
 }
 .marquee-preview-dialog .el-dialog__title { color: #CFE0FF; }
+.marquee-preview-dialog .el-dialog__headerbtn .el-dialog__close { color: #7A90B3; font-size: 18px; }
+.marquee-preview-dialog .el-dialog__headerbtn:hover .el-dialog__close { color: #4EA1F3; }
 .marquee-preview-dialog .el-dialog__body { padding-top: 12px; }
 .marquee-grid { display: grid; gap: 10px; }
 .marquee-cell {
