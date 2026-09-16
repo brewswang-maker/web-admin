@@ -266,7 +266,7 @@
                 :title="showPointLabels ? '隐藏点位名称标签（点击隐藏）' : '显示点位名称标签（点击显示）'"
                 @click="togglePointLabels"
               >
-                <el-icon :size="13"><Tag /></el-icon>
+                <el-icon :size="13"><PriceTag /></el-icon>
                 名称
               </button>
               <!-- [P1-3 2026-09-16 iSC「测距」工具对标] 底图两点测距 (未标定比例尺禁用;
@@ -283,6 +283,18 @@
               >
                 <el-icon :size="13"><ScaleToOriginal /></el-icon>
                 测距
+              </button>
+              <!-- [P1-4 2026-09-16 大华 DSS 框选对标] 拖拽框选多个点位 → 批量预览
+                    (与测距共用 toolMode 互斥; 激活态青色高亮, ESC 退出) -->
+              <button
+                type="button"
+                class="floor-locate-toggle"
+                :class="{ 'is-active': mapToolMode === 'marquee' }"
+                :title="mapToolMode === 'marquee' ? '退出框选（ESC）' : '框选预览：拖拽框选多个点位批量打开实时画面'"
+                @click="toggleMarqueeTool"
+              >
+                <el-icon :size="13"><Grid /></el-icon>
+                框选
               </button>
               <!-- [P1-1 2026-09-16 iSC「资源点搜索」对标] 图内搜索: 显示名/通道/类型中文匹配 →
                     选中金色光环+居中 (复用 focusBinding) -->
@@ -322,6 +334,7 @@
                 @device-click="onFloorDeviceClick"
                 @viewport-change="onFloorViewportChange"
                 @tool-cancel="onToolCancel"
+                @marquee-select="onMarqueeSelect"
               />
               <div v-else class="floor-empty">
                 <span>暂无平面图</span>
@@ -552,6 +565,26 @@
     :map-label="currentFloorMap ? floorMapLabel(currentFloorMap) : ''"
     @close="onDeviceDetailClose"
   />
+  <!-- ═══ [P1-4 2026-09-16 大华 DSS 框选对标] 框选批量预览: 子码流 ≤9 路宫格
+        (值班快速开画面; destroy-on-close 随弹窗全量销毁 MiniPlayer) ═══ -->
+  <el-dialog
+    v-model="previewVisible"
+    :title="`框选批量预览（${previewBindings.length} 路）`"
+    width="880px"
+    append-to-body
+    destroy-on-close
+    class="marquee-preview-dialog"
+  >
+    <div class="marquee-grid" :style="{ gridTemplateColumns: `repeat(${previewCols}, 1fr)` }">
+      <div v-for="b in previewBindings" :key="b.channel_id" class="marquee-cell">
+        <MiniPlayer :channel-id="bareChannelOf(b.channel_id)" stream-type="sub" aspect-ratio="16:9" />
+        <div class="marquee-cell-name" :title="previewNameOf(b)">
+          <span class="fm-layer-dot marquee-dot" :style="{ background: DEVICE_ICON_META[b.device_type || 'camera']?.color }" />
+          {{ previewNameOf(b) }}
+        </div>
+      </div>
+    </div>
+  </el-dialog>
 </template>
 
 <script setup lang="ts">
@@ -560,7 +593,7 @@ import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
 // [P0-2 2026-09-16 iSC 报警定位对标] 定位开关图标
-import { Aim, Filter, Tag, ScaleToOriginal } from '@element-plus/icons-vue'
+import { Aim, Filter, PriceTag, ScaleToOriginal, Grid } from '@element-plus/icons-vue'
 // [PERF 2026-09-14] echarts 改动态 import (见 ensureEcharts): 解除本页 chunk 对
 //   vendor-echarts(1.5MB) 的静态依赖 (实测该下载拖慢首页框架渲染 3.9s@隧道带宽),
 //   图表库在 initCharts 数据就绪后才按需拉取。
@@ -584,6 +617,8 @@ import { openAlarmDetailById } from '@/composables/useAlarmPopup'
 import FloorMapCanvas from '@/components/map/FloorMapCanvas.vue'
 // [FLOOR-MAP 2026-09-05 v5] 设备详情弹窗 (点位点击 → 预览/录像/告警就地查看)
 import DeviceDetailDialog from '@/components/map/DeviceDetailDialog.vue'
+// [P1-4 2026-09-16 大华 DSS 框选对标] 框选批量预览宫格内核 (自管理播放器生命周期)
+import MiniPlayer from '@/components/video/MiniPlayer.vue'
 import { useFloorMap, channelIdVariants } from '@/composables/useFloorMap'
 // [P0-1 2026-09-16 iSC 初始视野对标] 视野变更 PATCH 落库
 import { floorMapApi } from '@/api/floorMap'
@@ -1036,8 +1071,28 @@ const canMeasure = computed(() => !!currentFloorMap.value && currentFloorMap.val
 function toggleMeasureTool() {
   mapToolMode.value = mapToolMode.value === 'measure' ? '' : 'measure'
 }
+function toggleMarqueeTool() {
+  mapToolMode.value = mapToolMode.value === 'marquee' ? '' : 'marquee'
+}
 function onToolCancel() {
   mapToolMode.value = ''
+}
+// [P1-4 2026-09-16 大华 DSS 框选对标] 框选批量预览: 子码流降压 + ≤9 路上限 (超出取前 9
+//   并提示) + destroy-on-close 全量销毁 (设备 ZLM 并发保护); 空选框 ElMessage 提示
+const previewVisible = ref(false)
+const previewBindings = ref<CameraMapBinding[]>([])
+function onMarqueeSelect(list: CameraMapBinding[]) {
+  if (!list.length) { ElMessage.warning('选框内无设备点位'); return }
+  previewBindings.value = list.slice(0, 9)
+  if (list.length > 9) ElMessage.info(`选框内 ${list.length} 路设备，仅预览前 9 路`)
+  previewVisible.value = true
+}
+const previewCols = computed(() => Math.min(3, Math.max(1, Math.ceil(Math.sqrt(previewBindings.value.length)))))
+// 裸通道口径同 DeviceDetailDialog.bareChannelId (GB28181 通道 ID 去 _chN 双流后缀)
+const bareChannelOf = (ch: string) => ch.replace(/_ch\d+$/, '')
+function previewNameOf(b: CameraMapBinding): string {
+  if (b.device_type && b.device_type !== 'camera') return b.label || deviceTypeLabel(b.device_type)
+  return floorChannelLabels.value[b.channel_id] || `…${b.channel_id.slice(-6)}`
 }
 watch(() => latestAlarms.value[0]?.channelId, async (ch) => {
   if (!alarmLocateEnabled.value) return
@@ -4151,4 +4206,36 @@ onUnmounted(() => {
   margin-right: 6px;
   vertical-align: -1px;
 }
+/* [P1-4 2026-09-16] 框选批量预览 dialog (append-to-body → 全局块):
+     深色主题 + 宫格子码流 16:9 格 + 底部名称条 */
+.marquee-preview-dialog {
+  --el-dialog-bg-color: rgba(7, 19, 62, 0.97);
+  --el-dialog-border-radius: 8px;
+}
+.marquee-preview-dialog .el-dialog__title { color: #CFE0FF; }
+.marquee-preview-dialog .el-dialog__body { padding-top: 12px; }
+.marquee-grid { display: grid; gap: 10px; }
+.marquee-cell {
+  border: 1px solid rgba(78, 110, 170, 0.35);
+  border-radius: 4px;
+  overflow: hidden;
+  background: #04091f;
+}
+.marquee-cell-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  font-size: 12px;
+  color: #AADDFF;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.marquee-cell-name .marquee-dot {
+  flex: none;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+}
+.marquee-cell-name > :last-child { overflow: hidden; text-overflow: ellipsis; }
 </style>

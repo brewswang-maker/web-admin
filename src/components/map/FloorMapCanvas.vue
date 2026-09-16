@@ -139,6 +139,9 @@
         :style="measureLabelStyle"
       >{{ measureText }}</span>
     </div>
+
+    <!-- ═══ [P1-4 大华 DSS 框选对标] 框选层: 拖拽蓝色半透明选框 (viewport 内跟随缩放) ═══ -->
+    <div v-if="marqueeRect" class="fm-canvas__marquee" :style="marqueeStyle" />
     </div><!-- /fm-canvas__viewport -->
 
     <!-- [FLOOR-MAP 2026-09-05 v2] 缩放控件 (海康/大宇对标; 只读缩放态显示) -->
@@ -245,6 +248,8 @@ const emit = defineEmits<{
   (e: 'viewport-change', v: { x: number; y: number; z: number }): void
   /** [P1-3] 工具态下按 ESC → 请求宿主退出工具态 (清当前测量/选框) */
   (e: 'tool-cancel'): void
+  /** [P1-4] 框选态 mouseup → 命中点位列表 (可能为空数组, 由宿主提示) */
+  (e: 'marquee-select', bindings: CameraMapBinding[]): void
 }>()
 
 const wrapEl = ref<HTMLElement | null>(null)
@@ -335,7 +340,8 @@ function onKeyDown(ev: KeyboardEvent) {
 const panning = ref<{ sx: number; sy: number; vx: number; vy: number } | null>(null)
 function startPan(ev: MouseEvent) {
   if (!panEnabled.value || ev.button !== 0) return
-  if (props.toolMode) return // [P1-3/P1-4] 测距态点击=取点 / 框选态拖拽=选框 — 平移短路
+  if (props.toolMode === 'marquee') { startMarquee(ev); return } // [P1-4] 拖拽=选框
+  if (props.toolMode) return // [P1-3] 测距态点击=取点 — 平移短路
   panning.value = { sx: ev.clientX, sy: ev.clientY, vx: view.x, vy: view.y }
   window.addEventListener('mousemove', onPanMove)
   window.addEventListener('mouseup', onPanEnd)
@@ -428,6 +434,47 @@ function fovStyle(b: CameraMapBinding) {
       `conic-gradient(from ${from}deg, transparent 0deg, ` +
       `rgba(0, 229, 255, 0.30) 2deg, rgba(0, 229, 255, 0.10) 88deg, transparent 90deg)`,
   }
+}
+
+// ── [P1-4 2026-09-16 大华 DSS 框选对标] 框选批量预览: 空白区拖拽蓝色选框,
+// mouseup 计算归一化矩形命中的点位 (visibleBindings 内, 中心点入框) → emit;
+// 框内 0 点也 emit 空数组由宿主提示 (值班快速开画面语义)。
+const marqueeRect = ref<{ x0: number; y0: number; x1: number; y1: number } | null>(null)
+const marqueeStyle = computed(() => {
+  const r = marqueeRect.value
+  if (!r) return {}
+  return {
+    left: `${Math.min(r.x0, r.x1) * 100}%`,
+    top: `${Math.min(r.y0, r.y1) * 100}%`,
+    width: `${Math.abs(r.x1 - r.x0) * 100}%`,
+    height: `${Math.abs(r.y1 - r.y0) * 100}%`,
+  }
+})
+function startMarquee(ev: MouseEvent) {
+  if (!wrapEl.value) return
+  const p = toLocalNorm(ev.clientX, ev.clientY)
+  marqueeRect.value = { x0: p.x, y0: p.y, x1: p.x, y1: p.y }
+  window.addEventListener('mousemove', onMarqueeMove)
+  window.addEventListener('mouseup', onMarqueeUp)
+}
+function onMarqueeMove(ev: MouseEvent) {
+  if (!marqueeRect.value || !wrapEl.value) return
+  const p = toLocalNorm(ev.clientX, ev.clientY)
+  marqueeRect.value = { ...marqueeRect.value, x1: p.x, y1: p.y }
+}
+function onMarqueeUp() {
+  const r = marqueeRect.value
+  marqueeRect.value = null
+  window.removeEventListener('mousemove', onMarqueeMove)
+  window.removeEventListener('mouseup', onMarqueeUp)
+  if (!r) return
+  const minX = Math.min(r.x0, r.x1); const maxX = Math.max(r.x0, r.x1)
+  const minY = Math.min(r.y0, r.y1); const maxY = Math.max(r.y0, r.y1)
+  // 拖拽距离过小 (<1% 画布) 视为误触丢弃; 点位中心入框即命中 (visibleBindings 同图层口径)
+  if (maxX - minX < 0.01 && maxY - minY < 0.01) return
+  const hits = visibleBindings.value.filter((b) =>
+    b.pos_x >= minX && b.pos_x <= maxX && b.pos_y >= minY && b.pos_y <= maxY)
+  emit('marquee-select', hits)
 }
 
 // ── [P1-3 2026-09-16 iSC「测距」工具对标] 底图测距: 两点取点 → 线段 + 距离标签 ──
@@ -537,6 +584,8 @@ onBeforeUnmount(() => {
   window.removeEventListener('mouseup', onDragEnd)
   window.removeEventListener('mousemove', onPanMove)
   window.removeEventListener('mouseup', onPanEnd)
+  window.removeEventListener('mousemove', onMarqueeMove)
+  window.removeEventListener('mouseup', onMarqueeUp)
   clearTimeout(viewportEmitTimer)
 })
 // [FLOOR-MAP 2026-09-05 v2] 换图复位视口 (多图/楼层切换后不应残留平移缩放态)
@@ -656,6 +705,15 @@ const bboxStyle = computed(() => {
   font-size: calc(11px / var(--fmz, 1));
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
+}
+
+/* ── [P1-4] 框选层: 蓝色半透明选框 (与测距层同 z-index 层级; pointer-events 放行拖拽) ── */
+.fm-canvas__marquee {
+  position: absolute;
+  z-index: 5;
+  border: 1px solid rgba(0, 229, 255, 0.8);
+  background: rgba(0, 148, 255, 0.18);
+  pointer-events: none;
 }
 
 /* ── [FLOOR-MAP 2026-09-05 v2] 视口层: 统一矩阵变换 (合成层, 100 点位一次变换) ── */
