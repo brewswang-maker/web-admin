@@ -293,9 +293,11 @@ onUnmounted(() => {
 .evt-name { color: #303133; }
 .evt-key { color: #909399; font-family: monospace; font-size: 11px; }
 .level-tag { padding: 2px 8px; border-radius: 10px; font-size: 12px; }
-.lv-crit { background: #fef0f0; color: #f56c6c; }
-.lv-high { background: #fdf6ec; color: #e6a23c; }
-.lv-med { background: #ecf5ff; color: #409eff; }
+/* [FIX level-color-ssot 2026-09-16] 方案 A 对齐 (utils/alarmLevel): 浅底彩字风格
+   严重=深红字 #B71C1C / 高=红字 #F56C6C / 中=黄字 #E6A23C (原蓝字) / 低=绿字 */
+.lv-crit { background: #f7e6e6; color: #B71C1C; }
+.lv-high { background: #fef0f0; color: #F56C6C; }
+.lv-med { background: #fdf6ec; color: #E6A23C; }
 .lv-low { background: #f0f9eb; color: #67c23a; }
 .lv-info { background: #f4f4f5; color: #909399; }
 .snap-thumb { width: 50px; height: 32px; border-radius: 4px; }

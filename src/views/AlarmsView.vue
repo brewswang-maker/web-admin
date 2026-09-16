@@ -204,7 +204,7 @@
             <div style="margin-top:8px;font-size:12px">
               <div style="font-weight:600;display:flex;justify-content:space-between">
                 <span>{{ item.type }}</span>
-                <el-tag size="small" :type="levelTagType(item.severity)" effect="light">{{ severityLabel(item.severity) }}</el-tag>
+                <el-tag size="small" :type="levelTagType(item.severity)" :effect="levelTagEffect(item.severity)">{{ severityLabel(item.severity) }}</el-tag>
               </div>
               <div style="color:#909399;margin-top:4px">{{ alarmDevLabel(item) }} · {{ alarmChLabel(item) }}</div>
               <div style="color:#666;margin-top:2px">{{ formatTime(item.createdAt) }}</div>
@@ -300,7 +300,7 @@
           <template #default="{ row }">
             <div class="level-cell">
               <span class="level-dot" :class="row.severity"></span>
-              <el-tag :type="levelTagType(row.severity)" size="small" effect="light">
+              <el-tag :type="levelTagType(row.severity)" size="small" :effect="levelTagEffect(row.severity)">
                 {{ severityLabel(row.severity) }}
               </el-tag>
             </div>
@@ -808,6 +808,7 @@ import { queryRecordings, toLocalISOString, recordUrlCandidates, ensureRecordTra
 import { securityAreaApi } from '@/api/securityAreas'
 import { recordingHttp, streamHttp } from '@/api/http'
 import { normalizeStreamUrl } from '@/utils/streamUrl'
+import { alarmLevelTagType, alarmLevelTagEffect } from '@/utils/alarmLevel' // [FIX level-color-ssot 2026-09-16] 等级色板全站统一
 import type { AlarmHandleForm, AlarmEvidence, AlarmEvent } from '@/types/alarm'
 import { normalizeAlarmCore } from '@/types/alarm'
 import { useAuthStore } from '@/stores/auth'
@@ -1591,9 +1592,14 @@ function levelLabel(level: string) {
   return SEVERITY_LABELS[level] || level
 }
 
-function levelTagType(level: string): 'primary' | 'success' | 'warning' | 'info' | 'danger' {
-  const map: Record<string, 'primary' | 'success' | 'warning' | 'info' | 'danger'> = { critical: 'danger', high: 'warning', medium: 'warning', low: 'success' }
-  return map[level] || 'info'
+// [FIX level-color-ssot 2026-09-16] 原表 high=warning 与 medium 同色不分档;
+//   统一走 utils/alarmLevel: 低=success/中=warning/高=danger/严重=danger+dark
+function levelTagType(level: string): 'success' | 'warning' | 'danger' | 'info' {
+  return alarmLevelTagType(level)
+}
+
+function levelTagEffect(level: string): 'light' | 'dark' {
+  return alarmLevelTagEffect(level)
 }
 
 function statusLabel(status: string) {
@@ -2408,10 +2414,24 @@ onUnmounted(() => {
   flex-shrink: 0;
 }
 
-.level-dot.critical { background: #DC2626; box-shadow: 0 0 6px rgba(220, 38, 38, 0.4); }
-.level-dot.high { background: #EA580C; }
-.level-dot.medium { background: #F59E0B; }
-.level-dot.low { background: #22C55E; }
+/* [FIX level-color-ssot 2026-09-16] 方案 A 全站统一 (utils/alarmLevel):
+   低=绿 #67C23A / 中=黄 #E6A23C / 高=红 #F56C6C / 严重=深红 #B71C1C
+   (原 Tailwind 系 #DC2626/#EA580C/#F59E0B/#22C55E 与他页不一致) */
+.level-dot.critical { background: #B71C1C; box-shadow: 0 0 6px rgba(183, 28, 28, 0.4); }
+.level-dot.high { background: #F56C6C; }
+.level-dot.medium { background: #E6A23C; }
+.level-dot.low { background: #67C23A; }
+
+/* [FIX level-color-ssot 2026-09-16] 严重档 dark 实底用深红 #B71C1C
+   (Element danger-dark 默认 #F56C6C 与高危同色, 无法体现「严重=深红」)。
+   命中两处载体: 列表视图 .level-cell / 证据库视图 .evidence-item */
+.level-cell :deep(.el-tag--danger.el-tag--dark),
+.evidence-item :deep(.el-tag--danger.el-tag--dark) {
+  background: #B71C1C;
+  --el-tag-bg-color: #B71C1C;
+  --el-tag-border-color: #B71C1C;
+  border-color: #B71C1C;
+}
 
 /* [STAGE1 P0-1 2026-09-10] SLA 剩余时间列 — 三色分级 */
 .sla-remaining { font-variant-numeric: tabular-nums; font-weight: 500; }

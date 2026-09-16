@@ -31,8 +31,25 @@
     </div>
     <!-- Controls -->
     <div v-if="showControls && playing" class="mini-player__controls">
+      <!-- [FIX mp4-seek-ctl 2026-09-16] 3.3 快退/快进 (仅 mp4 直链回放; 直播流无文件时间轴):
+           ±seekStepSec 秒段内 seek (默认 10s, 可配), 越界自动 clamp 到 [0, duration] -->
+      <template v-if="srcIsMp4">
+        <el-button size="small" text style="cursor: pointer" @click="seekByMp4(-seekStep)">⏪{{ seekStep }}s</el-button>
+        <el-button size="small" text style="cursor: pointer" @click="seekByMp4(seekStep)">{{ seekStep }}s⏩</el-button>
+      </template>
       <el-button size="small" text style="cursor: pointer" @click="takeSnapshot">📸 截图</el-button>
       <el-button size="small" text style="cursor: pointer" @click="toggleMute">{{ muted ? '🔊 开声' : '🔇 静音' }}</el-button>
+    </div>
+    <!-- [FIX mp4-progress 2026-09-16] 3.4 进度条+时间+可拖 seek (仅 mp4 直链回放):
+         拖动中仅 UI 跟手 (@input), 松手才真正 seek (@change) — 避免 Range 拖动中连续 seek 卡顿 -->
+    <div v-if="srcIsMp4 && playing && srcDur > 0" class="mini-player__progress" @mousedown.stop>
+      <span class="mini-player__time">{{ fmtSec(srcCur) }}</span>
+      <input
+        class="mini-player__range"
+        type="range" min="0" :max="srcDur" step="0.1" :value="srcCur"
+        @input="onProgressInput" @change="onProgressChange"
+      >
+      <span class="mini-player__time">{{ fmtSec(srcDur) }}</span>
     </div>
   </div>
 </template>
@@ -44,11 +61,11 @@
  * 从 LiveView.vue 抽取核心播放逻辑，用于告警弹窗等场景。
  * 自管理 flv.js / HLS 实例的创建与销毁。
  */
-import { ref, watch, onBeforeUnmount, nextTick } from 'vue'
 import { Loading } from '@element-plus/icons-vue'
 // [PERF 2026-09-14] 播放器库改按需加载: hls.js + flv.js ≈1.1MB, 原静态导入经
 //   App.vue→AlarmPopup→MiniPlayer 静态链拖进首屏 vendor-misc (首页被迫下载)。
 //   类型仅编译期引用 (擦除), 运行时首次播放才 import() — 见 ensurePlayerLibs。
+import { ref, watch, onBeforeUnmount, nextTick, computed } from 'vue'
 import type Hls from 'hls.js'
 import type flvjs from 'flv.js'
 import { streamHttp } from '@/api/http'
@@ -92,6 +109,8 @@ const props = withDefaults(defineProps<{
   srcIsLive?: boolean
   /** 码流类型: 'main' (高清) 或 'sub' (子码流, 低分辨率) */
   streamType?: 'main' | 'sub'
+  /** [FIX mp4-seek-ctl 2026-09-16] 3.3 mp4 回放快退/快进步长 (秒), 默认 10 */
+  seekStepSec?: number
   /** 组件是否可见 (v-show 场景下控制是否启动流) */
   visible?: boolean
   /** 录像回放应关闭live */
@@ -104,6 +123,7 @@ const props = withDefaults(defineProps<{
   showControls: false,
   skipStartApi: false,
   streamType: 'main',
+  seekStepSec: 10,
   srcFormat: '',
   srcIsLive: true,
   visible: true,
@@ -161,6 +181,41 @@ const errorMsg = ref('')
 const muted = ref(props.muted)
 // [NVR-PB 2026-09-13] 候选链内出现过 FLV CodecUnsupported (非标/HEVC 编码) → 模板提示分支
 const h265Suspect = ref(false)
+// [FIX mp4-progress 2026-09-16] 3.3/3.4 mp4 回放 seek 支持: srcIsMp4=当前候选为 mp4 直链
+//   (进度条/快退快进仅此形态可用; 直播 flv/hls 无文件时间轴); srcCur/srcDur=进度条状态;
+//   isSeekingDrag=拖动中 (timeupdate 暂停回写 srcCur, 松手 @change 才真正 seek)
+const srcIsMp4 = ref(false)
+const srcCur = ref(0)
+const srcDur = ref(0)
+const isSeekingDrag = ref(false)
+const seekStep = computed(() => props.seekStepSec ?? 10)
+/** 秒 → mm:ss / h:mm:ss (进度条两侧时间显示) */
+function fmtSec(s: number): string {
+  if (!isFinite(s) || s < 0) return '--:--'
+  const sec = Math.floor(s % 60), m = Math.floor(s / 60) % 60, h = Math.floor(s / 3600)
+  const p2 = (n: number) => String(n).padStart(2, '0')
+  return h > 0 ? `${h}:${p2(m)}:${p2(sec)}` : `${p2(m)}:${p2(sec)}`
+}
+/** 3.3 快退/快进: 段内 ±seekStep 秒, clamp 到 [0, duration-0.1] (越 stopAt 由
+ *  srcTimeUpdateHandler 自然触发 ended → 连播推进下一段, 无需特殊处理) */
+function seekByMp4(deltaSec: number) {
+  const video = videoRef.value
+  if (!video || !isFinite(video.duration) || video.duration <= 0) return
+  video.currentTime = Math.min(Math.max(0, video.currentTime + deltaSec), Math.max(0, video.duration - 0.1))
+  srcCur.value = video.currentTime
+}
+/** 3.4 拖动中: 仅更新进度条显示 (timeupdate 暂停回写), 松手 @change 才 seek */
+function onProgressInput(e: Event) {
+  isSeekingDrag.value = true
+  srcCur.value = Number((e.target as HTMLInputElement).value)
+}
+/** 3.4 松手: 写入 video.currentTime 真正 seek */
+function onProgressChange(e: Event) {
+  const v = Number((e.target as HTMLInputElement).value)
+  const video = videoRef.value
+  if (video && isFinite(v)) video.currentTime = v
+  isSeekingDrag.value = false
+}
 
 let playerInstance: Hls | flvjs.Player | null = null
 let currentFormat: PlayerFormat | '' = ''
@@ -244,6 +299,11 @@ function destroyPlayer() {
   }
   currentFormat = ''
   playing.value = false
+  // [FIX mp4-progress 2026-09-16] 进度条/seek 状态随播放器销毁重置 (候选切换/通道切换/卸载)
+  srcIsMp4.value = false
+  srcCur.value = 0
+  srcDur.value = 0
+  isSeekingDrag.value = false
 }
 
 // ── 获取流 URL ──
@@ -675,10 +735,12 @@ async function attachSrcPlayer(video: HTMLVideoElement, raw: string) {
       })
       playerInstance = hls
       currentFormat = 'hls'
+      srcIsMp4.value = false  // [FIX mp4-progress 2026-09-16] 非 mp4 候选隐藏进度条/快退快进
     } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
       video.src = url
       video.play().catch(() => {})
       currentFormat = 'hls'
+      srcIsMp4.value = false
     } else {
       failNext('HLS 不受支持')
       return
@@ -707,11 +769,13 @@ async function attachSrcPlayer(video: HTMLVideoElement, raw: string) {
     if (p && typeof p.catch === 'function') p.catch(() => {})
     playerInstance = player
     currentFormat = isWs ? 'ws-flv' : 'flv'
+    srcIsMp4.value = false  // [FIX mp4-progress 2026-09-16] 非 mp4 候选隐藏进度条/快退快进
   } else {
     // mp4 / blob / data / 其他原生可播地址 (录像文件直链走此路)
     video.src = url
     video.play().catch(() => {})
     currentFormat = 'mp4'
+    srcIsMp4.value = true  // [FIX mp4-progress 2026-09-16] mp4 候选启用进度条+快退快进
   }
 
   // 真实首帧 (取代原“立即 playing”假首帧) + video 级错误监听 (flv.js 走自身 ERROR)
@@ -728,12 +792,16 @@ async function attachSrcPlayer(video: HTMLVideoElement, raw: string) {
   //   - ended: 自然播完转发 (单次触发防重; 与 stopAt 之和构成"片播完"单一信号)
   if (currentFormat === 'mp4') {
     srcLoadedMetaHandler = () => {
+      // [FIX mp4-progress 2026-09-16] 元数据就绪: 记录总时长供进度条显示
+      srcDur.value = isFinite(video.duration) && video.duration > 0 ? video.duration : 0
       const seek = props.seekStart
       if (seek && seek > 0.3 && isFinite(video.duration) && video.duration > 0) {
         video.currentTime = Math.min(seek, Math.max(0, video.duration - 0.5))
       }
     }
     srcTimeUpdateHandler = () => {
+      // [FIX mp4-progress 2026-09-16] 进度条当前时刻回写 (拖动中暂停, 松手后恢复)
+      if (!isSeekingDrag.value) srcCur.value = video.currentTime
       if (srcEndedFired) return
       const stop = props.stopAt
       if (stop != null && video.currentTime >= stop - 0.2) {
@@ -948,5 +1016,33 @@ onBeforeUnmount(() => {
   gap: 8px;
   padding: 4px;
   background: linear-gradient(transparent, rgba(0,0,0,0.6));
+}
+/* [FIX mp4-progress 2026-09-16] 3.4 mp4 回放进度条行 (控件条上方): 时间 + range + 总时长 */
+.mini-player__progress {
+  position: absolute;
+  bottom: 34px;
+  left: 8px;
+  right: 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  z-index: 2;
+  padding: 2px 4px;
+  background: rgba(0, 0, 0, 0.45);
+  border-radius: 4px;
+}
+.mini-player__time {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: #aaddff;
+  font-variant-numeric: tabular-nums;
+  user-select: none;
+}
+.mini-player__range {
+  flex: 1;
+  min-width: 0;
+  height: 4px;
+  accent-color: #409eff;
+  cursor: pointer;
 }
 </style>

@@ -7,7 +7,6 @@ import { alarmApi } from '@/api/alarm'  // [P3-VP1] 时间轴告警标记
 import { getRecordings, playRecording, stopPlayback as stopRecordingPlayback, controlPlayback, downloadRecording, recordUrlCandidates, toLocalISOString, exportRangeRecordingAsync, fetchAndDownload, ensureRecordTranscoded, type RecordingSegment as ApiRecordingSeg } from '@/api/recording'
 import {
   getWatermark, updateWatermark,
-  downloadSegment as downloadSegmentApi,
   type WatermarkConfig,
 } from '@/api/recording'
 // [PERF 2026-09-14 R8] hls.js/flv.js 改动态加载 (原静态 import 拖 391KB gzip 进本页
@@ -61,6 +60,12 @@ const selectedDate = ref(new Date().toISOString().split('T')[0])
 // [REC-UI 2026-09-13 效果图对标] 查询日内起止时间 (默认全天=原行为; 对齐效果图「起止时间」双选择器)
 const queryStartTime = ref('00:00:00')
 const queryEndTime = ref('23:59:59')
+// [FIX rec-window 2026-09-16] 查询窗口 ms 基准 (3.1 时间查询不准): NVR/盒子按切片粒度
+//   返回录像 (与窗口有交集的整段切片, 片段物理起点可早于所选开始时间 ~30min) —
+//   自动播放等「无显式目标点」链路需钳制到窗口起点开播 (期望: 首帧 ≥ 查询开始 ±1s);
+//   时间轴点击/按时间点观看等显式定位链路天然精准, 不受影响。
+const queryWindowStartMs = ref(0)
+const queryWindowEndMs = ref(0)
 // [REC-UI 2026-09-13] 录像片段列表抽屉 (控制条「列表」按钮打开; 主视图保持自动播放首段, 抽屉仅按需展开)
 const clipDrawerVisible = ref(false)
 const recordings = ref<RecordingSegment[]>([])
@@ -420,6 +425,9 @@ async function fetchRecordings(opts?: { autoPlay?: boolean }) {
   try {
     // 使用 POST /api/v1/recordings/query 查询GB28181设备录像
     // [REC-UI 2026-09-13] 支持日内起止时间范围 (效果图双时间选择器; 默认 00:00:00~23:59:59 全天)
+    // [FIX rec-window 2026-09-16] 同步记录查询窗口 (autoPlayFirstSegment 播放起点钳制用)
+    queryWindowStartMs.value = new Date(`${selectedDate.value}T${queryStartTime.value || '00:00:00'}`).getTime()
+    queryWindowEndMs.value = new Date(`${selectedDate.value}T${queryEndTime.value || '23:59:59'}`).getTime()
     const { data } = await recordingHttp.post('/query', {
       device_id: selectedDeviceId.value,
       channel_id: selectedChannelId.value,
@@ -445,18 +453,31 @@ async function autoPlayFirstSegment() {
   const segs = buildSegs()
   const first = segs[0]
   if (!first) return
+  // [FIX rec-window 2026-09-16] 播放起点钳制到查询窗口 (3.1): 切片物理起点早于所选
+  //   开始时间 >1s 时从窗口起点开播 (jumpToTime 段内精准 seek / GB 设备从该时刻推流),
+  //   杜绝「选 10:00 查询却从 09:30 片头播放」; 段起点在窗口内(±1s)则维持原行为。
+  const clampToWindow = (segStartMs: number) =>
+    queryWindowStartMs.value > 0 && segStartMs < queryWindowStartMs.value - 1000
+      ? queryWindowStartMs.value
+      : segStartMs
+  const firstStartAt = clampToWindow(first.s)
   if (first.s < tlView.startMs || first.s > tlView.startMs + tlView.spanMs) {
     tlView.startMs = clampTlStart(first.s - tlView.spanMs / 2, tlView.spanMs)
     drawTimeline()
   }
-  const ok = await playSegment(first.r, { startAtMs: first.s })
-  if (ok) { ElMessage.success(`已自动播放首段 ${fmtClockMs(first.s)} 起的录像`); return }
+  const ok = await playSegment(first.r, { startAtMs: firstStartAt })
+  if (ok) {
+    ElMessage.success(firstStartAt !== first.s
+      ? `录像按切片粒度返回，已从所选开始时刻 ${fmtClockMs(firstStartAt)} 开始播放`
+      : `已自动播放首段 ${fmtClockMs(first.s)} 起的录像`)
+    return
+  }
   // [FIX p2-autoplay2 2026-09-12] 首段重试后仍不可播 (NVR 归档/会话竞态) → 顺延第二段,
   //   保证「零人工操作进入播放」不因单段故障而落空
   const second = segs[1]
   if (second) {
     ElMessage.warning('首段暂不可播放，已顺延播放第二段')
-    await playSegment(second.r, { startAtMs: second.s })
+    await playSegment(second.r, { startAtMs: clampToWindow(second.s) })
   }
 }
 
@@ -1185,13 +1206,45 @@ async function attachHls(hlsUrl: string) {
   }
 }
 
-// [FIX rec-dl 2026-09-11] 原 window.open('/recordings/${id}/download'):
-//   ① id 为磁盘路径含 '/' → URL 撕裂; ② 该路由后端不存在 → 恒 404。
-//   改走已治本的 download-file?path= 链 (nginx /record/ 静态直链, Range 206 实测)。
+// [FIX rec-dl-full 2026-09-16] 区间拼接导出公共体 (3.2 下载完整录像): export-range-async
+//   扫描中心存储切片 → ffmpeg -c copy 拼接 → fetchAndDownload 落盘。返回 true=已导出;
+//   false=失败 (原因已 ElMessage), 调用方决定降级路径。与时间轴框选/REC-MARK 同链路。
+async function exportAndDownloadRange(startMs: number, endMs: number, fileLabel: string): Promise<boolean> {
+  if (!selectedChannelId.value) {
+    ElMessage.warning('未选择通道, 无法导出')
+    return false
+  }
+  try {
+    const out = await exportRangeRecordingAsync({
+      device_id: selectedDeviceId.value || undefined,
+      channel_id: String(selectedChannelId.value),
+      start_time: toLocalISOString(new Date(startMs)),
+      end_time: toLocalISOString(new Date(endMs)),
+    })
+    await fetchAndDownload(out.download_url, out.filename || fileLabel)
+    ElMessage.success(`完整录像已下载${out.segments_used ? ` (拼接 ${out.segments_used} 个切片)` : ''}`)
+    return true
+  } catch (e: any) {
+    ElMessage.error('区间导出失败: ' + (e?.response?.data?.message || e?.message || ''))
+    return false
+  }
+}
+
+// [FIX rec-dl-full 2026-09-16] 3.2 下载无效: ZLM 60s 一片 (mp4_max_second=60), 原单片
+//   downloadRecording 只落盘一个 60s 分段 (用户拿到的是"分段"而非完整录像) → 改优先
+//   按段起止区间导出拼接完整 mp4; 无中心切片覆盖 (纯设备存储段) / 接口失败 / 超 30min
+//   上限时降级原单片下载并明示。
 async function downloadSegment(rec: RecordingSegment) {
+  const sMs = Date.parse(rec.startTime || '')
+  const eMs = Date.parse(rec.endTime || '')
+  if (selectedChannelId.value && Number.isFinite(sMs) && Number.isFinite(eMs)
+    && eMs > sMs && eMs - sMs <= 30 * 60_000) {
+    if (await exportAndDownloadRange(sMs, eMs, `export_${rec.id}.mp4`)) return
+    ElMessage.info('已降级为单片下载 (仅当前切片文件)')
+  }
   try {
     await downloadRecording(rec.id)
-    ElMessage.success('下载已开始')
+    ElMessage.success('单片下载已开始')
   } catch (e: any) {
     ElMessage.error('下载失败: ' + (e?.message || ''))
   }
@@ -1244,8 +1297,12 @@ function navSegment(dir: -1 | 1) {
 function playPrevSegment() { navSegment(-1) }
 function playNextSegment() { navSegment(1) }
 
-/** [REC-UI 2026-09-13 效果图对标] 快退/快进(±5s): 目标=当前绝对时刻±N秒, 复用时间轴点击链路
- *  (命中当前段 → jumpToTime 段内精准 seek; 跨段/空档 → resolveSegmentAt 切段播放) */
+/** [REC-UI 2026-09-13 效果图对标] 快退/快进: 目标=当前绝对时刻±N秒, 复用时间轴点击链路
+ *  (命中当前段 → jumpToTime 段内精准 seek; 跨段/空档 → resolveSegmentAt 切段播放)
+ *  [FIX rec-seek-step 2026-09-16] 3.3 步长统一 10s (Shift+点击=30s): 原 ±5s 偏小,
+ *  对齐用户「±10s 或 ±30s 可配」诉求 (快捷键 ←/→ 同步 10s / Shift+←/→ 30s)。 */
+const SEEK_STEP_SEC = 10
+const SEEK_STEP_LARGE_SEC = 30
 async function seekBy(deltaSec: number) {
   const cur = currentAbsMs()
   if (!cur) {
@@ -1289,27 +1346,41 @@ function stepFrame(dir: 1 | -1) {
   currentTime.value = video.currentTime  // 暂停态 timeupdate 不触发, 手动同步进度条
 }
 
-/** 批量下载 (设计图「录像下载」入口): 逐段 fetch→blob→objectURL 强制落盘 */
+/** 批量下载 (设计图「录像下载」入口)
+ *  [FIX rec-dl-full 2026-09-16] 3.2: 原"逐段下载"对 60s 切片逐片触发浏览器下载
+ *  (整天查询 = 上百个分段文件, 用户需自行拼接 = "下载不到完整录像") → 改为查询
+ *  时段区间导出: ≤30min 单文件; 超限自动按 30min 切分依次导出 (文件名带序号)。 */
 async function batchDownload() {
   const list = filteredRecordings.value
   if (!list.length) {
     ElMessage.warning('暂无可下载的录像段')
     return
   }
-  try {
-    await ElMessageBox.confirm(`将逐段下载 ${list.length} 个录像文件，是否继续？`, '提示', { type: 'warning' })
-  } catch { return }
-  let ok = 0
-  let fail = 0
-  for (const rec of list) {
-    try {
-      await downloadRecording(rec.id)
-      ok++
-    } catch { fail++ }
-    await new Promise(r => setTimeout(r, 300))  // 间隔触发, 避免浏览器并发下载拦截
+  const winS = queryWindowStartMs.value || Date.parse(list[0].startTime || '')
+  const winE = queryWindowEndMs.value || Date.parse(list[list.length - 1].endTime || '')
+  if (!Number.isFinite(winS) || !Number.isFinite(winE) || winE <= winS) {
+    ElMessage.warning('查询时段无效, 请重新查询')
+    return
   }
-  if (fail) ElMessage.warning(`下载完成: 成功 ${ok} 段, 失败 ${fail} 段`)
-  else ElMessage.success(`已触发 ${ok} 段录像下载`)
+  const CHUNK = 30 * 60_000
+  const batches = Math.ceil((winE - winS) / CHUNK)
+  try {
+    await ElMessageBox.confirm(
+      batches > 1
+        ? `查询时段约 ${Math.round((winE - winS) / 60000)} 分钟，超过单次 30 分钟导出上限，将按 30 分钟切分为 ${batches} 个文件依次导出，是否继续？`
+        : `将导出查询时段的完整录像文件 (约 ${Math.round((winE - winS) / 60000)} 分钟)，是否继续？`,
+      '录像下载',
+      { type: 'warning' },
+    )
+  } catch { return }
+  let done = 0
+  for (let i = 0; i < batches; i++) {
+    const s = winS + i * CHUNK
+    const e = Math.min(winS + (i + 1) * CHUNK, winE)
+    if (await exportAndDownloadRange(s, e, `record_${selectedDate.value}_${String(i + 1).padStart(2, '0')}.mp4`)) done++
+    if (i + 1 < batches) await new Promise(r => setTimeout(r, 1200))  // 间隔防浏览器多文件下载拦截
+  }
+  if (done < batches) ElMessage.warning(`导出完成: 成功 ${done}/${batches} 个文件 (失败时段见上方提示)`)
 }
 
 /** 设计图查询按钮: 按当前源分流 (设备录像 / 本地录像) */
@@ -1664,8 +1735,9 @@ function onSeekEnd(v: number | number[]) {
   isSeeking.value = false
 }
 
-// [V4-X4 2026-07-08] 快捷键处理 (空格:暂停/播放  ←/→:快退/快进 5s  Shift+←/→:30s  Esc:退出全屏)
+// [V4-X4 2026-07-08] 快捷键处理 (空格:暂停/播放  ←/→:快退/快进 10s  Shift+←/→:30s  Esc:退出全屏)
 //   输入框聚焦时不响应避免误触
+//   [FIX rec-seek-step 2026-09-16] ←/→ 步长 5s → 10s (与控制条按钮统一, SEEK_STEP_SEC)
 function handleKeydown(e: KeyboardEvent) {
   const target = e.target as HTMLElement | null
   if (target) {
@@ -1687,12 +1759,12 @@ function handleKeydown(e: KeyboardEvent) {
       break
     case 'ArrowLeft':
       e.preventDefault()
-      videoRef.value.currentTime = Math.max(0, videoRef.value.currentTime - (e.shiftKey ? 30 : 5))
+      videoRef.value.currentTime = Math.max(0, videoRef.value.currentTime - (e.shiftKey ? SEEK_STEP_LARGE_SEC : SEEK_STEP_SEC))
       break
     case 'ArrowRight':
       e.preventDefault()
       if (isFinite(duration.value))
-        videoRef.value.currentTime = Math.min(duration.value, videoRef.value.currentTime + (e.shiftKey ? 30 : 5))
+        videoRef.value.currentTime = Math.min(duration.value, videoRef.value.currentTime + (e.shiftKey ? SEEK_STEP_LARGE_SEC : SEEK_STEP_SEC))
       break
     case ',':
       e.preventDefault()
@@ -2280,22 +2352,25 @@ async function saveWatermark() {
 
 // ---- [P1-2] 片段下载 ----
 async function doSegmentDownload() {
-  if (!selectedDeviceId.value || !segStartTime.value || !segEndTime.value) {
+  if (!selectedDeviceId.value || !selectedChannelId.value || !segStartTime.value || !segEndTime.value) {
     ElMessage.warning('请填写完整的时间范围')
     return
   }
-  try {
-    await downloadSegmentApi({
-      device_id: selectedDeviceId.value,
-      channel_id: selectedChannelId.value,
-      start_time: segStartTime.value,
-      end_time: segEndTime.value,
-    })
-    ElMessage.success('下载请求已发送')
-    segmentDownloadVisible.value = false
-  } catch (e: any) {
-    ElMessage.error('下载失败: ' + (e.message || ''))
+  // [FIX rec-dl-full 2026-09-16] 3.2: 原 /download-segment 链路后端把 GB downloadStart
+  //   返回的 call_id JSON 当 download_url 透传 (save_path 空 → ZLM 不录制, 无产物文件),
+  //   前端仅得"伪链接"必失败 → 统一改 export-range-async 拼接完整文件后强制落盘。
+  const sMs = Date.parse(segStartTime.value)
+  const eMs = Date.parse(segEndTime.value)
+  if (!Number.isFinite(sMs) || !Number.isFinite(eMs) || eMs <= sMs) {
+    ElMessage.warning('结束时间需晚于开始时间')
+    return
   }
+  if (eMs - sMs > 30 * 60_000) {
+    ElMessage.warning('导出区间上限 30 分钟, 请缩小时间范围 (更长时段请分批导出)')
+    return
+  }
+  const ok = await exportAndDownloadRange(sMs, eMs, `clip_${segStartTime.value.replace(/[:T]/g, '')}.mp4`)
+  if (ok) segmentDownloadVisible.value = false
 }
 
 // ---- [REC-TSEEK 2026-09-11] 按时间点观看 ----
@@ -2487,6 +2562,9 @@ onUnmounted(() => {
             <el-time-picker v-model="queryEndTime" value-format="HH:mm:ss" format="HH:mm:ss" placeholder="结束时间" class="qp-time-item" />
           </div>
           <el-button type="primary" class="qp-block-btn" :loading="loading || localLoading" @click="onQueryClick">查询</el-button>
+          <!-- [FIX rec-window 2026-09-16] 切片粒度提示 (3.1): 设备录像按 NVR/盒子切片粒度返回,
+               覆盖所选时段的整段切片起点可早于开始时间 (~30min 粒度) → 播放自动定位到开始时刻 -->
+          <div class="qp-granularity-tip">设备录像按切片粒度返回，片段起点可能早于所选开始时间；播放将自动从所选时刻定位</div>
           <el-button class="qp-block-btn" :disabled="recordingSource !== 'device' || !filteredRecordings.length" @click="batchDownload">录像下载</el-button>
           <div class="qp-links">
             <el-link type="primary" :underline="false" @click="openTimeSeek">按时间点观看</el-link>
@@ -2646,11 +2724,11 @@ onUnmounted(() => {
                 <button class="pc-icon-btn" title="下一段" @click="playNextSegment"><i class="iconfont1 icon1-xiayige" /></button>
               </div>
               <div class="pc-group pc-frame-group">
-                <button class="pc-icon-btn" title="后退 5 秒" @click="seekBy(-5)"><i class="iconfont1 icon1-houtui" /></button>
+                <button class="pc-icon-btn" title="后退 10 秒 (Shift+点击 = 30 秒)" @click.exact="seekBy(-SEEK_STEP_SEC)" @click.shift="seekBy(-SEEK_STEP_LARGE_SEC)"><i class="iconfont1 icon1-houtui" /></button>
                 <button class="pc-icon-btn" :disabled="!!currentSessionId" title="上一帧" @click="stepFrame(-1)"><i class="iconfont1 icon1-xiayige-copy" /></button>
                 <div class="pc-clock pc-clock-click" title="回放钟 (段起点+进度) — 点击打开按时间点观看" @click="openTimeSeek">{{ playbackClockLabel }}</div>
                 <button class="pc-icon-btn" :disabled="!!currentSessionId" title="下一帧" @click="stepFrame(1)"><i class="iconfont1 icon1-xiayige" /></button>
-                <button class="pc-icon-btn" title="前进 5 秒" @click="seekBy(5)"><i class="iconfont1 icon1-qianjin" /></button>
+                <button class="pc-icon-btn" title="前进 10 秒 (Shift+点击 = 30 秒)" @click.exact="seekBy(SEEK_STEP_SEC)" @click.shift="seekBy(SEEK_STEP_LARGE_SEC)"><i class="iconfont1 icon1-qianjin" /></button>
                 <div class="pc-group pc-continuous" title="段播完自动衔接相邻下一段 (间隙 ≤ 30s)">
                   <el-switch v-model="continuousPlay" size="small" />
                   <span class="pc-switch-label">连播</span>
@@ -2841,6 +2919,9 @@ onUnmounted(() => {
           <span class="clip-src" :class="rec.source === 'zlm' ? 'clip-src-zlm' : 'clip-src-gb'">{{ rec.source === 'zlm' ? '中心储存' : '设备存储' }}</span>
           <span class="clip-range">{{ (rec.startTime || '').replace('T', ' ').slice(0, 19) }} ~ {{ (rec.endTime || '').replace('T', ' ').slice(11, 19) }}</span>
           <span class="clip-dur">{{ clipDurLabel(rec) }}</span>
+          <!-- [FIX rec-dl-full 2026-09-16] 3.2 行内下载按钮: 走 downloadSegment → export-range-async
+               区间拼接导出完整录像; 无中心切片/失败/超 30min 时内置降级单片下载 (stop 防触发行点击播放) -->
+          <el-button class="clip-dl" size="small" text type="primary" @click.stop="downloadSegment(rec)">下载</el-button>
         </div>
       </div>
     </el-drawer>
@@ -3179,6 +3260,8 @@ onUnmounted(() => {
 .qp-time-range { display: flex; align-items: center; gap: 4px; width: 100%; margin-bottom: 10px; }
 .qp-time-item { flex: 1; min-width: 0; }
 .qp-time-sep { flex: 0 0 auto; color: var(--el-text-color-secondary); }
+/* [FIX rec-window 2026-09-16] 切片粒度提示 (3.1): 说明片段起点可早于所选开始时间 + 播放自动定位 */
+.qp-granularity-tip { margin-top: 2px; font-size: 11px; line-height: 1.5; color: var(--el-text-color-secondary); }
 
 /* [REC-UI 2026-09-13] 录像片段列表抽屉 */
 .clip-list { display: flex; flex-direction: column; gap: 4px; }
@@ -3191,6 +3274,8 @@ onUnmounted(() => {
 .clip-src-gb { color: #409eff; background: rgba(64,158,255,.12); }
 .clip-range { flex: 1; font-family: monospace; color: var(--el-text-color-primary); }
 .clip-dur { flex: 0 0 52px; text-align: right; color: var(--el-text-color-secondary); }
+/* [FIX rec-dl-full 2026-09-16] 3.2 行内下载按钮 (区间拼接导出完整录像) */
+.clip-dl { flex: 0 0 auto; padding: 4px 6px; }
 
 /* AI 智能检索抽屉 */
 .smart-drawer-body { display: flex; flex-direction: column; gap: 12px; }

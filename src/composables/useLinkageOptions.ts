@@ -17,6 +17,7 @@ import { deviceApi } from '@/api/device'
 import { testApi } from '@/api/test'
 import type { AlgorithmInfo } from '@/api/algorithms'
 import type { ChannelItem } from '@/types/device'
+import { alarmLevelColor } from '@/utils/alarmLevel' // [FIX level-color-ssot 2026-09-16] 等级色板全站统一
 
 /** 事件类型选项 */
 export interface EventTypeOption {
@@ -394,15 +395,18 @@ export function useLinkageOptions() {
   })
 
   // v7.6: 严重等级颜色映射 (对标海康/大华告警级别颜色)
+  // [FIX level-color-ssot 2026-09-16] 数字 severity 色统一走 utils/alarmLevel
+  //   (方案 A): 5=严重 #B71C1C / 4=高 #F56C6C / 3=中 #E6A23C / 2=低 #67C23A /
+  //   1=信息 #909399 (原 3=MEDIUM 蓝 #409EFF 与全站「中=黄」不一致)
   const severityColors: Record<number, string> = {
-    5: '#F56C6C', // CRITICAL - 红
-    4: '#E6A23C', // HIGH - 橙
-    3: '#409EFF', // MEDIUM - 蓝
-    2: '#67C23A', // LOW - 绿
-    1: '#909399', // INFO - 灰
+    5: alarmLevelColor(5),
+    4: alarmLevelColor(4),
+    3: alarmLevelColor(3),
+    2: alarmLevelColor(2),
+    1: alarmLevelColor(1),
   }
   function severityColor(level?: number): string {
-    return severityColors[level ?? 3] || '#409EFF'
+    return severityColors[level ?? 3] || alarmLevelColor(3)
   }
 
   return {

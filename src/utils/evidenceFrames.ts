@@ -192,3 +192,21 @@ export function isEvidencePostPending(
   const age = Date.now() - ts
   return age >= 0 && age < 20000
 }
+
+/**
+ * [FIX snap3 2026-09-16 4.1] 三帧完整度统计 (统一 3 张 pre/on/post 规范):
+ * present = 三键中契约有效帧数 (0~3); complete = 凑满 3 张;
+ * pendingPost 复用 isEvidencePostPending (补位链 delay+抓帧途中, 不算缺)。
+ * complete=false 且 !pendingPost 且 present>0 → UI 显示「快照不全 (N/3)」
+ * (present=0 为无取证链老告警, 不标避免噪音)。
+ */
+export function evidenceCompleteness(
+  metadata?: Record<string, unknown> | null,
+  alarmTsMs?: number,
+): { present: number; total: number; complete: boolean; pendingPost: boolean } {
+  const m = metadata || {}
+  const present = buildEvidenceFrames(m).length
+  const total = EVIDENCE_FRAME_KEYS.length
+  const pendingPost = isEvidencePostPending(m, present, alarmTsMs)
+  return { present, total, complete: present >= total, pendingPost }
+}

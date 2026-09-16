@@ -20,6 +20,8 @@ declare module 'vue' {
     ArrowUp: typeof import('@element-plus/icons-vue')['ArrowUp']
     BellFilled: typeof import('@element-plus/icons-vue')['BellFilled']
     Camera: typeof import('@element-plus/icons-vue')['Camera']
+    CaretBottom: typeof import('@element-plus/icons-vue')['CaretBottom']
+    CaretRight: typeof import('@element-plus/icons-vue')['CaretRight']
     CEPPatternEditor: typeof import('./components/CEPPatternEditor.vue')['default']
     ChatDotRound: typeof import('@element-plus/icons-vue')['ChatDotRound']
     CircleCheck: typeof import('@element-plus/icons-vue')['CircleCheck']

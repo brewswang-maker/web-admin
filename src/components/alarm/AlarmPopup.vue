@@ -195,6 +195,11 @@
                     <!-- [EV-TS 2026-09-14] post 采集中提示: 补位链延时回写窗口内
                          (evidence_update 帧到达后 post 入列自动消失) -->
                     <span v-if="evidencePending" class="alarm-popup__ev-pending" title="事后帧由取证补位链在触发后延时抓取, 稍后自动回填">事后帧采集中…</span>
+                                        <!-- [FIX snap3 2026-09-16 4.1] 快照不全标注: 取证帧 <3 且非
+                                             采集中 (补位链已放弃/抓帧失败) — 用户规范要求显式标注 -->
+                                        <span v-else-if="evidenceIncomplete" class="alarm-popup__ev-incomplete"
+                                          :title="`三帧规范 (事前/触发/事后) 仅到 ${evidenceIncomplete.present} 帧, 后端补帧未成功`"
+                                        >快照不全 ({{ evidenceIncomplete.present }}/3)</span>
                     <button class="alarm-popup__thumbs-nav" :disabled="imageIndex >= totalImageCount - 1" @click="nextImage" aria-label="下一张">›</button>
                   </div>
                 </div>
@@ -617,7 +622,8 @@ import MiniPlayer from '@/components/video/MiniPlayer.vue'
 import AlarmSnapshot from '@/components/alarm/AlarmSnapshot.vue'
 import defaultFacePhoto from '@/assets/photo.jpg'
 import EvidenceFrames from '@/components/EvidenceFrames.vue' // [POPUP-EV-MERGE 2026-09-07] 弹窗内已并入画廊, import 保留给未来复用 (无副作用)
-import { buildEvidenceFrames, isEvidencePostPending } from '@/utils/evidenceFrames' // [EV-TRIPLE 2026-09-14] 取证帧语义/时间戳共享模块
+import { buildEvidenceFrames, evidenceCompleteness, isEvidencePostPending } from '@/utils/evidenceFrames' // [EV-TRIPLE 2026-09-14] 取证帧语义/时间戳共享模块
+import { alarmLevelColor, alarmLevelRgb, alarmLevelText } from '@/utils/alarmLevel' // [FIX level-color-ssot 2026-09-16] 等级色板全站统一
 import {
   popupVisible, currentAlarm, matchedRule, linkageLogs,
   currentPopupAutoCloseS,  // [POPUP-AUTOCLOSE 2026-09-03] 弹窗自动关闭秒数 (0=不启用)
@@ -744,6 +750,13 @@ const totalImageCount = computed(() => Math.max(1, alarmImageList.value.length))
  *   — evidence_update 帧回写后 post 入列, 提示自动消失 */
 const evidencePending = computed(() =>
   isEvidencePostPending(popupMetaSrc(), alarmImageList.value.filter(i => i.tag).length, alarmTsMs.value))
+/** [FIX snap3 2026-09-16 4.1] 快照不全 (三帧规范): 有取证帧但 <3 且非 post
+ *   采集中 (20s 窗口过、补位链未回写 = 补帧失败) — UI 显式标注 (用户规范);
+ *   present=0 (老告警无取证链) 不标避免噪音 */
+const evidenceIncomplete = computed(() => {
+  const c = evidenceCompleteness(popupMetaSrc(), alarmTsMs.value)
+  return (!c.complete && !c.pendingPost && c.present > 0) ? c : null
+})
 /** 缩略图 hover title: 主快照 / 「标签 · T-12s (14:32:08)」 */
 function thumbTitle(img: GalleryImage): string {
   if (!img.tag) return '主快照'
@@ -1836,32 +1849,13 @@ const snapshotImageUrl = computed(() => {
   return `data:${mime};base64,${fixed}`
 })
 
-const levelColor = computed(() => {
-  switch (currentAlarm.value?.level) {
-    case 'critical': return '#FF3D71'; case 'high': return '#FF6B35'
-    case 'medium': return '#FFB800'; default: return '#00D4AA'
-  }
-})
-const levelRgb = computed(() => {
-  switch (currentAlarm.value?.level) {
-    case 'critical': return '255, 61, 113'; case 'high': return '255, 107, 53'
-    case 'medium': return '255, 184, 0'; default: return '0, 212, 170'
-  }
-})
-const levelLabel = computed(() => {
-  switch (currentAlarm.value?.level) {
-    case 'critical': return '严重'; case 'high': return '高'
-    case 'medium': return '中'; default: return '低'
-  }
-})
-const alarmHeaderColor = computed(() => {
-  switch (currentAlarm.value?.level) {
-    case 'critical': return '#FF3D71'
-    case 'high': return '#FF6B35'
-    case 'medium': return '#FFB800'
-    default: return '#00D4AA'
-  }
-})
+// [FIX level-color-ssot 2026-09-16] 色板统一走 utils/alarmLevel (方案 A:
+// 低=绿/中=黄/高=红/严重=深红)。原暗色系(#FF3D71/#FF6B35/#FFB800/#00D4AA)
+// 与 AlarmsView/SituationScreen/LinkageRule 各一套, 四处互不一致。
+const levelColor = computed(() => alarmLevelColor(currentAlarm.value?.level))
+const levelRgb = computed(() => alarmLevelRgb(currentAlarm.value?.level))
+const levelLabel = computed(() => alarmLevelText(currentAlarm.value?.level))
+const alarmHeaderColor = computed(() => alarmLevelColor(currentAlarm.value?.level))
 
 const popupBbox = computed<number[]>(() => {
   const m = (currentAlarm.value?.metadata || {}) as Record<string, unknown>
@@ -2368,6 +2362,13 @@ void jumpToPlayback; void openImageTab
   white-space: nowrap;
   animation: alarm-popup-ev-blink 1.6s ease-in-out infinite;
 }
+/* [FIX snap3 2026-09-16 4.1] 快照不全角标 (三帧规范未凑满且非采集中 = 补帧失败;
+   与 ev-pending 青色区分用警告黄, 不闪烁 — 静态事实非进行中状态) */
+.alarm-popup__ev-incomplete {
+  font-size: 11px;
+  color: #E6A23C;
+  white-space: nowrap;
+}
 @keyframes alarm-popup-ev-blink {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.45; }
@@ -2754,10 +2755,10 @@ void jumpToPlayback; void openImageTab
   color: #fff;
   margin-left: 4px;
 }
-.alarm-popup__level-badge--critical { background: #FF3D71; }
-.alarm-popup__level-badge--high     { background: #FF6B35; }
-.alarm-popup__level-badge--medium   { background: #FFB800;  }
-.alarm-popup__level-badge--low      { background: #00D4AA; }
+.alarm-popup__level-badge--critical { background: #B71C1C; } /* [FIX level-color-ssot 2026-09-16] 方案 A 深红 */
+.alarm-popup__level-badge--high     { background: #F56C6C; }
+.alarm-popup__level-badge--medium   { background: #E6A23C;  }
+.alarm-popup__level-badge--low      { background: #67C23A; }
 
 .alarm-popup__status {
   display: inline-block;

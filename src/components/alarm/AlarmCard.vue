@@ -181,9 +181,11 @@ const timeText = computed(() => {
   color: #fff;
   background: #909399;
 }
-.alarm-card__level.lv-crit { background: #f56c6c; }
-.alarm-card__level.lv-high { background: #e6a23c; }
-.alarm-card__level.lv-med { background: #409eff; }
+/* [FIX level-color-ssot 2026-09-16] 方案 A 全站统一 (utils/alarmLevel):
+   严重=深红 #B71C1C / 高=红 #F56C6C / 中=黄 #E6A23C (原中=蓝 #409eff) / 低=绿 */
+.alarm-card__level.lv-crit { background: #B71C1C; }
+.alarm-card__level.lv-high { background: #F56C6C; }
+.alarm-card__level.lv-med { background: #E6A23C; }
 .alarm-card__level.lv-low { background: #67c23a; }
 
 /* 信息区 */

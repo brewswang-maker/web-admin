@@ -80,20 +80,24 @@ export const useUserStore = defineStore('user', () => {
     }
   }
 
-  async function logout() {
-    try {
-      await userApi.logout()
-    } catch (error) {
-      console.error('[UserStore] 登出请求失败:', error)
-    } finally {
-      token.value = ''
-      userInfo.value = null
-      roles.value = []
-      permissions.value = []
-      clearAuthToken()
-      Cookies.remove(TOKEN_KEY)
-      localStorage.removeItem(USER_KEY)
-    }
+  function logout() {
+    // [FIX logout-twice 2026-09-16] 原实现先 await userApi.logout() 再于 finally 清
+    //   本地态: MainLayout 同步紧跟 router.push('/login') 时 token 尚未清, 路由守卫
+    //   (router/index.ts L756) 见 isLoggedIn=true → next('/') 踢回首页 → 第一次点
+    //   退出"无反应", 第二次才生效(此时首次请求已返回、finally 已清)。
+    //   修法: 本地状态同步先清 (isLoggedIn 立即 false), 后端吊销 fire-and-forget
+    //   (失败仅打日志; 服务端 token 自然过期兜底, 不阻塞登出跳转)。
+    token.value = ''
+    userInfo.value = null
+    roles.value = []
+    permissions.value = []
+    clearAuthToken()
+    Cookies.remove(TOKEN_KEY)
+    localStorage.removeItem(USER_KEY)
+    // Promise.resolve 兼容 mock/异常场景下 logout 返回非 promise (undefined.catch 会炸)
+    Promise.resolve(userApi.logout()).catch((error) => {
+      console.error('[UserStore] 登出请求失败(本地态已清, 忽略):', error)
+    })
   }
 
   async function fetchUserInfo() {

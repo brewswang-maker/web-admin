@@ -3280,13 +3280,16 @@ onUnmounted(() => {
   font-weight: 500;
 }
 
-.alarm-row.critical .alarm-level b { background: #D51F3D; }
-.alarm-row.high .alarm-level b { background: #E85720; }
-.alarm-row.medium .alarm-level b { background: #B88D12; }
-.alarm-row.low .alarm-level b { background: #1676D2; }
+/* [FIX level-color-ssot 2026-09-16] 方案 A 全站统一 (utils/alarmLevel):
+   低=绿 中=黄 高=红 严重=深红 信息=灰; 原 low=蓝 #1676D2 / medium 暗黄
+   #B88D12 与 AlarmsView/AlarmPopup/LinkageRule 三套互不一致 */
+.alarm-row.critical .alarm-level b { background: #B71C1C; }
+.alarm-row.high .alarm-level b { background: #F56C6C; }
+.alarm-row.medium .alarm-level b { background: #E6A23C; }
+.alarm-row.low .alarm-level b { background: #67C23A; }
 /* [FIX level-ssot 2026-09-14] info 档徽章 (SSOT 5 档补全; 原缺档回落默认
-   蓝 #1676D2 与 low 同色难区分 — 信息级用低饱和灰蓝) */
-.alarm-row.info .alarm-level b { background: #6B7A99; }
+   蓝 #1676D2 与 low 同色难区分 — 信息级用低饱和灰) */
+.alarm-row.info .alarm-level b { background: #909399; }
 
 .alarm-snapshot {
   justify-content: center;

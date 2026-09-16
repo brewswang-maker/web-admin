@@ -701,10 +701,12 @@
               <!-- 事件类型 -->
               <template v-if="cond.type === 'eventType'">
                 <!-- v7.6 事件类型选择器: 分类分组 + 严重度颜色标签 (对标海康/大华事件配置) -->
+                <!-- [FIX level-color-ssot 2026-09-16] 图例色与 utils/alarmLevel 方案 A 对齐:
+                     紧急=深红 #B71C1C / 高=红 #F56C6C / 中=黄 #E6A23C (原中=蓝) -->
                 <div class="event-type-severity-legend">
-                  <span class="legend-item"><i class="legend-dot" style="background:#F56C6C"></i>紧急</span>
-                  <span class="legend-item"><i class="legend-dot" style="background:#E6A23C"></i>高</span>
-                  <span class="legend-item"><i class="legend-dot" style="background:#409EFF"></i>中</span>
+                  <span class="legend-item"><i class="legend-dot" style="background:#B71C1C"></i>紧急</span>
+                  <span class="legend-item"><i class="legend-dot" style="background:#F56C6C"></i>高</span>
+                  <span class="legend-item"><i class="legend-dot" style="background:#E6A23C"></i>中</span>
                   <span class="legend-item"><i class="legend-dot" style="background:#67C23A"></i>低</span>
                   <span class="legend-item"><i class="legend-dot" style="background:#909399"></i>提示</span>
                 </div>

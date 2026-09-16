@@ -13,6 +13,10 @@
        :data-evidence-count="frames.length" :data-evidence-pending="pendingPost ? 1 : 0">
     <div class="ev-head">
       <span class="ev-title">{{ frames.length >= 3 ? '三帧证据链' : '双时刻取证' }}</span>
+      <!-- [FIX snap3 2026-09-16 4.1] 快照不全角标 (三帧规范未凑满且非采集中) -->
+      <span v-if="incomplete" class="ev-incomplete"
+        :title="`三帧规范 (事前/触发/事后) 仅到 ${incomplete.present} 帧, 后端补帧未成功`"
+      >快照不全 ({{ incomplete.present }}/3)</span>
       <span v-if="!compact" class="ev-sub">按时间先后对照, 点击可放大 ({{ algoHint }})</span>
     </div>
     <div class="ev-grid" :class="`ev-grid--${Math.min(frames.length + (pendingPost ? 1 : 0), 3)}`">
@@ -63,8 +67,8 @@
  */
 import { computed } from 'vue'
 import {
-  buildEvidenceFrames, evidenceAlgoHint, isEvidencePostPending,
-  type EvidenceFrameMeta,
+  buildEvidenceFrames, evidenceAlgoHint, evidenceCompleteness,
+  isEvidencePostPending, type EvidenceFrameMeta,
 } from '@/utils/evidenceFrames'
 
 const props = defineProps<{
@@ -91,6 +95,13 @@ const frames = computed<EvFrame[]>(() =>
 const pendingPost = computed(() =>
   isEvidencePostPending(props.metadata, frames.value.length, props.alarmTsMs))
 
+/** [FIX snap3 2026-09-16 4.1] 快照不全 (三帧规范): 有帧但 <3 且非采集中
+ *   (补位链已放弃/抓帧失败) — 标题行显式标注; 与弹窗同源共享模块 */
+const incomplete = computed(() => {
+  const c = evidenceCompleteness(props.metadata, props.alarmTsMs)
+  return (!c.complete && !c.pendingPost && c.present > 0) ? c : null
+})
+
 const algoHint = computed(() => evidenceAlgoHint(props.algoId, props.metadata))
 </script>
 
@@ -108,6 +119,14 @@ const algoHint = computed(() => evidenceAlgoHint(props.algoId, props.metadata))
   font-size: 13px;
   font-weight: 600;
   color: var(--el-text-color-primary);
+}
+/* [FIX snap3 2026-09-16 4.1] 快照不全角标 (三帧规范未凑满且非采集中) */
+.ev-incomplete {
+  font-size: 11px;
+  color: var(--el-color-warning);
+  border: 1px solid var(--el-color-warning-light-5);
+  border-radius: 3px;
+  padding: 0 4px;
 }
 .ev-sub {
   font-size: 12px;
