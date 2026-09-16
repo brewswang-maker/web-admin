@@ -162,7 +162,9 @@
       <!-- [场景菜单 2026-09-16] admin 多场景组: 6 场景入口 + 点击展开内联 tabs (无 flyout, 无 hover 延迟) -->
       <div v-else class="sidebar-menu scenario-menu">
         <div class="scenario-group-title">
-          <span v-if="!isCollapsed">{{ activePrimaryMenu.label }}</span>
+          <span class="group-title">
+            <span v-if="!isCollapsed">{{ activePrimaryMenu.label }}</span>
+          </span>
         </div>
         <div v-for="entry in displayedScenarioEntries" :key="entry.key" class="scenario-entry-block">
           <div
@@ -177,10 +179,10 @@
             <span v-if="!isCollapsed" class="scenario-entry-label">{{ entry.label }}</span>
             <el-icon
               v-if="!isCollapsed && entry.scenario.tabs.length > 0"
-              class="scenario-entry-caret"
+              class="el-sub-menu__icon-arrow scenario-entry-caret"
+              :class="{ 'is-opened': expandedScenarioKey === entry.key }"
             >
-              <CaretTop v-if="expandedScenarioKey === entry.key" />
-              <CaretBottom v-else />
+              <ArrowDown />
             </el-icon>
           </div>
           <!-- 展开的 tabs 纵向列表 (内联, 无浮层) -->
@@ -196,7 +198,7 @@
               :class="{ 'is-active': route.path === tab.path || route.path.startsWith(`${tab.path}/`) }"
               @click="navigateToMenu(tab.path)"
             >
-              <el-icon><component :is="tab.icon" /></el-icon>
+              <!-- <el-icon><component :is="tab.icon" /></el-icon> -->
               <span>{{ tab.label }}</span>
             </button>
           </div>
@@ -560,7 +562,6 @@ import {
   Files,   // [vp9 2026-09-01] 设备分组菜单
   OfficeBuilding, // [UI-5 2026-09-10] 组织架构管理菜单
   // [场景菜单 2026-09-16] admin 多场景组展开收起指示器
-  CaretBottom, CaretTop,
 } from '@element-plus/icons-vue'
 import logoUrl from '@/assets/logo.png'
 import userAvatarUrl from '@/assets/photo2.jpg'
@@ -1425,16 +1426,16 @@ function handleUserCommand(command: string) {
 }
 
 .scenario-group-title {
-  display: flex;
-  align-items: center;
   height: 42px;
-  padding: 0 14px 0 45px;
-  font-size: 18px;
-  font-weight: 700;
-  background: linear-gradient(to bottom, #0EC5EC, #00D8F4, #FFFFFF);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
+  flex-shrink: 0;
+  background-image: url('../assets/siderbar.png');
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: 100% 100%;
+}
+
+.scenario-group-title .group-title {
+  width: 100%;
 }
 
 .scenario-entry-block {
@@ -1447,10 +1448,10 @@ function handleUserCommand(command: string) {
   display: flex;
   align-items: center;
   gap: 8px;
-  height: 40px;
+  height: 50px;
   padding: 0 14px;
   background: transparent;
-  color: #C5DDF0;
+  color: #AADDFF;
   font: inherit;
   font-size: 14px;
   cursor: pointer;
@@ -1460,18 +1461,29 @@ function handleUserCommand(command: string) {
 
 .scenario-entry .el-icon {
   flex-shrink: 0;
-  font-size: 16px;
-  opacity: 0.9;
+  font-size: 18px;
 }
 
 .scenario-entry:hover {
-  background: rgba(96, 165, 250, 0.12);
-  color: #FFFFFF;
+  background: #002c73;
+  color: var(--app-sidebar-active, #3B82F6);
 }
 
 .scenario-entry.is-current {
-  background: rgba(24, 144, 255, 0.18);
-  color: #FFFFFF;
+  background: rgba(59, 130, 246, 0.15);
+  color: var(--app-sidebar-active, #3B82F6);
+  font-weight: var(--font-medium, 500);
+}
+
+.scenario-entry.is-current::before {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 3px;
+  background: #00e4ff;
+  box-shadow: 0 0 8px rgba(0, 228, 255, 0.7);
+  content: '';
 }
 
 .scenario-entry-label {
@@ -1483,9 +1495,14 @@ function handleUserCommand(command: string) {
 
 .scenario-entry-caret {
   flex-shrink: 0;
-  font-size: 11px;
-  opacity: 0.55;
-  transition: transform 0.15s ease;
+  color: #AADDFF;
+  font-size: 12px !important;
+  /*opacity: 0.75;*/
+  transition: transform 0.2s ease;
+}
+
+.scenario-entry-caret.is-opened {
+  transform: rotateZ(180deg);
 }
 
 .sidebar.collapsed .scenario-entry {
@@ -1498,12 +1515,16 @@ function handleUserCommand(command: string) {
   display: none;
 }
 
+.sidebar.collapsed .scenario-group-title .group-title {
+  padding-left: 0;
+}
+
 /* ── 侧栏展开的 tabs 纵向列表 (内联, 与上一轮单场景账号侧边栏子菜单化体验一致;
    扁平简洁样式 (参照 智慧安保一体化平台 侧栏, 不要太“设计感”) ── */
 .sidebar .scenario-tabs {
   display: flex;
   flex-direction: column;
-  background: transparent;
+  background: #07133e;
   margin: 0;
   padding: 0;
   animation: sidebar-scenario-tabs-fade 0.18s ease;
@@ -1518,11 +1539,11 @@ function handleUserCommand(command: string) {
   display: flex;
   align-items: center;
   gap: 8px;
-  height: 32px;
+  height: 50px;
   padding: 0 12px 0 32px;
   border: 0;
-  background: transparent;
-  color: #98B8D0;
+  background: #07133e;
+  color: #AADDFF;
   font: inherit;
   font-size: 13px;
   text-align: left;
@@ -1538,13 +1559,13 @@ function handleUserCommand(command: string) {
 }
 
 .sidebar .scenario-tab:hover {
-  background: rgba(96, 165, 250, 0.1);
-  color: #FFFFFF;
+  background: #0b285e;
+  color: #00e4ff;
 }
 
 .sidebar .scenario-tab.is-active {
-  background: rgba(24, 144, 255, 0.18);
-  color: #FFFFFF;
+  background: #00419eb5;
+  color: #00e4ff;
 }
 
 /* ── 浅色主题适配 (场景菜单) ── */
@@ -1655,6 +1676,11 @@ function handleUserCommand(command: string) {
 
 .main-layout.dark-theme .sidebar-menu :deep(.el-menu-item.is-active .el-icon) {
   color: #00FFFF;
+}
+
+.main-layout.dark-theme .scenario-entry.is-current {
+  background: #00419E;
+  color: #00E4FF;
 }
 
 /* ── 内容容器 ── */
