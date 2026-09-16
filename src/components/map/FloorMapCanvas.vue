@@ -131,6 +131,24 @@
       <div class="fm-canvas__approx-tip">近似定位 (无标定数据, FOV 扇形内投影)</div>
     </div>
 
+    <!-- ═══ [P2-11a iSC「标记」对标] 自定义标记层: 旗标 + 名称 (viewport 内跟随缩放;
+         点击标记由宿主确认删除; --fmz 反向补偿视觉恒定) ═══ -->
+    <div v-if="pins.length" class="fm-canvas__pins">
+      <div
+        v-for="pin in pins" :key="pin.id"
+        class="fm-canvas__pin"
+        :style="{ left: `${pin.x * 100}%`, top: `${pin.y * 100}%` }"
+        :title="`${pin.name}（点击可删除）`"
+        @click.stop="emit('pin-click', pin)"
+        @mousedown.stop
+      >
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none">
+          <path d="M7 21V3.6l12.5 3.8L7 11.4" fill="#F4B400" stroke="#B7860B" stroke-width="1.4" stroke-linejoin="round" />
+        </svg>
+        <span class="fm-canvas__pin-label">{{ pin.name }}</span>
+      </div>
+    </div>
+
     <!-- ═══ [P1-3 2026-09-16 iSC「测距」工具对标] 测距层: 两点端点 + 线段 + 中点距离标签
          (viewport 内跟随缩放平移; 线宽/字号经 --fmz 反向补偿视觉恒定) ═══ -->
     <div v-if="measurePts.length" class="fm-canvas__measure">
@@ -188,7 +206,7 @@
  *   大华 FOV 实时预览的正确缩放语义); 编辑模式默认关闭 (与落点/拖拽语义冲突)。
  */
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
-import type { CameraMapBinding, FloorMapDef, FloorMapDeviceType } from '@/types/floorMap'
+import type { CameraMapBinding, FloorMapDef, FloorMapDeviceType, MapPin } from '@/types/floorMap'
 import { deviceTypeLabel, deviceIconMeta, parseMapViewport } from '@/types/floorMap'
 import { floorMapApi } from '@/api/floorMap'
 import { fovRadiusNormalized, projectAlarmPoint, channelIdVariants, type AlarmMapPoint } from '@/composables/useFloorMap'
@@ -234,6 +252,9 @@ const props = withDefaults(defineProps<{
    *  坐标, 平面图无单应标定不可精确上图 → FOV 扇形橙色布防态 + 规则数角标即通道防区的
    *  平面表达) */
   defenseChannels?: Record<string, string[]>
+  /** [P2-11a 2026-09-16 iSC「标记」对标] 自定义标记列表 (宿主 localStorage 按图持久化;
+   *  纯显示层, 点击标记由宿主确认删除) */
+  pins?: MapPin[]
 }>(), {
   editable: false,
   alarmChannelId: '',
@@ -251,6 +272,7 @@ const props = withDefaults(defineProps<{
   showLabels: true,
   toolMode: '',
   defenseChannels: () => ({}),
+  pins: () => [],
 })
 
 const emit = defineEmits<{
@@ -264,6 +286,10 @@ const emit = defineEmits<{
   (e: 'tool-cancel'): void
   /** [P1-4] 框选态 mouseup → 命中点位列表 (可能为空数组, 由宿主提示) */
   (e: 'marquee-select', bindings: CameraMapBinding[]): void
+  /** [P2-11a] 标记态点击底图 → 放置标记 (归一化坐标, 点位图标 @click.stop 不冒泡不误采) */
+  (e: 'pin-add', x: number, y: number): void
+  /** [P2-11a] 点击已有标记 → 宿主确认删除 */
+  (e: 'pin-click', pin: MapPin): void
 }>()
 
 const wrapEl = ref<HTMLElement | null>(null)
@@ -560,6 +586,13 @@ function snap(v: number): number {
 function onCanvasClick(ev: MouseEvent) {
   // [P1-3] 测距态: 点击底图取点 (点位图标 @click.stop 不冒泡, 不会误采图标坐标)
   if (props.toolMode === 'measure') { onMeasureClick(ev); return }
+  // [P2-11a] 标记态: 点击底图放置标记 (宿主弹命名框后持久化)
+  if (props.toolMode === 'pin') {
+    if (!wrapEl.value) return
+    const p = toLocalNorm(ev.clientX, ev.clientY)
+    emit('pin-add', Math.min(1, Math.max(0, p.x)), Math.min(1, Math.max(0, p.y)))
+    return
+  }
   if (!props.editable || !wrapEl.value) return
   const p = toLocalNorm(ev.clientX, ev.clientY)
   const x = Math.min(1, Math.max(0, p.x))
@@ -704,6 +737,30 @@ const bboxStyle = computed(() => {
 .fm-canvas--pan:focus-visible { box-shadow: 0 0 0 1px rgba(0, 229, 255, 0.45) inset; }
 /* [P1-3/P1-4] 工具态: 十字光标提示取点/框选语义 */
 .fm-canvas--tool { cursor: crosshair; }
+
+/* ── [P2-11a] 标记层: 旗标 + 名称标签 (点击删除; pointer-events 子层放行) ── */
+.fm-canvas__pins { position: absolute; inset: 0; z-index: 5; pointer-events: none; }
+.fm-canvas__pin {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  pointer-events: auto;
+  cursor: pointer;
+  filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.5));
+}
+.fm-canvas__pin svg { transform: scale(calc(1 / var(--fmz, 1))); }
+.fm-canvas__pin-label {
+  padding: calc(1px / var(--fmz, 1)) calc(5px / var(--fmz, 1));
+  margin-top: calc(1px / var(--fmz, 1));
+  white-space: nowrap;
+  background: rgba(5, 14, 48, 0.88);
+  border: 1px solid rgba(244, 180, 0, 0.6);
+  border-radius: calc(2px / var(--fmz, 1));
+  color: #F4B400;
+  font-size: calc(10px / var(--fmz, 1));
+  pointer-events: none;
+}
 
 /* ── [P1-3] 测距层: 端点 + 线段 + 距离标签 (#00E5FF 同 FOV/选中 token) ── */
 .fm-canvas__measure { position: absolute; inset: 0; z-index: 5; pointer-events: none; }

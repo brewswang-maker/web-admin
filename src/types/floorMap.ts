@@ -138,6 +138,17 @@ export interface CameraMapBinding {
   updated_at: number
 }
 
+/** [P2-11a 2026-09-16 iSC「标记」对标] 平面图自定义标记 (前端 localStorage
+ *  fm_map_pins_v1 按图隔离持久化; 纯显示层不参与任何判定/联动) */
+export interface MapPin {
+  id: string
+  /** 归一化 [0,1] */
+  x: number
+  y: number
+  name: string
+  created_at: number
+}
+
 /** 列表项: 地图 + 图内全部摄像头绑定 (GET /api/v1/maps) */
 export interface FloorMapWithCameras extends FloorMapDef {
   cameras: CameraMapBinding[]

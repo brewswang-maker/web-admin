@@ -309,6 +309,18 @@
                 <el-icon :size="13"><Lock /></el-icon>
                 防区
               </button>
+              <!-- [P2-11a 2026-09-16 iSC「标记」对标] 自定义标记工具 (与测距/框选共用
+                    toolMode 互斥; 激活态青色高亮, 点击底图放置 → 命名 → localStorage 持久化) -->
+              <button
+                type="button"
+                class="floor-locate-toggle"
+                :class="{ 'is-active': mapToolMode === 'pin' }"
+                :title="mapToolMode === 'pin' ? '退出标记（ESC）' : '自定义标记：点击底图放置旗标并命名（点击已有标记可删除）'"
+                @click="togglePinTool"
+              >
+                <el-icon :size="13"><Flag /></el-icon>
+                标记
+              </button>
               <!-- [P1-1 2026-09-16 iSC「资源点搜索」对标] 图内搜索: 显示名/通道/类型中文匹配 →
                     选中金色光环+居中 (复用 focusBinding) -->
               <el-select
@@ -344,11 +356,14 @@
                 :show-labels="showPointLabels"
                 :tool-mode="mapToolMode"
                 :defense-channels="defenseChannels"
+                :pins="currentPins"
                 persist-viewport
                 @device-click="onFloorDeviceClick"
                 @viewport-change="onFloorViewportChange"
                 @tool-cancel="onToolCancel"
                 @marquee-select="onMarqueeSelect"
+                @pin-add="onPinAdd"
+                @pin-click="onPinClick"
               />
               <div v-else class="floor-empty">
                 <span>暂无平面图</span>
@@ -605,9 +620,9 @@
 import { ref, reactive, computed, onMounted, onUnmounted, nextTick, watch, defineAsyncComponent } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 // [P0-2 2026-09-16 iSC 报警定位对标] 定位开关图标
-import { Aim, Filter, PriceTag, ScaleToOriginal, Grid, Lock } from '@element-plus/icons-vue'
+import { Aim, Filter, PriceTag, ScaleToOriginal, Grid, Lock, Flag } from '@element-plus/icons-vue'
 // [PERF 2026-09-14] echarts 改动态 import (见 ensureEcharts): 解除本页 chunk 对
 //   vendor-echarts(1.5MB) 的静态依赖 (实测该下载拖慢首页框架渲染 3.9s@隧道带宽),
 //   图表库在 initCharts 数据就绪后才按需拉取。
@@ -639,6 +654,7 @@ import { floorMapApi } from '@/api/floorMap'
 import type { FloorMapWithCameras, CameraMapBinding } from '@/types/floorMap'
 // [P0-4 2026-09-16 iSC「过滤资源点」对标] 图层过滤选项 + 分类型色点
 import { FLOOR_MAP_DEVICE_TYPES, DEVICE_ICON_META, deviceTypeLabel } from '@/types/floorMap'
+import type { MapPin } from '@/types/floorMap'
 import SceneEditPanel from '@/components/SceneEditPanel.vue'
 // [PERF 2026-09-14] hls.js/flv.js 改动态 import (见 ensurePlayerLibs): 解除本页
 //   chunk 对 vendor-players(1.7MB) 的静态依赖, 首次开播前才加载 (与拉流 API 并行,
@@ -1082,7 +1098,7 @@ function togglePointLabels() {
 // [P1-3 2026-09-16 iSC「测距」工具对标] toolMode 状态 ('' = 默认平移; 'measure' = 测距;
 //   P1-4 扩展 'marquee')。ESC 退出经 tool-cancel 事件同步高亮复位; scale_m_per_px<=0
 //   (未标定) 时按钮禁用 — 距离换算无意义。
-const mapToolMode = ref<'' | 'measure' | 'marquee'>('')
+const mapToolMode = ref<'' | 'measure' | 'marquee' | 'pin'>('')
 
 // ═══ [P2-9 2026-09-16 iSC「虚拟防区上图」对标] 布防可视化图层 ═══
 // 规则 ROI 是画面归一化坐标, 平面图无单应标定不可精确上图 (useFloorMap 注释实锚)
@@ -1145,6 +1161,65 @@ const defenseChannels = computed<Record<string, string[]>>(() => {
   }
   return out
 })
+
+// ═══ [P2-11a 2026-09-16 iSC「标记」对标] 自定义标记 (localStorage 按图隔离持久化) ═══
+// 纯显示层: 放置→命名→旗标上图; 点击旗标确认删除; 不参与任何判定/联动。
+const PINS_KEY = 'fm_map_pins_v1'
+function loadPinsStore(): Record<string, MapPin[]> {
+  try {
+    const v = JSON.parse(localStorage.getItem(PINS_KEY) || '{}')
+    return v && typeof v === 'object' ? v : {}
+  } catch { return {} }
+}
+function savePinsStore(store: Record<string, MapPin[]>) {
+  try { localStorage.setItem(PINS_KEY, JSON.stringify(store)) } catch { /* 存储满静默 */ }
+}
+const mapPins = ref<Record<string, MapPin[]>>(loadPinsStore())
+const currentPins = computed(() => mapPins.value[String(currentFloorMapId.value)] || [])
+function togglePinTool() {
+  mapToolMode.value = mapToolMode.value === 'pin' ? '' : 'pin'
+}
+async function onPinAdd(x: number, y: number) {
+  const m = currentFloorMap.value
+  if (!m) return
+  const list = mapPins.value[String(m.id)] || []
+  let name = ''
+  try {
+    const r = await ElMessageBox.prompt('输入标记名称', '添加标记', {
+      inputValue: `标记${list.length + 1}`,
+      inputPattern: /\S+/,
+      inputErrorMessage: '名称不能为空',
+      confirmButtonText: '添加',
+      cancelButtonText: '取消',
+    })
+    name = String(r.value || '').trim()
+  } catch { return } // 取消
+  const pin: MapPin = {
+    id: `pin_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+    x, y, name,
+    created_at: Date.now(),
+  }
+  mapPins.value = { ...mapPins.value, [String(m.id)]: [...list, pin] }
+  savePinsStore(mapPins.value)
+  ElMessage.success(`已添加标记「${name}」`)
+  mapToolMode.value = '' // 放置完成自动退出标记模式 (连续放置可再点开启)
+}
+async function onPinClick(pin: MapPin) {
+  try {
+    await ElMessageBox.confirm(`删除标记「${pin.name}」？`, '删除标记', {
+      type: 'warning',
+      confirmButtonText: '删除',
+      cancelButtonText: '取消',
+    })
+  } catch { return } // 取消
+  const m = currentFloorMap.value
+  if (!m) return
+  mapPins.value = {
+    ...mapPins.value,
+    [String(m.id)]: (mapPins.value[String(m.id)] || []).filter((p) => p.id !== pin.id),
+  }
+  savePinsStore(mapPins.value)
+}
 const canMeasure = computed(() => !!currentFloorMap.value && currentFloorMap.value.scale_m_per_px > 0)
 function toggleMeasureTool() {
   mapToolMode.value = mapToolMode.value === 'measure' ? '' : 'measure'
