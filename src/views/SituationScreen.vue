@@ -221,10 +221,22 @@
                 (海康告警源自动定位对标) + 点位点击跳视频监控视图 ═══ -->
           <transition :name="slideDirection" mode="out-in">
           <div v-if="centerView === 'floor'" key="floor" class="center-view-floor">
-            <div v-if="floorMaps.length > 1" class="floor-toolbar">
-              <el-select v-model="currentFloorMapId" size="small" style="width: 150px">
+            <div class="floor-toolbar">
+              <el-select v-if="floorMaps.length > 1" v-model="currentFloorMapId" size="small" style="width: 150px">
                 <el-option v-for="m in floorMaps" :key="m.id" :label="floorMapLabel(m)" :value="m.id" />
               </el-select>
+              <!-- [P0-2 2026-09-16 iSC「报警定位」对标] 告警自动切图开关 (开启态红色激活 —
+                    iSC: 开启后该按钮字体变为红色) -->
+              <button
+                type="button"
+                class="floor-locate-toggle"
+                :class="{ 'is-on': alarmLocateEnabled }"
+                :title="alarmLocateEnabled ? '告警时自动切换到报警点所在平面图（点击关闭）' : '已关闭告警自动定位（点击开启）'"
+                @click="toggleAlarmLocate"
+              >
+                <el-icon :size="13"><Aim /></el-icon>
+                告警定位
+              </button>
             </div>
             <div class="floor-canvas-wrap">
               <FloorMapCanvas
@@ -466,6 +478,8 @@ import { ref, reactive, computed, onMounted, onUnmounted, nextTick, watch, defin
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
+// [P0-2 2026-09-16 iSC 报警定位对标] 定位开关图标
+import { Aim } from '@element-plus/icons-vue'
 // [PERF 2026-09-14] echarts 改动态 import (见 ensureEcharts): 解除本页 chunk 对
 //   vendor-echarts(1.5MB) 的静态依赖 (实测该下载拖慢首页框架渲染 3.9s@隧道带宽),
 //   图表库在 initCharts 数据就绪后才按需拉取。
@@ -917,7 +931,16 @@ watch(centerView, (v) => {
   }
 }, { immediate: true })
 // 告警自动定位图 (海康告警源自动定位楼层对标): 最新告警通道未绑在当前图 → 反查切图
+// [P0-2 2026-09-16 iSC「报警定位」对标] 开关门控 (localStorage 持久; 默认开) —
+//   关闭后告警不再自动切图 (值班员手动浏览时防劫持视野)
+const alarmLocateEnabled = ref(localStorage.getItem('fm_alarm_locate') !== '0')
+function toggleAlarmLocate() {
+  alarmLocateEnabled.value = !alarmLocateEnabled.value
+  localStorage.setItem('fm_alarm_locate', alarmLocateEnabled.value ? '1' : '0')
+  ElMessage.success(alarmLocateEnabled.value ? '已开启告警自动定位' : '已关闭告警自动定位')
+}
 watch(() => latestAlarms.value[0]?.channelId, async (ch) => {
+  if (!alarmLocateEnabled.value) return
   if (!ch || !floorMaps.value.length) return
   const bound = floorBindings.value.some(b => channelIdVariants(ch).includes(b.channel_id))
   if (bound) return
@@ -3562,6 +3585,33 @@ onUnmounted(() => {
   top: 8px;
   left: 8px;
   z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+/* [P0-2 2026-09-16 iSC「报警定位」对标] 告警定位开关 (开启态红色 — iSC 同款激活语义) */
+.floor-locate-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  padding: 0 10px;
+  font-size: 12px;
+  color: #8fa4c8;
+  background: rgba(7, 19, 62, 0.85);
+  border: 1px solid rgba(78, 110, 170, 0.4);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: color 0.2s, border-color 0.2s;
+}
+.floor-locate-toggle:hover {
+  color: #cfe0ff;
+  border-color: rgba(0, 228, 255, 0.5);
+}
+.floor-locate-toggle.is-on {
+  color: #f93a55;
+  border-color: rgba(249, 58, 85, 0.55);
+  background: rgba(73, 15, 26, 0.55);
 }
 .floor-canvas-wrap {
   position: absolute;
