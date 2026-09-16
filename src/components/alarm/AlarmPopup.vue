@@ -2597,10 +2597,10 @@ void jumpToPlayback; void openImageTab
   border-radius: 4px;
   margin-bottom: 8px;
 }
-.alarm-popup__detail-ai--critical { color: #FF3D71; }
-.alarm-popup__detail-ai--high { color: #FF6B35; }
-.alarm-popup__detail-ai--medium { color: #FFB800; }
-.alarm-popup__detail-ai--low { color: #00D4AA; }
+.alarm-popup__detail-ai--critical { color: #B71C1C; }
+.alarm-popup__detail-ai--high { color: #F56C6C; }
+.alarm-popup__detail-ai--medium { color: #E6A23C; }
+.alarm-popup__detail-ai--low { color: #67C23A; }
 .alarm-popup__detail-row {
   display: flex; align-items: center;
   gap: 8px;

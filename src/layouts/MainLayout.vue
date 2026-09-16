@@ -1475,7 +1475,7 @@ function handleUserCommand(command: string) {
   font-weight: var(--font-medium, 500);
 }
 
-.scenario-entry.is-current::before {
+/*.scenario-entry.is-current::before {
   position: absolute;
   top: 0;
   bottom: 0;
@@ -1484,7 +1484,7 @@ function handleUserCommand(command: string) {
   background: #00e4ff;
   box-shadow: 0 0 8px rgba(0, 228, 255, 0.7);
   content: '';
-}
+}*/
 
 .scenario-entry-label {
   flex: 1;
@@ -1540,7 +1540,7 @@ function handleUserCommand(command: string) {
   align-items: center;
   gap: 8px;
   height: 50px;
-  padding: 0 12px 0 32px;
+  padding: 0 12px 0 39px;
   border: 0;
   background: #07133e;
   color: #AADDFF;
