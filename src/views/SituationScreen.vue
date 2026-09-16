@@ -237,6 +237,27 @@
                 <el-icon :size="13"><Aim /></el-icon>
                 告警定位
               </button>
+              <!-- [P0-4 2026-09-16 iSC「过滤资源点」对标] 设备类型图层过滤 (勾选隐藏;
+                    告警层不受过滤影响 — 不关注的类型不展示, 报警始终可见) -->
+              <el-popover placement="bottom-start" :width="168" trigger="click">
+                <template #reference>
+                  <button
+                    type="button"
+                    class="floor-locate-toggle"
+                    :class="{ 'is-filter': hiddenDeviceTypes.length > 0 }"
+                    title="按设备类型显示/隐藏点位"
+                  >
+                    <el-icon :size="13"><Filter /></el-icon>
+                    图层
+                  </button>
+                </template>
+                <el-checkbox-group v-model="hiddenDeviceTypes" class="fm-layer-checks">
+                  <el-checkbox v-for="t in FLOOR_MAP_DEVICE_TYPES" :key="t.value" :value="t.value" size="small">
+                    <span class="fm-layer-dot" :style="{ background: DEVICE_ICON_META[t.value]?.color }" />
+                    {{ t.label }}
+                  </el-checkbox>
+                </el-checkbox-group>
+              </el-popover>
             </div>
             <div class="floor-canvas-wrap">
               <FloorMapCanvas
@@ -250,6 +271,7 @@
                 :channel-online="floorChannelOnline"
                 :highlight-channel-id="floorHighlight"
                 :focus-channel-id="floorFocusChannel"
+                :hidden-device-types="hiddenDeviceTypes"
                 persist-viewport
                 @device-click="onFloorDeviceClick"
                 @viewport-change="onFloorViewportChange"
@@ -489,7 +511,7 @@ import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
 // [P0-2 2026-09-16 iSC 报警定位对标] 定位开关图标
-import { Aim } from '@element-plus/icons-vue'
+import { Aim, Filter } from '@element-plus/icons-vue'
 // [PERF 2026-09-14] echarts 改动态 import (见 ensureEcharts): 解除本页 chunk 对
 //   vendor-echarts(1.5MB) 的静态依赖 (实测该下载拖慢首页框架渲染 3.9s@隧道带宽),
 //   图表库在 initCharts 数据就绪后才按需拉取。
@@ -517,6 +539,8 @@ import { useFloorMap, channelIdVariants } from '@/composables/useFloorMap'
 // [P0-1 2026-09-16 iSC 初始视野对标] 视野变更 PATCH 落库
 import { floorMapApi } from '@/api/floorMap'
 import type { FloorMapWithCameras, CameraMapBinding } from '@/types/floorMap'
+// [P0-4 2026-09-16 iSC「过滤资源点」对标] 图层过滤选项 + 分类型色点
+import { FLOOR_MAP_DEVICE_TYPES, DEVICE_ICON_META } from '@/types/floorMap'
 import SceneEditPanel from '@/components/SceneEditPanel.vue'
 // [PERF 2026-09-14] hls.js/flv.js 改动态 import (见 ensurePlayerLibs): 解除本页
 //   chunk 对 vendor-players(1.7MB) 的静态依赖, 首次开播前才加载 (与拉流 API 并行,
@@ -1006,6 +1030,16 @@ async function locateAlarmOnMap(a: Alarm) {
   await nextTick()
   floorFocusChannel.value = ch
 }
+
+// [P0-4 2026-09-16 iSC「过滤资源点」对标] 隐藏的设备类型 (localStorage 持久; 空=全显;
+//   勾选=隐藏 — 默认全选语义下记录增量更省事, 且新设备类型默认可见)
+const LS_LAYER_KEY = 'fm_hidden_device_types'
+const hiddenDeviceTypes = ref<string[]>((() => {
+  try { const v = JSON.parse(localStorage.getItem(LS_LAYER_KEY) || '[]'); return Array.isArray(v) ? v : [] } catch { return [] }
+})())
+watch(hiddenDeviceTypes, (v) => {
+  localStorage.setItem(LS_LAYER_KEY, JSON.stringify(v))
+}, { deep: true })
 
 // 全屏状态
 const isFullscreen = ref(false)
@@ -3664,6 +3698,12 @@ onUnmounted(() => {
   border-color: rgba(249, 58, 85, 0.55);
   background: rgba(73, 15, 26, 0.55);
 }
+/* [P0-4] 过滤生效态 (有隐藏类型) — 青色激活与告警红色区分 */
+.floor-locate-toggle.is-filter {
+  color: #00e4ff;
+  border-color: rgba(0, 228, 255, 0.5);
+  background: rgba(0, 65, 158, 0.4);
+}
 .floor-canvas-wrap {
   position: absolute;
   inset: 0;
@@ -3958,5 +3998,23 @@ onUnmounted(() => {
 .el-select__popper.title-view-popper .el-popper__arrow::before {
   background: rgba(3, 27, 78, 0.97) !important;
   border-color: rgba(0, 180, 255, 0.35) !important;
+}
+/* [P0-4 2026-09-16 iSC「过滤资源点」对标] 图层过滤 popover (teleport 到 body → 全局块) */
+.fm-layer-checks {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.fm-layer-checks .el-checkbox {
+  margin-right: 0;
+  height: 26px;
+}
+.fm-layer-checks .fm-layer-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  margin-right: 6px;
+  vertical-align: -1px;
 }
 </style>

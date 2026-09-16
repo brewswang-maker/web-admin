@@ -47,7 +47,7 @@
 
     <!-- ═══ Layer 2: 设备层 (分类型图标 + 状态色环 + FOV 扇形; 宇视 SVG 落点对标) ═══ -->
     <div class="fm-canvas__cams">
-      <template v-for="b in bindings" :key="`${b.map_id}-${b.channel_id}`">
+      <template v-for="b in visibleBindings" :key="`${b.map_id}-${b.channel_id}`">
         <!-- FOV 扇形 (conic-gradient 圆裁剪; 复用 AlarmPopup #00E5FF token; 仅 camera — 非摄像头 fov_radius_m=0) -->
         <div
           v-if="fovRadius(b) > 0.02"
@@ -195,6 +195,8 @@ const props = withDefaults(defineProps<{
   persistViewport?: boolean
   /** [P0-3 2026-09-16 iSC「快速定位」对标] 聚焦通道 → 定位居中 (金色光环走 highlightChannelId) */
   focusChannelId?: string
+  /** [P0-4 2026-09-16 iSC「过滤资源点」对标] 隐藏的设备类型 (图层过滤; 告警层不受影响) */
+  hiddenDeviceTypes?: string[]
 }>(), {
   editable: false,
   alarmChannelId: '',
@@ -208,6 +210,7 @@ const props = withDefaults(defineProps<{
   ghostType: '',
   persistViewport: false,
   focusChannelId: '',
+  hiddenDeviceTypes: () => [],
 })
 
 const emit = defineEmits<{
@@ -336,6 +339,13 @@ function isHighlighted(b: CameraMapBinding): boolean {
 }
 
 // ── 设备层 ──
+// [P0-4 2026-09-16 iSC「过滤资源点」对标] 图层过滤: 图钉/名称/FOV 按类型显隐;
+//   编辑模式恒全量 (落点语义), 告警层 (L3 涟漪/色环) 不过滤 — 报警始终可见
+const visibleBindings = computed(() => {
+  const hidden = props.hiddenDeviceTypes
+  if (!hidden?.length || props.editable) return props.bindings
+  return props.bindings.filter((b) => !hidden.includes(b.device_type))
+})
 // [P0-1] 分类型图标元数据已提升至 types/floorMap.ts (SSOT; 添加工具箱共用)
 const iconMeta = deviceIconMeta
 // [P0-3] 设备状态色环: alarm > online > offline (告警最高优先; 红/绿/灰)
