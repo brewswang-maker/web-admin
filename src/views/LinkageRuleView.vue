@@ -711,11 +711,11 @@
                   <span class="legend-item"><i class="legend-dot" style="background:#909399"></i>提示</span>
                 </div>
                 <!-- [P1-4-EXPAND 2026-09-13] @change 仅用户交互触发 (回显赋值不触发) → 自动展开入口 -->
-                <el-checkbox-group v-model="form.conditions.eventType.config.types" @change="onEventTypesChanged" class="event-type-grid" v-loading="optionsLoading">
+                <el-checkbox-group v-model="form.conditions.eventType.config.types" @change="onEventTypesChanged" class="event-type-grid" :disabled="!!editingRule" v-loading="optionsLoading">
                   <template v-if="eventTypeOptions.length > 0">
                     <div v-for="(group, cat) in eventTypeGrouped" :key="cat" class="event-type-group">
                       <div class="event-type-group__title">{{ cat }}</div>
-                      <el-checkbox v-for="et in group" :key="et.value" :value="et.value" size="small">
+                      <el-checkbox v-for="et in group" :key="et.value" :value="et.value" :disabled="!!editingRule" size="small">
                         <span class="event-type-label">
                           <i
                             v-if="et.severityLevel"
@@ -732,9 +732,15 @@
                     </div>
                   </template>
                   <template v-else>
-                    <el-checkbox v-for="et in fallbackEventTypes" :key="et.value" :label="et.label" :value="et.value" size="small" />
+                    <el-checkbox v-for="et in fallbackEventTypes" :key="et.value" :label="et.label" :value="et.value" :disabled="!!editingRule" size="small" />
                   </template>
                 </el-checkbox-group>
+                <!-- [EVENT-TYPE-LOCK 2026-09-16] 事件类型在编辑模式下锁定 (业界惯例: 华为/海康/大华/宇视/NVIDIA/Intel 等均锁定; 事件类型是规则的语义锐点,
+                     变更会让动作模板/通道/时空条件/历史日志全部脱锐, 需走“复制为新规则”走新建链变更 -->
+                <p v-if="editingRule" class="cond-hint" style="color: #909399; margin-top: 6px; display: flex; align-items: center; gap: 6px">
+                  <el-icon style="font-size: 14px"><Lock /></el-icon>
+                  <span>事件类型不可变更 — 如需换类型, 请使用抽屉底部的“复制为新规则”</span>
+                </p>
                 <!-- [R6 P1-4 2026-09-12] 预留位事件显式预期管理 (doc §5.4): 选中 C 档事件时
                      告知「当前无算法支撑，规则将在算法可用后生效」— 空壳从静默失效变显式告知 -->
                 <el-alert v-if="selectedReservedEventLabels.length" type="warning" :closable="false" show-icon
@@ -845,6 +851,11 @@
         <div class="drawer-footer">
           <el-button @click="handleDryRun" :loading="dryRunLoading" :disabled="!editingRule">
             模拟测试
+          </el-button>
+          <!-- [EVENT-TYPE-LOCK 2026-09-16] 事件类型锁定后变更入口: 复制为新规则 (业界惯例: 华为/海康/大华/宇视等均提供)
+               复制后跳转到新建模式 (清 editingRule + 清空事件类型 + 名称追加"副本") -->
+          <el-button v-if="editingRule" @click="copyAsNewRule" :icon="CopyDocument">
+            复制为新规则
           </el-button>
           <div style="flex:1" />
           <el-button @click="drawerVisible = false">取消</el-button>
@@ -1466,7 +1477,7 @@ import { ref, computed, reactive, onMounted, onUnmounted, watch, nextTick } from
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { FormInstance, FormRules } from 'element-plus'
-import { Search, Plus, Document, Link, Bell, Setting, ArrowDown, Download, Upload, Refresh, WarningFilled, DataLine } from '@element-plus/icons-vue'
+import { Search, Plus, Document, Link, Bell, Setting, ArrowDown, Download, Upload, Refresh, WarningFilled, DataLine, Lock, CopyDocument } from '@element-plus/icons-vue'
 import { linkageApi, ACTION_TYPE_MAP, ACTION_TYPE_REVERSE_MAP, getTargetForActionType, unwrapRuleTemplates } from '@/api/linkage'
 import { regionApi } from '@/api/region'  // [FIX 2026-08-28] 画板绊线自动创建 (createTripwireWithMirror)
 import type { LinkageRule, LinkageAction, LinkageLog, ActionLogEntry, TimeTemplate, LinkagePlan, CEPPattern, ConditionNode, RuleConflict, RuleTriggerStat } from '@/api/linkage'
@@ -3763,6 +3774,36 @@ function onSimpleSwitchAdvanced(mode: 'simple' | 'full') {
 function onNewCommand(cmd: string) {
   if (cmd === 'advanced') openEditor(null)
   else if (cmd === 'template') openTemplateLibrary()
+}
+
+/** [EVENT-TYPE-LOCK 2026-09-16] 复制为新规则: 编辑态下另存为新规则入口
+ *  - 业界惯例 (华为 iClient / 海康 iVMS / 大华 DSS / 宇视 NVR): 事件类型锁定, 变更多走"复制为新规则"。
+ *  - 实现: 取当前编辑源 resetEditorState 整包回显 → 清 editingRule 转为新建模式
+ *    → 清空事件类型 (触发必选提示) → 清空被抑制于规则 (原 id 引用在新规则无效) → 名称追加"副本" → 默认禁用。
+ *  - 保存时 handleSave 检测 editingRule=null 自动走 createRule 分支 (新 id  生成走crypto.randomUUID)。
+ */
+function copyAsNewRule() {
+  if (!editSourceRule.value && !editingRule.value) {
+    ElMessage.warning('当前不在编辑模式')
+    return
+  }
+  const sourceRow = (editSourceRule.value || editingRule.value) as LinkageRule
+  // 1. 快照原名称供后续追加"副本"
+  const origName = sourceRow.name || form.name || '未命名规则'
+  // 2. 以当前编辑源整包回显 (动作/通道/时空条件全部保留)
+  resetEditorState(sourceRow)
+  // 3. 转为新建模式: 清 editingRule → 保存走 createRule 分支 (自然生成新 id)
+  editingRule.value = null
+  // 4. 清空事件类型 (用户必须重新选择, 提示“事件类型为必选项”会生效)
+  form.conditions.eventType.config.types = []
+  // 5. 清空被抑制于规则 (原 id 引用在新规则中无效)
+  form.suppressAfterRule = ''
+  // 6. 默认禁用 (副本创建后用户确认后再启用, 防误联动)
+  form.enabled = false
+  // 7. 名称追加"副本" 后缀 (避免同名冲突)
+  form.name = `${origName} - 副本`
+  // 8. 提示用户
+  ElMessage.info('已复制为新规则草稿，请重新选择事件类型后保存')
 }
 
 // ── 编辑器: 保存 (内部表单 → 后端格式) ──
