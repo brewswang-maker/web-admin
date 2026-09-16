@@ -179,8 +179,8 @@
               v-if="!isCollapsed && entry.scenario.tabs.length > 0"
               class="scenario-entry-caret"
             >
-              <CaretBottom v-if="expandedScenarioKey === entry.key" />
-              <CaretRight v-else />
+              <CaretTop v-if="expandedScenarioKey === entry.key" />
+              <CaretBottom v-else />
             </el-icon>
           </div>
           <!-- 展开的 tabs 纵向列表 (内联, 无浮层) -->
@@ -560,7 +560,7 @@ import {
   Files,   // [vp9 2026-09-01] 设备分组菜单
   OfficeBuilding, // [UI-5 2026-09-10] 组织架构管理菜单
   // [场景菜单 2026-09-16] admin 多场景组展开收起指示器
-  CaretBottom, CaretRight,
+  CaretBottom, CaretTop,
 } from '@element-plus/icons-vue'
 import logoUrl from '@/assets/logo.png'
 import userAvatarUrl from '@/assets/photo2.jpg'
