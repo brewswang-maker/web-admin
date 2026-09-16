@@ -124,10 +124,10 @@
       :class="{ collapsed: isCollapsed }"
     >
       <!-- 导航菜单 -->
-      <!-- [场景下拉 2026-09-16] 普通组 (home/location/video/alarm/ai/platform) 沿用 el-menu-item-group;
-           场景组 (scenarios/单场景账号) 用下拉式 flyout (Teleport 到 body) -->
+      <!-- [场景菜单 2026-09-16] 普通组 (home/location/video/alarm/ai/platform) + 单场景账号沿用 el-menu-item-group (上一轮 2ac8cd6 已落地的单场景账号侧边栏子菜单化);
+           admin 多场景组 (scenarios) 用 .scenario-menu + 点击展开内联 tabs (取代之前的 hover-flyout, 与单场景账号体感一致: tabs 一眼可见) -->
       <el-menu
-        v-if="!isActivePrimaryScenario"
+        v-if="!isMultiScenariosGroup"
         class="sidebar-menu"
         :default-active="displayedActiveMenu"
         :collapse="isCollapsed"
@@ -159,46 +159,40 @@
         </el-menu-item-group>
       </el-menu>
 
+      <!-- [场景菜单 2026-09-16] admin 多场景组: 6 场景入口 + 点击展开内联 tabs (无 flyout, 无 hover 延迟) -->
       <div v-else class="sidebar-menu scenario-menu">
         <div class="scenario-group-title">
           <span v-if="!isCollapsed">{{ activePrimaryMenu.label }}</span>
         </div>
-        <div
-          v-for="entry in displayedScenarioEntries"
-          :key="entry.key"
-          class="scenario-entry"
-          :class="{ 'is-current': isCurrentScenario(entry), 'is-hovered': hoveredScenarioKey === entry.key }"
-          @mouseenter="onScenarioEnter(entry.key, $event)"
-          @mouseleave="onScenarioLeave"
-          @click="onScenarioClick(entry)"
-        >
-          <el-icon><component :is="entry.icon" /></el-icon>
-          <span v-if="!isCollapsed" class="scenario-entry-label">{{ entry.label }}</span>
-        </div>
-      </div>
-
-      <!-- [场景下拉 2026-09-16] flyout 浮层, Teleport 到 body 避免被 sidebar overflow 裁剪 -->
-      <Teleport to="body">
-        <div
-          v-show="hoveredScenarioKey"
-          class="scenario-flyout"
-          :style="{ top: flyoutTop + 'px', left: flyoutLeft + 'px' }"
-          @mouseenter="onFlyoutEnter"
-          @mouseleave="onFlyoutLeave"
-          role="menu"
-          aria-label="场景子菜单"
-        >
+        <div v-for="entry in displayedScenarioEntries" :key="entry.key" class="scenario-entry-block">
           <div
-            v-for="s in visibleScenariosForFlyout"
-            v-show="hoveredScenarioKey === s.key"
-            :key="s.key"
-            class="flyout-list"
+            class="scenario-entry"
+            :class="{
+              'is-current': isCurrentScenario(entry),
+              'is-expanded': expandedScenarioKey === entry.key
+            }"
+            @click="onScenarioTriggerClick(entry)"
+          >
+            <el-icon><component :is="entry.icon" /></el-icon>
+            <span v-if="!isCollapsed" class="scenario-entry-label">{{ entry.label }}</span>
+            <el-icon
+              v-if="!isCollapsed && entry.scenario.tabs.length > 0"
+              class="scenario-entry-caret"
+            >
+              <CaretBottom v-if="expandedScenarioKey === entry.key" />
+              <CaretRight v-else />
+            </el-icon>
+          </div>
+          <!-- 展开的 tabs 纵向列表 (内联, 无浮层) -->
+          <div
+            v-if="!isCollapsed && expandedScenarioKey === entry.key"
+            class="scenario-tabs"
           >
             <button
-              v-for="tab in s.tabs"
+              v-for="tab in entry.scenario.tabs"
               :key="tab.path"
               type="button"
-              class="flyout-item"
+              class="scenario-tab"
               :class="{ 'is-active': route.path === tab.path || route.path.startsWith(`${tab.path}/`) }"
               @click="navigateToMenu(tab.path)"
             >
@@ -207,7 +201,7 @@
             </button>
           </div>
         </div>
-      </Teleport>
+      </div>
 
       <!-- Legacy groups remain in the template as a compatibility fallback, but are not rendered. -->
       <el-menu
@@ -580,6 +574,8 @@ import {
   TakeawayBox, MagicStick,
   Files,   // [vp9 2026-09-01] 设备分组菜单
   OfficeBuilding, // [UI-5 2026-09-10] 组织架构管理菜单
+  // [场景菜单 2026-09-16] admin 多场景组展开收起指示器
+  CaretBottom, CaretRight,
 } from '@element-plus/icons-vue'
 import logoUrl from '@/assets/logo.png'
 import userAvatarUrl from '@/assets/photo2.jpg'
@@ -872,19 +868,20 @@ const isSingleScenarioUser = computed(() =>
   scenarioMenus.value.filter(s => matchMenuRoles(s.roles)).length === 1
 )
 
-// [场景下拉 2026-09-16] 场景下拉触发与 flyout 浮层管理 (hover 触发, 浮层 Teleport 到 body)。
-//   多场景用户 (admin) 侧栏「应用场景」组下展示 6 场景入口, 单场景账号仅 1 个,
-//   任一形态 hover 弹出 flyout 列该场景的全部 tabs; 路由 path / menu.* 文案键全部不变。
+// [场景菜单 2026-09-16] admin 多场景组: 侧栏 6 入口 + 点击展开内联 tabs (取代之前的 hover-flyout)。
+//   单场景账号仍走 primaryMenus + el-menu-item 路径 (上一轮 2ac8cd6 设计的 tabs 侧边栏子菜单化)。
+//   路由 path / menu.* / menuPrimary.* / menuSecondary.* 全部不变。
 const isMultiScenariosGroup = computed(() => activePrimaryKey.value === 'scenarios')
 const activeScenarioMenu = computed(() => {
   const k = activePrimaryKey.value
   return scenarioMenus.value.find(s => matchMenuRoles(s.roles) && s.key === k)
 })
 const isActivePrimaryScenario = computed(() => isMultiScenariosGroup.value || !!activeScenarioMenu.value)
-const visibleScenariosForFlyout = computed(() => scenarioMenus.value.filter(s => matchMenuRoles(s.roles)))
+// [场景菜单 2026-09-16] 哪些场景在侧栏可见 (供 admin 6 入口拼装; 单场景账号走 primaryMenus 不走这里)
+const visibleScenariosForSidebar = computed(() => scenarioMenus.value.filter(s => matchMenuRoles(s.roles)))
 const displayedScenarioEntries = computed<Array<{ key: PrimaryMenuKey; label: string; icon: Component; scenario: ScenarioDef }>>(() => {
   if (isMultiScenariosGroup.value) {
-    return visibleScenariosForFlyout.value.map(s => ({
+    return visibleScenariosForSidebar.value.map(s => ({
       key: s.key,
       label: t(`menuSecondary.${s.entryKey}`),
       icon: s.tabs[0].icon,
@@ -906,46 +903,25 @@ function isCurrentScenario(entry: { scenario: ScenarioDef }): boolean {
   return route.path === entry.scenario.prefix || route.path.startsWith(`${entry.scenario.prefix}/`)
 }
 
-const hoveredScenarioKey = ref<PrimaryMenuKey | null>(null)
-const flyoutTop = ref(0)
-const flyoutLeft = ref(0)
-let openTimer: ReturnType<typeof setTimeout> | null = null
-let closeTimer: ReturnType<typeof setTimeout> | null = null
-function clearFlyoutTimers() {
-  if (openTimer) { clearTimeout(openTimer); openTimer = null }
-  if (closeTimer) { clearTimeout(closeTimer); closeTimer = null }
-}
-function onScenarioEnter(key: PrimaryMenuKey, ev: MouseEvent) {
-  clearFlyoutTimers()
-  const trigger = ev.currentTarget as HTMLElement
-  const sidebar = trigger.closest('.sidebar') as HTMLElement | null
-  const sidebarWidth = sidebar?.getBoundingClientRect().width ?? 245
-  const rect = trigger.getBoundingClientRect()
-  flyoutTop.value = rect.top
-  flyoutLeft.value = sidebarWidth
-  openTimer = setTimeout(() => {
-    hoveredScenarioKey.value = key
-  }, 120)
-}
-function onScenarioLeave() {
-  clearFlyoutTimers()
-  closeTimer = setTimeout(() => {
-    hoveredScenarioKey.value = null
-  }, 250)
-}
-function onFlyoutEnter() {
-  if (closeTimer) { clearTimeout(closeTimer); closeTimer = null }
-}
-function onFlyoutLeave() {
-  clearFlyoutTimers()
-  closeTimer = setTimeout(() => {
-    hoveredScenarioKey.value = null
-  }, 100)
-}
-function onScenarioClick(entry: { scenario: ScenarioDef }) {
-  // 点击 trigger = 跳转第一个 tab, flyout 保持显示 (供后续点选其他子页, 不关闭以避免误判)
+// [场景菜单 2026-09-16] admin 模式下当前展开的场景 key (点 trigger toggle, 点 tab 跳路由后同步)
+const expandedScenarioKey = ref<PrimaryMenuKey | null>(null)
+function onScenarioTriggerClick(entry: { scenario: ScenarioDef }) {
+  // 单场景账号走的是 primaryMenus + el-menu-item 路径, 此函数仅被 admin 多场景场景触发
+  if (expandedScenarioKey.value === entry.key) {
+    // 同一 trigger 二次点击 -> 收起 (不放路由)
+    expandedScenarioKey.value = null
+    return
+  }
+  // 切换场景: 展开新场景 + 跳第一个 tab (路由变化后 watch 会再同步一次)
+  expandedScenarioKey.value = entry.key
   navigateToMenu(entry.scenario.tabs[0].path)
 }
+// [场景菜单 2026-09-16] 路由命中某场景 tab -> 自动同步展开 (点击顶部 Tab / 书签 / 浏览器后退均覆盖)
+watch(activeScenario, (newScen) => {
+  if (newScen && isMultiScenariosGroup.value) {
+    expandedScenarioKey.value = newScen.key
+  }
+}, { immediate: true })
 const pendingMenuPath = ref<string | null>(null)
 const routeLoading = ref(false)
 let navigationSequence = 0
@@ -1128,9 +1104,9 @@ function handleKeydown(e: KeyboardEvent) {
     showSearch.value = true
     return
   }
-  // [场景下拉 2026-09-16] ESC 关闭 flyout
-  if (e.key === 'Escape' && hoveredScenarioKey.value) {
-    hoveredScenarioKey.value = null
+  // [场景菜单 2026-09-16] ESC 收起 admin 多场景组展开的场景 (单场景账号走 el-menu-item, 不受影响)
+  if (e.key === 'Escape' && isMultiScenariosGroup.value && expandedScenarioKey.value) {
+    expandedScenarioKey.value = null
   }
 }
 
@@ -1457,7 +1433,7 @@ function handleUserCommand(command: string) {
   transform: none;
 }
 
-/* ── [场景下拉 2026-09-16] 场景组下拉式菜单 (替代原纵向并列 el-menu-item-group) ── */
+/* ── [场景菜单 2026-09-16] admin 多场景组: 侧栏 6 入口 + 点击展开内联 tabs (取代之前的 hover-flyout) ── */
 .scenario-menu {
   display: flex;
   flex-direction: column;
@@ -1474,6 +1450,11 @@ function handleUserCommand(command: string) {
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
+}
+
+.scenario-entry-block {
+  display: flex;
+  flex-direction: column;
 }
 
 .scenario-entry {
@@ -1497,8 +1478,7 @@ function handleUserCommand(command: string) {
   font-size: 18px;
 }
 
-.scenario-entry:hover,
-.scenario-entry.is-hovered {
+.scenario-entry:hover {
   background: rgba(59, 130, 246, 0.1);
   color: #FFFFFF;
 }
@@ -1527,72 +1507,79 @@ function handleUserCommand(command: string) {
   text-overflow: ellipsis;
 }
 
+.scenario-entry-caret {
+  flex-shrink: 0;
+  font-size: 12px;
+  opacity: 0.6;
+  transition: transform 0.15s ease;
+}
+
 .sidebar.collapsed .scenario-entry {
   justify-content: center;
   padding: 0;
 }
 
-.sidebar.collapsed .scenario-entry-label {
+.sidebar.collapsed .scenario-entry-label,
+.sidebar.collapsed .scenario-entry-caret {
   display: none;
 }
 
-/* ── flyout 浮层 (Teleport 到 body, 需 z-index 高于其他面板) ── */
-.scenario-flyout {
-  position: fixed;
-  z-index: 2000;
-  min-width: 200px;
-  background: #002C73;
-  border: 1px solid rgba(0, 148, 210, 0.28);
-  border-radius: 6px;
-  padding: 6px 0;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
-}
-
-.flyout-list {
+/* ── 侧栏展开的 tabs 纵向列表 (内联, 与上一轮单场景账号侧边栏子菜单化体验一致; 用 .sidebar 前缀避免与顶部 Tab 同名类冲突) ── */
+.sidebar .scenario-tabs {
   display: flex;
   flex-direction: column;
+  background: rgba(0, 0, 0, 0.18);
+  border-left: 2px solid rgba(0, 228, 255, 0.35);
+  margin: 2px 0 4px 0;
+  padding: 4px 0;
+  animation: sidebar-scenario-tabs-fade 0.18s ease;
 }
 
-.flyout-item {
+@keyframes sidebar-scenario-tabs-fade {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.sidebar .scenario-tab {
   display: flex;
   align-items: center;
   gap: 10px;
-  height: 40px;
-  padding: 0 16px;
+  height: 38px;
+  padding: 0 14px 0 38px;
   border: 0;
   background: transparent;
   color: #AADDFF;
   font: inherit;
-  font-size: 14px;
+  font-size: 13px;
   text-align: left;
   cursor: pointer;
   white-space: nowrap;
   transition: background 0.15s ease, color 0.15s ease;
 }
 
-.flyout-item .el-icon {
+.sidebar .scenario-tab .el-icon {
   flex-shrink: 0;
-  font-size: 16px;
+  font-size: 14px;
+  opacity: 0.85;
 }
 
-.flyout-item:hover {
+.sidebar .scenario-tab:hover {
   background: rgba(59, 130, 246, 0.15);
   color: #FFFFFF;
 }
 
-.flyout-item.is-active {
-  background: rgba(59, 130, 246, 0.25);
+.sidebar .scenario-tab.is-active {
+  background: rgba(59, 130, 246, 0.22);
   color: #60A5FA;
   font-weight: 600;
 }
 
-/* ── 浅色主题适配 (场景下拉) ── */
+/* ── 浅色主题适配 (场景菜单) ── */
 .main-layout:not(.dark-theme) .scenario-entry {
   color: #1F2937;
 }
 
-.main-layout:not(.dark-theme) .scenario-entry:hover,
-.main-layout:not(.dark-theme) .scenario-entry.is-hovered {
+.main-layout:not(.dark-theme) .scenario-entry:hover {
   background: rgba(31, 41, 55, 0.06);
   color: #1F2937;
 }
@@ -1602,21 +1589,20 @@ function handleUserCommand(command: string) {
   color: var(--app-sidebar-active, #1890FF);
 }
 
-.main-layout:not(.dark-theme) .scenario-flyout {
-  background: #FFFFFF;
-  border-color: rgba(31, 41, 55, 0.12);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+.main-layout:not(.dark-theme) .sidebar .scenario-tabs {
+  background: rgba(31, 41, 55, 0.04);
+  border-left-color: rgba(24, 144, 255, 0.35);
 }
 
-.main-layout:not(.dark-theme) .flyout-item {
-  color: #1F2937;
+.main-layout:not(.dark-theme) .sidebar .scenario-tab {
+  color: #374151;
 }
 
-.main-layout:not(.dark-theme) .flyout-item:hover {
+.main-layout:not(.dark-theme) .sidebar .scenario-tab:hover {
   background: rgba(31, 41, 55, 0.06);
 }
 
-.main-layout:not(.dark-theme) .flyout-item.is-active {
+.main-layout:not(.dark-theme) .sidebar .scenario-tab.is-active {
   background: rgba(24, 144, 255, 0.12);
   color: var(--app-sidebar-active, #1890FF);
 }
