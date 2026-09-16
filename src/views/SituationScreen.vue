@@ -4218,6 +4218,16 @@ onUnmounted(() => {
 .marquee-preview-dialog .el-dialog__headerbtn .el-dialog__close { color: #7A90B3; font-size: 18px; }
 .marquee-preview-dialog .el-dialog__headerbtn:hover .el-dialog__close { color: #4EA1F3; }
 .marquee-preview-dialog .el-dialog__body { padding-top: 12px; }
+/* [P1-4 fixup 2026-09-16] 特异性保险: vendor 的 .el-dialog{background} 与上方单类规则
+     同特异性 (0,1,0) 且构建产物中后加载, 实测覆盖致白底回退 (真机 56mf 两轮部署对照:
+     单类版白底 / 双类版深色) — 双类选择器 (0,2,0) 恒胜, 视觉与上方规则同义,
+     防不同构建 CSS 顺序漂移 */
+.el-dialog.marquee-preview-dialog {
+  background: rgba(10, 22, 40, 0.97);
+  border: 1px solid #2A3F66;
+  border-radius: 10px;
+  box-shadow: 0 12px 48px rgba(0, 0, 0, 0.55);
+}
 .marquee-grid { display: grid; gap: 10px; }
 .marquee-cell {
   border: 1px solid rgba(78, 110, 170, 0.35);
