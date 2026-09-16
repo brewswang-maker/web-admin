@@ -193,6 +193,8 @@ const props = withDefaults(defineProps<{
   /** [P0-1 2026-09-16 iSC 初始视野对标] 持久化初始视野: 载入时应用 map.viewport,
    *  缩放/平移/复位后 emit viewport-change 由宿主 PATCH 落库 (编辑模式不生效) */
   persistViewport?: boolean
+  /** [P0-3 2026-09-16 iSC「快速定位」对标] 聚焦通道 → 定位居中 (金色光环走 highlightChannelId) */
+  focusChannelId?: string
 }>(), {
   editable: false,
   alarmChannelId: '',
@@ -205,6 +207,7 @@ const props = withDefaults(defineProps<{
   highlightChannelId: '',
   ghostType: '',
   persistViewport: false,
+  focusChannelId: '',
 })
 
 const emit = defineEmits<{
@@ -456,6 +459,26 @@ watch(() => props.map.id, () => {
 // [P0-1] 首次挂载同样应用已存初始视野 (无 viewport → identity, 行为不变)
 onMounted(applyViewportFromMap)
 onBeforeUnmount(() => clearTimeout(viewportEmitTimer))
+
+// ═══ [P0-3 2026-09-16 iSC「快速定位」对标] 聚焦通道 → 定位居中 ═══
+// 屏幕位置 = norm·size·z + view → 居中即 view = size/2 − norm·size·z;
+// z 保持现有值, <1.5 时提升到 2 (拉近到可辨认图标层级, iSC 定位居中间义)
+function focusOnChannel(ch: string) {
+  if (!wrapEl.value || props.editable || !panEnabled.value) return
+  const variants = channelIdVariants(ch)
+  const b = props.bindings.find((x) => variants.includes(x.channel_id))
+  if (!b) return
+  const w = wrapEl.value.clientWidth
+  const h = wrapEl.value.clientHeight
+  if (view.z < 1.5) view.z = 2
+  view.x = w / 2 - b.pos_x * w * view.z
+  view.y = h / 2 - b.pos_y * h * view.z
+  clampPan()
+  scheduleViewportEmit()
+}
+watch(() => props.focusChannelId, (ch) => {
+  if (ch) focusOnChannel(ch)
+})
 
 // ── 告警层: 落点 + bbox ──
 // [FIX 2026-09-05 平面图未关联] 告警 channel_id (裸 20 位) 与绑定库 channel_id

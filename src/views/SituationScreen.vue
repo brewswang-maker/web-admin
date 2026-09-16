@@ -249,6 +249,7 @@
                 :channel-labels="floorChannelLabels"
                 :channel-online="floorChannelOnline"
                 :highlight-channel-id="floorHighlight"
+                :focus-channel-id="floorFocusChannel"
                 persist-viewport
                 @device-click="onFloorDeviceClick"
                 @viewport-change="onFloorViewportChange"
@@ -325,6 +326,15 @@
                       {{ alarmStatusText(alarm.status) }}
                     </el-tag>
                   </span>
+                  <button
+                    v-if="alarm.channelId"
+                    class="alarm-action alarm-locate"
+                    type="button"
+                    title="图上定位 (平面图居中显示报警点位)"
+                    @click.stop="locateAlarmOnMap(alarm)"
+                  >
+                    <el-icon :size="13"><Aim /></el-icon>
+                  </button>
                   <button class="alarm-action" type="button" @click.stop="openAlarmDetail(alarm)">
                     {{ alarm.status === '已处置' ? t('situationScreen.viewDetail') : t('situationScreen.toHandle') }}
                   </button>
@@ -973,6 +983,29 @@ function onFloorViewportChange(v: { x: number; y: number; z: number }) {
   }, 400)
 }
 const slideDirection = ref<'slide-left' | 'slide-right'>('slide-left')
+// [P0-3 2026-09-16 iSC「快速定位」对标] 告警列表行 → 图上定位 (任意行非仅最新;
+//   iSC: 单击事件列可在地图中快速定位资源点并居中)。先清后设保证重复点击同条
+//   也重触发画布居中; FloorMapCanvas 内部复用金色光环 (floorHighlight 同值)
+const floorFocusChannel = ref('')
+async function locateAlarmOnMap(a: Alarm) {
+  const ch = a.channelId || ''
+  if (!ch) { ElMessage.warning('该告警未携带通道信息, 无法图上定位'); return }
+  if (centerView.value !== 'floor') setCenterView('floor')
+  if (!floorMaps.value.length) {
+    await loadFloorMapsQ().catch(() => [])
+    if (!currentFloorMapId.value && floorMaps.value.length) currentFloorMapId.value = floorMaps.value[0].id
+  }
+  const variants = channelIdVariants(ch)
+  if (!floorBindings.value.some((b) => variants.includes(b.channel_id))) {
+    const pairs = await floorMapsByChannel(ch).catch(() => [])
+    if (!pairs.length) { ElMessage.warning('该设备未绑定平面图点位'); return }
+    currentFloorMapId.value = pairs[0].map.id
+  }
+  floorHighlight.value = ch
+  floorFocusChannel.value = ''
+  await nextTick()
+  floorFocusChannel.value = ch
+}
 
 // 全屏状态
 const isFullscreen = ref(false)
@@ -3392,6 +3425,24 @@ onUnmounted(() => {
 .alarm-action:hover,
 .alarm-action:focus-visible {
   color: #00E4FF;
+}
+/* [P0-3 2026-09-16 iSC「快速定位」对标] 图上定位 icon 按钮 (与文字动作按钮同行; icon 居中) */
+.alarm-action.alarm-locate {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  flex: none;
+  color: #8fa4c8;
+  border: 1px solid rgba(78, 110, 170, 0.4);
+  border-radius: 4px;
+  text-align: center;
+}
+.alarm-action.alarm-locate:hover,
+.alarm-action.alarm-locate:focus-visible {
+  color: #00E4FF;
+  border-color: rgba(0, 228, 255, 0.5);
 }
 
 .alarm-scroll :deep(.el-scrollbar__bar.is-vertical) {
