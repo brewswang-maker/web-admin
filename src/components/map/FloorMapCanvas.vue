@@ -87,7 +87,7 @@
             class="fm-canvas__cam-dot"
             :class="isChannelOnline(b.channel_id) ? 'is-on' : 'is-off'"
           />
-          <span v-if="camLabel(b)" class="fm-canvas__cam-label">{{ camLabel(b) }}</span>
+          <span v-if="showLabels && camLabel(b)" class="fm-canvas__cam-label">{{ camLabel(b) }}</span>
           <!-- 拖拽实时坐标 (图标上方; 归一化百分比, 宇视落点精调辅助对标) -->
           <span v-if="dragging === b && dragPos" class="fm-canvas__cam-coords">
             {{ Math.round(dragPos.x * 100) }}, {{ Math.round(dragPos.y * 100) }}
@@ -197,6 +197,8 @@ const props = withDefaults(defineProps<{
   focusChannelId?: string
   /** [P0-4 2026-09-16 iSC「过滤资源点」对标] 隐藏的设备类型 (图层过滤; 告警层不受影响) */
   hiddenDeviceTypes?: string[]
+  /** [P1-2 2026-09-16 iSC「名称显示」开关对标] 点位名称标签显隐 (default true) */
+  showLabels?: boolean
 }>(), {
   editable: false,
   alarmChannelId: '',
@@ -211,6 +213,7 @@ const props = withDefaults(defineProps<{
   persistViewport: false,
   focusChannelId: '',
   hiddenDeviceTypes: () => [],
+  showLabels: true,
 })
 
 const emit = defineEmits<{

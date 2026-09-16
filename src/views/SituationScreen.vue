@@ -258,6 +258,17 @@
                   </el-checkbox>
                 </el-checkbox-group>
               </el-popover>
+              <!-- [P1-2 2026-09-16 iSC「名称显示」开关对标] 点位名称标签显隐 -->
+              <button
+                type="button"
+                class="floor-locate-toggle"
+                :class="{ 'is-active': showPointLabels }"
+                :title="showPointLabels ? '隐藏点位名称标签（点击隐藏）' : '显示点位名称标签（点击显示）'"
+                @click="togglePointLabels"
+              >
+                <el-icon :size="13"><Tag /></el-icon>
+                名称
+              </button>
             </div>
             <div class="floor-canvas-wrap">
               <FloorMapCanvas
@@ -272,6 +283,7 @@
                 :highlight-channel-id="floorHighlight"
                 :focus-channel-id="floorFocusChannel"
                 :hidden-device-types="hiddenDeviceTypes"
+                :show-labels="showPointLabels"
                 persist-viewport
                 @device-click="onFloorDeviceClick"
                 @viewport-change="onFloorViewportChange"
@@ -513,7 +525,7 @@ import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
 // [P0-2 2026-09-16 iSC 报警定位对标] 定位开关图标
-import { Aim, Filter } from '@element-plus/icons-vue'
+import { Aim, Filter, Tag } from '@element-plus/icons-vue'
 // [PERF 2026-09-14] echarts 改动态 import (见 ensureEcharts): 解除本页 chunk 对
 //   vendor-echarts(1.5MB) 的静态依赖 (实测该下载拖慢首页框架渲染 3.9s@隧道带宽),
 //   图表库在 initCharts 数据就绪后才按需拉取。
@@ -974,6 +986,12 @@ function toggleAlarmLocate() {
   alarmLocateEnabled.value = !alarmLocateEnabled.value
   localStorage.setItem('fm_alarm_locate', alarmLocateEnabled.value ? '1' : '0')
   ElMessage.success(alarmLocateEnabled.value ? '已开启告警自动定位' : '已关闭告警自动定位')
+}
+// [P1-2 2026-09-16 iSC「名称显示」开关对标] 点位名称标签显隐 (localStorage 持久; 默认开)
+const showPointLabels = ref(localStorage.getItem('fm_map_show_labels') !== '0')
+function togglePointLabels() {
+  showPointLabels.value = !showPointLabels.value
+  localStorage.setItem('fm_map_show_labels', showPointLabels.value ? '1' : '0')
 }
 watch(() => latestAlarms.value[0]?.channelId, async (ch) => {
   if (!alarmLocateEnabled.value) return
@@ -3708,6 +3726,12 @@ onUnmounted(() => {
 }
 /* [P0-4] 过滤生效态 (有隐藏类型) — 青色激活与告警红色区分 */
 .floor-locate-toggle.is-filter {
+  color: #00e4ff;
+  border-color: rgba(0, 228, 255, 0.5);
+  background: rgba(0, 65, 158, 0.4);
+}
+/* [P1] 工具激活态 (名称开关/测距/框选) — 青色高亮与告警红区分 */
+.floor-locate-toggle.is-active {
   color: #00e4ff;
   border-color: rgba(0, 228, 255, 0.5);
   background: rgba(0, 65, 158, 0.4);
