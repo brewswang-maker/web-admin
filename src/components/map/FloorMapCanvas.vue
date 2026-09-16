@@ -161,9 +161,9 @@
  *   图标/标签/涟漪环尺寸经 --fmz 反向补偿保持视觉恒定 (FOV 扇形与底图等比跟随 —
  *   大华 FOV 实时预览的正确缩放语义); 编辑模式默认关闭 (与落点/拖拽语义冲突)。
  */
-import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import type { CameraMapBinding, FloorMapDef, FloorMapDeviceType } from '@/types/floorMap'
-import { deviceTypeLabel, deviceIconMeta } from '@/types/floorMap'
+import { deviceTypeLabel, deviceIconMeta, parseMapViewport } from '@/types/floorMap'
 import { floorMapApi } from '@/api/floorMap'
 import { fovRadiusNormalized, projectAlarmPoint, channelIdVariants, type AlarmMapPoint } from '@/composables/useFloorMap'
 
@@ -190,6 +190,9 @@ const props = withDefaults(defineProps<{
   highlightChannelId?: string
   /** [v4-C10] 落点幽灵图标设备类型 (待落点选中通道/编号后跟随光标; '' = 关闭) */
   ghostType?: FloorMapDeviceType | ''
+  /** [P0-1 2026-09-16 iSC 初始视野对标] 持久化初始视野: 载入时应用 map.viewport,
+   *  缩放/平移/复位后 emit viewport-change 由宿主 PATCH 落库 (编辑模式不生效) */
+  persistViewport?: boolean
 }>(), {
   editable: false,
   alarmChannelId: '',
@@ -201,6 +204,7 @@ const props = withDefaults(defineProps<{
   panZoom: undefined,
   highlightChannelId: '',
   ghostType: '',
+  persistViewport: false,
 })
 
 const emit = defineEmits<{
@@ -208,6 +212,8 @@ const emit = defineEmits<{
   (e: 'binding-move', binding: CameraMapBinding, x: number, y: number): void
   /** [FLOOR-MAP 2026-09-05 v2] 只读模式点击设备点位 (海康通道点击预览对标; AlarmPopup 跳预览) */
   (e: 'device-click', binding: CameraMapBinding): void
+  /** [P0-1 2026-09-16 iSC 初始视野对标] 视野变更 (缩放/平移/复位后防抖 emit; 宿主 PATCH 落库) */
+  (e: 'viewport-change', v: { x: number; y: number; z: number }): void
 }>()
 
 const wrapEl = ref<HTMLElement | null>(null)
@@ -240,6 +246,30 @@ function zoomAt(nz: number, mx = wrapEl.value?.clientWidth ? wrapEl.value.client
   view.y = my - (my - view.y) * k
   view.z = z
   clampPan()
+  scheduleViewportEmit()
+}
+// ═══ [P0-1 2026-09-16 iSC 初始视野对标] 初始视野应用 + 变更持久化 ═══
+// 载入/换图时应用 map.viewport (z clamp 到 [1,4]); 缩放/平移/复位结束后防抖 emit
+// (wheel 连续滚动/拖拽过程不发请求 — 500ms 静默后合一发)。persistViewport=false
+// (默认) 行为与旧版完全一致: 视野不落库。
+let viewportEmitTimer: ReturnType<typeof setTimeout> | undefined
+function scheduleViewportEmit() {
+  if (!props.persistViewport || props.editable) return
+  clearTimeout(viewportEmitTimer)
+  viewportEmitTimer = setTimeout(() => {
+    emit('viewport-change', { x: view.x, y: view.y, z: view.z })
+  }, 500)
+}
+function applyViewportFromMap() {
+  const vp = parseMapViewport(props.map.viewport)
+  if (!vp) {
+    view.x = 0; view.y = 0; view.z = 1
+    return
+  }
+  view.z = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, vp.z))
+  view.x = vp.x
+  view.y = vp.y
+  clampPan()
 }
 function zoomBy(k: number) {
   zoomAt(view.z * k)
@@ -254,6 +284,7 @@ function resetView() {
   view.x = 0
   view.y = 0
   view.z = 1
+  scheduleViewportEmit()
 }
 function onKeyDown(ev: KeyboardEvent) {
   if (!panEnabled.value) return
@@ -281,6 +312,7 @@ function onPanEnd() {
   panning.value = null
   window.removeEventListener('mousemove', onPanMove)
   window.removeEventListener('mouseup', onPanEnd)
+  scheduleViewportEmit()
 }
 // 视口坐标 → 归一化坐标 (逆变换; 编辑模式 view 恒 {0,0,1} → 与旧版逐字节一致)
 function toLocalNorm(clientX: number, clientY: number): { x: number; y: number } {
@@ -414,13 +446,16 @@ onBeforeUnmount(() => {
   window.removeEventListener('mouseup', onDragEnd)
   window.removeEventListener('mousemove', onPanMove)
   window.removeEventListener('mouseup', onPanEnd)
+  clearTimeout(viewportEmitTimer)
 })
 // [FLOOR-MAP 2026-09-05 v2] 换图复位视口 (多图/楼层切换后不应残留平移缩放态)
+// [P0-1 2026-09-16 iSC 初始视野对标] 复位改为: 有已存初始视野则应用, 否则 identity
 watch(() => props.map.id, () => {
-  view.x = 0
-  view.y = 0
-  view.z = 1
+  applyViewportFromMap()
 })
+// [P0-1] 首次挂载同样应用已存初始视野 (无 viewport → identity, 行为不变)
+onMounted(applyViewportFromMap)
+onBeforeUnmount(() => clearTimeout(viewportEmitTimer))
 
 // ── 告警层: 落点 + bbox ──
 // [FIX 2026-09-05 平面图未关联] 告警 channel_id (裸 20 位) 与绑定库 channel_id

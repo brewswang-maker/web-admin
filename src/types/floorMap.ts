@@ -24,8 +24,25 @@ export interface FloorMapDef {
   origin_y: number
   /** 每像素代表的米数 (比例尺), FOV 半径米→像素换算用 */
   scale_m_per_px: number
+  /** [P0-1 2026-09-16 iSC 初始视野对标] 初始视野 JSON 文本 {"x","y","z"}
+   *  (画布平移偏移 px + 缩放; 后端 floor_maps.viewport 原样透传, 空串=未设置) */
+  viewport?: string
   created_at: number
   updated_at: number
+}
+
+/** [P0-1] 初始视野解析 (非法/未设置返回 null → 画布走默认 identity) */
+export interface FloorMapViewport { x: number; y: number; z: number }
+export function parseMapViewport(v?: string | null): FloorMapViewport | null {
+  if (!v) return null
+  try {
+    const o = JSON.parse(v) as Partial<FloorMapViewport> | null
+    if (!o || typeof o.x !== 'number' || typeof o.y !== 'number' || typeof o.z !== 'number') return null
+    if (!Number.isFinite(o.x) || !Number.isFinite(o.y) || !Number.isFinite(o.z)) return null
+    return { x: o.x, y: o.y, z: o.z }
+  } catch {
+    return null
+  }
 }
 
 /** [P0-1 2026-09-04 设备绑定通用化] 平面图设备类型 (与 RestApiHandlers validDeviceType / init_box.sql CHECK 同枚举)

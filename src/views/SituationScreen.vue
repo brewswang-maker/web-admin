@@ -164,6 +164,7 @@
               :devices="sceneDevices"
               :buildings="sceneBuildings"
               :scene-meta="sceneMeta"
+              :initial-camera="sceneCamera"
               :edit-mode="sceneEditActive"
               :selected-device-id="selectedDeviceId"
               :show-mini-map="showMiniMap"
@@ -236,7 +237,9 @@
                 :channel-labels="floorChannelLabels"
                 :channel-online="floorChannelOnline"
                 :highlight-channel-id="floorHighlight"
+                persist-viewport
                 @device-click="onFloorDeviceClick"
+                @viewport-change="onFloorViewportChange"
               />
               <div v-else class="floor-empty">
                 <span>暂无平面图</span>
@@ -387,6 +390,7 @@
                 :devices="sceneDevices"
                 :buildings="sceneBuildings"
                 :scene-meta="sceneMeta"
+                :initial-camera="sceneCamera"
                 :show-mini-map="showMiniMap"
                 @device-drag="onDeviceDrag"
                 @device-select="onDeviceSelect"
@@ -475,7 +479,7 @@ import { securityAreaApi } from '@/api/securityAreas'
 // [FIX type-zh 2026-09-07] 实时告警列表类型中文化: canonical SSOT + 本地兜底
 import { ALARM_TYPE_CN } from '@/types/alarm'
 import { useEventTypeZh } from '@/composables/useEventTypeZh'
-import { sceneApi } from '@/api/scene'
+import { sceneApi, type SceneCamera } from '@/api/scene'
 import { DEFAULT_BUILDINGS, STADIUM_SCENE_META } from '@/components/scene3d/constants/defaultSceneData'
 import type { Building3DNode, SceneMeta } from '@/components/scene3d/types/scene3d'
 import { useWebSocket } from '@/composables/useWebSocket'
@@ -486,6 +490,8 @@ import FloorMapCanvas from '@/components/map/FloorMapCanvas.vue'
 // [FLOOR-MAP 2026-09-05 v5] 设备详情弹窗 (点位点击 → 预览/录像/告警就地查看)
 import DeviceDetailDialog from '@/components/map/DeviceDetailDialog.vue'
 import { useFloorMap, channelIdVariants } from '@/composables/useFloorMap'
+// [P0-1 2026-09-16 iSC 初始视野对标] 视野变更 PATCH 落库
+import { floorMapApi } from '@/api/floorMap'
 import type { FloorMapWithCameras, CameraMapBinding } from '@/types/floorMap'
 import SceneEditPanel from '@/components/SceneEditPanel.vue'
 // [PERF 2026-09-14] hls.js/flv.js 改动态 import (见 ensurePlayerLibs): 解除本页
@@ -724,6 +730,9 @@ const hourlyFailed = ref(false)
 // ── 3D场景数据（体育场，后端 scene_config.json 优先，本地常量兜底）──
 const sceneBuildings = ref<Building3DNode[]>(DEFAULT_BUILDINGS)
 const sceneMeta = ref<SceneMeta>(STADIUM_SCENE_META)
+/** [CAM-POSE 2026-09-16] 当前场景初始视角（scene_config.json scenes[].camera,
+ *  "3D场景管理"页可设）; 下发主视图/全屏 Scene3D 作进入经典位姿 */
+const sceneCamera = ref<SceneCamera | undefined>(undefined)
 
 // ── 编辑模式状态 ──
 const sceneEditActive = ref(false)
@@ -927,6 +936,18 @@ function onFloorDeviceClick(b: CameraMapBinding) {
 function onDeviceDetailClose() {
   detailBinding.value = null
   floorHighlight.value = ''
+}
+// [P0-1 2026-09-16 iSC 初始视野对标] 视野变更防抖 PATCH 落库 (iSC「可配置初始视野」:
+//   管理员/值班员调好的缩放平移重进后保留; fire-and-forget, 失败仅 console 不打扰)
+let viewportSaveTimer: ReturnType<typeof setTimeout> | undefined
+function onFloorViewportChange(v: { x: number; y: number; z: number }) {
+  const m = currentFloorMap.value
+  if (!m) return
+  clearTimeout(viewportSaveTimer)
+  viewportSaveTimer = setTimeout(() => {
+    floorMapApi.updateMap(m.id, { name: m.name, viewport: JSON.stringify(v) })
+      .catch((e) => console.warn('[P0-1] viewport save failed', e))
+  }, 400)
 }
 const slideDirection = ref<'slide-left' | 'slide-right'>('slide-left')
 
@@ -1861,6 +1882,8 @@ async function loadSceneDevices() {
       availableScenes.value = cfg.scenes.map(s => ({ id: s.id, name: s.name }))
       const active = cfg.scenes.find(s => s.id === cfg.activeSceneId) ?? cfg.scenes[0]
       currentSceneId.value = active.id
+      // [CAM-POSE 2026-09-16] 场景初始视角下发（缺省 undefined → Scene3D 内部兜底默认位姿）
+      sceneCamera.value = active.camera
       if (active.buildings?.length) {
         sceneBuildings.value = active.buildings as Building3DNode[]
         sceneMeta.value = {
