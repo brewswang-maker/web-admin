@@ -296,6 +296,19 @@
                 <el-icon :size="13"><Grid /></el-icon>
                 框选
               </button>
+              <!-- [P2-9 2026-09-16 iSC「虚拟防区上图」对标] 布防可视化图层:
+                    绑定联动规则的通道 FOV 扇形橙色布防态 + 规则数角标
+                    (规则 ROI 为画面坐标无标定不可精确上图, 扇形即通道防区平面表达) -->
+              <button
+                type="button"
+                class="floor-locate-toggle"
+                :class="{ 'is-active': defenseLayerOn }"
+                :title="defenseLayerOn ? '关闭布防图层' : '布防图层：联动规则绑定的通道扇形橙色高亮并显示规则数'"
+                @click="toggleDefenseLayer"
+              >
+                <el-icon :size="13"><Lock /></el-icon>
+                防区
+              </button>
               <!-- [P1-1 2026-09-16 iSC「资源点搜索」对标] 图内搜索: 显示名/通道/类型中文匹配 →
                     选中金色光环+居中 (复用 focusBinding) -->
               <el-select
@@ -330,6 +343,7 @@
                 :hidden-device-types="hiddenDeviceTypes"
                 :show-labels="showPointLabels"
                 :tool-mode="mapToolMode"
+                :defense-channels="defenseChannels"
                 persist-viewport
                 @device-click="onFloorDeviceClick"
                 @viewport-change="onFloorViewportChange"
@@ -593,7 +607,7 @@ import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
 // [P0-2 2026-09-16 iSC 报警定位对标] 定位开关图标
-import { Aim, Filter, PriceTag, ScaleToOriginal, Grid } from '@element-plus/icons-vue'
+import { Aim, Filter, PriceTag, ScaleToOriginal, Grid, Lock } from '@element-plus/icons-vue'
 // [PERF 2026-09-14] echarts 改动态 import (见 ensureEcharts): 解除本页 chunk 对
 //   vendor-echarts(1.5MB) 的静态依赖 (实测该下载拖慢首页框架渲染 3.9s@隧道带宽),
 //   图表库在 initCharts 数据就绪后才按需拉取。
@@ -632,6 +646,8 @@ import SceneEditPanel from '@/components/SceneEditPanel.vue'
 import type flvjs from 'flv.js'
 import type Hls from 'hls.js'
 import { channelApi } from '@/api/channel'
+import { linkageApi } from '@/api/linkage'
+// [P2-9 2026-09-16 iSC「虚拟防区上图」对标] 布防图层规则源 (enabled 规则空间绑定)
 import { useChannelStore } from '@/stores/channel'
 import {
   normalizeMapDevicePoint,
@@ -1067,6 +1083,68 @@ function togglePointLabels() {
 //   P1-4 扩展 'marquee')。ESC 退出经 tool-cancel 事件同步高亮复位; scale_m_per_px<=0
 //   (未标定) 时按钮禁用 — 距离换算无意义。
 const mapToolMode = ref<'' | 'measure' | 'marquee'>('')
+
+// ═══ [P2-9 2026-09-16 iSC「虚拟防区上图」对标] 布防可视化图层 ═══
+// 规则 ROI 是画面归一化坐标, 平面图无单应标定不可精确上图 (useFloorMap 注释实锚)
+// → 落地为布防图层: 绑定 enabled 规则的通道 FOV 扇形橙色布防态 + 规则数角标。
+// 空间绑定形态 (LinkageRuleView 实锚): spatial_cond.bound_channel_ids = 字符串 GB 码数组;
+// 无通道绑定且无形状的纯时间/事件规则不上图 (布防语义=空间防区)。
+const defenseLayerOn = ref(false)
+const defenseRulesRaw = ref<Record<string, string[]>>({})  // 归一通道(去 _chN) → 规则名列表
+const defenseLoading = ref(false)
+async function toggleDefenseLayer() {
+  if (defenseLayerOn.value) {
+    defenseLayerOn.value = false
+    return
+  }
+  defenseLayerOn.value = true
+  if (!Object.keys(defenseRulesRaw.value).length) await loadDefenseRules()
+}
+async function loadDefenseRules() {
+  if (defenseLoading.value) return
+  defenseLoading.value = true
+  try {
+    const res = await linkageApi.getAllRules({ enabled_only: true })
+    const items: any[] = (res.data as any)?.data?.items ?? (res.data as any)?.items ?? []
+    const map: Record<string, string[]> = {}
+    for (const r of items) {
+      if (!r || r.enabled === false) continue
+      const sp = r.spatial_cond || {}
+      let bounds: string[] = []
+      try {
+        bounds = typeof sp.bound_channel_ids === 'string'
+          ? JSON.parse(sp.bound_channel_ids)
+          : (sp.bound_channel_ids || [])
+      } catch { bounds = [] }
+      const hasShape = !!sp.roi_shapes_json || !!sp.roi_shapes_by_channel
+      if (!bounds.length && !hasShape) continue
+      const name = String(r.name || r.id || '未命名规则')
+      for (const raw of bounds) {
+        const ch = String(raw).replace(/_ch\d+$/, '')
+        if (!ch) continue
+        ;(map[ch] = map[ch] || []).push(name)
+      }
+    }
+    defenseRulesRaw.value = map
+  } catch (e) {
+    console.warn('[P2-9] defense rules load failed', e)
+    ElMessage.warning('布防规则拉取失败, 图层已关闭')
+    defenseLayerOn.value = false
+  } finally {
+    defenseLoading.value = false
+  }
+}
+// 当前图 bindings × 归一规则通道 → 画布注入映射 (键=binding.channel_id 原样, 画布精确匹配;
+// computed 派生, 换图自动跟随不重拉规则)
+const defenseChannels = computed<Record<string, string[]>>(() => {
+  if (!defenseLayerOn.value) return {}
+  const out: Record<string, string[]> = {}
+  for (const b of floorBindings.value) {
+    const rules = defenseRulesRaw.value[String(b.channel_id).replace(/_ch\d+$/, '')]
+    if (rules?.length) out[b.channel_id] = rules
+  }
+  return out
+})
 const canMeasure = computed(() => !!currentFloorMap.value && currentFloorMap.value.scale_m_per_px > 0)
 function toggleMeasureTool() {
   mapToolMode.value = mapToolMode.value === 'measure' ? '' : 'measure'

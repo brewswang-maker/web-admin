@@ -48,11 +48,14 @@
     <!-- ═══ Layer 2: 设备层 (分类型图标 + 状态色环 + FOV 扇形; 宇视 SVG 落点对标) ═══ -->
     <div class="fm-canvas__cams">
       <template v-for="b in visibleBindings" :key="`${b.map_id}-${b.channel_id}`">
-        <!-- FOV 扇形 (conic-gradient 圆裁剪; 复用 AlarmPopup #00E5FF token; 仅 camera — 非摄像头 fov_radius_m=0) -->
+        <!-- FOV 扇形 (conic-gradient 真·圆扇形; [P2-9] 布防态橙色 — 报警红环仍优先) -->
         <div
           v-if="fovRadius(b) > 0.02"
           class="fm-canvas__fov"
-          :class="{ 'fm-canvas__fov--alarm': devStatus(b) === 'alarm' }"
+          :class="{
+            'fm-canvas__fov--alarm': devStatus(b) === 'alarm',
+            'fm-canvas__fov--defense': devStatus(b) !== 'alarm' && defenseRules(b).length > 0,
+          }"
           :style="fovStyle(b)"
         />
         <div
@@ -91,6 +94,10 @@
           <!-- 拖拽实时坐标 (图标上方; 归一化百分比, 宇视落点精调辅助对标) -->
           <span v-if="dragging === b && dragPos" class="fm-canvas__cam-coords">
             {{ Math.round(dragPos.x * 100) }}, {{ Math.round(dragPos.y * 100) }}
+          </span>
+          <!-- [P2-9] 布防角标: 绑定规则数 (右上金色; 与右下在线点错位; >9 折叠) -->
+          <span v-if="defenseRules(b).length" class="fm-canvas__cam-def">
+            {{ defenseRules(b).length > 9 ? '9+' : defenseRules(b).length }}
           </span>
         </div>
       </template>
@@ -219,8 +226,14 @@ const props = withDefaults(defineProps<{
   /** [P1-2 2026-09-16 iSC「名称显示」开关对标] 点位名称标签显隐 (default true) */
   showLabels?: boolean
   /** [P1-3/P1-4 2026-09-16 iSC 测距/框选对标] 工具态: ''=默认平移; 'measure'=测距 (点击取点);
-   *  'marquee'=框选 (拖拽选点位)。非 '' 态空白拖拽平移短路, 滚轮缩放/zoombar 保留 */
+   *  'marquee'=框选 (拖拽选点位); [P2-11a] 'pin'=标记 (点击放置)。非 '' 态空白拖拽平移短路,
+   *  滚轮缩放/zoombar 保留 */
   toolMode?: string
+  /** [P2-9 2026-09-16 iSC「虚拟防区上图」对标] 布防通道映射 (binding.channel_id → 绑定规则名
+   *  列表; 宿主由联动规则 spatial_cond.bound_channel_ids 归一匹配后注入。规则 ROI 为画面
+   *  坐标, 平面图无单应标定不可精确上图 → FOV 扇形橙色布防态 + 规则数角标即通道防区的
+   *  平面表达) */
+  defenseChannels?: Record<string, string[]>
 }>(), {
   editable: false,
   alarmChannelId: '',
@@ -237,6 +250,7 @@ const props = withDefaults(defineProps<{
   hiddenDeviceTypes: () => [],
   showLabels: true,
   toolMode: '',
+  defenseChannels: () => ({}),
 })
 
 const emit = defineEmits<{
@@ -395,6 +409,12 @@ function devStatus(b: CameraMapBinding): DevStatus {
   if (props.alarmChannels[b.channel_id]) return 'alarm'
   return props.channelOnline[b.channel_id] ? 'online' : 'offline'
 }
+// ── [P2-9 2026-09-16 iSC「虚拟防区上图」对标] 布防通道: 绑定 enabled 规则的通道以 FOV
+//    扇形橙色布防态 + 规则数角标呈现 (alarm 红色优先 — alarm > defense > 默认青;
+//    数据源宿主 getAllRules(enabled_only) → spatial_cond.bound_channel_ids 归一匹配) ──
+function defenseRules(b: CameraMapBinding): string[] {
+  return props.defenseChannels[b.channel_id] || []
+}
 function isChannelOnline(ch: string): boolean {
   return !!props.channelOnline[ch]
 }
@@ -406,7 +426,12 @@ function camLabel(b: CameraMapBinding): string {
 function camTitle(b: CameraMapBinding): string {
   const t = deviceTypeLabel(b.device_type || 'camera')
   const label = camLabel(b)
-  return `${t}${label ? ' · ' + label : ''} · ${b.channel_id}${b.is_primary ? ' · 主图' : ''}`
+  // [P2-9] 布防信息: 规则数 + 前 3 条规则名 (tooltip 溯源「该防区由哪些规则看守」)
+  const rules = defenseRules(b)
+  const defInfo = rules.length
+    ? ` · 布防: ${rules.length} 规则(${rules.slice(0, 3).join('、')}${rules.length > 3 ? ` 等${rules.length}条` : ''})`
+    : ''
+  return `${t}${label ? ' · ' + label : ''} · ${b.channel_id}${defInfo}${b.is_primary ? ' · 主图' : ''}`
 }
 function camStyle(b: CameraMapBinding) {
   const pos = dragging.value === b ? dragPos.value : null
@@ -425,6 +450,10 @@ function fovStyle(b: CameraMapBinding) {
   const x = (pos?.x ?? b.pos_x) * 100
   const y = (pos?.y ?? b.pos_y) * 100
   const from = b.fov_yaw - 45
+  // [P2-9] 扇形布防态橙色; alarm 保持既有视觉 (青扇形 + 红色色环 + 加速脉动) 不变
+  const isDef = devStatus(b) !== 'alarm' && defenseRules(b).length > 0
+  const c1 = isDef ? 'rgba(244, 180, 0, 0.26)' : 'rgba(0, 229, 255, 0.30)'
+  const c2 = isDef ? 'rgba(244, 180, 0, 0.08)' : 'rgba(0, 229, 255, 0.10)'
   return {
     left: `${x}%`,
     top: `${y}%`,
@@ -432,7 +461,7 @@ function fovStyle(b: CameraMapBinding) {
     height: `${r * 200}%`,
     background:
       `conic-gradient(from ${from}deg, transparent 0deg, ` +
-      `rgba(0, 229, 255, 0.30) 2deg, rgba(0, 229, 255, 0.10) 88deg, transparent 90deg)`,
+      `${c1} 2deg, ${c2} 88deg, transparent 90deg)`,
   }
 }
 
@@ -872,6 +901,25 @@ const bboxStyle = computed(() => {
   pointer-events: none;
 }
 .fm-canvas__cam--primary .fm-canvas__cam-label { color: #00E5FF; }
+
+/* ── [P2-9] 布防角标: 规则数 (金色小圆右上; 与左下在线点错位; 尺寸 --fmz 反向补偿) ── */
+.fm-canvas__cam-def {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  min-width: calc(14px / var(--fmz, 1));
+  height: calc(14px / var(--fmz, 1));
+  padding: 0 calc(3px / var(--fmz, 1));
+  border-radius: calc(7px / var(--fmz, 1));
+  background: #F4B400;
+  color: #1F2D4A;
+  font-size: calc(9px / var(--fmz, 1));
+  font-weight: 700;
+  line-height: calc(14px / var(--fmz, 1));
+  text-align: center;
+  box-shadow: 0 0 calc(5px / var(--fmz, 1)) rgba(244, 180, 0, 0.8);
+  pointer-events: none;
+}
 
 /* ── [P0-2] 栅格吸附对齐辅助线 (拖拽十字虚线) ── */
 .fm-canvas__guide {
