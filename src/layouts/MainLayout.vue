@@ -489,22 +489,7 @@
         </div>
       </el-header>
 
-      <!-- [场景 Tab 2026-09-15] 场景子页顶部页签 (三级菜单): 点击切路由, 激活高亮;
-           数据源 = 当前路由命中场景的 tabs (scenarioMenus), 固定于内容区上方。
-           [SIMPLE-SC-SIDEBAR 2026-09-15] 单场景账号子菜单已改左侧纵向展示,
-           顶部 Tab 仅对多场景用户 (admin 等) 保留 -->
-      <nav v-if="activeScenario && !isSingleScenarioUser" class="scenario-tabs" aria-label="场景页签">
-        <button
-          v-for="tab in activeScenario.tabs"
-          :key="tab.path"
-          type="button"
-          class="scenario-tab"
-          :class="{ 'is-active': route.path === tab.path || route.path.startsWith(`${tab.path}/`) }"
-          @click="navigateToMenu(tab.path)"
-        >
-          {{ tab.label }}
-        </button>
-      </nav>
+      <!-- [场景菜单 2026-09-16] 场景子页顶部页签 (admin 多场景组) 已移除: 现在侧栏内联 tabs 负贵导航, 不再重复 -->
 
       <!-- 页面内容 -->
       <el-main
@@ -1462,10 +1447,10 @@ function handleUserCommand(command: string) {
   display: flex;
   align-items: center;
   gap: 8px;
-  height: 50px;
+  height: 40px;
   padding: 0 14px;
   background: transparent;
-  color: #AADDFF;
+  color: #C5DDF0;
   font: inherit;
   font-size: 14px;
   cursor: pointer;
@@ -1475,29 +1460,18 @@ function handleUserCommand(command: string) {
 
 .scenario-entry .el-icon {
   flex-shrink: 0;
-  font-size: 18px;
+  font-size: 16px;
+  opacity: 0.9;
 }
 
 .scenario-entry:hover {
-  background: rgba(59, 130, 246, 0.1);
+  background: rgba(96, 165, 250, 0.12);
   color: #FFFFFF;
 }
 
 .scenario-entry.is-current {
-  background: rgba(59, 130, 246, 0.18);
-  color: #60A5FA;
-  font-weight: 600;
-}
-
-.scenario-entry.is-current::before {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: 0;
-  width: 3px;
-  background: #00e4ff;
-  box-shadow: 0 0 8px rgba(0, 228, 255, 0.7);
-  content: '';
+  background: rgba(24, 144, 255, 0.18);
+  color: #FFFFFF;
 }
 
 .scenario-entry-label {
@@ -1509,8 +1483,8 @@ function handleUserCommand(command: string) {
 
 .scenario-entry-caret {
   flex-shrink: 0;
-  font-size: 12px;
-  opacity: 0.6;
+  font-size: 11px;
+  opacity: 0.55;
   transition: transform 0.15s ease;
 }
 
@@ -1524,31 +1498,31 @@ function handleUserCommand(command: string) {
   display: none;
 }
 
-/* ── 侧栏展开的 tabs 纵向列表 (内联, 与上一轮单场景账号侧边栏子菜单化体验一致; 用 .sidebar 前缀避免与顶部 Tab 同名类冲突) ── */
+/* ── 侧栏展开的 tabs 纵向列表 (内联, 与上一轮单场景账号侧边栏子菜单化体验一致;
+   扁平简洁样式 (参照 智慧安保一体化平台 侧栏, 不要太“设计感”) ── */
 .sidebar .scenario-tabs {
   display: flex;
   flex-direction: column;
-  background: rgba(0, 0, 0, 0.18);
-  border-left: 2px solid rgba(0, 228, 255, 0.35);
-  margin: 2px 0 4px 0;
-  padding: 4px 0;
+  background: transparent;
+  margin: 0;
+  padding: 0;
   animation: sidebar-scenario-tabs-fade 0.18s ease;
 }
 
 @keyframes sidebar-scenario-tabs-fade {
-  from { opacity: 0; transform: translateY(-4px); }
+  from { opacity: 0; transform: translateY(-2px); }
   to { opacity: 1; transform: translateY(0); }
 }
 
 .sidebar .scenario-tab {
   display: flex;
   align-items: center;
-  gap: 10px;
-  height: 38px;
-  padding: 0 14px 0 38px;
+  gap: 8px;
+  height: 32px;
+  padding: 0 12px 0 32px;
   border: 0;
   background: transparent;
-  color: #AADDFF;
+  color: #98B8D0;
   font: inherit;
   font-size: 13px;
   text-align: left;
@@ -1559,51 +1533,49 @@ function handleUserCommand(command: string) {
 
 .sidebar .scenario-tab .el-icon {
   flex-shrink: 0;
-  font-size: 14px;
-  opacity: 0.85;
+  font-size: 13px;
+  opacity: 0.8;
 }
 
 .sidebar .scenario-tab:hover {
-  background: rgba(59, 130, 246, 0.15);
+  background: rgba(96, 165, 250, 0.1);
   color: #FFFFFF;
 }
 
 .sidebar .scenario-tab.is-active {
-  background: rgba(59, 130, 246, 0.22);
-  color: #60A5FA;
-  font-weight: 600;
+  background: rgba(24, 144, 255, 0.18);
+  color: #FFFFFF;
 }
 
 /* ── 浅色主题适配 (场景菜单) ── */
 .main-layout:not(.dark-theme) .scenario-entry {
-  color: #1F2937;
+  color: #374151;
 }
 
 .main-layout:not(.dark-theme) .scenario-entry:hover {
-  background: rgba(31, 41, 55, 0.06);
-  color: #1F2937;
+  background: rgba(31, 41, 55, 0.05);
+  color: #111827;
 }
 
 .main-layout:not(.dark-theme) .scenario-entry.is-current {
-  background: rgba(24, 144, 255, 0.12);
+  background: rgba(24, 144, 255, 0.1);
   color: var(--app-sidebar-active, #1890FF);
 }
 
 .main-layout:not(.dark-theme) .sidebar .scenario-tabs {
-  background: rgba(31, 41, 55, 0.04);
-  border-left-color: rgba(24, 144, 255, 0.35);
+  background: transparent;
 }
 
 .main-layout:not(.dark-theme) .sidebar .scenario-tab {
-  color: #374151;
+  color: #4B5563;
 }
 
 .main-layout:not(.dark-theme) .sidebar .scenario-tab:hover {
-  background: rgba(31, 41, 55, 0.06);
+  background: rgba(31, 41, 55, 0.05);
 }
 
 .main-layout:not(.dark-theme) .sidebar .scenario-tab.is-active {
-  background: rgba(24, 144, 255, 0.12);
+  background: rgba(24, 144, 255, 0.1);
   color: var(--app-sidebar-active, #1890FF);
 }
 
@@ -1841,70 +1813,7 @@ function handleUserCommand(command: string) {
   outline-offset: -2px;
 }
 
-/* ── [场景 Tab 2026-09-15] 场景子页顶部页签 (三级菜单) ── */
-.scenario-tabs {
-  display: flex;
-  flex-shrink: 0;
-  align-items: center;
-  gap: 4px;
-  padding: 6px 14px 0;
-  overflow-x: auto;
-  border-bottom: 1px solid var(--app-border-light);
-  background: var(--app-bg);
-  scrollbar-width: none;
-}
-
-.scenario-tabs::-webkit-scrollbar {
-  display: none;
-}
-
-.scenario-tab {
-  position: relative;
-  flex-shrink: 0;
-  padding: 8px 16px;
-  border: 0;
-  background: transparent;
-  color: var(--app-text-secondary);
-  font: inherit;
-  font-size: 14px;
-  white-space: nowrap;
-  cursor: pointer;
-  transition: color 0.18s ease;
-}
-
-.scenario-tab::after {
-  position: absolute;
-  bottom: 0;
-  left: 12px;
-  right: 12px;
-  height: 2px;
-  /*background: var(--app-sidebar-active);*/
-  background-color: #409eff;
-  content: '';
-  opacity: 0;
-  transform: scaleX(0.5);
-  transition: opacity 0.18s ease, transform 0.18s ease;
-}
-
-.scenario-tab:hover {
-  color: var(--app-text-primary);
-}
-
-.scenario-tab.is-active {
-  /*color: var(--app-sidebar-active);*/
-  font-weight: 600;
-  color:#409eff
-}
-
-.scenario-tab.is-active::after {
-  opacity: 1;
-  transform: scaleX(1);
-}
-
-.scenario-tab:focus-visible {
-  outline: 2px solid var(--app-sidebar-active);
-  outline-offset: -2px;
-}
+/* ── [场景菜单 2026-09-16] 顶部 nav.scenario-tabs 及其子级 .scenario-tab 样式已删除 (顶部页签移除) ── */
 
 .global-search {
   display: flex;
