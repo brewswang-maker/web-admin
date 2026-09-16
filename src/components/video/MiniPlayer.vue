@@ -5,6 +5,8 @@
       muted
       autoplay
       playsinline
+      @play="onVideoPlay"
+      @pause="onVideoPause"
       style="width:100%;height:100%;object-fit:contain;background:#000;border-radius:6px"
     />
     <!-- Loading -->
@@ -31,6 +33,11 @@
     </div>
     <!-- Controls -->
     <div v-if="showControls && playing" class="mini-player__controls">
+      <!-- [FIX mp4-playpause 2026-09-16] 3.2 播放/暂停 (仅 mp4 回放; 直播流无暂停语义):
+           暂停中显示「▶ 播放」点击恢复; 播完 (ended) 后再点 = 从头重播 -->
+      <el-button v-if="srcIsMp4" size="small" text style="cursor: pointer" @click="togglePlay">
+        {{ paused ? '▶ 播放' : '⏸ 暂停' }}
+      </el-button>
       <!-- [FIX mp4-seek-ctl 2026-09-16] 3.3 快退/快进 (仅 mp4 直链回放; 直播流无文件时间轴):
            ±seekStepSec 秒段内 seek (默认 10s, 可配), 越界自动 clamp 到 [0, duration] -->
       <template v-if="srcIsMp4">
@@ -39,6 +46,11 @@
       </template>
       <el-button size="small" text style="cursor: pointer" @click="takeSnapshot">📸 截图</el-button>
       <el-button size="small" text style="cursor: pointer" @click="toggleMute">{{ muted ? '🔊 开声' : '🔇 静音' }}</el-button>
+    </div>
+    <!-- [FIX mp4-playpause 2026-09-16] 3.2 暂停覆盖层: 画面中央大播放按钮 (点击恢复;
+         z-index 1 低于控件条/进度条 — 暂停时仍可操作快退/快进/截图/开声) -->
+    <div v-if="showControls && playing && paused" class="mini-player__pause-overlay" title="继续播放" @click="togglePlay">
+      <div class="mini-player__pause-btn">▶</div>
     </div>
     <!-- [FIX mp4-progress 2026-09-16] 3.4 进度条+时间+可拖 seek (仅 mp4 直链回放):
          拖动中仅 UI 跟手 (@input), 松手才真正 seek (@change) — 避免 Range 拖动中连续 seek 卡顿 -->
@@ -177,6 +189,9 @@ function scheduleAutoRetry(stage: string, fatal = false) {
 const videoRef = ref<HTMLVideoElement>()
 const loading = ref(false)
 const playing = ref(false)
+// [FIX mp4-playpause 2026-09-16] 3.2 暂停状态: 由 video @play/@pause 事件统一回写
+//   (含 stopAt 裁剪暂停/播完前的自然暂停), UI 仅做展示
+const paused = ref(false)
 const errorMsg = ref('')
 const muted = ref(props.muted)
 // [NVR-PB 2026-09-13] 候选链内出现过 FLV CodecUnsupported (非标/HEVC 编码) → 模板提示分支
@@ -216,6 +231,22 @@ function onProgressChange(e: Event) {
   if (video && isFinite(v)) video.currentTime = v
   isSeekingDrag.value = false
 }
+
+/** [FIX mp4-playpause 2026-09-16] 3.2 播放/暂停切换 (mp4 回放):
+ *   暂停中 → play() 恢复; mp4 播完 (ended) 后再点播放 → currentTime 归零重播 */
+function togglePlay() {
+  const video = videoRef.value
+  if (!video) return
+  if (video.paused) {
+    if (video.ended) video.currentTime = 0
+    const p = video.play()
+    if (p && typeof p.catch === 'function') p.catch(() => {})
+  } else {
+    video.pause()
+  }
+}
+function onVideoPlay() { paused.value = false }
+function onVideoPause() { paused.value = true }
 
 let playerInstance: Hls | flvjs.Player | null = null
 let currentFormat: PlayerFormat | '' = ''
@@ -304,6 +335,7 @@ function destroyPlayer() {
   srcCur.value = 0
   srcDur.value = 0
   isSeekingDrag.value = false
+  paused.value = false  // [FIX mp4-playpause 2026-09-16] 暂停态随销毁复位 (旧 video 事件跨实例不残留)
 }
 
 // ── 获取流 URL ──
@@ -941,6 +973,11 @@ watch(() => props.visible, (vis) => {
   // 不在不可见时销毁播放器 — 保持流持续，避免 TAB 切换时闪烁重连
 })
 
+// [FIX snapshot-dl 2026-09-16] 4. 命令式控制出口 (AlarmPopup Alt+A 快捷键等父组件场景):
+//   父组件 ref → takeSnapshot() → emit('snapshot') → 父组件下载落盘
+//   (defineExpose 同时补齐 play/pause 控制, 供父组件按需调用)
+defineExpose({ takeSnapshot, toggleMute, togglePlay })
+
 onBeforeUnmount(() => {
   clearAutoRetry()  // [P0-4] 清理退避定时器, 防止卸载后仍触发 startPlay
   destroyPlayer()
@@ -1011,11 +1048,38 @@ onBeforeUnmount(() => {
   bottom: 0;
   left: 0;
   right: 0;
+  z-index: 2;  /* [FIX mp4-playpause 2026-09-16] 高于暂停覆盖层 (z-index 1), 暂停时控件条可点 */
   display: flex;
   justify-content: center;
   gap: 8px;
   padding: 4px;
   background: linear-gradient(transparent, rgba(0,0,0,0.6));
+}
+/* [FIX mp4-playpause 2026-09-16] 3.2 暂停覆盖层: 中央大播放按钮 (点击恢复) */
+.mini-player__pause-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  background: rgba(0, 0, 0, 0.25);
+}
+.mini-player__pause-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.55);
+  border: 2px solid rgba(255, 255, 255, 0.85);
+  color: #fff;
+  font-size: 22px;
+  line-height: 1;
+  padding-left: 5px;  /* ▶ 字形视觉居中补偿 */
+  user-select: none;
 }
 /* [FIX mp4-progress 2026-09-16] 3.4 mp4 回放进度条行 (控件条上方): 时间 + range + 总时长 */
 .mini-player__progress {

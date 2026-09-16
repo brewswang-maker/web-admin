@@ -91,18 +91,34 @@
           </el-col>
         </el-row>
 
-        <!-- ===== 近 7 日告警趋势 + 通道统计 (对齐效果图「AI告警统计柱状图 / 设备统计」) ===== -->
+        <!-- ===== [FLOOR-MAP 2026-09-16] 平面图置顶 (中间部分第一单元) + 通道统计 ===== -->
         <el-row :gutter="16" class="stat-row trend-row">
           <el-col :xs="24" :sm="16">
-            <el-card shadow="hover" class="trend-card">
+            <el-card shadow="hover" class="floor-card">
               <template #header>
                 <div class="card-head">
-                  <span>{{ t('perimeter.kpi.trendTitle', '近 7 日告警趋势') }}</span>
-                  <span class="card-hint">{{ t('perimeter.kpi.trendHint', '按日统计') }}</span>
+                  <span>{{ t('perimeter.floor.title', '平面图') }}</span>
+                  <div class="card-head-ops">
+                    <el-select v-if="floorMaps.length > 1" v-model="activeMapId" size="small"
+                      style="width: 140px" @change="onFloorMapChange">
+                      <el-option v-for="m in floorMaps" :key="m.id" :label="m.name" :value="m.id" />
+                    </el-select>
+                    <el-button size="small" text type="primary" @click="go('/maps')">
+                      {{ t('perimeter.floor.manage', '平面图管理') }}
+                    </el-button>
+                  </div>
                 </div>
               </template>
-              <LazyChart v-if="trendOption" :option="trendOption" height="220px" />
-              <el-empty v-else :description="t('perimeter.overview.noEvents')" :image-size="64" />
+              <div class="floor-canvas-box">
+                <FloorMapCanvas v-if="currentFloorMap"
+                  :map="currentFloorMap" :bindings="floorBindings"
+                  @device-click="onFloorDeviceClick" />
+                <el-empty v-else
+                  :description="t('perimeter.floor.empty', '暂无平面图，请先在「平面图管理」上传底图并绑定设备')"
+                  :image-size="72">
+                  <el-button size="small" type="primary" @click="go('/maps')">{{ t('perimeter.floor.goto', '去上传') }}</el-button>
+                </el-empty>
+              </div>
             </el-card>
           </el-col>
           <el-col :xs="24" :sm="8">
@@ -201,21 +217,18 @@
           </el-col>
         </el-row>
 
+        <!-- ===== [FLOOR-MAP 2026-09-16] 近 7 日告警趋势 (平面图置顶后从第 2 行下移) + 运营质量/融合 ===== -->
         <el-row :gutter="16" class="trend-row">
-          <!-- ===== 事件类型分布 (19 键 vp5, 中文名对齐效果图; tooltip 保留裸 key) ===== -->
           <el-col :xs="24" :sm="14">
-            <el-card shadow="hover" class="dist-card">
-              <template #header>{{ t('perimeter.overview.typeDist') }}</template>
-              <div v-if="typeDist.length === 0" class="dist-empty">
-                <el-empty :description="t('perimeter.overview.noEvents')" :image-size="72" />
-              </div>
-              <div v-else class="dist-list">
-                <div v-for="d in typeDist" :key="d.type" class="dist-item">
-                  <span class="dist-name" :title="d.type">{{ zh(d.type) }}</span>
-                  <el-progress :percentage="d.pct" :stroke-width="10" class="dist-bar"
-                               :format="() => String(d.count)" />
+            <el-card shadow="hover" class="trend-card">
+              <template #header>
+                <div class="card-head">
+                  <span>{{ t('perimeter.kpi.trendTitle', '近 7 日告警趋势') }}</span>
+                  <span class="card-hint">{{ t('perimeter.kpi.trendHint', '按日统计') }}</span>
                 </div>
-              </div>
+              </template>
+              <LazyChart v-if="trendOption" :option="trendOption" height="220px" />
+              <el-empty v-else :description="t('perimeter.overview.noEvents')" :image-size="64" />
             </el-card>
           </el-col>
 
@@ -271,6 +284,25 @@
             </el-card>
           </el-col>
         </el-row>
+
+        <!-- ===== 事件类型分布 (19 键 vp5, 中文名对齐效果图; 平面图置顶后独占整行/双列网格) ===== -->
+        <el-row :gutter="16" class="trend-row">
+          <el-col :xs="24" :sm="24">
+            <el-card shadow="hover" class="dist-card">
+              <template #header>{{ t('perimeter.overview.typeDist') }}</template>
+              <div v-if="typeDist.length === 0" class="dist-empty">
+                <el-empty :description="t('perimeter.overview.noEvents')" :image-size="72" />
+              </div>
+              <div v-else class="dist-list">
+                <div v-for="d in typeDist" :key="d.type" class="dist-item">
+                  <span class="dist-name" :title="d.type">{{ zh(d.type) }}</span>
+                  <el-progress :percentage="d.pct" :stroke-width="10" class="dist-bar"
+                               :format="() => String(d.count)" />
+                </div>
+              </div>
+            </el-card>
+          </el-col>
+        </el-row>
       </template>
     </template>
   </div>
@@ -308,6 +340,9 @@ import { channelApi } from '@/api/channel'
 import { getInferenceChannels } from '@/api/inference'
 import type { EChartsOption } from 'echarts'
 import LazyChart from '@/components/LazyChart.vue'
+import FloorMapCanvas from '@/components/map/FloorMapCanvas.vue'
+import { useFloorMap } from '@/composables/useFloorMap'
+import type { CameraMapBinding } from '@/types/floorMap'
 import { useEventTypeZh } from '@/composables/useEventTypeZh'
 import { useAlarmRowActions } from '@/composables/useAlarmRowActions'
 import { useRealtimeAlarmEvents } from '@/composables/useRealtimeAlarmEvents'
@@ -319,6 +354,21 @@ const { zh, ensure: ensureEventTypes } = useEventTypeZh()
 // [FIX handle-refresh 2026-09-10] 处警后状态同步: 处置成功广播 'alarm-handled'
 //   去抖重拉 — KPI 卡 (未处理/已处置计数) 与事件列表即时对齐后端治理字段。
 useRealtimeAlarmEvents(() => reload())
+
+// ── [FLOOR-MAP 2026-09-16] 平面图置顶 (中间部分第一单元) ──
+//   数据底座复用 useFloorMap 单例缓存 (与态势大屏/平面图管理/告警弹窗共享 TTL 30s);
+//   设备点位点击 → 实时监控并定位该通道 (与态势大屏 onFloorDeviceClick 同交互范式)
+const { maps: floorMaps, loadMaps, bindingsOfMap } = useFloorMap()
+const activeMapId = ref<number | null>(null)
+const currentFloorMap = computed(() =>
+  floorMaps.value.find(m => m.id === activeMapId.value) ?? floorMaps.value[0] ?? null)
+const floorBindings = computed<CameraMapBinding[]>(() =>
+  currentFloorMap.value ? bindingsOfMap(currentFloorMap.value.id) : [])
+function onFloorMapChange(id: number) { activeMapId.value = id }
+function onFloorDeviceClick(b: CameraMapBinding) {
+  // 点位点击 → 实时监控定位通道 (LiveView 支持 ?channelId= 预选)
+  router.push({ path: '/live', query: { channelId: b.channel_id } })
+}
 
 interface RuleLite { rule_id?: string; scene_pack_id?: string; source_pack?: string; tags?: string[]; enabled?: boolean }
 
@@ -533,6 +583,7 @@ async function reload() {
 onMounted(() => {
   reload()
   ensureEventTypes() // 事件类型中文名预热 (非阻塞)
+  void loadMaps()    // [FLOOR-MAP 2026-09-16] 平面图数据预热 (失败静默, 卡片呈现空态)
 })
 </script>
 
@@ -565,7 +616,12 @@ onMounted(() => {
 
 /* ── 卡片头部通用 ── */
 .card-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.card-head-ops { display: flex; align-items: center; gap: 8px; }
 .card-hint { font-size: 12px; color: var(--el-text-color-secondary); font-weight: 400; }
+
+/* ── [FLOOR-MAP 2026-09-16] 平面图卡 (中间第一单元): 固定高画布盒 (FloorMapCanvas 自撑满) ── */
+.floor-canvas-box { height: 260px; }
+.floor-canvas-box .el-empty { height: 100%; padding: 0; }
 
 /* ── 通道统计 ── */
 .dev-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 12px; }
@@ -593,7 +649,8 @@ onMounted(() => {
 
 /* ── 事件类型分布 ── */
 .dist-card { min-height: 320px; }
-.dist-list { display: flex; flex-direction: column; gap: 12px; padding: 6px 0; }
+/* [FLOOR-MAP 2026-09-16] 类型分布独占整行 → 双列网格 (19 键长列表高度减半) */
+.dist-list { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px 24px; padding: 6px 0; }
 .dist-item { display: flex; align-items: center; gap: 12px; }
 .dist-name { width: 130px; flex-shrink: 0; font-size: 12px; text-align: right;
              overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -627,6 +684,7 @@ onMounted(() => {
 @media (max-width: 768px) {
   .snap-grid { grid-template-columns: 1fr; }
   .dev-grid { grid-template-columns: repeat(2, 1fr); }
+  .dist-list { grid-template-columns: 1fr; }
 }
 
 .trend-row { margin-bottom: 12px; }

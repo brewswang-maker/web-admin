@@ -57,6 +57,7 @@
               <div v-show="activePrimaryTab === 'preview'" class="alarm-popup__pane alarm-popup__pane--preview">
                 <div class="alarm-popup__preview-wrap">
                   <MiniPlayer
+                    ref="previewPlayerRef"
                     v-show="previewChannelId && !playerError"
                     :key="`preview-${previewChannelId}#${liveRebuildEpoch}`"
                     :channel-id="previewChannelId"
@@ -105,6 +106,10 @@
                     <el-icon class="is-loading" :size="20"><Loading /></el-icon>
                     <span style="margin-left:8px">回放生成中…</span>
                     <p class="alarm-popup__hint">录像正在转为浏览器兼容格式，首次播放约需 10 秒</p>
+                    <!-- [FIX rec-wait-skip 2026-09-16] 3.1 取消「必须等转码就绪」前置: 直达播放入口 -->
+                    <el-button size="small" type="primary" plain style="margin-top:8px" @click="skipTranscodeWait">
+                      ⚡ 不等转码 · 直接播放
+                    </el-button>
                   </div>
                   <MiniPlayer
                     v-else-if="playerSrc"
@@ -119,6 +124,7 @@
                     autoplay :show-controls="true"
                     @ended="onPlaybackEnded"
                     @error="onPlaybackError"
+                    @snapshot="(b) => onPlayerSnapshot(b, 'playback')"
                   />
                   <div v-else-if="isRecordingInProgress" class="alarm-popup__recording-state">
                     <div class="alarm-popup__recording-indicator">
@@ -142,13 +148,8 @@
                     <span>{{ queueRangeLabel }} · 第 {{ Math.min(queueIndex + 1, playbackQueue.length) }}/{{ playbackQueue.length }} 段{{ queueFinished ? ' · 已播完' : '' }}{{ skippedSegments ? ' · 已跳过 ' + skippedSegments + ' 段' : '' }}</span>
                     <span v-if="queueFinished" class="alarm-popup__queue-replay" @click="replayQueue">↻ 重播</span>
                   </div>
-                  <div class="alarm-popup__timeline" aria-label="24 小时时间轴">
-                    <div
-                      v-for="h in 24" :key="h"
-                      class="alarm-popup__timeline-tick"
-                      :class="{ 'alarm-popup__timeline-tick--active': h - 1 === currentHour }"
-                    >{{ String((h - 1) * 1).padStart(2, '0') }}:00</div>
-                  </div>
+                  <!-- [FIX pb-ui 2026-09-16] 3. 原「24 小时时间轴」单条就地废除 (冗余占位):
+                       时间导航由 MiniPlayer 进度条 (HH:mm:ss 双端 + 可拖 seek) 承担 -->
                 </div>
               </div>
 
@@ -911,11 +912,8 @@ const mapFovRadius = computed(() => {
   return (m.fov_radius as number) || 50
 })
 const fovSize = computed(() => Math.min(160, Math.max(80, mapFovRadius.value * 1.2)))
-const currentHour = computed(() => {
-  const t = currentAlarm.value?.createdAt
-  if (!t) return 10
-  return new Date(t).getHours()
-})
+// [FIX pb-ui 2026-09-16] 3. 原 24 小时时间轴 (currentHour) 就地废除 — 底部单条冗余,
+//   时间导航由 MiniPlayer 进度条 (含 HH:mm:ss 双端) 承担
 
 // ── 处警表单 ──
 const auth = useAuthStore()
@@ -1028,8 +1026,14 @@ async function confirmAppend() {
 //   「找到 N 段录像, 点击播放」人工选片列表。设备 ZLM 录像为 60s 切片
 //   (mp4_max_second=60) → 3 分钟 = 3~4 片连播: 首片 seek 到 T-90s 片内偏移,
 //   片间由 MiniPlayer @ended 推进, 末片播到 T+90s 截止 (0.5s 容差内视为播全片)。
-const CLIP_HALF_MS = 90_000        // 事件前后各 1.5 分钟
-const CLIP_QUERY_PAD_MS = 150_000  // 查询窗口前后各 2.5 分钟 (含片边界余量)
+// [FIX clip-window 2026-09-16] 3.1 时间窗延长: 事件前后各 90s → 各 3 分钟 (共 6 分钟),
+//   localStorage `shield.clipHalfMinutes` 可配 (1~30, 默认 3); 查询窗口 = 半窗 + 60s 边距
+const CLIP_HALF_MS = (() => {
+  const v = Number(localStorage.getItem('shield.clipHalfMinutes'))
+  const minutes = Number.isFinite(v) && v >= 1 && v <= 30 ? v : 3
+  return Math.round(minutes * 60_000)
+})()
+const CLIP_QUERY_PAD_MS = CLIP_HALF_MS + 60_000  // 查询窗口前后各 (半窗 + 1min), 含片边界余量
 interface PlaybackQueueItem { url: string; seekStart: number; stopAt?: number; rec: DeviceRecording }
 const deviceRecordings = ref<DeviceRecording[]>([])
 const recordingsLoading = ref(false)
@@ -1151,6 +1155,18 @@ async function playQueueItem(i: number) {
   // 预转下一段 (后端单并发队列; 播完当前段时下一段通常已就绪 — 消除段间等待)
   const nx = playbackQueue.value[i + 1]
   if (nx) void ensureRecordTranscoded(nx.url)
+}
+// [FIX rec-wait-skip 2026-09-16] 3.1 等待期直达入口: 跳过转码直接播原片 —
+//   pbAttempt++ 作废在途转码回调, 走原片候选链 (原片 HEVC 若浏览器不支持由
+//   候选链/失败自愈自然兜底; 用户显式选择「不等」)
+function skipTranscodeWait() {
+  const item = playbackQueue.value[queueIndex.value]
+  if (!item) return
+  pbAttempt++
+  queuePreparing.value = false
+  const cands = recordUrlCandidates(item.url)
+  queueSrc.value = cands[0] || item.url
+  playbackFallbackUrls.value = cands.slice(1)
 }
 function startQueuePlayback(items: PlaybackQueueItem[]) {
   playbackQueue.value = items
@@ -1584,7 +1600,11 @@ function jumpToPlayback() {
   closePopup()
 }
 
-function takePreviewSnapshot() { ElMessage.success('截图已保存') }
+// [FIX snapshot-dl 2026-09-16] 4. 截图链路真实现 (原 takePreviewSnapshot 为假实现: 只弹
+//   toast, 画面未采集)。Alt+A 快捷键 → 命令式调用预览 MiniPlayer 截图 (defineExpose),
+//   采集结果经 emit('snapshot') 回本组件 onPlayerSnapshot 统一下载落盘。
+const previewPlayerRef = ref<InstanceType<typeof MiniPlayer> | null>(null)
+function takePreviewSnapshot() { previewPlayerRef.value?.takeSnapshot() }
 function openImageTab() { activePrimaryTab.value = 'image' }
 
 // ── 码流复用检测 ──
@@ -1603,7 +1623,9 @@ const playerError = ref('')
 const liveRebuildEpoch = ref(0)
 const liveFallbackHint = ref('')
 const LIVE_FAIL_SWITCH_MS = 30_000, LIVE_FAIL_FAST_MS = 3_000
-const HEARTBEAT_INTERVAL_MS = 10_000, HEARTBEAT_MAX_FAILS = 3, REBUILD_TICKS = 3
+// [PERF Q7 2026-09-16] 探活降频: 10s→30s (nginx 日志中 alive 心跳为 top 请求源,
+//   弹窗常驻期 6 次/分 → 2 次/分); MAX_FAILS 3→2 补偿 (断流检出 ~60s, 与原 30s 同级)
+const HEARTBEAT_INTERVAL_MS = 30_000, HEARTBEAT_MAX_FAILS = 2, REBUILD_TICKS = 3
 let liveFailTimer: ReturnType<typeof setTimeout> | null = null
 let switchedAwayFromLive = false
 let heartbeatTimer: ReturnType<typeof setInterval> | null = null
@@ -1677,7 +1699,25 @@ watch(popupVisible, (v) => {
     pbAttempt++
   }
 })
-function onPlayerSnapshot(_blob: Blob) { ElMessage.success('截图已保存') }
+/** [FIX snapshot-dl 2026-09-16] 4. 截图落盘: blob → objectURL → a[download] 下载
+ *  (联动预览/联动回放两入口共用; 命名区分来源 preview|playback + 通道 + 秒级时间戳,
+ *   点击后 1s revoke objectURL — 原实现把 blob 丢弃只弹 toast, 是两入口截图不可用的根因) */
+function downloadSnapshot(blob: Blob, kind: 'preview' | 'playback') {
+  if (!blob || blob.size === 0) { ElMessage.warning('截图失败: 画布内容为空'); return }
+  const ch = String(currentAlarm.value?.channelId || 'ch')
+  const d = new Date(), p = (n: number) => String(n).padStart(2, '0')
+  const ts = `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `${kind}_${ch}_${ts}.jpg`
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  setTimeout(() => URL.revokeObjectURL(url), 1000)
+  ElMessage.success('截图已保存')
+}
+function onPlayerSnapshot(blob: Blob, kind: 'preview' | 'playback' = 'preview') { downloadSnapshot(blob, kind) }
 
 // ── [POPUP-AUTOCLOSE 2026-09-03] 弹窗自动关闭倒计时 (条件启动):
 //   - currentPopupAutoCloseS === 0 (默认) → 不启动任何定时器, 弹窗常驻待用户操作
@@ -2258,29 +2298,6 @@ void jumpToPlayback; void openImageTab
   user-select: none;
 }
 .alarm-popup__queue-replay:hover { text-decoration: underline; }
-
-/* 24 小时时间轴 */
-.alarm-popup__timeline {
-  height: 36px; flex: 0 0 36px;
-  background: #050E30;
-  border-top: 1px solid #1C4A7D;
-  display: flex; align-items: stretch;
-  overflow: hidden;
-}
-.alarm-popup__timeline-tick {
-  flex: 1;
-  display: flex; align-items: center; justify-content: center;
-  font-size: 10px;
-  color: #6b7a99;
-  border-right: 1px solid #1C4A7D;
-  cursor: default;
-}
-.alarm-popup__timeline-tick:last-child { border-right: none; }
-.alarm-popup__timeline-tick--active {
-  color: #00E5FF;
-  background: rgba(0, 229, 255, 0.08);
-  font-weight: 600;
-}
 
 /* ── 图片 Tab ── */
 .alarm-popup__image-wrap {

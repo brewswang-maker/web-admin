@@ -28,7 +28,11 @@
  */
 import { onMounted, onUnmounted } from 'vue'
 
-export function useRealtimeAlarmEvents(onAlarm: () => void, debounceMs = 800) {
+export function useRealtimeAlarmEvents(onAlarm: () => void, debounceMs = 3000) {
+  // [PERF Q7 2026-09-16] 去抖 800ms→3000ms: 告警风暴 (多通道并发 + 双写期) 下 800ms
+  //   窗口几乎每告警都穿透 → 场景页全量重拉 (实测单用户 27 次/30min, 叠加 rules/scene-packs
+  //   并行拉取)。3s 窗口聚合同批告警, 刷新滞后仍 <3s (人眼近实时); 需更快反馈的页面
+  //   可显式传更小值 (参数保留)。
   let timer: number | undefined
   const handler = () => {
     if (timer) window.clearTimeout(timer)

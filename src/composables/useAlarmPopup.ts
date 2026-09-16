@@ -73,7 +73,11 @@ let audioUnlockCleanup: (() => void) | null = null
 // 联动规则缓存
 let cachedRules: LinkageRule[] | null = null
 let ruleCacheTime = 0
-const RULE_CACHE_TTL_MS = 30000
+// [PERF Q7 2026-09-16] 规则缓存 TTL 30s→300s: nginx 日志 linkage/rules/all 全量拉取
+//   365 次/窗口 top4 (30s TTL 下弹窗高频期几乎每次告警都过期重拉)。规则变更已由
+//   rules.changed WS → invalidateRuleCache() 主动失效兜底 (useGlobalAlarm L217),
+//   长 TTL 无一致性风险。
+const RULE_CACHE_TTL_MS = 300000
 
 /** [SSOT R2 2026-09-12] 规则缓存刷新 (抽自 findMatchingRule 内联拉取):
  *  TTL 内直用缓存; 过期/无缓存时拉 /rules/all 全量端点。
