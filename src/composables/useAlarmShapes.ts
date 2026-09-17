@@ -113,12 +113,20 @@ export function isFullscreenPoints(pts: Array<[number, number]>): boolean {
 }
 
 /** 算法 ID 匹配 (区域库存短名 'person_with_backpack' 与全名 'shield.algo.*' 并存):
- *  全等, 或任一尾段 (最后一个 '.' 段) 相等 */
+ *  全等, 或任一尾段 (最后一个 '.' 段) 相等
+ *  [FIX parking-alias 2026-09-17] 违停算法命名分裂: canonical 全名尾段
+ *  'parking_violation' vs 事件短名 'illegal_parking' 不同源 (告警 type=illegal_parking,
+ *  区域库存全名时尾段不等 → 弹窗画不出违停检测区)。尾段经别名归一后比较,
+ *  与插件侧 RegionRoiCache.h algoIdAliasCandidates 同口径 */
+const ALGO_TAIL_CANONICAL: Record<string, string> = {
+  illegal_parking: 'parking_violation',
+}
 function algoMatch(a?: string, b?: string): boolean {
   if (!a || !b) return false
   if (a === b) return true
   const tail = (s: string) => s.split('.').pop() || s
-  return tail(a) === tail(b)
+  const canon = (t: string) => ALGO_TAIL_CANONICAL[t] || t
+  return canon(tail(a)) === canon(tail(b))
 }
 
 // ─────────────────────────── 数据获取 (两级链 + 模块级缓存) ───────────────────────────
@@ -614,6 +622,17 @@ export function zhLabel(label: string): string {
   return LABEL_ZH[label] || label
 }
 
+/** [FIX label-overlap 2026-09-17] 标签占用矩形: 相邻框标签同位叠画 →
+ *  两个百分比文字拼接成视觉假象 (真机违停告警 "motor 24%"+"motor 31%"
+ *  上下叠 4px 距离, 肉眼看成 "motor 249%")。绘制前查已占用矩形,
+ *  冲突时依次换位: 框下方 → 上方再上一行 → 下方再下一行; x 出画布左移收边 */
+function rectsOverlap(
+  a: { x: number; y: number; w: number; h: number },
+  b: { x: number; y: number; w: number; h: number },
+): boolean {
+  return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y
+}
+
 /** 检测框绘制 (屏幕/导出共用视觉: danger 红 #f56c6c, 其余类别调色板) */
 export function drawDetsOnCtx(
   ctx: CanvasRenderingContext2D,
@@ -623,6 +642,7 @@ export function drawDetsOnCtx(
   scale = 1,
   forceDanger = false,
 ) {
+  const labelSlots: { x: number; y: number; w: number; h: number }[] = []
   for (const d of dets) {
     // [FIX bbox-guard 2026-09-08 R3] 退化框跳过: w/h 归一后不足 1px 不画
     //   框与 label (事件级告警无定位语义, 避免左上角残留文字块)
@@ -637,9 +657,27 @@ export function drawDetsOnCtx(
     ctx.font = `bold ${Math.round(11 * scale)}px sans-serif`
     const tw = ctx.measureText(label).width + 8 * scale
     const th = 18 * scale
+    // 候选位: 框上方(默认) → 框下方 → 上方第二行 → 下方第二行 → 上方第三行
+    const candidates = [
+      { lx: x, ly: y - th },
+      { lx: x, ly: y + bh },
+      { lx: x, ly: y - th * 2 },
+      { lx: x, ly: y + bh + th },
+      { lx: x, ly: y - th * 3 },
+    ]
+    let placed = candidates[0]
+    for (const cand of candidates) {
+      // x 收边: 右溢出左移, 左溢出贴 0; y 越界(顶/底)的位置直接跳过
+      const lx = Math.min(Math.max(cand.lx, 0), Math.max(0, w - tw))
+      const ly = cand.ly
+      if (ly < 0 || ly + th > h) continue
+      const rect = { x: lx, y: ly, w: tw, h: th }
+      if (!labelSlots.some((o) => rectsOverlap(rect, o))) { placed = { lx, ly }; break }
+    }
+    labelSlots.push({ x: placed.lx, y: placed.ly, w: tw, h: th })
     ctx.fillStyle = color
-    ctx.fillRect(x, y - th, tw, th)
+    ctx.fillRect(placed.lx, placed.ly, tw, th)
     ctx.fillStyle = '#fff'
-    ctx.fillText(label, x + 4 * scale, y - 5 * scale)
+    ctx.fillText(label, placed.lx + 4 * scale, placed.ly + 13 * scale)
   }
 }
