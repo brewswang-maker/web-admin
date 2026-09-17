@@ -121,7 +121,7 @@
          服务端按 matched_rule_ids 快照过滤, × 清除恢复全量 -->
     <div v-if="ruleIdFilter" class="rule-filter-bar">
       <el-tag type="primary" effect="light" size="large" closable @close="clearRuleFilter">
-        触发规则: {{ ruleNameFilter || ruleIdFilter }}
+        事件规则名: {{ ruleNameFilter || ruleIdFilter }}
       </el-tag>
       <span class="rule-filter-hint">已按联动规则过滤事件列表 (当前 {{ totalAlarms }} 条)</span>
     </div>
@@ -379,12 +379,12 @@
           </template>
         </el-table-column>
 
-        <!-- [EV-RULE 2026-09-18] 「事件」列改为「触发规则」列: 显示后端 verdict 快照
-             命中规则名 (matched_rule_name)。原 P0-4 事件态 (进行中/已结束/瞬时占位)
-             随列退场; 空快照 (旧行/无命中) 显示「—」。规则名随命中集变化
+        <!-- [EV-RULE 2026-09-18] 「事件」列正名为「事件规则名」列 (用户口径): 显示后端
+             verdict 快照命中规则名 (matched_rule_name)。原 P0-4 事件态 (进行中/已结束/
+             瞬时占位) 随列退场; 空快照 (旧行/无命中) 显示「—」。规则名随命中集变化
              (level×min_sev 分层 + prio 冠军取值) 属联动真实行为, 如实透出
              (与 AlarmEventsPanel 同构同步) -->
-        <el-table-column label="触发规则" width="130" show-overflow-tooltip>
+        <el-table-column label="事件规则名" width="130" show-overflow-tooltip>
           <template #default="{ row }">
             <span v-if="row.matchedRuleName">{{ row.matchedRuleName }}</span>
             <span v-else class="text-secondary" style="font-size:11px">—</span>

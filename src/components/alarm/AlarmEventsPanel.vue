@@ -128,10 +128,10 @@
         </template>
       </el-table-column>
 
-      <!-- [EV-RULE 2026-09-18] 「事件」列改为「触发规则」列: 显示后端 verdict 快照
-           命中规则名 (matched_rule_name); 空快照 (旧行/无命中) 显示「—」。
+      <!-- [EV-RULE 2026-09-18] 「事件」列正名为「事件规则名」列 (用户口径): 显示后端
+           verdict 快照命中规则名 (matched_rule_name); 空快照 (旧行/无命中) 显示「—」。
            原 P0-4 事件态 (进行中/已结束 tag) 随列退场 (与 AlarmsView 同构同步) -->
-      <el-table-column label="触发规则" width="130" show-overflow-tooltip>
+      <el-table-column label="事件规则名" width="130" show-overflow-tooltip>
         <template #default="{ row }">
           <span v-if="row.matchedRuleName">{{ row.matchedRuleName }}</span>
           <span v-else class="text-secondary" style="font-size:11px">—</span>

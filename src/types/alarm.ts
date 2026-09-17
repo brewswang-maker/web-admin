@@ -174,7 +174,7 @@ export interface AlarmEvent {
   eventEndMs?: number
   eventEnded?: boolean
   /** [EV-RULE 2026-09-18] 命中规则名 (后端 matched_rule_name, verdict 快照解析):
-   *  空 = 旧行无快照 / 未命中任何规则 → 列表「触发规则」列显示「—」。
+   *  空 = 旧行无快照 / 未命中任何规则 → 列表「事件规则名」列显示「—」。
    *  同一类型告警的规则名随命中集变化 (level×规则 min_sev 分层 + prio 冠军
    *  取值) 属联动真实行为, 如实透出不做稳定性处理。 */
   matchedRuleName?: string
@@ -1016,7 +1016,7 @@ export function normalizeAlarmCore(raw: any): AlarmEvent {
     lastSeenMs,
     eventEndMs,
     eventEnded,
-    // [EV-RULE 2026-09-18] 命中规则名 (「触发规则」列数据源)
+    // [EV-RULE 2026-09-18] 命中规则名 (「事件规则名」列数据源)
     matchedRuleName,
   }
 }
