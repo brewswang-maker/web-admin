@@ -418,7 +418,7 @@
                           <span class="alarm-popup__ai-review-label">识别算法</span>
                           <span class="alarm-popup__ai-review-value">{{ alarmTypeLabel }}</span>
                           <span class="alarm-popup__ai-review-label">检测置信度</span>
-                          <span class="alarm-popup__ai-review-value">{{ Math.round((currentAlarm?.confidence || 0) * 100) }}%</span>
+                          <span class="alarm-popup__ai-review-value">{{ Math.round(detConfidence * 100) }}%</span>
                           <span class="alarm-popup__ai-review-label">复核置信度</span>
                           <span class="alarm-popup__ai-review-value">{{ aiReviewConfidenceText }}</span>
                         </div>
@@ -747,6 +747,20 @@ const alarmImageList = computed<GalleryImage[]>(() => {
   return [...mainUrls.map(u => ({ url: u, tag: '' })), ...evidence]
 })
 const totalImageCount = computed(() => Math.max(1, alarmImageList.value.length))
+/** [FIX popup-conf 2026-09-17] 检测置信度显示兜底链: WS 实时精简帧
+ *   (linkage_alarm 双写帧, LinkageEvent 无 metadata 成员) 可能缺顶层
+ *   confidence → 「检测置信度 0%」。metadata.detections[0].confidence
+ *   与 REST 详情同源 (AlarmDispatcher detections 透传链, 真机 DB 12/12
+ *   置信度非零实锚), 逐级兑底。 */
+const detConfidence = computed<number>(() => {
+  const top = Number(currentAlarm.value?.confidence ?? 0)
+  if (top > 0) return top
+  const meta: any = currentAlarm.value?.metadata
+  const d0 = Number(meta?.detections?.[0]?.confidence ?? 0)
+  if (d0 > 0) return d0
+  const mc = Number(meta?.confidence ?? 0)
+  return mc > 0 ? mc : 0
+})
 /** [EV-TS] post 采集中 (补位链延时回写窗口): 已有取证帧且 post 未到、告警新鲜
  *   — evidence_update 帧回写后 post 入列, 提示自动消失 */
 const evidencePending = computed(() =>

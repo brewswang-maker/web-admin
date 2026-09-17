@@ -691,6 +691,38 @@ export async function showAlarmPopup(
       'autoCloseSeconds:', currentPopupAutoCloseS.value)
   }
 
+  // [FIX popup-enrich 2026-09-17] 打开即富化: WS 实时帧可能缺数据 —
+  //   linkage_alarm 双写精简帧 (LinkageEvent 无 metadata 成员, 仅顶层
+  //   bbox/detections) → metadata 空; 精简帧顶层 confidence 亦可能缺。
+  //   真机 DB 12/12 metadata 全齐 (bbox/detections/三帧/置信度), 显示层
+  //   缺数据只是链路问题。归一化对象不满足富化门槛 (confidence>0 且
+  //   metadata 含 detections) 时异步 GET /alarms/:id 回填 — 弹窗已先开
+  //   不阻塞; 合并方向 rich(DB 全量) 为底, 已有 cur 稀疏键不丢; 弹窗已
+  //   切换/关闭 (id 不一致) 放弃。失败静默 (仅少富化)。
+  const needsEnrich =
+    !(Number(alarm.confidence) > 0) ||
+    !alarm.metadata ||
+    !Array.isArray((alarm.metadata as any)?.detections) ||
+    (alarm.metadata as any)?.detections.length === 0
+  const enrichId = alarm.id ? String(alarm.id) : ''
+  if (needsEnrich && enrichId && !enrichId.startsWith('linkage_')) {
+    alarmApi.getDetail(enrichId).then((res: any) => {
+      const detail = res?.data?.data ?? res?.data ?? res
+      if (!detail) return
+      if (currentAlarm.value?.id !== alarm.id) return  // 已切换/关闭
+      const rich = normalizeAlarmPayload(detail)
+      const cur = currentAlarm.value as any
+      currentAlarm.value = {
+        ...cur,
+        confidence: Number(cur.confidence) > 0 ? cur.confidence : rich.confidence,
+        snapshotUrl: cur.snapshotUrl || rich.snapshotUrl,
+        videoClipUrl: cur.videoClipUrl || rich.videoClipUrl,
+        metadata: { ...(rich.metadata || {}), ...(cur.metadata || {}) },
+      } as typeof alarm
+      console.log('[useAlarmPopup] popup enrich merged from REST, id:', enrichId)
+    }).catch(() => {})
+  }
+
   // 3. 音效 —— [SOUND-ORIGIN 2026-09-11] 仅自动弹窗 (WS 推送) / 联动触发播音,
   //    手动入口 (列表点行/卡片/详情按钮) 一律静音; 仍按告警类型过滤 (仅 ALARM 类)
   if (options?.origin === 'auto' || options?.origin === 'linkage') {
