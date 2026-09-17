@@ -40,7 +40,7 @@
         <el-option label="固定尺寸" value="fixed" />
         <el-option label="近景放宽" value="near_adaptive" />
       </el-select>
-      <el-checkbox v-model="sameSecondIgnore" size="small">同秒忽略</el-checkbox>
+      <el-checkbox v-model="sameSecondIgnore" size="small" style="margin-right: 10px;">同秒忽略</el-checkbox>
       <el-checkbox v-model="dtAuto" size="small">ΔT 自动</el-checkbox>
       <el-slider
         v-if="!dtAuto"
@@ -476,9 +476,15 @@ function drawGateLine(ctx: CanvasRenderingContext2D, c: HTMLCanvasElement,
 }
 .pw-toolbar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 12px;
-  .tip { color: #909399; font-size: 13px; }
+  gap: 8px 12px;
+  .tip {
+    flex: 0 0 100%;
+    margin: 0;
+    color: #909399;
+    font-size: 13px;
+  }
 }
 .pw-sens-row {
   display: flex;

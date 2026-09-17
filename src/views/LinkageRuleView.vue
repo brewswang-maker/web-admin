@@ -617,25 +617,11 @@
                      右栏 (通用画板位): 纯尾随规则全抽屉仅一个绘制区域; 混合规则时与
                      画板同栏堆叠 (画板=绊线/形状, 本块=通道区, 语义分区仍清晰)。 -->
                 <el-form-item v-if="isTailgatingRule" label="尾随通道" label-position="top" class="cond-form-item">
-                  <div style="width: 100%">
-                    <!-- [pw-single-canvas 2026-09-16] 存量空间形状显式暴露: 画板隐藏后
-                         roi_shapes_json 仍在引擎层过滤事件 (无编辑入口 → 静默失效风险),
-                         提示 + 一键清除, 不自动清 (尊重存量行为) -->
-                    <el-alert v-if="legacySpatialShapes.length" type="warning" :closable="false" show-icon style="margin-bottom: 8px">
-                      <template #title>
-                        <span>本规则存有 {{ legacySpatialShapes.length }} 个「空间区域」形状, 引擎层仍在按其过滤事件 (与通道区叠加判定); 尾随判定建议以通道区为唯一区域。</span>
-                        <el-button size="small" text type="danger" @click="clearLegacySpatialShapes">清除空间形状</el-button>
-                      </template>
-                    </el-alert>
-                    <p class="cond-hint" style="margin: 0 0 8px">
-                      通道多边形供尾随判定消费: 点击 ≥3 个顶点围成通行区后点「确认添加」；删除/停用立即生效, 不随规则保存/丢弃。<template v-if="pwTabsVisible">多通道: 点「绘制通道」切换目标通道分别绘制 (各通道独立保存); 未绘通道按内置中央矩形兜底。</template>
-                    </p>
-                    <!-- [pw-per-channel 2026-09-16] 逐通道页签: 纯尾随画板隐藏后唯一的工作
-                         通道切换入口 (混合规则不显示 — 画板页签 switchRoiChannel 已同步
-                         channelId/底图); 徽标=各通道已启用通道区数 -->
-                    <div v-if="pwTabsVisible" class="pw-ch-tabs">
-                      <div class="pw-ch-tabs__label">绘制通道</div>
-                      <div class="pw-ch-tabs__list">
+
+                  <div class="roi-workspace">
+                    <aside v-if="pwTabsVisible" class="roi-channel-panel">
+                      <div class="roi-ch-tabs__label">绘制通道</div>
+                      <div class="roi-ch-tabs">
                         <div
                           v-for="t in pwTabChannels"
                           :key="t.value"
@@ -657,34 +643,53 @@
                           >{{ pwCountOf(t.value) > 0 ? `已绘 ${pwCountOf(t.value)}` : '未绘' }}</span>
                         </div>
                       </div>
-                    </div>
-                    <PassagewayEditor
-                      v-if="form.conditions.region.config.channelId"
-                      :key="`pw_${form.conditions.region.config.channelId}`"
-                      :image-url="roiBackgroundUrl"
-                      :saved="displayPassageways"
-                      @confirm="onPassagewayConfirm"
-                    />
-                    <el-empty v-else description="请先在「绑定通道」勾选通道" :image-size="60" />
-                    <div v-if="displayPassageways.length" class="pw-list">
-                      <div v-for="pw in displayPassageways" :key="pw.id" class="pw-list__item">
-                        <span>
-                          <el-switch
-                            :model-value="pw.enabled !== false"
-                            size="small"
-                            style="margin-right: 8px"
-                            :title="pw.enabled === false ? '已停用 (检测不生效)' : '生效中'"
-                            @change="(v: any) => toggleRulePassagewayEnabled(pw, !!v)"
-                          />
-                          {{ pw.name }}
-                          (sens={{ pw.sensitivity }}, {{ pw.direction_in ? '进入' : '离开' }} {{ pw.suppress_mode }}<template v-if="pw.detect_mode === 'precise'">, 精确档</template><template v-else>, 快速档</template><template v-if="pw.bbox_size_mode === 'near_adaptive'">, 近景放宽</template>, Δt={{ pw.tailgate_dt_ms == null || pw.tailgate_dt_ms === -1 ? '自动' : (pw.tailgate_dt_ms === 0 ? '禁用' : pw.tailgate_dt_ms + 'ms') }}<template v-if="pw.migrated_from_tripwire">, 迁移自绊线#{{ pw.migrated_from_tripwire }}</template>)
-                        </span>
-                        <el-button text size="small" type="danger" @click="deleteRulePassageway(pw)">删除</el-button>
+                      <div class="roi-ch-toolbar">
+                        <el-button size="small" @click="migrateTripwiresToPassageways">老绊线迁移</el-button>
+                        <span class="pw-mig-hint">绊线→矩形通道 (幂等, detector 首帧自动执行)</span>
                       </div>
-                    </div>
-                    <div class="pw-toolbar-row">
-                      <el-button size="small" @click="migrateTripwiresToPassageways">老绊线迁移</el-button>
-                      <span class="pw-mig-hint">绊线→矩形通道 (幂等, detector 首帧自动执行)</span>
+                    </aside>
+                    <div class="roi-canvas-panel">
+                      <!-- [pw-single-canvas 2026-09-16] 存量空间形状显式暴露: 画板隐藏后
+                           roi_shapes_json 仍在引擎层过滤事件 (无编辑入口 → 静默失效风险),
+                           提示 + 一键清除, 不自动清 (尊重存量行为) -->
+                      <el-alert v-if="legacySpatialShapes.length" type="warning" :closable="false" show-icon style="margin-bottom: 8px">
+                        <template #title>
+                          <span>本规则存有 {{ legacySpatialShapes.length }} 个「空间区域」形状, 引擎层仍在按其过滤事件 (与通道区叠加判定); 尾随判定建议以通道区为唯一区域。</span>
+                          <el-button size="small" text type="danger" @click="clearLegacySpatialShapes">清除空间形状</el-button>
+                        </template>
+                      </el-alert>
+                      <p class="cond-hint" style="margin: 0 0 8px">
+                        通道多边形供尾随判定消费: 点击 ≥3 个顶点围成通行区后点「确认添加」；删除/停用立即生效, 不随规则保存/丢弃。<template v-if="pwTabsVisible">多通道: 点「绘制通道」切换目标通道分别绘制 (各通道独立保存); 未绘通道按内置中央矩形兜底。</template>
+                      </p>
+                      <PassagewayEditor
+                        v-if="form.conditions.region.config.channelId"
+                        :key="`pw_${form.conditions.region.config.channelId}`"
+                        :image-url="roiBackgroundUrl"
+                        :saved="displayPassageways"
+                        @confirm="onPassagewayConfirm"
+                      />
+                      <el-empty v-else description="请先在「绑定通道」勾选通道" :image-size="60" />
+                      <div v-if="displayPassageways.length" class="pw-list">
+                        <div v-for="pw in displayPassageways" :key="pw.id" class="pw-list__item">
+                          <span>
+                            <el-switch
+                              :model-value="pw.enabled !== false"
+                              size="small"
+                              style="margin-right: 8px"
+                              :title="pw.enabled === false ? '已停用 (检测不生效)' : '生效中'"
+                              @change="(v: any) => toggleRulePassagewayEnabled(pw, !!v)"
+                            />
+                            {{ pw.name }}
+                            (sens={{ pw.sensitivity }}, {{ pw.direction_in ? '进入' : '离开' }} {{ pw.suppress_mode }}<template v-if="pw.detect_mode === 'precise'">, 精确档</template><template v-else>, 快速档</template><template v-if="pw.bbox_size_mode === 'near_adaptive'">, 近景放宽</template>, Δt={{ pw.tailgate_dt_ms == null || pw.tailgate_dt_ms === -1 ? '自动' : (pw.tailgate_dt_ms === 0 ? '禁用' : pw.tailgate_dt_ms + 'ms') }}<template v-if="pw.migrated_from_tripwire">, 迁移自绊线#{{ pw.migrated_from_tripwire }}</template>)
+                          </span>
+                          <el-button text size="small" type="danger" @click="deleteRulePassageway(pw)">删除</el-button>
+                        </div>
+                      </div>
+                      <!-- 单通道时侧栏隐藏, 迁移入口回落到画布面板底部 -->
+                      <div v-if="!pwTabsVisible" class="pw-toolbar-row">
+                        <el-button size="small" @click="migrateTripwiresToPassageways">老绊线迁移</el-button>
+                        <span class="pw-mig-hint">绊线→矩形通道 (幂等, detector 首帧自动执行)</span>
+                      </div>
                     </div>
                   </div>
                 </el-form-item>
@@ -5727,11 +5732,7 @@ watch(mainTab, (tab) => {
   color: var(--el-color-danger);
 }
 .roi-ch-hint { display: none; }
-/* [pw-per-channel 2026-09-16] 尾随「绘制通道」页签 (横向条; 复用 roi-ch-tag 视觉) */
-.pw-ch-tabs { display: flex; align-items: stretch; margin: 0 0 8px; overflow: hidden; border: 1px solid var(--el-border-color-lighter); border-radius: 4px; background: var(--el-fill-color-extra-light); }
-.pw-ch-tabs__label { display: flex; flex: 0 0 auto; align-items: center; padding: 0 12px; border-right: 1px solid var(--el-border-color-lighter); background: var(--el-bg-color); font-size: 13px; font-weight: 600; color: var(--el-text-color-primary); }
-.pw-ch-tabs__list { display: flex; flex: 1 1 auto; align-items: center; gap: 6px; padding: 5px 8px; overflow-x: auto; }
-.pw-ch-tabs__list .roi-ch-tag { flex: 0 1 230px; width: 230px; min-width: 170px; max-width: 230px; }
+.roi-ch-toolbar .pw-mig-hint { flex: 1 1 100%; margin: 0; }
 .roi-canvas-panel { flex: 1; min-width: 0; padding: 10px; }
 .roi-workspace__hint { display: none; }
 /* [UX-ROI-HINT 2026-09-16 P3] 按算法绘制要求提示 (must 红/builtin 蓝/note 橙,
