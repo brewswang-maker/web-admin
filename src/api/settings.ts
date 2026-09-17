@@ -68,6 +68,14 @@ export interface SystemInfo {
   inferencePrecision: string
 }
 
+/** [REC-ARCH 2026-09-17] 录像存储策略 (全局): 连续录像默认关 + 事件录像不本地落盘 */
+export interface RecordingSettings {
+  /** 设备连续录像总闸 (默认 false; 17G eMMC 撑不住连续录像, 关时通道覆盖不生效) */
+  continuousEnabled: boolean
+  /** 事件录像来源: nvr=GB28181 回放流拉取(默认) / device=设备自身录像(同款 GB28181) / disabled=禁用 */
+  eventSource: 'nvr' | 'device' | 'disabled'
+}
+
 export const settingsApi = {
   /** 获取基本设置 */
   getBasic() {
@@ -108,5 +116,13 @@ export const settingsApi = {
   /** 获取系统信息 */
   getSystemInfo() {
     return http.get<ApiResponse<SystemInfo>>('/settings/system-info')
+  },
+  /** [REC-ARCH 2026-09-17] 获取录像存储策略 (全局) */
+  getRecording() {
+    return http.get<ApiResponse<RecordingSettings>>('/settings/recording')
+  },
+  /** [REC-ARCH 2026-09-17] 保存录像存储策略 (即时生效: 触发侧每次直读配置) */
+  saveRecording(data: Partial<RecordingSettings>) {
+    return http.put<ApiResponse<{ message: string; persisted: boolean }>>('/settings/recording', data)
   },
 }

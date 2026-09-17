@@ -380,6 +380,37 @@
 
       <!-- [REC-SCHEDULE 2026-09-11] 录像计划 — 自录像回放页迁出, 独立 CRUD 子模块 -->
       <el-tab-pane :label="$t('settings.tabRecordSchedule', '录像计划')">
+        <!-- [REC-ARCH 2026-09-17] 录像存储策略: 连续录像总闸 + 事件录像来源 (架构决策:
+             设备端移除连续录像, 事件录像不本地落盘, 证据回放走 GB28181 回放流) -->
+        <el-card shadow="never" style="margin-bottom:16px">
+          <template #header><b>{{ $t('settings.recStoragePolicy', '录像存储策略') }}</b></template>
+          <el-form label-width="130px" style="max-width:680px">
+            <el-form-item :label="$t('settings.recContinuous', '设备连续录像')">
+              <el-switch v-model="recPolicy.continuousEnabled" />
+              <div v-if="!recPolicy.continuousEnabled" style="width:100%;margin-top:4px">
+                <el-text type="warning" size="small">{{ $t('settings.recTotalGate', '总闸已关闭：所有通道均不进行连续录像') }}</el-text>
+              </div>
+              <div style="width:100%;margin-top:4px">
+                <el-text type="info" size="small">{{ $t('settings.recContinuousHint', '关闭后不再进行任何连续录像（设备存储有限，事件证据回放走 NVR 录像）') }}</el-text>
+              </div>
+            </el-form-item>
+            <el-form-item :label="$t('settings.recEventSource', '事件录像来源')">
+              <el-radio-group v-model="recPolicy.eventSource">
+                <el-radio value="nvr">{{ $t('settings.recSourceNvr', 'NVR 录像（GB28181 回放流）') }}</el-radio>
+                <el-radio value="device">{{ $t('settings.recSourceDevice', '设备录像（同款 GB28181）') }}</el-radio>
+                <el-radio value="disabled">{{ $t('settings.recSourceDisabled', '禁用事件录像') }}</el-radio>
+              </el-radio-group>
+              <div style="width:100%;margin-top:4px">
+                <el-text type="info" size="small">{{ $t('settings.recEventSourceHint', '事件录像不在盒子本地落盘，告警回放按需从来源设备拉取录像') }}</el-text>
+              </div>
+            </el-form-item>
+            <el-form-item>
+              <el-button type="primary" size="small" :loading="recPolicySaving" @click="saveRecordingPolicy">
+                {{ $t('settings.recSave', '保存') }}
+              </el-button>
+            </el-form-item>
+          </el-form>
+        </el-card>
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;gap:12px;flex-wrap:wrap">
           <span style="font-size:12px;color:#909399">按通道/时段/事件触发自动启停录像，支持节假日排除</span>
           <div style="display:flex;gap:8px;align-items:center">
@@ -592,7 +623,7 @@
 import { reactive, ref, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { settingsApi, type BasicSettings, type CloudSettings, type AlarmPolicySettings, type SystemInfo } from '@/api/settings'
+import { settingsApi, type BasicSettings, type CloudSettings, type AlarmPolicySettings, type SystemInfo, type RecordingSettings } from '@/api/settings'
 import { getModels, activateModel, deactivateModel, type ModelInfo } from '@/api/model'
 import configApi from '@/api/config'
 // [REC-SCHEDULE 2026-09-11] 录像计划 + 存储预估 (自录像回放页迁出, 复用现有 API 不重复建)
@@ -1124,11 +1155,37 @@ async function calculateStorage() {
   }
 }
 
+// ---- [REC-ARCH 2026-09-17] 录像存储策略 (连续录像总闸 + 事件录像来源) ----
+const recPolicy = reactive<RecordingSettings>({ continuousEnabled: false, eventSource: 'nvr' })
+const recPolicySaving = ref(false)
+async function loadRecordingPolicy() {
+  try {
+    const res = await settingsApi.getRecording()
+    const d = res.data.data
+    if (d) {
+      recPolicy.continuousEnabled = !!d.continuousEnabled
+      recPolicy.eventSource = d.eventSource || 'nvr'
+    }
+  } catch { /* 后端旧版本无此端点, 静默用默认 (关/nvr) */ }
+}
+async function saveRecordingPolicy() {
+  recPolicySaving.value = true
+  try {
+    await settingsApi.saveRecording({ ...recPolicy })
+    ElMessage.success(t('settings.recSaveOk', '录像存储策略已保存并即时生效'))
+  } catch (e: any) {
+    ElMessage.error('保存失败: ' + (e.message || ''))
+  } finally {
+    recPolicySaving.value = false
+  }
+}
+
 // ---- 初始化加载 ----
 onMounted(async () => {
   loading.value = true
   refreshLlmStatus()  // AI 模型状态 (异步, 不阻塞)
   loadSizeFilter()    // [P1-1 2026-09-13] 尺寸过滤配置 (异步, 不阻塞)
+  loadRecordingPolicy()  // [REC-ARCH 2026-09-17] 录像存储策略 (异步, 不阻塞)
   try {
     const [basicRes, cloudRes, alarmRes, infoRes, netRes] = await Promise.allSettled([
       settingsApi.getBasic(),

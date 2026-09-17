@@ -341,7 +341,19 @@ const zhCN = {
     exportFail: '配置导出失败',
     importOk: '配置导入成功，即将刷新页面',
     importFail: '配置导入失败',
-    unknownError: '未知错误'
+    unknownError: '未知错误',
+    // [REC-ARCH 2026-09-17] 录像存储策略
+    recStoragePolicy: '录像存储策略',
+    recContinuous: '设备连续录像',
+    recContinuousHint: '关闭后不再进行任何连续录像（设备存储有限，事件证据回放走 NVR 录像）',
+    recEventSource: '事件录像来源',
+    recSourceNvr: 'NVR 录像（GB28181 回放流）',
+    recSourceDevice: '设备录像（同款 GB28181）',
+    recSourceDisabled: '禁用事件录像',
+    recEventSourceHint: '事件录像不在盒子本地落盘，告警回放按需从来源设备拉取录像',
+    recTotalGate: '总闸已关闭：所有通道均不进行连续录像',
+    recSave: '保存',
+    recSaveOk: '录像存储策略已保存并即时生效',
   },
 
   alarm: {

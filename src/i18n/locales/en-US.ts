@@ -343,7 +343,19 @@ const enUS: MessageSchema = {
     exportFail: 'Config export failed',
     importOk: 'Config imported, page will reload',
     importFail: 'Config import failed',
-    unknownError: 'Unknown error'
+    unknownError: 'Unknown error',
+    // [REC-ARCH 2026-09-17] Recording storage policy
+    recStoragePolicy: 'Recording Storage Policy',
+    recContinuous: 'Device Continuous Recording',
+    recContinuousHint: 'When off, no continuous recording is performed (limited device storage; alarm evidence plays back from NVR recordings)',
+    recEventSource: 'Event Recording Source',
+    recSourceNvr: 'NVR recording (GB28181 playback)',
+    recSourceDevice: 'Device recording (same GB28181)',
+    recSourceDisabled: 'Disable event recording',
+    recEventSourceHint: 'Event recordings are not stored locally; alarm playback pulls recordings from the source device on demand',
+    recTotalGate: 'Master switch is off: no channel performs continuous recording',
+    recSave: 'Save',
+    recSaveOk: 'Recording storage policy saved and effective immediately',
   },
 
   alarm: {

@@ -136,4 +136,18 @@ export const channelApi = {
   async deleteRoi(channelId: string, roiId: number): Promise<void> {
     await channelHttp.delete(`/${channelId}/roi/${roiId}`)
   },
+
+  // ── [REC-ARCH 2026-09-17] 通道级录像覆盖 (全局+覆盖+有效值一次拉齐) ──
+
+  /** 获取通道录像配置 (global/override/effective; override 值 '' = 跟随全局) */
+  async getRecordingConfig(channelId: string) {
+    const { data } = await http.get<any>(`/recording-config/${encodeURIComponent(channelId)}`)
+    return data?.data ?? data
+  },
+
+  /** 保存通道录像覆盖 (传空串 = 清除覆盖回退全局; 即时生效) */
+  saveRecordingOverride(channelId: string, payload: { continuous?: string; eventSource?: string }) {
+    return http.put<ApiResponse<{ channel_id: string }>>(
+      `/recording-config/${encodeURIComponent(channelId)}`, payload)
+  },
 }

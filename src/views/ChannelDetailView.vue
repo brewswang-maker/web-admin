@@ -108,6 +108,30 @@
         </el-col>
       </el-row>
 
+      <!-- [REC-ARCH 2026-09-17] 录像存储策略 (全局默认关 + 通道覆盖; 事件录像不本地落盘) -->
+      <el-card style="margin-top:16px" shadow="hover">
+        <template #header><span>录像存储策略</span></template>
+        <div class="info-row">
+          <span class="label">连续录像（有效值）</span>
+          <span class="value">
+            <el-tag :type="recCfg?.effective?.continuousEnabled ? 'success' : 'info'" size="small">
+              {{ recCfg?.effective?.continuousEnabled ? '开启' : '关闭' }}
+            </el-tag>
+          </span>
+        </div>
+        <div class="info-row">
+          <span class="label">事件录像来源（有效值）</span>
+          <span class="value">{{ eventSourceLabel(recCfg?.effective?.eventSource) }}</span>
+        </div>
+        <div class="info-row">
+          <span class="label">通道覆盖状态</span>
+          <span class="value">
+            <el-tag v-if="!recCfg?.override?.continuous && !recCfg?.override?.eventSource" type="info" size="small">跟随全局</el-tag>
+            <el-tag v-else type="warning" size="small">通道覆盖已启用</el-tag>
+          </span>
+        </div>
+      </el-card>
+
       <!-- RTSP 地址 & 流地址 -->
       <el-card style="margin-top:16px" shadow="hover">
         <template #header>
@@ -228,6 +252,22 @@
         <el-form-item label="启用通道">
           <el-switch v-model="editForm.enabled" />
         </el-form-item>
+        <!-- [REC-ARCH 2026-09-17] 通道级录像覆盖 ('' = 跟随全局; 连续录像受全局总闸约束) -->
+        <el-form-item label="连续录像">
+          <el-select v-model="editForm.recContinuous" style="width:100%">
+            <el-option label="跟随全局" value="" />
+            <el-option label="开启（需全局总闸开）" value="on" />
+            <el-option label="关闭" value="off" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="事件录像来源">
+          <el-select v-model="editForm.recEventSource" style="width:100%">
+            <el-option label="跟随全局" value="" />
+            <el-option label="NVR 录像" value="nvr" />
+            <el-option label="设备录像" value="device" />
+            <el-option label="禁用" value="disabled" />
+          </el-select>
+        </el-form-item>
         <el-form-item>
           <el-button type="primary" :loading="saving" @click="saveConfig">保存</el-button>
           <el-button @click="showEditDrawer = false">取消</el-button>
@@ -283,7 +323,15 @@ const editForm = ref({
   fps: 25,
   bitrate: 2048,
   enabled: true,
+  recContinuous: '',   // [REC-ARCH 2026-09-17] '' = 跟随全局
+  recEventSource: '',  // [REC-ARCH 2026-09-17] '' = 跟随全局
 })
+
+// [REC-ARCH 2026-09-17] 通道录像配置 (全局+覆盖+有效值, 后端一次拉齐)
+const recCfg = ref<any>(null)
+function eventSourceLabel(v?: string) {
+  return v === 'nvr' ? 'NVR 录像' : v === 'device' ? '设备录像' : v === 'disabled' ? '已禁用' : (v || '-')
+}
 
 const activeAlgos = computed(() => {
   if (!detail.value?.algoPlugin) return []
@@ -331,9 +379,17 @@ async function loadDetail() {
       fps: d.fps || 25,
       bitrate: d.bitrate || 2048,
       enabled: d.enabled ?? true,
+      recContinuous: '',   // [REC-ARCH 2026-09-17] 下方 recording-config 回读覆盖
+      recEventSource: '',
     }
     // 同步算法
     algoPlugins.value = d.algoPlugin && d.algoPlugin !== '无' ? [d.algoPlugin] : []
+    // [REC-ARCH 2026-09-17] 通道录像配置 (失败不阻断详情加载)
+    try {
+      recCfg.value = await channelApi.getRecordingConfig(channelId.value)
+      editForm.value.recContinuous = recCfg.value?.override?.continuous || ''
+      editForm.value.recEventSource = recCfg.value?.override?.eventSource || ''
+    } catch { recCfg.value = null }
   } catch {
     ElMessage.error('加载通道详情失败')
   } finally {
@@ -393,6 +449,12 @@ async function saveConfig() {
       bitrate: editForm.value.bitrate,
       enabled: editForm.value.enabled,
     } as any)
+    // [REC-ARCH 2026-09-17] 通道录像覆盖同批保存 (空串 = 清除覆盖回退全局)
+    await channelApi.saveRecordingOverride(channelId.value, {
+      continuous: editForm.value.recContinuous,
+      eventSource: editForm.value.recEventSource,
+    })
+    recCfg.value = await channelApi.getRecordingConfig(channelId.value)
     ElMessage.success('配置已保存')
     showEditDrawer.value = false
     await loadDetail()
