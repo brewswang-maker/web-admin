@@ -128,23 +128,12 @@
         </template>
       </el-table-column>
 
-      <!-- [P0-4 2026-09-14] 事件态 (后端事件生命周期: event_start/end_ms + end 帧):
-           进行中 = 绿 tag; 已结束 = info 灰 tag (同行列置灰); 无事件字段 — 占位
-           [FIX ev-instant 2026-09-17] 无轨迹告警占位「—」→「瞬时」
-           (与 AlarmsView 同构同步; 后端 track<0 直通事件链无生命周期) -->
-      <el-table-column width="88" align="center">
-        <template #header>
-          <span title="进行中=持续事件活跃；已结束=事件已收尾；瞬时=无目标轨迹的单次上报">事件</span>
-        </template>
+      <!-- [EV-RULE 2026-09-18] 「事件」列改为「触发规则」列: 显示后端 verdict 快照
+           命中规则名 (matched_rule_name); 空快照 (旧行/无命中) 显示「—」。
+           原 P0-4 事件态 (进行中/已结束 tag) 随列退场 (与 AlarmsView 同构同步) -->
+      <el-table-column label="触发规则" width="130" show-overflow-tooltip>
         <template #default="{ row }">
-          <el-tag v-if="row.eventEnded" size="small" type="info" effect="plain">已结束</el-tag>
-          <el-tag v-else-if="row.eventStartMs > 0" size="small" type="success" effect="light">进行中</el-tag>
-          <span
-            v-else-if="(row.trackId ?? -1) < 0"
-            class="text-secondary"
-            style="font-size:11px"
-            title="无目标轨迹的单次上报，不产生进行中/已结束周期"
-          >瞬时</span>
+          <span v-if="row.matchedRuleName">{{ row.matchedRuleName }}</span>
           <span v-else class="text-secondary" style="font-size:11px">—</span>
         </template>
       </el-table-column>

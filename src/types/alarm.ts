@@ -173,6 +173,11 @@ export interface AlarmEvent {
   lastSeenMs?: number
   eventEndMs?: number
   eventEnded?: boolean
+  /** [EV-RULE 2026-09-18] 命中规则名 (后端 matched_rule_name, verdict 快照解析):
+   *  空 = 旧行无快照 / 未命中任何规则 → 列表「触发规则」列显示「—」。
+   *  同一类型告警的规则名随命中集变化 (level×规则 min_sev 分层 + prio 冠军
+   *  取值) 属联动真实行为, 如实透出不做稳定性处理。 */
+  matchedRuleName?: string
 }
 
 /** [SSOT R1/R2 2026-09-12] 后端判定结果 (LinkageEngine::matchAndVerdict 序列化形态).
@@ -881,6 +886,12 @@ export function normalizeAlarmCore(raw: any): AlarmEvent {
   const evEndNum = Number(raw.event_end_ms ?? raw.eventEndMs ?? 0)
   const eventEndMs = Number.isFinite(evEndNum) && evEndNum > 0 ? evEndNum : 0
   const eventEnded = raw.event_ended === true || raw.eventEnded === true || eventEndMs > 0
+  // [EV-RULE 2026-09-18] 命中规则名归一 (REST/WS 顶层字段; 响应拦截器 snake→camel
+  //   双读兜底): 空串/缺失 → undefined (模板判空显示「—」, 口径同后端「空快照
+  //   静默跳过 — 前端按缺省渲染」)
+  const matchedRuleNameRaw = raw.matched_rule_name ?? raw.matchedRuleName
+  const matchedRuleName = typeof matchedRuleNameRaw === 'string' && matchedRuleNameRaw
+    ? matchedRuleNameRaw : undefined
 
   return {
     id: raw.id || raw.alarm_id || `${raw.device_id || ''}_${channelId}_${raw.timestamp_ms || Date.now()}`,
@@ -1005,6 +1016,8 @@ export function normalizeAlarmCore(raw: any): AlarmEvent {
     lastSeenMs,
     eventEndMs,
     eventEnded,
+    // [EV-RULE 2026-09-18] 命中规则名 (「触发规则」列数据源)
+    matchedRuleName,
   }
 }
 // [t3-tree-channel 2026-09-11 完成锚点] 三级树通道级服务端下钻(单值直传+多值 fan-out)批次 · 部署产物 entry=index-CvT0U9Nv4f.js tgz md5=07a2e26224ed93a40c47f987c04b7bb5
