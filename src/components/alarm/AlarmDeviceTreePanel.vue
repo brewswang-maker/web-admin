@@ -1,7 +1,7 @@
 <template>
   <aside v-if="!collapsed" class="alarm-tree-panel">
     <div class="alarm-tree-panel__head">
-      <span class="alarm-tree-panel__title">区域 / 设备 / 通道</span>
+      <span class="alarm-tree-panel__title">区域 / 设备 / 监控点</span>
       <div class="alarm-tree-panel__ops">
         <el-button link size="small" type="primary" :title="expanded ? '折叠' : '展开'" @click="toggleExpand"><el-icon><Sort /></el-icon></el-button>
         <el-button link size="small" type="primary" title="收起" @click="collapse"><el-icon><DArrowRight /></el-icon></el-button>
@@ -133,7 +133,7 @@ const treeData = computed<TreeRow[]>(() =>
       deviceId: d,
       children: devChannelsOf(d).map((c) => ({
         key: `ch:${c.raw}`,
-        label: c.name || `通道${c.raw}`,
+        label: c.name || `监控点${c.raw}`,
         channelId: c.raw,
         children: [],
       })) as TreeRow[],

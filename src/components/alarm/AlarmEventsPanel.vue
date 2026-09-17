@@ -156,8 +156,9 @@
       </el-table-column>
 
       <!-- 通道 [chan-col 2026-09-11] 通道名口径 (channelName 可读优先; 空名/纯数字反查,
-           反查不中「通道{channelId}」占位) — 与 useAlarmTableHelpers.alarmChLabel SSOT 同源 -->
-      <el-table-column label="通道" min-width="150" show-overflow-tooltip>
+           反查不中「监控点{channelId}」占位 — [FIX channel-monitor-point 2026-09-17] 海康术语
+           统一占位词) — 与 useAlarmTableHelpers.alarmChLabel SSOT 同源 -->
+      <el-table-column label="监控点" min-width="150" show-overflow-tooltip>
         <template #default="{ row }">
           <span>{{ alarmChLabel(row) }}</span>
         </template>

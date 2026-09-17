@@ -127,7 +127,9 @@
             <span class="level-tag" :class="levelClass(row.level)">{{ levelText(row.level) }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="channelId" label="通道" width="80" align="center" />
+        <el-table-column prop="channelId" label="监控点" width="80" align="center">
+          <template #default="{ row }">{{ alarmChLabel(row) }}</template>
+        </el-table-column>
         <el-table-column prop="description" label="描述" min-width="240" show-overflow-tooltip />
         <el-table-column label="快照" width="80" align="center">
           <template #default="{ row }">
@@ -166,6 +168,8 @@
 import { computed, onMounted, ref } from 'vue'
 import { Refresh } from '@element-plus/icons-vue'
 import { alarmApi } from '@/api/alarm'
+// [FIX channel-monitor-point 2026-09-17] 对标海康术语: 通道列显示值友好名化 (目录反查, 失败回退技术 ID)
+import { alarmChLabel } from '@/composables/useAlarmTableHelpers'
 import { screeningApi } from '@/api/screening'
 import type { PersonalItemStatus, PersonalItemConfig } from '@/api/screening'
 import eventTypesApi from '@/api/eventTypes'

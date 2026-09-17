@@ -210,7 +210,7 @@
         </el-table-column>
         <el-table-column prop="vendor" label="厂商" width="100" show-overflow-tooltip />
         <el-table-column prop="model" label="型号" width="120" show-overflow-tooltip />
-        <el-table-column prop="channels" label="通道数" width="80" />
+        <el-table-column prop="channels" label="监控点数" width="80" />
         <el-table-column label="操作" width="100" fixed="right">
           <template #default="{ row }">
             <el-button size="small" type="primary" @click="addDiscoveredDevice(row)">接入</el-button>

@@ -342,9 +342,9 @@ async function fetchDevices() {
       id: d.device_id || d.id,
       name: d.device_name || d.name || d.id,
       status: d.status || d.state || d.online_status,
-      channels: (d.channels || [{ id: d.device_id || d.id, name: '通道1', deviceId: d.device_id || d.id }]).map((c: any) => ({
+      channels: (d.channels || [{ id: d.device_id || d.id, name: '监控点1', deviceId: d.device_id || d.id }]).map((c: any) => ({
         id: c.channel_id || c.id,
-        name: c.channel_name || c.name || `通道${c.id}`,
+        name: c.channel_name || c.name || `监控点${c.id}`,
         deviceId: d.device_id || d.id
       }))
     }))
@@ -359,7 +359,7 @@ async function fetchDevices() {
         if (!Array.isArray(chs) || !chs.length) return
         dev.channels = chs.map((c: any) => ({
           id: String(c.channel_id || c.id),
-          name: c.channel_name || c.name || (c.channel_no != null ? `通道${c.channel_no}` : String(c.channel_id || c.id)),
+          name: c.channel_name || c.name || (c.channel_no != null ? `监控点${c.channel_no}` : String(c.channel_id || c.id)),
           deviceId: dev.id,
         }))
       } catch { /* 保留内嵌兑底 */ }
@@ -423,7 +423,7 @@ function normalizeDeviceRecording(raw: Record<string, unknown>): RecordingSegmen
 //   传入; doTimeSeek/告警跳转等自带目标点的链路保持默认 false, 由各自定位逻辑主导。
 async function fetchRecordings(opts?: { autoPlay?: boolean }) {
   if (!selectedDeviceId.value || !selectedChannelId.value || !selectedDate.value) {
-    ElMessage.warning('请选择设备、通道和日期')
+    ElMessage.warning('请选择设备、监控点和日期')
     return
   }
   loading.value = true
@@ -615,7 +615,7 @@ async function finishMarkRecording() {
     return
   }
   if (!selectedChannelId.value) {
-    ElMessage.warning('未选择通道, 无法导出')
+    ElMessage.warning('未选择监控点, 无法导出')
     return
   }
   markExporting.value = true
@@ -1216,7 +1216,7 @@ async function attachHls(hlsUrl: string) {
 //   false=失败 (原因已 ElMessage), 调用方决定降级路径。与时间轴框选/REC-MARK 同链路。
 async function exportAndDownloadRange(startMs: number, endMs: number, fileLabel: string): Promise<boolean> {
   if (!selectedChannelId.value) {
-    ElMessage.warning('未选择通道, 无法导出')
+    ElMessage.warning('未选择监控点, 无法导出')
     return false
   }
   try {
@@ -1265,7 +1265,7 @@ const qpDeviceLabel = computed(() => {
 const qpChannelLabel = computed(() => {
   const dev = devices.value.find(d => String(d.id) === String(selectedDeviceId.value))
   const ch = (dev?.channels || []).find(c => String(c.id) === String(selectedChannelId.value))
-  return ch ? (ch.name || ch.id) : '未选择通道'
+  return ch ? (ch.name || ch.id) : '未选择监控点'
 })
 
 /** 存储位置过滤 (设计图「全部录像 / 中心储存」下拉): zlm=中心存储 MP4 / gb28181=设备端录像
@@ -1550,7 +1550,7 @@ function openSyncDialog() {
 }
 function applySyncDialog() {
   if (syncPick.value.length > SYNC_MAX_AUX) {
-    ElMessage.warning(`同步通道最多 ${SYNC_MAX_AUX} 路 (加主通道共 ${SYNC_MAX_AUX + 1} 路)`)
+    ElMessage.warning(`同步监控点最多 ${SYNC_MAX_AUX} 路 (加主监控点共 ${SYNC_MAX_AUX + 1} 路)`)
     return
   }
   syncChannels.value = syncPick.value.map(key => {
@@ -2320,7 +2320,7 @@ function stopOfflineCheck() {
 // ---- [P0-2] 水印配置 ----
 async function openWatermarkDialog() {
   if (!selectedChannelId.value) {
-    ElMessage.warning('请先选择通道')
+    ElMessage.warning('请先选择监控点')
     return
   }
   watermarkLoading.value = true
@@ -2384,7 +2384,7 @@ async function doSegmentDownload() {
 //   playSegment(seg, {startAtMs}) → ZLM: MP4 Range seek / GB28181: 设备从目标时刻起推流。
 function openTimeSeek() {
   if (!selectedDeviceId.value || !selectedChannelId.value) {
-    ElMessage.warning('请先选择设备和通道')
+    ElMessage.warning('请先选择设备和监控点')
     return
   }
   timeSeekDate.value = selectedDate.value
@@ -2397,7 +2397,7 @@ function openTimeSeek() {
 const tlSeekTime = ref('14:30:25')
 async function tlSeekGo() {
   if (!selectedDeviceId.value || !selectedChannelId.value) {
-    ElMessage.warning('请先选择设备和通道')
+    ElMessage.warning('请先选择设备和监控点')
     return
   }
   if (!tlSeekTime.value) {
@@ -2411,7 +2411,7 @@ async function tlSeekGo() {
 
 async function doTimeSeek() {
   if (!selectedDeviceId.value || !selectedChannelId.value) {
-    ElMessage.warning('请先选择设备和通道')
+    ElMessage.warning('请先选择设备和监控点')
     return
   }
   if (!timeSeekDate.value || !timeSeekTime.value) {
@@ -2507,11 +2507,11 @@ onUnmounted(() => {
       <!-- 左侧: 设备通道树 + 录像查询面板 (设计图左侧栏布局) -->
       <div class="rec-left-col">
         <el-card shadow="never" class="rec-tree-card">
-          <template #header>设备通道</template>
+          <template #header>设备监控点</template>
           <!-- [UI 2026-09-11] 通道目录树 (区域→设备→通道, 与视频预览 LiveView 同款) -->
           <el-input
             v-model="recTreeFilter"
-            placeholder="筛选设备/通道..."
+            placeholder="筛选设备/监控点..."
             clearable
             style="margin-bottom:8px"
           >
@@ -2527,7 +2527,7 @@ onUnmounted(() => {
               :expand-on-click-node="false"
               :filter-node-method="filterRecTreeNode"
               highlight-current
-              empty-text="暂无区域/设备/通道"
+              empty-text="暂无区域/设备/监控点"
               class="rec-tree"
               @node-click="onRecNodeClick"
             >
@@ -2626,7 +2626,7 @@ onUnmounted(() => {
               <div style="font-size:12px;margin-top:4px">录像正在转换为浏览器兼容格式，首次播放约需 10 秒</div>
             </div>
             <div v-else-if="!isPlaying" class="player-empty">
-              <div>请选择左侧通道并点击「查询」</div>
+              <div>请选择左侧监控点并点击「查询」</div>
               <div style="font-size:12px;margin-top:4px">点击时间轴上的蓝色录像块开始回放</div>
             </div>
             <!-- 进度条 + 时间显示 -->
@@ -2776,7 +2776,7 @@ onUnmounted(() => {
          <el-card v-if="recordingSource === 'local'" shadow="never" style="flex:1;overflow:auto">
           <template #header>本地录像 ({{ localRecordings.length }})</template>
           <el-table :data="localRecordings" v-loading="localLoading" stripe size="small">
-            <el-table-column label="通道" min-width="120">
+            <el-table-column label="监控点" min-width="120">
               <template #default="{ row }">{{ row.channel_id }}</template>
             </el-table-column>
             <el-table-column label="开始时间" min-width="160">
@@ -2814,11 +2814,11 @@ onUnmounted(() => {
     <!-- [REC-SCHEDULE 2026-09-11] 录像计划编辑弹窗已迁出 → SettingsView「录像计划」Tab -->
 
     <!-- [P2-1] 多路同步通道选择弹窗 -->
-    <el-dialog v-model="syncDialogVisible" title="多通道同步回放" width="520px">
+    <el-dialog v-model="syncDialogVisible" title="多监控点同步回放" width="520px">
       <div class="sync-dialog-tip">
-        主通道为左侧当前选中通道; 另选最多 {{ SYNC_MAX_AUX }} 路从窗, 主通道的播放/定位/连播/逐段切换将同步驱动从窗。
+        主监控点为左侧当前选中监控点; 另选最多 {{ SYNC_MAX_AUX }} 路从窗, 主监控点的播放/定位/连播/逐段切换将同步驱动从窗。
       </div>
-      <el-select v-model="syncPick" multiple filterable placeholder="选择同步通道 (最多 3 路)" style="width:100%" :multiple-limit="SYNC_MAX_AUX">
+      <el-select v-model="syncPick" multiple filterable placeholder="选择同步监控点 (最多 3 路)" style="width:100%" :multiple-limit="SYNC_MAX_AUX">
         <el-option v-for="opt in syncOptions" :key="opt.key" :label="opt.label" :value="opt.key" />
       </el-select>
       <template #footer>
@@ -2836,7 +2836,7 @@ onUnmounted(() => {
         <el-form-item label="显示时间戳">
           <el-switch v-model="watermarkConfig.show_timestamp" />
         </el-form-item>
-        <el-form-item label="显示通道名">
+        <el-form-item label="显示监控点名">
           <el-switch v-model="watermarkConfig.show_channel_name" />
         </el-form-item>
         <el-form-item label="自定义文字">
@@ -2869,7 +2869,7 @@ onUnmounted(() => {
         <el-form-item label="设备">
           <el-input :model-value="selectedDeviceId" disabled />
         </el-form-item>
-        <el-form-item label="通道">
+        <el-form-item label="监控点">
           <el-input :model-value="selectedChannelId" disabled />
         </el-form-item>
         <el-form-item label="开始时间">
@@ -2893,7 +2893,7 @@ onUnmounted(() => {
         <el-form-item label="设备">
           <el-input :model-value="selectedDeviceId" disabled />
         </el-form-item>
-        <el-form-item label="通道">
+        <el-form-item label="监控点">
           <el-input :model-value="selectedChannelId" disabled />
         </el-form-item>
         <el-form-item label="日期">
@@ -2945,7 +2945,7 @@ onUnmounted(() => {
             <el-select v-model="smartQuery.target_type" placeholder="全部" clearable style="width:150px">
               <el-option v-for="t in smartTargetTypes" :key="t" :label="t" :value="t" />
             </el-select>
-            <span class="smart-label">通道:</span>
+            <span class="smart-label">监控点:</span>
             <el-select v-model="smartQuery.channel_id" placeholder="全部" clearable style="width:150px">
               <el-option v-for="ch in channels" :key="ch.id" :label="ch.name" :value="ch.id" />
             </el-select>
@@ -2979,7 +2979,7 @@ onUnmounted(() => {
             <el-table-column label="检测时间" min-width="160">
               <template #default="{ row }">{{ fmtSmartTs(row.timestamp) }}</template>
             </el-table-column>
-            <el-table-column label="通道" min-width="160" show-overflow-tooltip>
+            <el-table-column label="监控点" min-width="160" show-overflow-tooltip>
               <template #default="{ row }">{{ fmtSmartChannel(row) }}</template>
             </el-table-column>
             <el-table-column label="告警类型" min-width="110">

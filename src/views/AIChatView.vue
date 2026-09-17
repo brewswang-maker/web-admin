@@ -464,9 +464,9 @@ async function sendMessage() {
         // 通道列表
         if (channels.length > 0) {
           const onlineChs = channels.filter((c:any) => c.status === 'online' || c.enabled).length
-          contextData += `\n## 视频通道 (${channels.length}个, 在线${onlineChs}个)\n`
+          contextData += `\n## 视频监控点 (${channels.length}个, 在线${onlineChs}个)\n`
           channels.forEach((ch:any) => {
-            contextData += `- 通道名: ${ch.name || ch.channel_id}, ID: ${ch.channel_id}, 协议: ${ch.protocol || '-'}, 状态: ${ch.status || (ch.enabled ? '启用' : '禁用')}\n`
+            contextData += `- 监控点名: ${ch.name || ch.channel_id}, ID: ${ch.channel_id}, 协议: ${ch.protocol || '-'}, 状态: ${ch.status || (ch.enabled ? '启用' : '禁用')}\n`
           })
         }
 

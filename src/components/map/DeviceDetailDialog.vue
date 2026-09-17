@@ -24,7 +24,7 @@
             <el-tag size="small" effect="dark" :color="deviceIconMeta(binding.device_type).color" style="border:none">{{ deviceTypeLabel(binding.device_type) }}</el-tag>
           </div>
           <div class="ddd-head__meta-line">
-            <span class="ddd-head__ch" :title="binding.channel_id">{{ isCamera ? '通道' : '编号' }}: {{ binding.channel_id }}</span>
+            <span class="ddd-head__ch" :title="binding.channel_id">{{ isCamera ? '监控点' : '编号' }}: {{ binding.channel_id }}</span>
             <span class="ddd-head__sep">|</span>
             <span class="ddd-head__status" :class="isOnline === null ? 'is-unknown' : isOnline ? 'is-online' : 'is-offline'">
               <i />{{ isOnline === null ? '状态未知' : isOnline ? '在线' : '离线' }}
@@ -67,7 +67,7 @@
           <!-- 通道离线: 不拉流直接占位 (避免无效 INVITE); 未知状态照常拉流由播放器报错 -->
           <div v-if="isOnline === false" class="ddd-player-state ddd-player-state--offline">
             <svg viewBox="0 0 24 24" width="34" height="34"><circle cx="12" cy="12" r="10" fill="none" stroke="#5F7699" stroke-width="2"/><path d="M8 8l8 8M16 8l-8 8" stroke="#5F7699" stroke-width="2" stroke-linecap="round"/></svg>
-            <span>通道离线, 无法获取实时视频</span>
+            <span>监控点离线, 无法获取实时视频</span>
             <el-button size="small" :loading="metaLoading" @click="loadMeta(true)">刷新状态</el-button>
           </div>
           <template v-else>
@@ -90,7 +90,7 @@
             <el-button size="small" type="primary" :loading="recLoading" @click="queryRec">查询录像</el-button>
             <span class="ddd-rec-tip">按日查询 GB28181 设备录像</span>
           </div>
-          <div v-if="!recDeviceId && !recLoading" class="ddd-rec-nodevice">未找到该通道归属设备 (device_id), 无法查询录像</div>
+          <div v-if="!recDeviceId && !recLoading" class="ddd-rec-nodevice">未找到该监控点归属设备 (device_id), 无法查询录像</div>
           <template v-else>
             <div v-if="recLoading" class="ddd-rec-state"><el-icon class="is-loading"><Loading /></el-icon> 正在查询录像…</div>
             <div v-else-if="recError" class="ddd-rec-state ddd-rec-state--error">
@@ -136,7 +136,7 @@
               <el-option value="low" label="低危" />
             </el-select>
             <el-button size="small" type="primary" :loading="alarmLoading" @click="fetchAlarms(1)">查询</el-button>
-            <span class="ddd-alarm-filter-hint">开始时间/通道为后端过滤 · 结束时间与级别为当前页内过滤</span>
+            <span class="ddd-alarm-filter-hint">开始时间/监控点为后端过滤 · 结束时间与级别为当前页内过滤</span>
           </div>
           <div v-if="alarmLoading" class="ddd-alarm-state"><el-icon class="is-loading"><Loading /></el-icon> 正在加载…</div>
           <div v-else-if="alarmError" class="ddd-alarm-state ddd-alarm-state--error">
@@ -291,7 +291,7 @@ const streamType = ref<'main' | 'sub'>('main')
 const playerFatal = ref('')
 function onStreamTypeChange() { playerFatal.value = '' }
 function onPlayerError(_msg: string, fatal?: boolean) {
-  playerFatal.value = fatal ? '设备不可达 / 通道离线, 实时视频不可用' : ''
+  playerFatal.value = fatal ? '设备不可达 / 监控点离线, 实时视频不可用' : ''
 }
 
 // ═══ 录像查询与回放 ═══

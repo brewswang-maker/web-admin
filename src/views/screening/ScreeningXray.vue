@@ -61,7 +61,9 @@
             <span class="level-tag" :class="levelClass(row.level)">{{ levelText(row.level) }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="channelId" label="通道" width="80" align="center" />
+        <el-table-column prop="channelId" label="监控点" width="80" align="center">
+          <template #default="{ row }">{{ alarmChLabel(row) }}</template>
+        </el-table-column>
         <el-table-column prop="description" label="描述" min-width="240" show-overflow-tooltip />
         <el-table-column label="快照" width="90" align="center">
           <template #default="{ row }">
@@ -109,7 +111,7 @@
                         style="width:100%;height:130px;border-radius:4px" />
               <div class="trace-meta">
                 <el-tag size="small" :type="it.channel_id === traceChannelId ? 'success' : 'info'" effect="plain">
-                  通道 {{ it.channel_id }}
+                  监控点 {{ it.channel_id }}
                 </el-tag>
                 <el-tag size="small" type="warning" effect="plain">相似 {{ ((it.similarity || 0) * 100).toFixed(0) }}%</el-tag>
               </div>
@@ -133,6 +135,8 @@ import { Refresh, Search } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { useRouter } from 'vue-router'
 import { alarmApi } from '@/api/alarm'
+// [FIX channel-monitor-point 2026-09-17] 对标海康术语: 通道列显示值友好名化 (目录反查, 失败回退技术 ID)
+import { alarmChLabel } from '@/composables/useAlarmTableHelpers'
 import { retrievalApi, extractTowerUnavailable, type ImageSearchItem } from '@/api/retrieval'
 import eventTypesApi from '@/api/eventTypes'
 import type { EventTypeMetadataItem } from '@/api/eventTypes'
@@ -280,10 +284,10 @@ async function handleTrace(row: AlarmEvent) {
   try {
     if (!row.snapshotUrl) {
       ElMessage.info('快照已清理, 已跳转智能检索预填关键字 (以文搜图)')
-      router.push({ path: '/retrieval', query: { nl: `通道${channelId} ${typeName(row.type)}`, from: 'xray' } })
+      router.push({ path: '/retrieval', query: { nl: `监控点${channelId} ${typeName(row.type)}`, from: 'xray' } })
       return
     }
-    traceTitle.value = `人包追溯 — ${typeName(row.type)} @通道${channelId}`
+    traceTitle.value = `人包追溯 — ${typeName(row.type)} @监控点${channelId}`
     traceVisible.value = true
     traceSearching.value = true
     const base64 = await snapshotToBase64(row.snapshotUrl)

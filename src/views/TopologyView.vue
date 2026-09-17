@@ -106,7 +106,7 @@ function buildOption() {
     itemStyle: { color: statusColor[d.status] || '#909399', borderColor: '#fff', borderWidth: 2 },
     label: { show: true, fontSize: 11, color: '#303133', position: 'bottom' as const },
     tooltip: {
-      formatter: `<b>${d.name}</b><br/>类型: ${d.deviceType}<br/>IP: ${d.ip}<br/>状态: ${d.status}<br/>通道: ${d.channelCount}`,
+      formatter: `<b>${d.name}</b><br/>类型: ${d.deviceType}<br/>IP: ${d.ip}<br/>状态: ${d.status}<br/>监控点: ${d.channelCount}`,
     },
   }))
 

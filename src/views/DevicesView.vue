@@ -101,7 +101,7 @@
             <el-tag v-else :type="statusTagType(row.status) as any" size="small">{{ statusLabel(row.status) }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="channelCount" label="通道" width="100">
+        <el-table-column prop="channelCount" label="监控点" width="100">
           <template #default="{ row }">
             <template v-if="isAreaRow(row)"><span class="area-dash">—</span></template>
             <template v-else>
@@ -156,7 +156,7 @@
             <el-button size="small" link type="warning" @click="openEditDialog(row)">编辑</el-button>
             <el-button size="small" link type="success" @click="handleLive(row)">预览</el-button>
             <!-- [TREE-EXPAND-FIX] 通道查看入口 (原 expand 行内表格迁移至此) -->
-            <el-button size="small" link type="primary" @click="openChannelDlg(row)">通道</el-button>
+            <el-button size="small" link type="primary" @click="openChannelDlg(row)">监控点</el-button>
             <!-- [DEV-GROUP 2026-09-07] 行内设置分组: 勾选即多组绑定 (设备视角) -->
             <el-button size="small" link type="primary" @click="openGroupDialog(row)">分组</el-button>
             <!-- [DEV-CTRL 2026-09-06] 按 deviceType 动态控制按钮:
@@ -242,20 +242,20 @@
 
     <!-- [TREE-EXPAND-FIX 2026-09-13] 通道查看弹窗 (原 expand 行内表格迁移):
          表格列与原 expand 内容一致 (预览/详情按钮沿用 handleChannelLive/Detail) -->
-    <el-dialog v-model="channelDlg.visible" :title="`通道列表 - ${channelDlg.device?.name || ''}`" width="820px">
+    <el-dialog v-model="channelDlg.visible" :title="`监控点列表 - ${channelDlg.device?.name || ''}`" width="820px">
       <div v-if="channelLoading === channelDlg.device?.id" style="padding:24px;text-align:center">
         <el-icon class="is-loading"><Loading /></el-icon> 加载中...
       </div>
       <div v-else-if="!channelDlg.device || !channelMap[channelDlg.device.id] || channelMap[channelDlg.device.id].length === 0" style="padding:24px;color:#8c8c8c;text-align:center">
-        暂无通道数据
+        暂无监控点数据
       </div>
       <el-table v-else :data="channelMap[channelDlg.device!.id]" size="small" max-height="420">
-        <el-table-column prop="name" label="通道名称" min-width="140" show-overflow-tooltip>
+        <el-table-column prop="name" label="监控点名称" min-width="140" show-overflow-tooltip>
           <template #default="{ row: ch }">
             <span style="color:var(--el-color-primary)">{{ ch.name }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="id" label="通道ID" min-width="180" show-overflow-tooltip />
+        <el-table-column prop="id" label="监控点ID" min-width="180" show-overflow-tooltip />
         <el-table-column prop="deviceType" label="类型" width="100">
           <template #default="{ row: ch }">
             <el-tag size="small" type="info">{{ ch.deviceType || 'IPCamera' }}</el-tag>
@@ -298,7 +298,7 @@
               <el-tag size="small" type="info">{{ row.protocol }}</el-tag>
             </template>
           </el-table-column>
-          <el-table-column prop="channels" label="通道" width="60" />
+          <el-table-column prop="channels" label="监控点" width="60" />
           <el-table-column label="操作" width="80" fixed="right">
             <template #default="{ row }">
               <el-button size="small" type="primary" link @click="quickAddFromDiscover(row)">添加</el-button>
@@ -417,7 +417,7 @@
           <el-form-item label="设备国标ID">
             <el-input v-model="addForm.protocolConfig.gbDeviceId" placeholder="34020000001310000001" />
           </el-form-item>
-          <el-form-item label="通道 ID">
+          <el-form-item label="监控点 ID">
             <el-input v-model="addForm.protocolConfig.gbChannelId" placeholder="34020000001310000001" />
           </el-form-item>
           <el-form-item>
@@ -610,7 +610,7 @@
           <span style="font-size:13px;width:14px">{{ ptzSpeedVal }}</span>
         </div>
         <div style="font-size:12px;color:#909399">
-          通道 {{ ptzChannelId || ptzDevice?.id || '—' }} · 权限不足时后端将拒绝 (403)
+          监控点 {{ ptzChannelId || ptzDevice?.id || '—' }} · 权限不足时后端将拒绝 (403)
         </div>
       </div>
     </el-dialog>

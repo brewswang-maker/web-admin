@@ -82,7 +82,7 @@
       </el-col>
     </el-row>
 
-    <el-card header="SLM Channel States (每通道独立指标)" shadow="never" class="mt-16" v-if="slmStats.streams && slmStats.streams.length > 0">
+    <el-card header="SLM Channel States (每监控点独立指标)" shadow="never" class="mt-16" v-if="slmStats.streams && slmStats.streams.length > 0">
       <el-table :data="slmStats.streams" size="small" stripe>
         <el-table-column prop="channel_id" label="Channel ID" width="140" />
         <el-table-column prop="state" label="State" width="140">

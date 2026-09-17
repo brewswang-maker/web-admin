@@ -36,7 +36,7 @@
       </el-form-item>
       <el-form-item label="分组维度">
         <el-select v-model="form.group_by" clearable placeholder="不分组">
-          <el-option label="通道" value="channel" />
+          <el-option label="监控点" value="channel" />
           <el-option label="设备" value="device" />
           <el-option label="区域" value="region" />
         </el-select>

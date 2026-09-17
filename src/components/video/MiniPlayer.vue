@@ -579,7 +579,7 @@ async function attachWebRtcMini(video: HTMLVideoElement) {
   destroyWebRtc()
   const chId = props.channelId
   if (!chId) {
-    errorMsg.value = 'WebRTC: 缺少通道ID'
+    errorMsg.value = 'WebRTC: 缺少监控点ID'
     return
   }
 

@@ -111,15 +111,15 @@
     <el-card style="margin-top: 16px" v-if="(device as any)?.channels">
       <template #header>
         <div style="display:flex;justify-content:space-between;align-items:center">
-          <span>视频通道</span>
+          <span>视频监控点</span>
           <el-button size="small" type="primary" link @click="$router.push(`/devices/${device?.id}/channels`)">
-            <el-icon><Grid /></el-icon>通道管理
+            <el-icon><Grid /></el-icon>监控点管理
           </el-button>
         </div>
       </template>
       <el-table :data="(device as any).channels || []" stripe>
-        <el-table-column prop="channelNo" label="通道号" width="80" />
-        <el-table-column prop="name" label="通道名称" width="180" />
+        <el-table-column prop="channelNo" label="监控点号" width="80" />
+        <el-table-column prop="name" label="监控点名称" width="180" />
         <el-table-column prop="rtspUrl" label="RTSP地址" min-width="220" />
         <el-table-column prop="algoPlugin" label="算法插件" width="140">
           <template #default="{ row }">
@@ -421,7 +421,7 @@ function handlePreview(channel: any) {
 }
 
 function handleChannelConfig(channel: any) {
-  ElMessage.info(`配置通道 ${channel.name}`)
+  ElMessage.info(`配置监控点 ${channel.name}`)
 }
 
 async function saveConfig() {

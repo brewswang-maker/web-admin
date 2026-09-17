@@ -4,9 +4,9 @@
     <el-card shadow="never" class="toolbar-card">
       <div class="toolbar">
         <div class="toolbar-left">
-          <span class="toolbar-label">通道</span>
+          <span class="toolbar-label">监控点</span>
           <el-select v-model="channelId" style="width: 220px" @change="onChannelChange"
-                     placeholder="选择通道">
+                     placeholder="选择监控点">
             <el-option v-for="c in channels" :key="c.id" :label="`${c.id} - ${c.name || c.channelName || ''}`"
                        :value="Number(c.id)" />
           </el-select>
@@ -57,7 +57,7 @@
             <canvas ref="heatCanvas" width="480" height="480" class="heat-canvas" />
             <div v-if="!hasHeatmap" class="canvas-empty">
               暂无密度快照<br />
-              <span class="hint">通道产生 density_heatmap 数据后自动展示</span>
+              <span class="hint">监控点产生 density_heatmap 数据后自动展示</span>
             </div>
           </div>
           <div class="legend">

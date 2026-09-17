@@ -5,7 +5,7 @@
     <div class="sam-toolbar">
       <div class="sam-toolbar-left">
         <span class="sam-title">安保区域管理</span>
-        <span class="sam-sub">区域即管理单位：多级区域树圈定通道范围，规则空间条件按区域触发</span>
+        <span class="sam-sub">区域即管理单位：多级区域树圈定监控点范围，规则空间条件按区域触发</span>
       </div>
       <div class="sam-toolbar-right">
         <el-input v-model="keyword" placeholder="搜索区域名称" clearable :prefix-icon="Search" style="width: 200px" />
@@ -94,7 +94,7 @@
               <el-input v-model="devKeyword" placeholder="搜索设备名称 / IP / 位置" clearable :prefix-icon="Search" style="width: 240px" size="small" />
               <span class="sam-stats-hint">
                 已选 <b>{{ draftDeviceIds.length }}</b> 台设备 ·
-                生效通道 <b>{{ resolvedPreview.length }}</b> 路
+                生效监控点 <b>{{ resolvedPreview.length }}</b> 路
                 <template v-if="draftChannelIds.length">（含显式绑定 {{ draftChannelIds.length }} 路）</template>
               </span>
             </div>
@@ -110,7 +110,7 @@
                     <span class="sam-dev-ip">{{ d.ip }}</span>
                   </el-checkbox>
                   <el-button link size="small" @click="toggleExpand(d)">
-                    {{ expanded.has(d.id) ? '收起' : `${channelsOf(d.id).length} 通道` }}
+                    {{ expanded.has(d.id) ? '收起' : `${channelsOf(d.id).length} 监控点` }}
                   </el-button>
                 </div>
                 <div v-if="expanded.has(d.id)" class="sam-chs">
@@ -131,7 +131,7 @@
           <!-- 预览：resolved 快照（需求"按区域预览设备清单"） -->
           <div class="sam-preview">
             <div class="sam-preview-title">
-              生效通道预览（resolved = 显式通道 ∪ 所选设备全部通道）
+              生效监控点预览（resolved = 显式监控点 ∪ 所选设备全部监控点）
               <el-tag size="small" type="success">{{ resolvedPreview.length }} 路</el-tag>
             </div>
             <div class="sam-preview-list">
@@ -141,7 +141,7 @@
             </div>
           </div>
         </template>
-        <el-empty v-else description="从左侧区域树选择一个区域，绑定设备与通道" />
+        <el-empty v-else description="从左侧区域树选择一个区域，绑定设备与监控点" />
       </div>
     </div>
 

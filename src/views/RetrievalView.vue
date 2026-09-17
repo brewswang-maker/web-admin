@@ -59,8 +59,8 @@
                 <div class="hint">key 白名单与算子契约来自 docs/attribute-key-contract.md (P4-B/P4-D)</div>
             </el-form-item>
 
-            <el-form-item label="通道">
-                <el-input v-model="hybridForm.channel_id" placeholder="留空 = 全部通道" style="width: 240px" />
+            <el-form-item label="监控点">
+                <el-input v-model="hybridForm.channel_id" placeholder="留空 = 全部监控点" style="width: 240px" />
             </el-form-item>
             <el-form-item label="时间范围">
                 <el-date-picker
@@ -134,8 +134,8 @@
             <el-form-item label="相似度阈值">
                 <el-slider v-model="imageForm.min_similarity" :min="0" :max="1" :step="0.05" style="width: 280px" show-input />
             </el-form-item>
-            <el-form-item label="通道">
-                <el-input v-model="imageForm.channel_id" placeholder="留空 = 全部通道" style="width: 240px" />
+            <el-form-item label="监控点">
+                <el-input v-model="imageForm.channel_id" placeholder="留空 = 全部监控点" style="width: 240px" />
             </el-form-item>
             <el-form-item label="时间范围">
                 <el-date-picker
@@ -173,9 +173,9 @@
             <el-form label-width="110px" class="query-form">
             <el-form-item label="Global ID">
                 <el-input-number v-model="trajForm.global_id" :min="0" :step="1" placeholder="0 = 不使用" style="width: 220px" />
-                <span class="hint" style="margin-left: 10px">与下方 通道+轨迹 ID 二选一</span>
+                <span class="hint" style="margin-left: 10px">与下方 监控点+轨迹 ID 二选一</span>
             </el-form-item>
-            <el-form-item label="通道 / 轨迹 ID">
+            <el-form-item label="监控点 / 轨迹 ID">
                 <el-input-number v-model="trajForm.camera_id" :min="0" :controls="false" placeholder="camera_id" style="width: 160px" />
                 <el-input-number v-model="trajForm.track_id" :min="0" :controls="false" placeholder="track_id" style="width: 160px" class="ml" />
             </el-form-item>
@@ -196,7 +196,7 @@
             <!-- 轨迹结果: 时间轴节点 (ts 升序) -->
             <template v-if="trajResult">
             <el-divider content-position="left">
-                轨迹 {{ trajResult.total }} 节点 · 跨 {{ trajResult.channel_count }} 通道 · global_id={{ trajResult.global_id }}
+                轨迹 {{ trajResult.total }} 节点 · 跨 {{ trajResult.channel_count }} 监控点 · global_id={{ trajResult.global_id }}
             </el-divider>
             <el-empty
                 v-if="!trajResult.total"
@@ -276,7 +276,7 @@
                     :stroke-width="8"
                     />
                 </div>
-                <div class="line">通道: {{ it.channel_id_str || it.channel_id || '—' }}</div>
+                <div class="line">监控点: {{ it.channel_id_str || it.channel_id || '—' }}</div>
                 <div class="line">时间: {{ formatTs(it.timestamp) }}</div>
                 <div class="line id">{{ it.image_id || it.alarm_id || it.person_id || '—' }}</div>
                 <!-- [P2-3 2026-09-15] 检索→布控贯通 (§5.4-14): 一键转布控草稿 -->
@@ -404,7 +404,7 @@ const trajResult = ref<TrajectoryResult | null>(null)
 const trajEmptyText = computed(() =>
   trajForm.global_id
     ? '该 global_id 在 ReID 回溯窗口内无跨镜记录'
-    : '该通道/轨迹 ID 在 ReID 回溯窗口内无记录 (内存态 LRU 约 5min, 重启即失)')
+    : '该监控点/轨迹 ID 在 ReID 回溯窗口内无记录 (内存态 LRU 约 5min, 重启即失)')
 
 // [安检对标优化 2026-08-30] X 光判图"追溯"跳转预填 (from=screening-xray):
 //   ScreeningXray 无快照时 router.push(/retrieval?nl=...&from=xray)
@@ -542,7 +542,7 @@ async function runNL() {
 /** [校园二期增强 2026-08-30] 跨镜轨迹查询: global_id 或 (camera_id+track_id) 二选一 */
 async function runTrajectory() {
   if (!trajForm.global_id && !(trajForm.camera_id && trajForm.track_id)) {
-    ElMessage.warning('请填写 Global ID, 或 通道 + 轨迹 ID 组合')
+    ElMessage.warning('请填写 Global ID, 或 监控点 + 轨迹 ID 组合')
     return
   }
   trajLoading.value = true

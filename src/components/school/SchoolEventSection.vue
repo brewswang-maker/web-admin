@@ -37,7 +37,9 @@
             <span class="level-tag" :class="levelClass(row.level)">{{ levelText(row.level) }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="channelId" label="通道" width="92" show-overflow-tooltip />
+        <el-table-column prop="channelId" label="监控点" width="92" show-overflow-tooltip>
+          <template #default="{ row }">{{ alarmChLabel(row) }}</template>
+        </el-table-column>
         <el-table-column prop="description" label="描述" min-width="220" show-overflow-tooltip />
         <el-table-column label="快照" width="80" align="center">
           <template #default="{ row }">
@@ -69,7 +71,7 @@
       <div v-if="current" class="detail-body">
         <div class="kv-row"><span class="k">类型</span><span>{{ current.type }} · {{ typeName(current.type) }}</span></div>
         <div class="kv-row"><span class="k">级别</span><span :class="levelClass(current.level)">{{ levelText(current.level) }}</span></div>
-        <div class="kv-row"><span class="k">通道</span><span>{{ current.channelId }}</span></div>
+        <div class="kv-row"><span class="k">监控点</span><span>{{ current.channelId }}</span></div>
         <div class="kv-row"><span class="k">置信度</span><span>{{ current.confidence != null ? (current.confidence * 100).toFixed(0) + '%' : '-' }}</span></div>
         <div class="kv-row"><span class="k">描述</span><span>{{ current.description || '-' }}</span></div>
         <div class="kv-row"><span class="k">时间</span><span>{{ formatTime(current.createdAt) }}</span></div>
@@ -94,6 +96,8 @@ import { Refresh } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { alarmApi } from '@/api/alarm'
 import eventTypesApi from '@/api/eventTypes'
+// [FIX channel-monitor-point 2026-09-17] 对标海康术语: 通道列显示值友好名化 (目录反查, 失败回退技术 ID)
+import { alarmChLabel } from '@/composables/useAlarmTableHelpers'
 import { schoolApi, SCHOOL_EVENT_SECTIONS, type SchoolSectionKey } from '@/api/school'
 import type { AlarmEvent, AlarmLevel } from '@/types/alarm'
 import { normalizeAlarmCore } from '@/types/alarm'

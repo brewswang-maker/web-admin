@@ -11,7 +11,7 @@
  *   ② bound_channel_ids 命中通道目录 → 通道名 (通道级精确绑定);
  *   ③ device_ids 命中设备目录 → 展开该设备全部通道 (勾设备 = 全部通道语义);
  *   ④ 设备无通道数据 → 设备名兜底;
- *   ⑤ channel_ids int32 → 哈希反投影; 反投影不中 →「通道 <n>」诚实兜底;
+ *   ⑤ channel_ids int32 → 哈希反投影; 反投影不中 →「监控点 <n>」诚实兜底;
  *   ⑥ location_id 命中计入 / 反查不中忽略;
  *   ⑦ _chN 归一去重 (bound ⊕ 设备展开重叠只留一条);
  *   ⑧ 空串/非法项剔除; 反查不中绝不回退「全部通道」(核心防回归);
@@ -117,12 +117,12 @@ describe('displayRuleBoundChannels 四源综合展示 (CH-BINDING-DISPLAY)', () 
     expect(labels(r.items)).toEqual(['华盾展厅东门'])
   })
 
-  it('⑤ channel_ids int32 → 哈希反投影; 反投影不中 →「通道 <n>」诚实兜底', () => {
+  it('⑤ channel_ids int32 → 哈希反投影; 反投影不中 →「监控点 <n>」诚实兜底', () => {
     const r = displayRuleBoundChannels(
       { source_cond: { channel_ids: [HASH_A, 999] } }, fakeLookup,
     )
     expect(r.allChannels).toBe(false)
-    expect(labels(r.items)).toEqual(['周界测试摄像头 照楼下 通道01', '通道 999'])
+    expect(labels(r.items)).toEqual(['周界测试摄像头 照楼下 通道01', '监控点 999'])
   })
 
   it('⑥ location_id 命中计入 / 反查不中忽略 (位置文本非通道域不误导)', () => {
@@ -159,13 +159,13 @@ describe('displayRuleBoundChannels 四源综合展示 (CH-BINDING-DISPLAY)', () 
     )
     expect(junk.allChannels).toBe(true)
 
-    // 目录未就绪窗口期: 合法形态但反查不中 → 原始标识兜底 (通道 <id>), 非全通道
+    // 目录未就绪窗口期: 合法形态但反查不中 → 原始标识兜底 (监控点 <id>), 非全通道
     const UNKNOWN = '13999999999999999999'
     const pending = displayRuleBoundChannels(
       { spatial_cond: { bound_channel_ids: ['', UNKNOWN] } }, fakeLookup,
     )
     expect(pending.allChannels).toBe(false)
-    expect(labels(pending.items)).toEqual([`通道 ${UNKNOWN}`])
+    expect(labels(pending.items)).toEqual([`监控点 ${UNKNOWN}`])
   })
 
   it('⑨ tooltip 顿号拼接 + 真机形态复刻 (bound+dev 双源 → 多 chip)', () => {

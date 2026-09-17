@@ -5,7 +5,7 @@
       <div>
         <h2 class="rules-title">事件规则</h2>
         <div class="rules-sub">
-          大型活动联动规则实例 — 启用状态 / 事件类型 / 通道绑定 / 触发条件; 由场景包「校验并布防」实例化 LE 模板生成
+          大型活动联动规则实例 — 启用状态 / 事件类型 / 监控点绑定 / 触发条件; 由场景包「校验并布防」实例化 LE 模板生成
         </div>
       </div>
       <el-button :icon="Refresh" :loading="loading" @click="reload">刷新</el-button>
@@ -115,7 +115,7 @@
               </div>
             </template>
           </el-table-column>
-          <el-table-column label="绑定设备通道" width="200">
+          <el-table-column label="绑定设备监控点" width="200">
             <template #default="{ row }">
               <!-- [CH-BINDING-DISPLAY 2026-09-14] 真实绑定展示 (缺陷修复):
                    原只读 source_cond.channel_ids — 布防通道写在 bound_channel_ids /
@@ -134,7 +134,7 @@
                   </span>
                 </el-tooltip>
               </template>
-              <el-tag v-else size="small" type="success" effect="plain">全部通道</el-tag>
+              <el-tag v-else size="small" type="success" effect="plain">全部监控点</el-tag>
             </template>
           </el-table-column>
           <el-table-column label="状态" width="90" align="center">

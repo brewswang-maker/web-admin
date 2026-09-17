@@ -825,7 +825,7 @@ function onAlarmMapMarker(e: Event) {
       </div>
       <div style="color: #666; font-size: 12px;">
         设备: ${detail.device_id || '--'}<br/>
-        通道: ${detail.channel_id || '--'}<br/>
+        监控点: ${detail.channel_id || '--'}<br/>
         坐标: ${lat.toFixed(6)}, ${lng.toFixed(6)}<br/>
         时间: ${new Date(detail.timestamp_ms).toLocaleString()}<br/>
         ${detail.snapshot_url ? `<img src="${detail.snapshot_url}" style="width:100%;margin-top:4px;border-radius:4px;"/>` : ''}

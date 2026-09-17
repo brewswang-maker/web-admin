@@ -445,14 +445,14 @@
                 <!-- [P1-4-EXPAND 2026-09-13] 自动展开说明条: 解释空间卡为何被打开 (可手动关闭) -->
                 <el-alert v-if="spatialAutoExpandNotice" type="info" :closable="true" show-icon
                   class="spatial-auto-alert" style="margin-bottom: 8px"
-                  title="已按所选事件类型自动展开「空间条件」— 可直接配置 ROI 绘制 / 绊线 / 方向 / 圈定通道；全画面触发可关闭本卡片"
+                  title="已按所选事件类型自动展开「空间条件」— 可直接配置 ROI 绘制 / 绊线 / 方向 / 圈定监控点；全画面触发可关闭本卡片"
                   @close="spatialAutoExpandNotice = false" />
                 <!-- [FEAT guard-badge 2026-09-10] 绑定通道插件层布防状态:
                      规则空间条件(引擎过滤)与算法检测区(插件触发)是两层, 徽标把
                      "插件层未布防"暴露给规则编辑者 — 消灭"规则开好了却永远无
                      告警"的静默空转 (海康/华为智能事件区域必填同理, 不让两层
                      脱节; 对标 AXIS 默认全画面/海康默认警戒面的可见性哲学)。 -->
-                <el-form-item v-if="guardStates.length" label="通道布防状态" label-position="top" class="cond-form-item">
+                <el-form-item v-if="guardStates.length" label="监控点布防状态" label-position="top" class="cond-form-item">
                   <div style="width: 100%">
                     <div v-for="st in guardStates" :key="st.channel" style="display:flex; align-items:center; gap:8px; margin-bottom:4px">
                       <span class="text-secondary" style="flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap" :title="st.channel">{{ st.label }}</span>
@@ -464,7 +464,7 @@
                     </div>
                     <el-alert v-if="hasUnguarded" type="warning" :closable="false" style="margin-top:4px">
                       <template #title>
-                        标红通道无任何启用的检测区/绊线 — 周界类算法(入侵/攀爬/越界)不会产生告警 (未布防=不触发, 对标海康/大华语义); 可在右侧画板点「⛶ 满屏」一键布防后再叠加排除区
+                        标红监控点无任何启用的检测区/绊线 — 周界类算法(入侵/攀爬/越界)不会产生告警 (未布防=不触发, 对标海康/大华语义); 可在右侧画板点「⛶ 满屏」一键布防后再叠加排除区
                       </template>
                     </el-alert>
                   </div>
@@ -489,10 +489,10 @@
                      树勾选契约不变 (bound_channel_ids 级联复选), 仅布局重排。 -->
                 <div class="spatial-split">
                 <div class="spatial-split__left">
-                <el-form-item label="设备 / 通道" label-position="top" class="cond-form-item">
+                <el-form-item label="设备 / 监控点" label-position="top" class="cond-form-item">
                   <div class="bound-ch-tree">
                     <div class="bound-ch-tree__head">
-                      <span class="bound-ch-tree__title">区域 / 设备 / 通道</span>
+                      <span class="bound-ch-tree__title">区域 / 设备 / 监控点</span>
                       <el-button v-if="boundChannelDraft.length" link size="small" type="danger" @click="clearBoundChannels">一键清除</el-button>
                     </div>
                     <div class="bound-ch-tree__body">
@@ -506,7 +506,7 @@
                         default-expand-all
                         :expand-on-click-node="false"
                         :default-checked-keys="boundChannelDraft"
-                        empty-text="暂无可选通道 (通道池未就绪或无设备接入)"
+                        empty-text="暂无可选监控点 (监控点池未就绪或无设备接入)"
                         @check="onBoundTreeCheck"
                       />
                     </div>
@@ -541,7 +541,7 @@
                        触发 — 与引擎严格模式同契约; 单通道/未点击页签 = 通用模式)。 -->
                   <div class="roi-workspace">
                     <aside v-if="roiTabChannels.length >= 2 || roiStrictMode" class="roi-channel-panel">
-                      <div class="roi-ch-tabs__label">绘制通道</div>
+                      <div class="roi-ch-tabs__label">绘制监控点</div>
                       <div class="roi-ch-tabs">
                         <div
                           v-for="t in roiTabChannels"
@@ -562,19 +562,19 @@
                         </div>
                       </div>
                       <div class="roi-ch-toolbar">
-                        <el-button size="small" @click="openCopyRoiDialog">复制到其他通道</el-button>
+                        <el-button size="small" @click="openCopyRoiDialog">复制到其他监控点</el-button>
                         <!-- <el-button size="small" @click="fillRoiFromBaseline">填充通用形状</el-button> -->
-                        <el-button v-if="roiStrictMode" class="roi-clear-button" size="small" type="danger" plain @click="clearRoiPerChannel">清除逐通道数据</el-button>
+                        <el-button v-if="roiStrictMode" class="roi-clear-button" size="small" type="danger" plain @click="clearRoiPerChannel">清除逐监控点数据</el-button>
                         <span class="roi-ch-hint">
                           {{ roiStrictMode
-                            ? '逐通道模式: 各通道独立绘制与判定, 未绘制通道不会触发本规则 (保存前会提示)'
-                            : '点击通道名开始逐通道绘制 (未进入 = 所有绑定通道共用同一份形状)' }}
+                            ? '逐监控点模式: 各监控点独立绘制与判定, 未绘制监控点不会触发本规则 (保存前会提示)'
+                            : '点击监控点名开始逐监控点绘制 (未进入 = 所有绑定监控点共用同一份形状)' }}
                         </span>
                       </div>
                     </aside>
                     <div class="roi-canvas-panel">
                       <p class="cond-hint roi-workspace__hint">
-                        触发双层判定: ①通道圈定（绑定通道 ∪ 安保区域[位置条件]，并集）②本画板形状（逐通道模式下仅对已绘通道生效）。
+                        触发双层判定: ①监控点圈定（绑定监控点 ∪ 安保区域[位置条件]，并集）②本画板形状（逐监控点模式下仅对已绘监控点生效）。
                       </p>
                       <!-- [UX-ROI-HINT 2026-09-16 P3 画线/画框要求提示] 按所选事件的
                            算法动态给出绘制要求 (must=插件层不画不工作)。口径=插件层
@@ -620,7 +620,7 @@
 
                   <div class="roi-workspace">
                     <aside v-if="pwTabsVisible" class="roi-channel-panel">
-                      <div class="roi-ch-tabs__label">绘制通道</div>
+                      <div class="roi-ch-tabs__label">绘制监控点</div>
                       <div class="roi-ch-tabs">
                         <div
                           v-for="t in pwTabChannels"
@@ -639,7 +639,7 @@
                           </span>
                           <span
                             class="roi-ch-tag__status"
-                            :title="pwCountOf(t.value) > 0 ? `已配置 ${pwCountOf(t.value)} 个启用通道区` : '未配置: 该通道按内置中央矩形兜底'"
+                            :title="pwCountOf(t.value) > 0 ? `已配置 ${pwCountOf(t.value)} 个启用通道区` : '未配置: 该监控点按内置中央矩形兜底'"
                           >{{ pwCountOf(t.value) > 0 ? `已绘 ${pwCountOf(t.value)}` : '未绘' }}</span>
                         </div>
                       </div>
@@ -659,7 +659,7 @@
                         </template>
                       </el-alert>
                       <p class="cond-hint" style="margin: 0 0 8px">
-                        通道多边形供尾随判定消费: 点击 ≥3 个顶点围成通行区后点「确认添加」；删除/停用立即生效, 不随规则保存/丢弃。<template v-if="pwTabsVisible">多通道: 点「绘制通道」切换目标通道分别绘制 (各通道独立保存); 未绘通道按内置中央矩形兜底。</template>
+                        通道多边形供尾随判定消费: 点击 ≥3 个顶点围成通行区后点「确认添加」；删除/停用立即生效, 不随规则保存/丢弃。<template v-if="pwTabsVisible">多通道: 点「绘制监控点」切换目标监控点分别绘制 (各监控点独立保存); 未绘监控点按内置中央矩形兜底。</template>
                       </p>
                       <PassagewayEditor
                         v-if="form.conditions.region.config.channelId"
@@ -668,7 +668,7 @@
                         :saved="displayPassageways"
                         @confirm="onPassagewayConfirm"
                       />
-                      <el-empty v-else description="请先在「绑定通道」勾选通道" :image-size="60" />
+                      <el-empty v-else description="请先在「绑定监控点」勾选监控点" :image-size="60" />
                       <div v-if="displayPassageways.length" class="pw-list">
                         <div v-for="pw in displayPassageways" :key="pw.id" class="pw-list__item">
                           <span>
@@ -706,7 +706,7 @@
                     </template>
                     <template #empty><span class="text-secondary">{{ tripwireEmptyHint }}</span></template>
                   </el-select>
-                  <p class="cond-hint">可在上方画板直接画绊线（选"绊线"类型，点击两点后点「确认添加」，保存规则时自动同步到算法库并关联）；或从下方下拉选择本通道已保存的绊线</p>
+                  <p class="cond-hint">可在上方画板直接画绊线（选"绊线"类型，点击两点后点「确认添加」，保存规则时自动同步到算法库并关联）；或从下方下拉选择本监控点已保存的绊线</p>
                 </el-form-item>
                 <el-form-item v-if="isTripwireRule" label="绊线方向" label-position="top" class="cond-form-item">
                   <el-radio-group v-model="form.conditions.region.config.direction">
@@ -740,7 +740,7 @@
                   </el-select>
                   <p class="cond-hint" style="margin-top:4px">层级: 园区/楼栋/楼层 (安保区域页维护)；旧规则中的设备位置仍兼容显示 (不可新选)。</p>
                 </el-form-item>
-                <el-form-item v-if="areaCascadeAreaId" label="设备/通道圈定" label-position="top" class="cond-form-item">
+                <el-form-item v-if="areaCascadeAreaId" label="设备/监控点圈定" label-position="top" class="cond-form-item">
                   <el-tree
                     ref="cascadeTreeRef"
                     :key="cascadeTreeKey"
@@ -759,10 +759,10 @@
                       </span>
                     </template>
                   </el-tree>
-                  <p class="cond-hint" style="margin-top:4px">不勾任何通道 = 整区域生效 (按区域 resolved 快照展开)；勾选通道并入范围、与区域取并集（因勾选恒在区域内，勾选不会缩小范围）。如需仅部分通道触发，请改用「区域」页签：不选安保区域 + 在「绑定通道」中精确勾选。</p>
+                  <p class="cond-hint" style="margin-top:4px">不勾任何监控点 = 整区域生效 (按区域 resolved 快照展开)；勾选监控点并入范围、与区域取并集（因勾选恒在区域内，勾选不会缩小范围）。如需仅部分监控点触发，请改用「区域」页签：不选安保区域 + 在「绑定监控点」中精确勾选。</p>
                 </el-form-item>
                 <div v-if="selectedLocationChannels" class="cond-hint" style="margin-top:2px; color: var(--el-color-success)">
-                  ✅ 区域「{{ selectedLocationChannels.areaName }}」共 {{ selectedLocationChannels.devices.length }} 台设备 / {{ selectedLocationChannels.totalChannels }} 路通道<template v-if="areaCascadeChannelIds.size">；已显式圈定 {{ areaCascadeChannelIds.size }} 路</template>。
+                  ✅ 区域「{{ selectedLocationChannels.areaName }}」共 {{ selectedLocationChannels.devices.length }} 台设备 / {{ selectedLocationChannels.totalChannels }} 路监控点<template v-if="areaCascadeChannelIds.size">；已显式圈定 {{ areaCascadeChannelIds.size }} 路</template>。
                 </div>
               </template>
 
@@ -904,7 +904,7 @@
               <span class="map-action-sub">触发时告警弹窗自动定位平面图 + 落点涟漪</span>
             </div>
             <el-alert v-if="actionState.CLIENT_SHOW_MAP" type="info" :closable="false" show-icon style="margin: 10px 0"
-              title="告警弹窗将自动定位至告警通道绑定的平面图并投影落点涟漪 (触发即定位); 图包绑定与楼层顺序在「AI 智能 → 平面图」页维护 (is_primary 优先)" />
+              title="告警弹窗将自动定位至告警监控点绑定的平面图并投影落点涟漪 (触发即定位); 图包绑定与楼层顺序在「AI 智能 → 平面图」页维护 (is_primary 优先)" />
           </div>
           </div>
 
@@ -940,13 +940,13 @@
     <el-dialog v-model="paramDialogVisible" :title="paramDialogTitle" width="520px" destroy-on-close append-to-body>
       <el-form :model="paramForm" label-position="top">
         <!-- 通用: 关联通道 (多数动作需要) -->
-        <el-form-item v-if="paramNeedsChannel" label="关联通道/设备">
-          <el-select v-model="paramForm.channel_id" placeholder="选择通道" clearable style="width: 100%">
+        <el-form-item v-if="paramNeedsChannel" label="关联监控点/设备">
+          <el-select v-model="paramForm.channel_id" placeholder="选择监控点" clearable style="width: 100%">
             <template v-if="channelOptionsDynamic.length > 0">
               <el-option v-for="ch in channelOptionsDynamic" :key="ch.value" :label="ch.label" :value="ch.value" />
             </template>
             <template #empty>
-              <span class="text-secondary">暂无通道数据</span>
+              <span class="text-secondary">暂无监控点数据</span>
             </template>
           </el-select>
         </el-form-item>
@@ -1113,7 +1113,7 @@
                 <span :title="row.event_type">{{ zh(row.event_type) }}</span>
               </template>
             </el-table-column>
-            <el-table-column prop="channel_id" label="通道" width="80" />
+            <el-table-column prop="channel_id" label="监控点" width="80" />
             <el-table-column label="执行动作" min-width="180">
               <template #default="{ row }">
                 <el-tag v-for="a in (row.actions_executed || []).slice(0, 3)" :key="a" size="small" effect="plain" style="margin: 2px">{{ a }}</el-tag>
@@ -1139,7 +1139,7 @@
                     <el-tag size="small" :type="log.severity >= 4 ? 'danger' : 'warning'" effect="plain" style="margin-left: 6px">
                       {{ zh(log.event_type) || '未知事件' }}
                     </el-tag>
-                    <el-tag size="small" type="info" effect="plain" style="margin-left: 4px">通道 {{ log.channel_id }}</el-tag>
+                    <el-tag size="small" type="info" effect="plain" style="margin-left: 4px">监控点 {{ log.channel_id }}</el-tag>
                   </div>
                   <span style="font-size: 12px; color: #909399">{{ log.duration_ms }}ms</span>
                 </div>
@@ -1177,7 +1177,7 @@
               <span v-else style="color: #C0C4CC">—</span>
             </template>
           </el-table-column>
-          <el-table-column prop="channel_id" label="通道" width="70" />
+          <el-table-column prop="channel_id" label="监控点" width="70" />
           <el-table-column label="状态" width="90" align="center">
             <template #default="{ row }">
               <el-tag :type="actionStatusTagType(row.status)" size="small" effect="dark">{{ row.status }}</el-tag>
@@ -1359,24 +1359,24 @@
 
     <!-- ===== [ROI-PER-CHANNEL 2026-09-12] 逐通道形状复制对话框 ===== -->
     <!-- 编辑链一环 (对标海康"参数复制到其他通道"): 编辑抽屉为 append-to-body, 本弹窗同 -->
-    <el-dialog v-model="showCopyRoiDialog" title="复制当前通道形状到其他通道" width="440px" destroy-on-close append-to-body>
+    <el-dialog v-model="showCopyRoiDialog" title="复制当前监控点形状到其他监控点" width="440px" destroy-on-close append-to-body>
       <el-form label-position="top">
-        <el-form-item label="目标通道 (可多选)">
+        <el-form-item label="目标监控点 (可多选)">
           <!-- [UX-UNPAINTED 2026-09-12] 批量提效: 一键勾选全部未绘通道 (追加式) -->
           <div style="margin-bottom:4px">
-            <el-button size="small" link type="primary" @click="copyTargetsSelectUnpainted">一键勾选全部未绘通道</el-button>
+            <el-button size="small" link type="primary" @click="copyTargetsSelectUnpainted">一键勾选全部未绘监控点</el-button>
           </div>
           <el-checkbox-group v-model="copyRoiTargets">
             <el-checkbox v-for="t in copyRoiOptions" :key="t.value" :value="t.value" style="display:block; margin:4px 0">
               {{ t.label }} <span :style="{ color: isChannelUnpainted(t.value) ? 'var(--el-color-danger, #f56c6c)' : undefined }">({{ roiPackBadge(t.value) }})</span>
             </el-checkbox>
           </el-checkbox-group>
-          <p class="cond-hint" v-if="copyRoiOptions.length === 0">无其他通道可复制 (请先在绑定通道/关联通道中添加)</p>
+          <p class="cond-hint" v-if="copyRoiOptions.length === 0">无其他监控点可复制 (请先在绑定监控点/关联监控点中添加)</p>
         </el-form-item>
         <el-form-item label="复制方式">
           <el-radio-group v-model="copyRoiMode">
-            <el-radio value="overwrite">覆盖目标通道已绘形状</el-radio>
-            <el-radio value="append">追加到目标通道 (保留原形状)</el-radio>
+            <el-radio value="overwrite">覆盖目标监控点已绘形状</el-radio>
+            <el-radio value="append">追加到目标监控点 (保留原形状)</el-radio>
           </el-radio-group>
         </el-form-item>
       </el-form>
@@ -1762,7 +1762,7 @@ function areaNamePath(id: string): string {
 const areaCascadeAreaOptions = computed(() => deviceGroups.value.map(g => ({
   value: g.id,
   // 徽标口径与 selectedGroupInfo/deviceGroupOptions 一致 (后端 count ?? 前端展开)
-  label: `${areaNamePath(g.id)}（${g.device_count ?? g.device_ids.length} 设备 / ${g.channel_count ?? g.resolved_channel_ids.length} 通道）`,
+  label: `${areaNamePath(g.id)}（${g.device_count ?? g.device_ids.length} 设备 / ${g.channel_count ?? g.resolved_channel_ids.length} 监控点）`,
 })))
 // 旧规则 point (device_location/设备旧位置) 回显 disabled option — 兼容读保留, 不允许新选
 const legacyPointEcho = computed(() => {
@@ -1828,7 +1828,7 @@ const areaCascadeTreeData = computed(() => {
     const chs = cascadeChannelsByDevice.value.get(devId) || []
     nodes.push({
       key: `dev:${devId}`, type: 'device',
-      label: `${cascadeDeviceName(devId)}${chs.length ? ` (${chs.length} 通道)` : ' (无在线通道)'}`,
+      label: `${cascadeDeviceName(devId)}${chs.length ? ` (${chs.length} 监控点)` : ' (无在线监控点)'}`,
       children: chs.map(c => ({ key: c.value, type: 'channel' as const, label: c.label })),
     })
   }
@@ -2064,7 +2064,7 @@ const boundChannelTreeData = computed<BoundTreeNode[]>(() => {
       for (const c of chs) claimed.add(c.value)
       devNodes.push({
         key: `dev:${devId}`, type: 'device',
-        label: `${cascadeDeviceName(devId)}${chs.length ? ` (${chs.length} 通道)` : ' (无在线通道)'}`,
+        label: `${cascadeDeviceName(devId)}${chs.length ? ` (${chs.length} 监控点)` : ' (无在线监控点)'}`,
         children: chs.map(c => ({ key: c.value, label: c.label, type: 'channel' as const, children: [] })),
       })
     }
@@ -2327,7 +2327,7 @@ function isChannelUnpainted(base: string): boolean {
 function copyTargetsSelectUnpainted() {
   const unpainted = copyRoiOptions.value.filter(t => isChannelUnpainted(t.value)).map(t => t.value)
   copyRoiTargets.value = Array.from(new Set([...copyRoiTargets.value, ...unpainted]))
-  if (unpainted.length === 0) ElMessage.info('没有未绘制的其他通道')
+  if (unpainted.length === 0) ElMessage.info('没有未绘制的其他监控点')
 }
 /** 当前工作副本 → 存档到激活通道包 (保留 tripwire_refs) */
 function roiSyncWorkCopyToPack() {
@@ -2388,8 +2388,8 @@ function roiMarkTouched() {
 async function clearRoiPerChannel() {
   try {
     await ElMessageBox.confirm(
-      '清除后本规则回到「通用区域」模式: 所有绑定通道共用同一份形状 (roi_shapes_json); 逐通道已绘数据将丢失。确定清除?',
-      '清除逐通道绘制', { type: 'warning', confirmButtonText: '清除', cancelButtonText: '取消' })
+      '清除后本规则回到「通用区域」模式: 所有绑定监控点共用同一份形状 (roi_shapes_json); 逐监控点已绘数据将丢失。确定清除?',
+      '清除逐监控点绘制', { type: 'warning', confirmButtonText: '清除', cancelButtonText: '取消' })
   } catch { return }
   roiByChannel.value = {}
   roiTouched.value.clear()
@@ -2400,7 +2400,7 @@ async function clearRoiPerChannel() {
   form.conditions.region.config.roiCombine = 'union'
   await nextTick()
   roiSuppressTouch = false
-  ElMessage.success('已清除逐通道数据 (保存规则后回到通用模式)')
+  ElMessage.success('已清除逐监控点数据 (保存规则后回到通用模式)')
 }
 // ── 复制到其他通道 / 填充通用形状 ──
 const showCopyRoiDialog = ref(false)
@@ -2412,13 +2412,13 @@ function openCopyRoiDialog() {
   if (!activeRoiChannel.value) {
     roiEnsureActive(roiBaseOf(form.conditions.region.config.channelId) || roiTabChannels.value[0]?.value || '')
   }
-  if (!activeRoiChannel.value) { ElMessage.warning('请先选择关联通道/绑定通道后再复制'); return }
+  if (!activeRoiChannel.value) { ElMessage.warning('请先选择关联监控点/绑定监控点后再复制'); return }
   copyRoiTargets.value = []
   copyRoiMode.value = 'overwrite'
   showCopyRoiDialog.value = true
 }
 function confirmCopyRoi() {
-  if (copyRoiTargets.value.length === 0) { ElMessage.warning('请勾选目标通道'); return }
+  if (copyRoiTargets.value.length === 0) { ElMessage.warning('请勾选目标监控点'); return }
   roiMarkTouched()  // 确认复制才真正进入逐通道模式 (取消关闭不改变模式)
   const src = roiByChannel.value[activeRoiChannel.value] || {
     list: roiClone(form.conditions.region.config.roiPolygon),
@@ -2437,7 +2437,7 @@ function confirmCopyRoi() {
     }
     roiTouched.value.add(key)
   }
-  ElMessage.success(`已复制到 ${copyRoiTargets.value.length} 个通道`)
+  ElMessage.success(`已复制到 ${copyRoiTargets.value.length} 个监控点`)
   showCopyRoiDialog.value = false
 }
 function fillRoiFromBaseline() {
@@ -2529,7 +2529,7 @@ const activeAreaRoiCount = computed(() =>
 //   保存链已保证画板即布防入口: 面类双写 regions 表 (createRegion)、绊线双写
 //   tripwires 表 (createTripwireWithMirror) → 提示与判定行为一致。
 const ROI_HINT_BY_ALGO_SEG: Record<string, { level: 'must' | 'builtin' | 'note'; text: string }> = {
-  intrusion: { level: 'must', text: '：必须绘制检测区域，未绘制区域的通道不布防，不会产生告警' },
+  intrusion: { level: 'must', text: '：必须绘制检测区域，未绘制区域的监控点不布防，不会产生告警' },
   tripwire: { level: 'must', text: '：必须绘制绊线，未绘制不产生越线判定' },
   boundary: { level: 'builtin', text: '：可绘制绊线；未绘制时使用内置中央垂直线兜底（仍会告警，位置/方向不可控）' },
   climbing: { level: 'builtin', text: '：内置三线攀爬判定可全画面工作；绘制检测区域后仅区域内人员参与判定' },
@@ -2623,7 +2623,7 @@ async function loadTripwireOptions() {
       direction: dirToUpper(t.direction),
       channelIdStr: t.channel_id_str || '',
     }))
-    tripwireEmptyHint.value = tripwireOptions.value.length === 0 ? '本通道暂无已保存绊线 — 可直接在上方画板绘制, 保存规则后自动同步' : ''
+    tripwireEmptyHint.value = tripwireOptions.value.length === 0 ? '本监控点暂无已保存绊线 — 可直接在上方画板绘制, 保存规则后自动同步' : ''
   } catch (e: any) {
     tripwireEmptyHint.value = `加载失败: ${e?.message || '未知错误'}`
     tripwireOptions.value = []
@@ -3332,7 +3332,7 @@ async function onPassagewayConfirm(payload: {
   gate_line2?: [number, number, number, number]
 }) {
   const chIdStr = String(form.conditions.region.config.channelId || '')
-  if (!chIdStr) { ElMessage.warning('请先在「绑定通道」勾选通道再绘制'); return }
+  if (!chIdStr) { ElMessage.warning('请先在「绑定监控点」勾选监控点再绘制'); return }
   const chIdNum = Number(chIdStr)
   try {
     await regionApi.upsertPassageway({
@@ -3768,11 +3768,13 @@ function resetEditorState(rule: LinkageRule | null) {
         if (!raw) return empty
         const parsed = JSON.parse(raw)
         const arr = (Array.isArray(parsed) ? parsed
-          : Array.isArray(parsed?.shapes) ? parsed.shapes : []) as Array<{ shape: string; name?: string; active?: boolean; direction?: string; points: number[] }>
+          : Array.isArray(parsed?.shapes) ? parsed.shapes : []) as Array<{ shape: string; name?: string; active?: boolean; direction?: string; pid?: string; points: number[] }>
         const combine: 'union' | 'intersection' =
           (!Array.isArray(parsed) && parsed?.combine === 'intersection') ? 'intersection' : 'union'
         const list = arr.filter(s => s && Array.isArray(s.points)).map((s, i) => ({
-          roi_id: `roi_echo_${Date.now()}_${i}`,
+          // [ROI-IDS 2026-09-17 P2] pid 稳定性: 已带 pid 的 shape 回显保留原值
+          //   (打开+保存不漂移); 存量 shape 首次保存时固化新 pid。
+          roi_id: s.pid || `roi_echo_${Date.now()}_${i}`,
           roi_name: s.name || `区域 ${i + 1}`,
           roi_type: s.shape as RoiData['roi_type'],
           polygon: s.points.map((v, k) => Math.round(k % 2 === 0 ? v * 1920 : v * 1080)),
@@ -3795,9 +3797,10 @@ function resetEditorState(rule: LinkageRule | null) {
             for (const k of Object.keys(m)) {
               const e = (m as any)[k]
               if (!e || typeof e !== 'object') continue
-              const arr = (Array.isArray(e.shapes) ? e.shapes : []) as Array<{ shape: string; name?: string; active?: boolean; direction?: string; points: number[] }>
+              const arr = (Array.isArray(e.shapes) ? e.shapes : []) as Array<{ shape: string; name?: string; active?: boolean; direction?: string; pid?: string; points: number[] }>
               const list = arr.filter(s => s && Array.isArray(s.points)).map((s, i) => ({
-                roi_id: `roi_ch_${Date.now()}_${i}`,
+                // [ROI-IDS 2026-09-17 P2] pid 稳定性: 同通用模式回显保留原值
+                roi_id: s.pid || `roi_ch_${Date.now()}_${i}`,
                 roi_name: s.name || `区域 ${i + 1}`,
                 roi_type: s.shape as RoiData['roi_type'],
                 polygon: s.points.map((v, k2) => Math.round(k2 % 2 === 0 ? v * 1920 : v * 1080)),
@@ -4151,9 +4154,9 @@ async function handleSave(): Promise<boolean> {
       if (unpainted.length > 0) {
         try {
           await ElMessageBox.confirm(
-            `以下 ${unpainted.length} 个通道未绘制检测区/绊线: ${unpainted.map(u => u.label).join('、')}。` +
-            '保存后这些通道不会触发本规则 (对标海康"不绘制不告警"), 可用「复制到其他通道」或「填充通用形状」补齐。',
-            '存在未绘制通道', { type: 'warning', confirmButtonText: '继续保存', cancelButtonText: '返回绘制' })
+            `以下 ${unpainted.length} 个监控点未绘制检测区/绊线: ${unpainted.map(u => u.label).join('、')}。` +
+            '保存后这些监控点不会触发本规则 (对标海康"不绘制不告警"), 可用「复制到其他监控点」或「填充通用形状」补齐。',
+            '存在未绘制监控点', { type: 'warning', confirmButtonText: '继续保存', cancelButtonText: '返回绘制' })
         } catch { return false }
       }
     }
@@ -4234,7 +4237,7 @@ async function handleSave(): Promise<boolean> {
           }
           totDrawn += drawnTripwires.length
           if (!chStr) {
-            ElMessage.warning('画了绊线但未选"关联通道", 绊线未同步到算法库; 请选择通道后重新保存')
+            ElMessage.warning('画了绊线但未选"关联监控点", 绊线未同步到算法库; 请选择监控点后重新保存')
             continue
           }
           let synced = 0, skipped = 0
@@ -4267,7 +4270,7 @@ async function handleSave(): Promise<boolean> {
                 if (mir) await regionApi.upsertTripwire({ ...mir, point_a: pa, point_b: pb, direction, enabled: r.is_active !== false } as any)
                 synced++; idByIndex[i] = String(cand.id)
               } catch (e: any) {
-                ElMessage.error(`绊线「${r.roi_name || i + 1}」(通道 ${chStr}) 同步失败: ${e?.message ?? e}`)
+                ElMessage.error(`绊线「${r.roi_name || i + 1}」(监控点 ${chStr}) 同步失败: ${e?.message ?? e}`)
                 idByIndex[i] = String(cand.id)  // [FIX tw-route] 同步失败不误清理 (画板意图保留)
               }
             } else {
@@ -4284,7 +4287,7 @@ async function handleSave(): Promise<boolean> {
                 })
                 synced++; idByIndex[i] = String(newId)
               } catch (e: any) {
-                ElMessage.error(`绊线创建失败 (通道 ${chStr}): ${e?.message ?? e} (规则仍会保存)`)
+                ElMessage.error(`绊线创建失败 (监控点 ${chStr}): ${e?.message ?? e} (规则仍会保存)`)
               }
             }
           }
@@ -4310,7 +4313,7 @@ async function handleSave(): Promise<boolean> {
             }
           }
           if (drawnTripwires.length > 1) {
-            ElMessage.info(`通道 ${chStr} 已同步 ${synced} 条绊线 (共 ${drawnTripwires.length} 条, 规则不限具体绊线, 任一触发)`)
+            ElMessage.info(`监控点 ${chStr} 已同步 ${synced} 条绊线 (共 ${drawnTripwires.length} 条, 规则不限具体绊线, 任一触发)`)
           }
         }
         // [ROI-PER-CHANNEL 2026-09-12] 严格模式: refs 回写通道包 (序列化段组装
@@ -4394,7 +4397,7 @@ async function handleSave(): Promise<boolean> {
         //   防误删: 仅清理规则镜像形态 (algo_id 精确等值), 算法页手工画的其他
         //   算法区域不动; 停用残留不查 (include_disabled 默认 false) 边界留待后续。
         if (drawnAreas.length > 0 && !areaChStr) {
-          ElMessage.warning('画了区域但未选"关联通道", 区域未同步到算法库; 请选择通道后重新保存')
+          ElMessage.warning('画了区域但未选"关联监控点", 区域未同步到算法库; 请选择监控点后重新保存')
           continue
         }
         if (!areaChStr) continue
@@ -4441,17 +4444,17 @@ async function handleSave(): Promise<boolean> {
             }
           }
           if (synced > 0 && cleaned > 0) ElMessage.success(areaMulti
-            ? `通道 ${areaChStr}: 区域已同步 (${synced} 更新, ${cleaned} 清理)`
+            ? `监控点 ${areaChStr}: 区域已同步 (${synced} 更新, ${cleaned} 清理)`
             : `区域已同步 (${synced} 更新, ${cleaned} 清理, 插件判定同几何)`)
           else if (cleaned > 0) ElMessage.success(areaMulti
-            ? `通道 ${areaChStr}: 已清理 ${cleaned} 个画板已删除的区域`
+            ? `监控点 ${areaChStr}: 已清理 ${cleaned} 个画板已删除的区域`
             : `已同步清理 ${cleaned} 个画板已删除的区域`)
           else if (synced > 0) ElMessage.success(areaMulti
-            ? `通道 ${areaChStr}: 区域已同步 (${synced} 个)`
+            ? `监控点 ${areaChStr}: 区域已同步 (${synced} 个)`
             : `区域已同步 (${synced} 个, 插件判定同几何)`)
         } catch (e: any) {
           ElMessage.error(areaMulti
-            ? `区域同步失败 (通道 ${areaChStr}): ${e?.message ?? e} (规则仍会保存, 算法库未更新)`
+            ? `区域同步失败 (监控点 ${areaChStr}): ${e?.message ?? e} (规则仍会保存, 算法库未更新)`
             : `区域同步失败: ${e?.message ?? e} (规则仍会保存, 算法库未更新)`)
         }
       }
@@ -4482,6 +4485,8 @@ async function handleSave(): Promise<boolean> {
       combine: rc.config.roiCombine === 'intersection' ? 'intersection' : 'union',
       shapes: list.map(r => ({
         shape: r.roi_type, name: r.roi_name, active: r.is_active,
+        // [ROI-IDS 2026-09-17 P2] 二级锚点: 形状级 pid (引擎命中提取进 verdict)
+        pid: r.roi_id,
         direction: r.direction || '', points: buildNormPoints(r.polygon),
       })),
     })
@@ -4506,6 +4511,8 @@ async function handleSave(): Promise<boolean> {
           combine: combine === 'intersection' ? 'intersection' : 'union',
           shapes: list.filter(r => isTripwireRule.value || r.roi_type !== 'tripwire').map(r => ({
             shape: r.roi_type, name: r.roi_name, active: r.is_active,
+            // [ROI-IDS 2026-09-17 P2] 二级锚点: 同通用模式 (逐通道条目)
+            pid: r.roi_id,
             direction: r.direction || '', points: buildNormPoints(r.polygon),
           })),
           tripwire_refs: isTripwireRule.value

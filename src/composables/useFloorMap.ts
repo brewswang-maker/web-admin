@@ -15,6 +15,7 @@
 
 import { ref } from 'vue'
 import { floorMapApi } from '@/api/floorMap'
+import { linkageApi } from '@/api/linkage'
 import type { CameraMapBinding, FloorMapWithCameras, MapChannelPair } from '@/types/floorMap'
 
 const LIST_TTL_MS = 30_000
@@ -162,6 +163,60 @@ export function fovRadiusNormalized(
 ): number {
   if (!map.width_px || map.scale_m_per_px <= 0) return 0.15
   return Math.min(0.5, (binding.fov_radius_m / map.scale_m_per_px) / map.width_px)
+}
+
+// ═══ [FM-DEF-SHARE 2026-09-17 海康「虚拟防区」对标 · P2-9 数据链共用] ═══
+// 布防规则映射单例: enabled 联动规则 spatial_cond.bound_channel_ids → 归一通道
+// (去 _chN 尾缀) → 规则名列表。编辑页(FloorMapView, 常开)与预览页(SituationScreen,
+// defenseLayerOn 门控)共用同一数据源与解析逻辑, 消除两处重复实现。
+// 解析口径 (LinkageRuleView 实锚): bound_channel_ids = JSON 字符串或数组;
+// 无通道绑定且无形状的纯时间/事件规则不上图 (布防语义=空间防区)。
+const defenseRulesRaw = ref<Record<string, string[]>>({})
+let defenseLoading = false
+/** 拉取 enabled 联动规则并归一为「归一通道 → 规则名列表」映射; 返回成功与否 (UI 副作用留给宿主) */
+export async function loadDefenseRules(): Promise<boolean> {
+  if (defenseLoading) return true // 并发去重: 复用进行中的拉取
+  defenseLoading = true
+  try {
+    const res = await linkageApi.getAllRules({ enabled_only: true })
+    const items: any[] = (res.data as any)?.data?.items ?? (res.data as any)?.items ?? []
+    const map: Record<string, string[]> = {}
+    for (const r of items) {
+      if (!r || r.enabled === false) continue
+      const sp = r.spatial_cond || {}
+      let bounds: string[] = []
+      try {
+        bounds = typeof sp.bound_channel_ids === 'string'
+          ? JSON.parse(sp.bound_channel_ids)
+          : (sp.bound_channel_ids || [])
+      } catch { bounds = [] }
+      const hasShape = !!sp.roi_shapes_json || !!sp.roi_shapes_by_channel
+      if (!bounds.length && !hasShape) continue
+      const name = String(r.name || r.id || '未命名规则')
+      for (const ch of bounds) {
+        const k = String(ch).replace(/_ch\d+$/, '')
+        if (!k) continue
+        if (!map[k]) map[k] = []
+        if (!map[k].includes(name)) map[k].push(name)
+      }
+    }
+    defenseRulesRaw.value = map
+    return true
+  } catch (e) {
+    console.warn('[useFloorMap] loadDefenseRules failed:', e)
+    return false
+  } finally {
+    defenseLoading = false
+  }
+}
+/** bindings × 归一规则通道 → 画布 defense-channels 注入映射 (键=binding.channel_id 原样精确匹配) */
+export function buildDefenseChannels(bindings: CameraMapBinding[]): Record<string, string[]> {
+  const out: Record<string, string[]> = {}
+  for (const b of bindings) {
+    const rules = defenseRulesRaw.value[String(b.channel_id).replace(/_ch\d+$/, '')]
+    if (rules?.length) out[b.channel_id] = rules
+  }
+  return out
 }
 
 export function useFloorMap() {

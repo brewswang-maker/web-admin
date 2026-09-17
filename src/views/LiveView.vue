@@ -86,7 +86,7 @@
               </div>
               <div v-else class="video-empty" @dragover.prevent @drop="onDropChannel($event, idx)">
                 <el-icon :size="32"><VideoCamera /></el-icon>
-                <span>拖拽通道到此处</span>
+                <span>拖拽监控点到此处</span>
               </div>
               <!-- 安全加密指示器 -->
               <div class="slot-security-badge" v-if="slot.playing">
@@ -167,7 +167,7 @@
         <el-card class="channel-card" v-loading="channelsLoading">
           <template #header>
             <div class="tree-head">
-              <span>通道目录</span>
+              <span>监控点目录</span> <!-- [FIX channel-monitor-point 2026-09-17] 海康术语: 通道→监控点 -->
               <el-input v-model="chSearch" size="small" style="width:120px" placeholder="搜索..." clearable />
             </div>
           </template>
@@ -181,7 +181,7 @@
             v-if="liveAreaFailed"
             type="warning"
             :closable="false"
-            title="安保区域加载失败, 通道已按「未分组」显示"
+            title="安保区域加载失败, 监控点已按「未分组」显示"
             class="tree-alert"
           />
           <!-- 三级树: 安保区域→设备→通道; 点通道叶子上墙 / 拖拽到视频格 / 勾选批量 -->
@@ -211,9 +211,9 @@
               </div>
             </template>
           </el-tree>
-          <el-empty v-if="!channels.length && !channelsLoading && !loadError" description="暂无通道数据" :image-size="50" />
+          <el-empty v-if="!channels.length && !channelsLoading && !loadError" description="暂无监控点数据" :image-size="50" />
           <div v-if="loadError" class="tree-error">
-            <span>通道加载失败, 请检查设备连接</span>
+            <span>监控点加载失败, 请检查设备连接</span>
             <el-button size="small" type="primary" link @click="loadData">重试</el-button>
           </div>
         </el-card>
@@ -394,11 +394,11 @@
             </el-form-item>
           </el-form>
 
-          <div style="margin:12px 0;font-weight:600">该组通道列表 ({{ activePatrolGroup.channels.length }})</div>
+          <div style="margin:12px 0;font-weight:600">该组监控点列表 ({{ activePatrolGroup.channels.length }})</div>
           <el-table :data="activePatrolGroup.channels" size="small" max-height="200">
             <el-table-column label="序号" type="index" width="50" />
-            <el-table-column prop="name" label="通道名称" />
-            <el-table-column prop="channelId" label="通道ID" width="160" />
+            <el-table-column prop="name" label="监控点名称" />
+            <el-table-column prop="channelId" label="监控点ID" width="160" />
             <el-table-column label="操作" width="60">
               <template #default="{ row }">
                 <el-button size="small" text type="danger" @click="removeChannelFromGroup(activePatrolGroup.id, row.channelId)">移除</el-button>
@@ -407,7 +407,7 @@
           </el-table>
 
           <div style="margin-top:12px">
-            <el-select v-model="channelToAdd" placeholder="选择通道添加到该组" filterable style="width:300px" size="small">
+            <el-select v-model="channelToAdd" placeholder="选择监控点添加到该组" filterable style="width:300px" size="small">
               <el-option v-for="ch in channels" :key="ch.id" :label="ch.name" :value="ch.id" />
             </el-select>
             <el-button size="small" type="primary" @click="channelToAdd && addChannelToGroup(activePatrolGroup.id, channelToAdd); channelToAdd = ''" style="margin-left:8px">+ 添加</el-button>
@@ -1005,8 +1005,8 @@ function batchAssignChecked() {
       activeSlotIdx.value = (slotIdx + 1) % total
     }
   }
-  if (assigned) ElMessage.success(`已上墙 ${assigned} 路通道`)
-  else ElMessage.warning('所选通道均已在画面中')
+  if (assigned) ElMessage.success(`已上墙 ${assigned} 路监控点`)
+  else ElMessage.warning('所选监控点均已在画面中')
 }
 // 主/子码流切换状态 (P0-1 对标海康/大华双码流策略)
 // 主码流: 高清 1080P/4Mbps → 单屏/4分屏预览
@@ -1130,7 +1130,7 @@ function openPatrolConfig() {
 // 启动轮巡
 function startPatrol() {
   if (!activePatrolGroup.value || activePatrolGroup.value.channels.length === 0) {
-    ElMessage.warning('请先选择轮巡组并添加通道')
+    ElMessage.warning('请先选择轮巡组并添加监控点')
     return
   }
   stopPatrol()  // 先停旧定时器
@@ -1200,7 +1200,7 @@ function toggleAutoPatrol() {
     ElMessage.info('自动轮巡已停止')
   } else {
     const activeCount = gridSlots.slice(0, layout.value).filter(s => s.channelId).length
-    if (activeCount === 0) { ElMessage.warning('没有可轮巡的通道'); return }
+    if (activeCount === 0) { ElMessage.warning('没有可轮巡的监控点'); return }
     autoPatrolEnabled.value = true
     autoPatrolTimer = setInterval(() => {
       const slots = gridSlots.slice(0, layout.value)
@@ -1437,7 +1437,7 @@ function assignChannel(slotIdx: number, ch: Channel) {
       if (chStatus === 'offline') {
         ElMessage.warning(`设备"${ch.name}"离线，无法获取视频流`)
       } else {
-        ElMessage.error(`通道"${ch.name}"视频流获取失败，请检查设备网络或稍后重试`)
+        ElMessage.error(`监控点"${ch.name}"视频流获取失败，请检查设备网络或稍后重试`)
       }
     }
   }).catch(() => {
@@ -2588,7 +2588,7 @@ async function toggleTalk() {
 
   const slot = gridSlots[talkSlotIdx.value]
   if (!slot?.deviceId || !slot?.channelId) {
-    ElMessage.error('请先选择通道')
+    ElMessage.error('请先选择监控点')
     return
   }
 
@@ -2882,7 +2882,7 @@ function restoreFromStore() {
   // 命名空间注册（如 SituationScreen 100+），浮窗继续显示那些通道
   if (restored > 0) {
     channelStore.showFloatingPreview = false
-    console.info(`[LiveView] 已恢复 ${restored} 个通道`)
+    console.info(`[LiveView] 已恢复 ${restored} 个监控点`)
   }
 }
 

@@ -3,7 +3,7 @@
     ref="wrapEl"
     class="fm-canvas"
     :class="{ 'fm-canvas--edit': editable, 'fm-canvas--pan': panEnabled, 'fm-canvas--tool': !!toolMode }"
-    :tabindex="panEnabled ? 0 : -1"
+    :tabindex="(panEnabled || !!toolMode) ? 0 : -1"
     @click="onCanvasClick"
     @wheel.prevent="onWheel"
     @dblclick="resetView"
@@ -382,25 +382,45 @@ function resetView() {
   scheduleViewportEmit()
 }
 function onKeyDown(ev: KeyboardEvent) {
+  // [FM-SETUP 2026-09-17] 工具态 ESC 提前分支: 编辑模式 (panEnabled=false) 也要能
+  //   ESC 退出框选 (panEnabled 守卫原来直接 return, ESC 收不到); 只读态行为不变
+  if (ev.key === 'Escape' && props.toolMode) {
+    measurePts.value = []
+    emit('tool-cancel')
+    ev.preventDefault()
+    return
+  }
   if (!panEnabled.value) return
   if (ev.key === '+' || ev.key === '=') zoomBy(1.25)
   else if (ev.key === '-') zoomBy(1 / 1.25)
   else if (ev.key === '0') resetView()
-  else if (ev.key === 'Escape' && props.toolMode) {
-    // [P1-3] 工具态 ESC: 清当前测量/选框并退出工具态 (宿主同步按钮高亮复位)
-    measurePts.value = []
-    emit('tool-cancel')
-    ev.preventDefault()
-  }
   else return
+  ev.preventDefault()
+}
+// [FM-SETUP 2026-09-17] 工具态 ESC window 级兑底: 焦点在工具栏按钮 (画布 div 未聚焦)
+//   时根 div keydown 收不到 → 框选退不出; window 级保证 ESC 总能退出工具态。
+//   确认框/告警弹窗在场时让位 (ESC 由弹窗自身关闭); 与根 div 分支双触发幂等
+//   (宿主 toolMode 置空 + measurePts 清空均为幂等操作)
+function onWindowKeydown(ev: KeyboardEvent) {
+  if (ev.key !== 'Escape' || !props.toolMode) return
+  if (document.querySelector('.el-message-box, .alarm-popup-overlay')) return
+  measurePts.value = []
+  emit('tool-cancel')
   ev.preventDefault()
 }
 // 空白区拖拽平移 (编辑模式禁用 — 与落点/图标拖拽语义冲突); 点位 mousedown 已 stop
 const panning = ref<{ sx: number; sy: number; vx: number; vy: number } | null>(null)
+// [FM-SETUP 2026-09-17 海康「资源上图」框选对标] 框选态在编辑模式同样生效
+//   (设置页框选批量删除); 框选拖拽后的 click 会冒泡到 onCanvasClick 误触发落点,
+//   用一次性标志抑制 (仅框选态置位, measure/pin/平移态不受影响)
+let marqueeSuppressClick = false
 function startPan(ev: MouseEvent) {
-  if (!panEnabled.value || ev.button !== 0) return
-  if (props.toolMode === 'marquee') { startMarquee(ev); return } // [P1-4] 拖拽=选框
-  if (props.toolMode) return // [P1-3] 测距态点击=取点 — 平移短路
+  if (ev.button !== 0) return
+  if (props.toolMode === 'marquee') { marqueeSuppressClick = true; startMarquee(ev); return }
+  if (!panEnabled.value) return
+  // [FM-VIEWPORT 2026-09-17 海康「修改视野」对标] 视野调整态: 宿主按需开 pan-zoom,
+  //   平移放行; 其余工具态 (measure/pin) 仍短路
+  if (props.toolMode && props.toolMode !== 'viewport') return
   panning.value = { sx: ev.clientX, sy: ev.clientY, vx: view.x, vy: view.y }
   window.addEventListener('mousemove', onPanMove)
   window.addEventListener('mouseup', onPanEnd)
@@ -607,6 +627,10 @@ function snap(v: number): number {
   return Math.round(v / GRID_STEP) * GRID_STEP
 }
 function onCanvasClick(ev: MouseEvent) {
+  // [FM-SETUP 2026-09-17] 框选拖拽结束后的 click 消费掉, 防编辑模式误落点
+  if (marqueeSuppressClick) { marqueeSuppressClick = false; return }
+  // [FM-VIEWPORT 2026-09-17] 视野调整态: 点击不落点 (拖拽平移后的 click 亦被吞)
+  if (props.toolMode === 'viewport') return
   // [P1-3] 测距态: 点击底图取点 (点位图标 @click.stop 不冒泡, 不会误采图标坐标)
   if (props.toolMode === 'measure') { onMeasureClick(ev); return }
   // [P2-11a] 标记态: 点击底图放置标记 (宿主弹命名框后持久化)
@@ -671,6 +695,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('mouseup', onPanEnd)
   window.removeEventListener('mousemove', onMarqueeMove)
   window.removeEventListener('mouseup', onMarqueeUp)
+  window.removeEventListener('keydown', onWindowKeydown) // [FM-SETUP]
   clearTimeout(viewportEmitTimer)
 })
 // [FLOOR-MAP 2026-09-05 v2] 换图复位视口 (多图/楼层切换后不应残留平移缩放态)
@@ -680,6 +705,8 @@ watch(() => props.map.id, () => {
 })
 // [P0-1] 首次挂载同样应用已存初始视野 (无 viewport → identity, 行为不变)
 onMounted(applyViewportFromMap)
+// [FM-SETUP 2026-09-17] 工具态 ESC window 级兑底挂载 (见 onWindowKeydown 注释)
+onMounted(() => window.addEventListener('keydown', onWindowKeydown))
 // [P0-1 v2 2026-09-16 iSC「可配置初始视野」对标 · 改显式配置] 自动持久化会让任意
 // 临时平移覆盖初始视野 (多人值班互覆), 改由宿主「设为初始视野」按钮触发落库:
 // 暴露当前视野给宿主; 普通浏览不再自动落库 (宿主不再传 persist-viewport →

@@ -129,7 +129,7 @@
       <el-col :span="8">
         <el-card shadow="never" class="block-card side-card">
           <template #header>
-            <div class="card-header"><span class="card-title">通道与 EHS 闭环</span></div>
+            <div class="card-header"><span class="card-title">监控点与 EHS 闭 环</span></div>
           </template>
           <div class="dev-line">
             <div class="dev-stat">
@@ -138,7 +138,7 @@
             </div>
             <div class="dev-stat">
               <span class="dev-num val-blue">{{ channelsTotal }}</span>
-              <span class="dev-label">接入通道</span>
+              <span class="dev-label">接入监控点</span>
             </div>
             <div class="dev-stat">
               <span class="dev-num val-purple">{{ t6Count }}</span>
@@ -163,7 +163,7 @@
             </div>
           </template>
           <el-empty v-else :image-size="48" description="24h 内无告警" />
-          <div class="rank-title">通道告警排行 <span class="rank-sub">(24h)</span></div>
+          <div class="rank-title">监控点告警排行 <span class="rank-sub">(24h)</span></div>
           <template v-if="topChannels.length">
             <div v-for="c in topChannels" :key="c.key" class="rank-row">
               <div class="rank-head">
@@ -175,7 +175,7 @@
               </div>
             </div>
           </template>
-          <el-empty v-else :image-size="48" description="24h 内无通道告警" />
+          <el-empty v-else :image-size="48" description="24h 内无监控点告警" />
         </el-card>
       </el-col>
     </el-row>
@@ -231,7 +231,7 @@ const t6Count = computed(() => events.value.filter(e => e.type === 'phone_call' 
 
 const kpiCards = computed<Array<{ label: string; value: string; sub: string; tone: string; icon: Component; to?: string; alert?: boolean }>>(() => [
   { label: '设备在线', value: `${devicesOnline.value}/${devicesTotal.value}`, sub: '加油站接入设备', tone: 'green', icon: Monitor, to: '/devices' },
-  { label: '通道数', value: String(channelsTotal.value), sub: '加油区/卸油/罐区/便利店', tone: 'blue', icon: DataLine, to: '/channels' },
+  { label: '监控点数', value: String(channelsTotal.value), sub: '加油区/卸油/ 罐区/便利店', tone: 'blue', icon: DataLine, to: '/channels' },
   { label: '今日告警', value: String(todayCount.value), sub: '五级分卡汇总', tone: todayCount.value > 50 ? 'red' : 'orange', icon: Bell, to: '/gas-station/perimeter' },
   { label: 'T6 触发', value: String(t6Count.value), sub: '电话/吸烟 — 仅声光', tone: 'orange', icon: Warning, alert: t6Count.value > 0 },
   { label: '加油站场景包', value: String(scenePacks.value.length), sub: '3 包 (primary/unloading/ehs)', tone: 'purple', icon: TakeawayBox, to: '/gas-station/scene-packs' },
@@ -311,7 +311,7 @@ const topChannels = computed(() => {
   const map = new Map<string, number>()
   for (const e of filtered) map.set(String(e.channelId), (map.get(String(e.channelId)) ?? 0) + 1)
   const items = Array.from(map.entries())
-    .map(([key, total]) => ({ key, label: `通道 ${key}`, total }))
+    .map(([key, total]) => ({ key, label: `监控点 ${key}`, total }))
     .sort((a, b) => b.total - a.total)
     .slice(0, 5)
   const max = Math.max(...items.map(i => i.total), 1)

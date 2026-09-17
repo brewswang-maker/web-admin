@@ -157,7 +157,7 @@ export const asyncRoutes: RouteRecordRaw[] = [
         path: 'devices/:id/channels',
         name: 'DeviceChannels',
         component: ChannelView,
-        meta: { title: '设备通道', icon: 'Grid', hidden: true, roles: ['admin', 'user'] }
+        meta: { title: '设备监控点', icon: 'Grid', hidden: true, roles: ['admin', 'user'] }
       },
       {
         // [P1.3 2026-09-10 更名] 安保区域独立管理 (原 device-groups; 对标海康 iSC 区域树)
@@ -176,13 +176,13 @@ export const asyncRoutes: RouteRecordRaw[] = [
         path: 'channels',
         name: 'Channels',
         component: ChannelView,
-        meta: { title: '通道管理', icon: 'Grid', roles: ['admin', 'user'] }
+        meta: { title: '监控点管理', icon: 'Grid', roles: ['admin', 'user'] }
       },
       {
         path: 'channels/:id',
         name: 'ChannelDetail',
         component: ChannelDetailView,
-        meta: { title: '通道详情', hidden: true, roles: ['admin', 'user'] },
+        meta: { title: '监控点详情', hidden: true, roles: ['admin', 'user'] },
         props: true
       },
       {
@@ -478,7 +478,7 @@ export const asyncRoutes: RouteRecordRaw[] = [
         path: 'hotel-unattended/corridor-events',
         name: 'HotelCorridorEvents',
         component: HotelCorridorEventsView,
-        meta: { title: '通道事件', icon: 'Bell', roles: ['admin', 'user', 'viewer'] }
+        meta: { title: '走廊事件', icon: 'Bell', roles: ['admin', 'user', 'viewer'] } // [FIX channel-monitor-point 2026-09-17] HotelCorridorEvents=走廊(物理位置), 同 i18n hotelCorridorEvents 口径
       },
       {
         path: 'hotel-unattended/scene-packs',

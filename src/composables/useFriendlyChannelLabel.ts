@@ -65,8 +65,8 @@ export function channelFallbackLabel(
   const chName = lookup?.chNameOf?.(base) ?? ''
   if (chName) return `${chName}${suffix}`
   const devName = lookup?.devNameOf?.(base) ?? ''
-  if (devName) return `${devName} 通道 ${v}`
-  return `通道 ${v}`
+  if (devName) return `${devName} 监控点 ${v}`
+  return `监控点 ${v}`
 }
 
 /**

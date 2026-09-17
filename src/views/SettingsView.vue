@@ -388,7 +388,7 @@
             <el-form-item :label="$t('settings.recContinuous', '设备连续录像')">
               <el-switch v-model="recPolicy.continuousEnabled" />
               <div v-if="!recPolicy.continuousEnabled" style="width:100%;margin-top:4px">
-                <el-text type="warning" size="small">{{ $t('settings.recTotalGate', '总闸已关闭：所有通道均不进行连续录像') }}</el-text>
+                <el-text type="warning" size="small">{{ $t('settings.recTotalGate', '总闸已关闭：所有监控点均不进行连续录像') }}</el-text>
               </div>
               <div style="width:100%;margin-top:4px">
                 <el-text type="info" size="small">{{ $t('settings.recContinuousHint', '关闭后不再进行任何连续录像（设备存储有限，事件证据回放走 NVR 录像）') }}</el-text>
@@ -412,9 +412,9 @@
           </el-form>
         </el-card>
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;gap:12px;flex-wrap:wrap">
-          <span style="font-size:12px;color:#909399">按通道/时段/事件触发自动启停录像，支持节假日排除</span>
+          <span style="font-size:12px;color:#909399">按监控点/时段/事件触发自动启停录像，支持节假日排除</span>
           <div style="display:flex;gap:8px;align-items:center">
-            <el-input v-model="scheduleChannelFilter" placeholder="按通道ID过滤" size="small" clearable style="width:180px"
+            <el-input v-model="scheduleChannelFilter" placeholder="按监控点ID过滤" size="small" clearable style="width:180px"
               @keyup.enter="fetchSchedules" @clear="fetchSchedules" />
             <el-button size="small" @click="fetchSchedules" :loading="scheduleLoading">{{ $t('settings.scheduleRefresh', '刷新') }}</el-button>
             <el-button type="primary" size="small" @click="openScheduleDialog()">+ {{ $t('settings.addSchedule', '新增计划') }}</el-button>
@@ -424,7 +424,7 @@
           <el-table-column :label="$t('settings.scheduleName', '计划名称')" width="140">
             <template #default="{ row }">{{ row.schedule_name || `#${row.id}` }}</template>
           </el-table-column>
-          <el-table-column :label="$t('settings.scheduleChannel', '通道')" width="140">
+          <el-table-column :label="$t('settings.scheduleChannel', '监控点')" width="140">
             <template #default="{ row }">{{ row.channel_id }}</template>
           </el-table-column>
           <el-table-column :label="$t('settings.scheduleType', '类型')" width="100">
@@ -477,7 +477,7 @@
         <div style="display:flex;gap:32px;flex-wrap:wrap;align-items:flex-start">
           <div style="display:flex;flex-direction:column;gap:16px">
             <div style="display:flex;align-items:center;gap:12px">
-              <span style="width:100px">通道数量:</span>
+              <span style="width:100px">监控点数量:</span>
               <el-input-number v-model="estParams.channel_count" :min="1" :max="256" />
             </div>
             <div style="display:flex;align-items:center;gap:12px">
@@ -496,7 +496,7 @@
           </div>
           <div v-if="storageEstimate" class="storage-result">
             <div class="storage-row">
-              <span class="storage-label">单通道/天</span>
+              <span class="storage-label">单监控点/天</span>
               <span class="storage-value">{{ storageEstimate.gb_per_channel_per_day }} GB</span>
             </div>
             <div class="storage-row highlight">
@@ -508,7 +508,7 @@
               <span class="storage-value">{{ storageEstimate.recommended_disk_tb }} TB</span>
             </div>
             <div class="storage-formula">
-              公式: 码率 ÷ 8 × 3600 × 小时/天 × 通道数 × 天数
+              公式: 码率 ÷ 8 × 3600 × 小时/天 × 监控点数 × 天数
             </div>
           </div>
         </div>
@@ -540,8 +540,8 @@
         <el-form-item label="计划名称">
           <el-input v-model="editingSchedule.schedule_name" placeholder="如: 工作日白天录像" />
         </el-form-item>
-        <el-form-item label="通道">
-          <el-input v-model="editingSchedule.channel_id" placeholder="通道ID" :disabled="!!editingSchedule.id" />
+        <el-form-item label="监控点">
+          <el-input v-model="editingSchedule.channel_id" placeholder="监控点ID" :disabled="!!editingSchedule.id" />
         </el-form-item>
         <el-form-item label="录像类型">
           <el-radio-group v-model="editingSchedule.schedule_type">
@@ -1099,7 +1099,7 @@ function removeTimeSegment(idx: number) {
 async function saveSchedule() {
   if (!editingSchedule.value) return
   if (!editingSchedule.value.channel_id) {
-    ElMessage.warning('请选择通道')
+    ElMessage.warning('请选择监控点')
     return
   }
   try {

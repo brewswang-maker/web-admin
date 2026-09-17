@@ -77,7 +77,9 @@
                 </el-tag>
               </template>
             </el-table-column>
-            <el-table-column prop="channelId" label="通道" width="80" />
+            <el-table-column prop="channelId" label="监控点" width="80">
+              <template #default="{ row }">{{ alarmChLabel(row) }}</template>
+            </el-table-column>
             <el-table-column prop="description" label="描述" min-width="200" show-overflow-tooltip />
             <el-table-column label="时间" width="160">
               <template #default="{ row }">{{ formatTime(row.createdAt) }}</template>
@@ -143,6 +145,8 @@ import { largeEventApi } from '@/api/largeEvent'
 import { alarmApi } from '@/api/alarm'
 import eventTypesApi from '@/api/eventTypes'
 import type { CapacityProfile } from '@/types/largeEvent'
+// [FIX channel-monitor-point 2026-09-17] 对标海康术语: 通道列显示值友好名化 (目录反查, 失败回退技术 ID)
+import { alarmChLabel } from '@/composables/useAlarmTableHelpers'
 import { LARGE_EVENT_SCENES, LARGE_EVENT_CIRCLES, NEW_LARGE_EVENT_TYPES } from '@/types/largeEvent'
 import type { AlarmEvent } from '@/types/alarm'
 import type { EventTypeMetadataItem } from '@/api/eventTypes'
@@ -177,7 +181,7 @@ const statCards = computed(() => [
   {
     label: '当前峰值密度 (人)',
     value: peakDensity.value,
-    sub: peakChannel.value != null ? `通道 ${peakChannel.value} 实时网格求和` : '暂无密度快照',
+    sub: peakChannel.value != null ? `监控点 ${peakChannel.value} 实时网格求和` : '暂无密度快照',
     color: '#e6a23c', icon: Odometer,
   },
   {

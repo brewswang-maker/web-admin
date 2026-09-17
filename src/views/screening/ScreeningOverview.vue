@@ -130,7 +130,7 @@
       <el-col :span="8">
         <el-card shadow="never" class="block-card side-card" style="height:100%">
           <template #header>
-            <div class="card-header"><span class="card-title">通道与设备实况</span></div>
+            <div class="card-header"><span class="card-title">监控点与设备实况</span></div>
           </template>
           <!-- 设备在线 (deviceApi 真实 status) -->
           <div class="dev-line">
@@ -140,7 +140,7 @@
             </div>
             <div class="dev-stat">
               <span class="dev-num val-blue">{{ channelsTotal }}</span>
-              <span class="dev-label">接入通道</span>
+              <span class="dev-label">接入监控点</span>
             </div>
             <div class="dev-stat">
               <span class="dev-num val-purple">{{ feedbackTotal }}</span>
@@ -150,7 +150,7 @@
           <el-progress v-if="devicesTotal" :percentage="Math.round(devicesOnline / devicesTotal * 100)"
                        :stroke-width="6" :show-text="false" class="dev-bar" status="success" />
           <!-- 通道告警排行 (dashboard.by_channel 真实聚合) -->
-          <div class="rank-title">通道告警排行 <span class="rank-sub">(窗口内)</span></div>
+          <div class="rank-title">监控点告警排行 <span class="rank-sub">(窗口内)</span></div>
           <template v-if="topChannels.length">
             <div v-for="c in topChannels" :key="c.key" class="rank-row">
               <div class="rank-head">
@@ -166,7 +166,7 @@
               </div>
             </div>
           </template>
-          <el-empty v-else :image-size="48" description="窗口内无通道告警" />
+          <el-empty v-else :image-size="48" description="窗口内无监控点告警" />
           <!-- 重点事件类型 Top (dashboard.by_type 真实聚合, 中文映射) -->
           <div class="rank-title">重点事件构成 <span class="rank-sub">(Top 5)</span></div>
           <template v-if="topTypes.length">
@@ -210,7 +210,9 @@
             <span class="level-tag" :class="levelClass(row.level)">{{ levelText(row.level) }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="channelId" label="通道" width="100" show-overflow-tooltip />
+        <el-table-column prop="channelId" label="监控点" width="100" show-overflow-tooltip>
+          <template #default="{ row }">{{ alarmChLabel(row) }}</template>
+        </el-table-column>
         <el-table-column prop="description" label="描述" min-width="220" show-overflow-tooltip />
         <el-table-column label="快照" width="80" align="center">
           <template #default="{ row }">
@@ -255,7 +257,7 @@
       <div v-if="current" class="detail-body">
         <div class="kv-row"><span class="k">事件类型</span><span>{{ current.type }} · {{ typeName(current.type) }}</span></div>
         <div class="kv-row"><span class="k">级别</span><span :class="levelClass(current.level)">{{ levelText(current.level) }}</span></div>
-        <div class="kv-row"><span class="k">通道</span><span>{{ current.channelId }}</span></div>
+        <div class="kv-row"><span class="k">监控点</span><span>{{ alarmChLabel(current) }}</span></div>
         <div class="kv-row"><span class="k">置信度</span><span>{{ current.confidence != null ? (current.confidence * 100).toFixed(0) + '%' : '-' }}</span></div>
         <div class="kv-row"><span class="k">描述</span><span>{{ current.description || '-' }}</span></div>
         <div class="kv-row"><span class="k">时间</span><span>{{ formatTime(current.createdAt) }}</span></div>
@@ -289,6 +291,8 @@ import { ElMessage } from 'element-plus'
 import LazyChart from '@/components/LazyChart.vue'
 import { alarmApi } from '@/api/alarm'
 import { deviceApi } from '@/api/device'
+// [FIX channel-monitor-point 2026-09-17] 对标海康术语: 通道列显示值友好名化 (目录反查, 失败回退技术 ID)
+import { alarmChLabel } from '@/composables/useAlarmTableHelpers'
 import eventTypesApi from '@/api/eventTypes'
 import { screeningApi } from '@/api/screening'
 import type { EventTypeMetadataItem } from '@/api/eventTypes'
@@ -405,7 +409,7 @@ const kpiCards = computed(() => {
     {
       label: '设备在线', value: `${devicesOnline.value}/${devicesTotal.value}`, tone: 'green', icon: Monitor,
       alert: devicesTotal.value > 0 && devicesOnline.value < devicesTotal.value,
-      sub: `接入通道 ${channelsTotal.value}`,
+      sub: `接入监控点 ${channelsTotal.value}`,
     },
     {
       label: '联动时延', value: d?.action_latency.sample_count ? `${(d.action_latency.p50_ms).toFixed(1)} ms` : '—', tone: 'teal', icon: Timer, alert: false,

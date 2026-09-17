@@ -70,7 +70,8 @@
                   <!-- [FLOOR-MAP 2026-09-05 v2] 点位点击预览非告警通道时提示可返回 -->
                   <div v-if="activePrimaryTab === 'preview' && previewChannelOverride" class="alarm-popup__preview-src-tag">
                     📍 平面图点位 · {{ previewChannelOverrideLabel }}
-                    <span class="alarm-popup__preview-src-back" @click="clearPreviewOverride">返回告警通道</span>
+                    <!-- [FIX channel-monitor-point 2026-09-17] 对标海康术语统一"通道"→"监控点" -->
+                    <span class="alarm-popup__preview-src-back" @click="clearPreviewOverride">返回告警监控点</span>
                   </div>
                   <div v-if="activePrimaryTab === 'preview' && playerError" class="alarm-popup__preview-empty">
                     <p>⚠️ 实时视频不可用</p>
@@ -78,8 +79,8 @@
                     <p class="alarm-popup__hint alarm-popup__hint--small">可查看「图片」或「联动回放」</p>
                   </div>
                   <div v-else-if="activePrimaryTab === 'preview' && !previewChannelId" class="alarm-popup__preview-empty">
-                    <p>⚠️ 无通道信息</p>
-                    <p class="alarm-popup__hint">该告警未关联视频通道</p>
+                    <p>⚠️ 无监控点信息</p>
+                    <p class="alarm-popup__hint">该告警未关联视频监控点</p>
                   </div>
 
                   <div class="alarm-popup__preview-tags">

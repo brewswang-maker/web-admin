@@ -55,9 +55,9 @@ describe('channelFallbackLabel 四段降级 (症状 3: 回显不裸显数字)', 
   it('② 池不中, 目录通道名反查命中', () => {
     expect(channelFallbackLabel('34020000001320000009', pool, dir)).toBe('仓库顶')
   })
-  it('③ 目录设备名反查命中 → 「设备名 通道 <id>」; ④ 全不中 → 「通道 <id>」', () => {
-    expect(channelFallbackLabel('34020000001320000008_ch0', pool, dir)).toBe('围墙球机 通道 34020000001320000008_ch0')
-    expect(channelFallbackLabel('9999', pool, dir)).toBe('通道 9999')
+  it('③ 目录设备名反查命中 → 「设备名 监控点 <id>」; ④ 全不中 → 「监控点 <id>」', () => {
+    expect(channelFallbackLabel('34020000001320000008_ch0', pool, dir)).toBe('围墙球机 监控点 34020000001320000008_ch0')
+    expect(channelFallbackLabel('9999', pool, dir)).toBe('监控点 9999')
   })
 })
 

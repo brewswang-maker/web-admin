@@ -51,7 +51,7 @@
       <table class="stats-table">
         <thead>
           <tr>
-            <th>通道</th>
+            <th>监控点</th>
             <th>首帧(ms)</th>
             <th>格式</th>
             <th>RTT(ms)</th>

@@ -67,9 +67,9 @@
       </el-col>
       <el-col :xs="24" :lg="9">
         <el-card shadow="never" class="chart-card">
-          <template #header><span class="card-title">通道告警分布 ({{ days }} 天)</span></template>
+          <template #header><span class="card-title">监控点告警分布 ({{ days }} 天)</span></template>
           <LazyChart v-if="channelBarOption" :option="channelBarOption" height="280px" />
-          <el-empty v-else :image-size="60" description="暂无通道数据" />
+          <el-empty v-else :image-size="60" description="暂无监控点数据" />
         </el-card>
       </el-col>
       <el-col :xs="24" :lg="7">
@@ -288,7 +288,7 @@ const channelBarOption = computed(() => {
     tooltip: { trigger: 'axis' },
     grid: { top: 16, left: 60, right: 16, bottom: 24 },
     xAxis: { type: 'value', minInterval: 1, splitLine: { lineStyle: { type: 'dashed', color: '#eee' } } },
-    yAxis: { type: 'category', data: items.map(i => `通道 ${i[0]}`), axisLabel: { fontSize: 10 } },
+    yAxis: { type: 'category', data: items.map(i => `监控点 ${i[0]}`), axisLabel: { fontSize: 10 } },
     series: [{
       type: 'bar', data: items.map(i => i[1]),
       itemStyle: { color: '#14b8b8', borderRadius: [0, 4, 4, 0] },

@@ -54,7 +54,7 @@
       </el-col>
       <el-col :xs="24" :lg="14">
         <el-card shadow="never" class="chart-card">
-          <template #header><span class="card-title">通道告警分布 ({{ days }} 天)</span></template>
+          <template #header><span class="card-title">监控点告警分布 ({{ days }} 天)</span></template>
           <LazyChart :option="channelBarOption" height="280px" />
         </el-card>
       </el-col>
@@ -208,7 +208,7 @@ const channelBarOption = computed<EChartsOption>(() => {
     tooltip: { trigger: 'axis' },
     grid: { left: 90, right: 24, top: 12, bottom: 24 },
     xAxis: { type: 'value', minInterval: 1 },
-    yAxis: { type: 'category', data: items.map(i => `通道 ${i.key}`).reverse(),
+    yAxis: { type: 'category', data: items.map(i => `监控点 ${i.key}`).reverse(),
              axisLabel: { fontSize: 10 } },
     series: [{
       type: 'bar', data: items.map(i => i.total).reverse(),

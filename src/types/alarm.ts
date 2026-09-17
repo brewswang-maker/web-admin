@@ -889,7 +889,8 @@ export function normalizeAlarmCore(raw: any): AlarmEvent {
     category: mapCategory(alarmType, severityNum),
     description: raw.description || raw.title || ALARM_TYPE_CN[alarmType] || alarmType,
     channelId,
-    channelName: raw.channel_name || raw.channelName || (channelId ? `通道${channelId}` : ''),
+    // [FIX channel-monitor-point 2026-09-17] 对标海康术语: channelName 缺失时占位改「监控点<id>」 (显示层口径, 与 alarmChLabel 一致)
+    channelName: raw.channel_name || raw.channelName || (channelId ? `监控点${channelId}` : ''),
     // [FIX device-fields 2026-09-10] 设备编号 = 父设备 20 位国标码
     //   (device_admin_id, REST enrich / WS 两推送点已补) 优先; 告警库
     //   device_id 是通道码形态 ("父码_chN"), 不再作为设备编号展示。

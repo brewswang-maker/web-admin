@@ -35,13 +35,13 @@
       <el-col :span="8">
         <el-card shadow="hover" class="stat-card">
           <div class="stat-value" style="color:#52c41a">{{ demandStatus.active_count }}</div>
-          <div class="stat-label">推理活跃通道</div>
+          <div class="stat-label">推理活跃监控点</div>
         </el-card>
       </el-col>
       <el-col :span="8">
         <el-card shadow="hover" class="stat-card">
           <div class="stat-value" style="color:#8c8c8c">{{ demandStatus.idle_count }}</div>
-          <div class="stat-label">推理休眠通道 (资源节省)</div>
+          <div class="stat-label">推理休眠监控点 (资源节省)</div>
         </el-card>
       </el-col>
       <el-col :span="8">

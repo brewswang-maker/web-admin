@@ -125,7 +125,7 @@
             <el-card shadow="hover" class="dev-card">
               <template #header>
                 <div class="card-head">
-                  <span>{{ t('perimeter.kpi.channelTitle', '通道统计') }}</span>
+                  <span>{{ t('perimeter.kpi.channelTitle', '监控点统计') }}</span>
                   <el-button size="small" text type="primary" @click="go('/algo-config')">
                     {{ t('perimeter.kpi.gotoAlgo', '去配置') }}
                   </el-button>
@@ -134,7 +134,7 @@
               <div class="dev-grid">
                 <div class="dev-item">
                   <div class="dev-num">{{ chStat.total }}</div>
-                  <div class="dev-label">{{ t('perimeter.kpi.chTotal', '接入通道') }}</div>
+                  <div class="dev-label">{{ t('perimeter.kpi.chTotal', '接入监控点') }}</div>
                 </div>
                 <div class="dev-item">
                   <div class="dev-num dev-ok">{{ chStat.online }}</div>
@@ -150,11 +150,11 @@
                 </div>
               </div>
               <div class="dev-rate">
-                <span class="dev-rate-label">{{ t('perimeter.kpi.onlineRate', '通道在线率') }}</span>
+                <span class="dev-rate-label">{{ t('perimeter.kpi.onlineRate', '监控点在线率') }}</span>
                 <el-progress :percentage="chStat.onlinePct" :stroke-width="10"
                   :status="chStat.onlinePct >= 90 ? 'success' : chStat.onlinePct >= 60 ? undefined : 'exception'" />
               </div>
-              <div v-if="!chStatLoaded" class="dev-fallback">{{ t('perimeter.kpi.chFallback', '通道统计暂不可用 (接口未就绪)') }}</div>
+              <div v-if="!chStatLoaded" class="dev-fallback">{{ t('perimeter.kpi.chFallback', '监控点统计暂不可用 (接口未就绪)') }}</div>
             </el-card>
           </el-col>
         </el-row>

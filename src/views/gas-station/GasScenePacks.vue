@@ -139,7 +139,7 @@
       </p>
       <div class="deploy-channels">
         <div class="deploy-channels-head">
-          <span>绑定通道 (规则事件源 channel_ids)</span>
+          <span>绑定监控点 (规则事件源 channel_ids)</span>
           <el-button size="small" link type="primary" :loading="deployDialog.loading"
                      @click="loadChannels">刷新</el-button>
         </div>
@@ -149,10 +149,10 @@
           </div>
         </el-checkbox-group>
         <div v-if="!deployDialog.loading && deployDialog.channels.length === 0" class="deploy-hint">
-          未获取到通道列表 — 布防将绑定全部通道
+          未获取到监控点列表 — 布防将绑定全部监控点
         </div>
         <div class="deploy-hint deploy-hint-sub">
-          不勾选任何通道 = 绑定全部通道 (与后端 channel_ids 空数组语义一致)
+          不勾选任何监控点 = 绑定全部监控点 (与后端 channel_ids 空数组语义一致)
         </div>
         <!-- [加油站三期 P1-6] 按 zones 圈层建议分组提示 (与详情抽屉「三圈布防 zones」同源) -->
         <div v-if="deployDialog.pack?.zones && Object.keys(deployDialog.pack.zones).length"
@@ -367,7 +367,7 @@ async function loadChannels() {
       .map((c) => {
         // 小整数 ID → int32 channel_ids (联动规则事件源语义)
         const numId = Number(c.channelNo) || Number(c.id) || 0
-        return { id: numId, label: `${c.name || `通道${numId}`} (#${numId})` }
+        return { id: numId, label: `${c.name || `监控点${numId}`} (#${numId})` }
       })
       .filter(c => c.id > 0)
   } catch {

@@ -86,7 +86,7 @@ const secKpis = computed(() => {
 
 const entries = [
   { path: '/screening/overview', name: '安检总览', tone: 'blue', icon: DataAnalysis,
-    desc: '6 KPI 真实聚合 / 24h 态势 / 通道排行 / 门面工程' },
+    desc: '6 KPI 真实聚合 / 24h 态势 / 监控点排行 / 门面工程' },
   { path: '/screening/xray', name: 'X 光判图辅助', tone: 'purple', icon: Aim,
     desc: '包裹快照判图 + 人包追溯 (以图搜图同通道 ±10min)' },
   { path: '/screening/rule-manager', name: '安检规则管理', tone: 'green', icon: DocumentChecked,

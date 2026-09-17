@@ -266,6 +266,32 @@
             <el-switch v-model="snapEnabled" size="small" />
             吸附
           </span>
+          <!-- [FM-SETUP 2026-09-17 海康「资源上图」工具栏对标 · FM-COPY-AREA 重排] 顺序:
+               框选 | 视野(与保存视野互斥) | 复制到其他区域 | 上传底图 | 保存 | 清空点位 | 删除 -->
+          <el-button
+            size="small"
+            :type="canvasTool === 'marquee' ? 'primary' : ''"
+            :title="canvasTool === 'marquee' ? '退出框选 (ESC)' : '框选点位: 空白处拖拽框选后批量删除'"
+            @click="toggleCanvasMarquee"
+          >框选</el-button>
+          <!-- [FM-VIEWPORT 2026-09-17 海康「修改视野」对标 · 单按钮二态] 未激活=「视野」
+               进入调整态 (滚轮缩放/拖拽平移, 落点暂停); 激活后原位变「保存视野」(点击落库,
+               ESC 退出不保存) —— 不新增工具栏行 (此前独立按钮会把工具栏挤到第二行,
+               与画布右上「添加设备」区域重叠) -->
+          <el-button
+            size="small"
+            :type="canvasTool === 'viewport' ? 'primary' : ''"
+            :title="canvasTool === 'viewport' ? '保存当前缩放/平移为初始视野 (ESC 退出不保存)' : '调整视野: 进入后滚轮缩放/拖拽平移, 完成后再次点击保存'"
+            @click="onViewportBtn"
+          >{{ canvasTool === 'viewport' ? '保存视野' : '视野' }}</el-button>
+          <!-- [FM-COPY-AREA 2026-09-17 海康「复制到其他区域」对标] 跨图复制点位集
+               (与复制整图 copyMap 区分: 目标是已存在的其他平面图, 如同组摄像头批量跨楼层布点) -->
+          <el-button
+            size="small"
+            :disabled="!selectedMap?.cameras?.length"
+            title="把当前图全部点位 (含位置/朝向/半径) 复制到另一张平面图"
+            @click="openCopyAreaDialog"
+          >复制到其他区域</el-button>
           <el-upload
             :show-file-list="false"
             :http-request="onUploadImage"
@@ -274,6 +300,15 @@
             <el-button size="small" :loading="uploading">上传底图</el-button>
           </el-upload>
           <el-button size="small" type="primary" :loading="savingMeta" @click="saveMeta">保存</el-button>
+          <!-- [FM-SETUP 2026-09-17 海康「清除配置」对标] 一键清空当前图全部点位 -->
+          <el-button
+            size="small"
+            type="danger"
+            plain
+            :disabled="!selectedMap?.cameras?.length"
+            title="删除当前图全部点位 (二次确认, 不可恢复)"
+            @click="clearBindings"
+          >清空点位</el-button>
           <el-button size="small" type="danger" plain @click="removeMap">删除</el-button>
         </div>
 
@@ -281,6 +316,7 @@
         <div class="floormap-view__editor">
           <div class="floormap-view__canvas-wrap">
             <FloorMapCanvas
+              ref="fmCanvasRef"
               :map="selectedMap"
               :bindings="selectedMap.cameras"
               :editable="true"
@@ -290,8 +326,13 @@
               :alarm-channels="alarmChannels"
               :highlight-channel-id="focusChannelId"
               :ghost-type="pendingChannel ? pendingType : ''"
+              :tool-mode="canvasTool"
+              :defense-channels="defenseChannels"
+              :pan-zoom="canvasTool === 'viewport' ? true : undefined"
               @canvas-click="onCanvasClick"
               @binding-move="onBindingMove"
+              @marquee-select="onMarqueeSelect"
+              @tool-cancel="canvasTool = ''"
             />
             <div v-if="pendingChannel" class="floormap-view__pending-tip">
               正在放置: {{ pendingDesc }} — 点击画布落点
@@ -372,7 +413,7 @@
                     <el-select
                       v-if="pendingType === 'camera'"
                       v-model="pendingChannel"
-                      placeholder="选择通道"
+                      placeholder="选择监控点"
                       size="small"
                       filterable
                       clearable
@@ -395,10 +436,10 @@
                   <!-- [v4-C10] 连续落点模式: 落点后不清编号 (非 camera 自动递增 SOS-001→002) -->
                   <label class="floormap-view__add-kit-cont">
                     <el-checkbox v-model="continuousMode" size="small">连续落点</el-checkbox>
-                    <span class="floormap-view__add-kit-cont-sub">{{ pendingType === 'camera' ? '落点后保留通道' : '编号自动递增' }}</span>
+                    <span class="floormap-view__add-kit-cont-sub">{{ pendingType === 'camera' ? '落点后保留监控点' : '编号自动递增' }}</span>
                   </label>
                   <div class="floormap-view__add-kit-hint">
-                    {{ pendingChannel ? (continuousMode ? '连续模式: 点画布连续落点' : '点击地图落点（自动吸附栅格）') : '选类型后选通道/输编号' }}
+                    {{ pendingChannel ? (continuousMode ? '连续模式: 点画布连续落点' : '点击地图落点（自动吸附栅格）') : '选类型后选监控点/输编号' }}
                   </div>
                 </div>
               </transition>
@@ -426,7 +467,7 @@
               <el-select
                 v-if="pendingType === 'camera'"
                 v-model="pendingChannel"
-                placeholder="选择通道后点画布落点"
+                placeholder="选择监控点后点画布落点"
                 size="small"
                 filterable
                 class="floormap-view__panel-pick-ipt"
@@ -798,7 +839,7 @@
               <text x="110" y="56" text-anchor="middle" fill="#4A5E80" font-size="7">创建后: 选设备 → 点画布落点 → 拖拽微调</text>
             </svg>
           </div>
-          <div class="floormap-wizard__tip">创建后将自动选中并进入设备绑定流程（选通道 → 点画布落点）</div>
+          <div class="floormap-wizard__tip">创建后将自动选中并进入设备绑定流程（选监控点 → 点画布落点）</div>
         </template>
         <div v-else class="floormap-wizard__done">
           <svg viewBox="0 0 24 24" width="44" height="44">
@@ -810,7 +851,7 @@
           <div class="floormap-wizard__next">
             <div class="floormap-wizard__next-card">
               <svg viewBox="0 0 24 24" width="20" height="20"><circle cx="12" cy="12" r="11" :fill="deviceIconMeta('camera').color"/><path :d="deviceIconMeta('camera').path" fill="#fff"/></svg>
-              <div><b>绑定摄像头</b><span>选通道后点画布落点</span></div>
+              <div><b>绑定摄像头</b><span>选监控点后点画布落点</span></div>
             </div>
             <div class="floormap-wizard__next-card">
               <svg viewBox="0 0 24 24" width="20" height="20"><circle cx="12" cy="12" r="11" :fill="deviceIconMeta('sos').color"/><path :d="deviceIconMeta('sos').path" fill="#fff"/></svg>
@@ -844,7 +885,58 @@
       </template>
     </el-dialog>
 
-    <!-- [v4-E18] 快捷键提示条 (底部居中, 可关闭 localStorage 记忆; 复用 fm-drop 过渡) -->
+    <!-- [FM-COPY-AREA 2026-09-17 海康「复制到其他区域」对标] 目标图选择器 (v4 卡片风格:
+         缩略图 + building/floor 元数据 + 点位数), 确认后逐点复制当前图点位集 -->
+    <el-dialog v-model="copyAreaVisible" title="复制点位到其他区域" width="560px" append-to-body>
+      <div class="floormap-view__copy-hint">
+        将把「{{ selectedMap?.name || selectedMap?.building || selectedMap?.floor || '当前图' }}」的
+        {{ selectedMap?.cameras?.length || 0 }} 个点位 (含位置/朝向/半径) 复制到所选平面图;
+        同监控点在目标图已有绑定时将被覆盖。
+      </div>
+      <div class="floormap-view__copy-list">
+        <label
+          v-for="m in copyAreaCandidates"
+          :key="m.id"
+          class="floormap-view__copy-card"
+          :class="{ 'is-active': copyAreaTargetId === m.id }"
+        >
+          <input
+            v-model.number="copyAreaTargetId"
+            type="radio"
+            :value="m.id"
+            class="floormap-view__copy-radio"
+          />
+          <img
+            v-if="m.image_path"
+            :src="floorMapApi.getImageUrl(m)"
+            class="floormap-view__copy-thumb"
+            alt=""
+          />
+          <div v-else class="floormap-view__copy-thumb floormap-view__copy-thumb--empty">无底图</div>
+          <div class="floormap-view__copy-meta">
+            <div class="floormap-view__copy-name">{{ m.name || '(未命名)' }}</div>
+            <div class="floormap-view__copy-sub">
+              {{ [m.building, m.floor].filter(Boolean).join(' · ') || '未分区' }}
+              · {{ m.cameras?.length || 0 }} 点位
+            </div>
+          </div>
+        </label>
+        <div v-if="!copyAreaCandidates.length" class="floormap-view__copy-empty">
+          没有其他平面图可接收复制 (可先新建一张图)
+        </div>
+      </div>
+      <template #footer>
+        <el-button size="small" @click="copyAreaVisible = false">取消</el-button>
+        <el-button
+          size="small"
+          type="primary"
+          :disabled="!copyAreaTargetId"
+          :loading="copyAreaBusy"
+          @click="doCopyToArea"
+        >复制</el-button>
+      </template>
+    </el-dialog>
+
     <transition name="fm-drop">
       <div v-if="kbdHintVisible" class="floormap-view__kbd-hint">
         <span><kbd>/</kbd>搜索</span>
@@ -874,7 +966,9 @@ import type { UploadRequestOptions } from 'element-plus'
 import { http } from '@/api/http'
 import { floorMapApi } from '@/api/floorMap'
 import { channelApi } from '@/api/channel'
-import { useFloorMap } from '@/composables/useFloorMap'
+// [FM-DEF-SHARE 2026-09-17 海康「虚拟防区」对标] 布防数据链抽至 useFloorMap 单例共用
+//   (编辑页常开 / 预览页 defenseLayerOn 门控, 同一解析口径), 本页不再自持 linkageApi
+import { useFloorMap, loadDefenseRules, buildDefenseChannels } from '@/composables/useFloorMap'
 import FloorMapCanvas from '@/components/map/FloorMapCanvas.vue'
 import {
   FLOOR_MAP_DEVICE_TYPES,
@@ -1159,6 +1253,60 @@ async function copyMap(m: FloorMapWithCameras) {
   }
 }
 
+// ── [FM-COPY-AREA 2026-09-17 海康「复制到其他区域」对标] 跨图复制点位集 ──
+// 与「复制整图」(copyMap, 新建一张副本图) 区分: 本功能把当前图点位集复制到**已存在**
+// 的其他平面图 (如同组摄像头跨楼层批量布点), 逐点 upsertBinding 全字段拷贝
+// (channel/device_type/label/pos/fov_yaw/radius/is_primary), 单点失败不中断,
+// 结束 Toast ok/total + 失败点位明细。目标图同通道已有绑定时被覆盖 (upsert 语义)。
+const copyAreaVisible = ref(false)
+const copyAreaTargetId = ref(0)
+const copyAreaBusy = ref(false)
+const copyAreaCandidates = computed<FloorMapWithCameras[]>(() =>
+  maps.value.filter((m) => m.id !== selectedId.value),
+)
+function openCopyAreaDialog() {
+  if (!selectedMap.value?.cameras?.length) return
+  copyAreaTargetId.value = 0
+  copyAreaVisible.value = true
+}
+async function doCopyToArea() {
+  const src = selectedMap.value
+  const dst = maps.value.find((m) => m.id === copyAreaTargetId.value)
+  if (!src || !dst || !src.cameras?.length) return
+  copyAreaBusy.value = true
+  const fails: string[] = []
+  let ok = 0
+  try {
+    for (const b of src.cameras) {
+      try {
+        await floorMapApi.upsertBinding(dst.id, {
+          channel_id: b.channel_id,
+          device_type: b.device_type,
+          label: b.label,
+          pos_x: b.pos_x,
+          pos_y: b.pos_y,
+          fov_yaw: b.fov_yaw,
+          fov_radius_m: b.fov_radius_m,
+          is_primary: b.is_primary,
+        })
+        ok++
+      } catch (e) {
+        console.warn('[FloorMapView] copyToArea single failed:', b.channel_id, e)
+        fails.push(b.label || b.channel_id)
+      }
+    }
+    await loadMaps(true)
+    if (fails.length) {
+      ElMessage.warning(`已复制 ${ok}/${src.cameras.length} 个点位到「${dst.name}」, 失败: ${fails.join('、')}`)
+    } else {
+      ElMessage.success(`已复制 ${ok}/${src.cameras.length} 个点位到「${dst.name}」`)
+    }
+    copyAreaVisible.value = false
+  } finally {
+    copyAreaBusy.value = false
+  }
+}
+
 /** 卡片 hover 删除 (与工具栏 removeMap 同链路, 支持删非选中图) */
 async function confirmDeleteMap(m: FloorMapWithCameras) {
   try {
@@ -1384,7 +1532,7 @@ const gpsHint = computed(() => {
   const meta = (ch?.metadata || {}) as Record<string, unknown>
   const lat = meta.gps_lat ?? meta.latitude
   const lng = meta.gps_lng ?? meta.longitude
-  return lat && lng ? `该通道带 GPS (${lat}, ${lng}), 可参考实际安装位置落点` : ''
+  return lat && lng ? `该监控点带 GPS (${lat}, ${lng}), 可参考实际安装位置落点` : ''
 })
 
 // ── 元数据表单 ──
@@ -1606,7 +1754,7 @@ async function submitCreate() {
     pendingType.value = 'camera'
     pendingChannel.value = ''
     wizCreated.value = true
-    ElMessage.success(`已创建「${created.name}」, 选择通道后点击画布绑定设备`)
+    ElMessage.success(`已创建「${created.name}」, 选择监控点后点击画布绑定设备`)
     // [v4-D14] 不再 1600ms 自动关闭 — done 区内嵌下一步建议卡片, 用户主动进入绑定
     showGuideBanner()
   } catch (e) {
@@ -1643,12 +1791,29 @@ async function saveMeta() {
 }
 
 async function onUploadImage(opts: UploadRequestOptions) {
-  if (!selectedMap.value) return
+  const m = selectedMap.value
+  if (!m) return
+  // [FM-BASEMAP 2026-09-17 海康「底图配置」对标] 已有底图时先确认: 后端按 id 覆写
+  //   底图文件, 旧图不可恢复 (零后端约束下无版本链), 以事前防御代替事后恢复;
+  //   SVG 无固定像素宽高 → 后端 width_px 解析为 0, 上传后提示校准比例尺
+  if (m.image_path) {
+    try {
+      await ElMessageBox.confirm(
+        `更换底图将覆盖当前底图, 不可恢复, 继续?`,
+        '更换底图',
+        { confirmButtonText: '继续上传', cancelButtonText: '取消', type: 'warning' },
+      )
+    } catch { return }
+  }
+  const isSvg = /\.svg$/i.test(opts.file?.name || '')
   uploading.value = true
   try {
-    await floorMapApi.uploadImage(selectedMap.value.id, opts.file as File)
+    await floorMapApi.uploadImage(m.id, opts.file as File)
     await loadMaps(true)
     ElMessage.success('底图已上传')
+    if (isSvg) {
+      ElMessage.warning('SVG 底图无法自动解析像素宽高, 请校准「米/像素」比例尺后再使用测距/视野功能')
+    }
   } catch (e) {
     console.warn('[FloorMapView] uploadImage failed:', e)
     notifyError('底图上传失败', '支持 SVG / PNG / JPG, 不超过 15MB')
@@ -1744,7 +1909,16 @@ async function updateBinding(b: CameraMapBinding, patch: Partial<CameraMapBindin
   }
 }
 
+// [FM-LINK-DEL 2026-09-17 海康「链接」对标] 单点解除通道-地图关联 (绑定面板行内入口):
+//   与框选删除/清空点位共用 deleteBinding 链路, 补二次确认防误触 (不可恢复)
 async function removeBinding(b: CameraMapBinding) {
+  try {
+    await ElMessageBox.confirm(
+      `解除「${b.label || b.channel_id}」与该平面图的关联? 点位将从图上移除 (可重新落点恢复)。`,
+      '解除链接',
+      { confirmButtonText: '解除', cancelButtonText: '取消', type: 'warning' },
+    )
+  } catch { return }
   try {
     await floorMapApi.deleteBinding(b.map_id, b.channel_id)
     await loadMaps(true)
@@ -1754,6 +1928,98 @@ async function removeBinding(b: CameraMapBinding) {
     ElMessage.error('解绑失败')
   }
 }
+
+// ── [FM-SETUP 2026-09-17 海康「资源上图」设置页补齐] 框选批量 / 清空点位 / 虚拟防区可视 ──
+// 框选: 画布 toolMode='marquee' (editable 下经画布 [FM-SETUP] 放开), 命中点位批量解绑;
+//   空框提示不弹确认。删除走 deleteBinding 逐个串行 (单点失败不中断, 结束汇报 ok/total)
+const canvasTool = ref('')
+function toggleCanvasMarquee() {
+  canvasTool.value = canvasTool.value === 'marquee' ? '' : 'marquee'
+}
+async function onMarqueeSelect(hits: CameraMapBinding[]) {
+  if (!hits.length) { ElMessage.info('框选范围内没有点位'); return }
+  try {
+    await ElMessageBox.confirm(
+      `框选命中 ${hits.length} 个点位, 确定批量删除(解绑)?`,
+      '框选删除',
+      { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' },
+    )
+  } catch { return }
+  let ok = 0
+  for (const b of hits) {
+    try { await floorMapApi.deleteBinding(b.map_id, b.channel_id); ok++ }
+    catch (e) { console.warn('[FloorMapView] marquee delete failed:', b.channel_id, e) }
+  }
+  ElMessage.success(`已删除 ${ok}/${hits.length} 个点位`)
+  canvasTool.value = ''
+  await loadMaps(true)
+}
+
+// 清除配置: 一键解绑当前图全部点位 (二次确认, 不可恢复; 海康「清除配置」对标)
+async function clearBindings() {
+  const m = selectedMap.value
+  if (!m) return
+  const n = m.cameras?.length || 0
+  if (!n) { ElMessage.info('当前图没有点位'); return }
+  try {
+    await ElMessageBox.confirm(
+      `将删除「${m.name || m.floor || m.building}」全部 ${n} 个点位, 不可恢复, 继续?`,
+      '清除配置',
+      { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' },
+    )
+  } catch { return }
+  let ok = 0
+  for (const b of m.cameras) {
+    try { await floorMapApi.deleteBinding(b.map_id, b.channel_id); ok++ }
+    catch (e) { console.warn('[FloorMapView] clear delete failed:', b.channel_id, e) }
+  }
+  ElMessage.success(`清除完成 ${ok}/${n}`)
+  await loadMaps(true)
+}
+
+// ── [FM-VIEWPORT 2026-09-17 海康「修改视野」对标 · 自预览页迁入] 视野工具态 ──
+// 进入后画布经 :pan-zoom 临时启用缩放/平移 (落点暂停, 画布 onCanvasClick 短路);
+// 「保存视野」把当前视野写库为该图初始视野 (updateMap viewport, 同原预览页落库
+// 语义); ESC 退出不保存 (画布 window 级工具态 ESC 兑底已通用)
+const fmCanvasRef = ref<InstanceType<typeof FloorMapCanvas>>()
+/** [FM-VIEWPORT 单按钮二态] 未激活→进入视野态; 激活→保存落库 (成功后退出视野态) */
+function onViewportBtn() {
+  if (canvasTool.value === 'viewport') saveViewport()
+  else canvasTool.value = 'viewport'
+}
+async function saveViewport() {
+  const m = selectedMap.value
+  const v = fmCanvasRef.value?.getViewpoint()
+  if (!m || !v) return
+  try {
+    await ElMessageBox.confirm(
+      `把「${m.name || m.floor || m.building}」当前缩放/平移状态设为初始视野？预览页下次进入将从此视野展示。`,
+      '保存初始视野',
+      { confirmButtonText: '保存', cancelButtonText: '取消', type: 'info' },
+    )
+  } catch { return }
+  try {
+    await floorMapApi.updateMap(m.id, { name: m.name, viewport: JSON.stringify(v) })
+    m.viewport = JSON.stringify(v) // 本地同步 (同原预览页做法): 换图/重挂载立即生效, 免重拉列表
+    ElMessage.success('初始视野已保存')
+    canvasTool.value = ''
+  } catch {
+    ElMessage.error('保存失败，请重试')
+  }
+}
+
+// 虚拟防区可视 [FM-DEF-SHARE 2026-09-17 海康「虚拟防区」对标]: 数据链抽至 useFloorMap
+//   共用 (loadDefenseRules + buildDefenseChannels 模块级单例), 编辑页常开、预览页
+//   defenseLayerOn 门控, 两处同一解析口径 (enabled 规则 spatial_cond.bound_channel_ids
+//   归一去 _chN) → 画布 FOV 橙色布防态 + 规则数角标 + tooltip 规则名
+const defenseChannels = computed<Record<string, string[]>>(() =>
+  buildDefenseChannels(selectedMap.value?.cameras || []),
+)
+onMounted(() => {
+  loadDefenseRules().then((ok) => {
+    if (!ok) console.warn('[FloorMapView] 布防规则拉取失败, 虚拟防区图层缺省 (编辑主流程不受影响)')
+  })
+})
 
 // ── [v4-B5/B6] 绑定面板: 搜索 + 类型过滤 chips + 分组折叠 + 批量管控 ──
 const bindKeyword = ref('')
@@ -3417,6 +3683,84 @@ onBeforeUnmount(() => {
 }
 .floormap-wizard__done-sub {
   color: #7E93B4;
+  font-size: 12px;
+}
+
+/* [FM-COPY-AREA 2026-09-17 海康「复制到其他区域」对标] 目标图选择器 (v4 卡片风格) */
+.floormap-view__copy-hint {
+  margin-bottom: 12px;
+  padding: 8px 12px;
+  border-radius: 6px;
+  background: rgba(64, 128, 255, 0.08);
+  border: 1px solid rgba(64, 128, 255, 0.2);
+  color: #9FB6D9;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.floormap-view__copy-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+.floormap-view__copy-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.03);
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+.floormap-view__copy-card:hover {
+  border-color: rgba(64, 158, 255, 0.45);
+}
+.floormap-view__copy-card.is-active {
+  border-color: #409eff;
+  background: rgba(64, 158, 255, 0.1);
+}
+.floormap-view__copy-radio {
+  accent-color: #409eff;
+  flex-shrink: 0;
+}
+.floormap-view__copy-thumb {
+  width: 72px;
+  height: 48px;
+  object-fit: contain;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.35);
+  flex-shrink: 0;
+}
+.floormap-view__copy-thumb--empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #5E7396;
+  font-size: 11px;
+}
+.floormap-view__copy-meta {
+  min-width: 0;
+}
+.floormap-view__copy-name {
+  color: #E8F1FA;
+  font-size: 13px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.floormap-view__copy-sub {
+  color: #7E93B4;
+  font-size: 12px;
+  margin-top: 2px;
+}
+.floormap-view__copy-empty {
+  padding: 24px 0;
+  text-align: center;
+  color: #5E7396;
   font-size: 12px;
 }
 </style>

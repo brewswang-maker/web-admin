@@ -39,7 +39,7 @@
         <!-- 编辑态预选提示: 用户清楚当前编辑对象 + 推荐路径 (规则名取 initialTune.name, 单一数据源) -->
         <el-alert type="info" :closable="false" style="margin-bottom: 12px">
           <template #title>
-            正在编辑规则「{{ initialTune?.name ?? '' }}」: 推荐选择「简易模式」快速修改高频字段 (名称 / 事件类型 / 设备通道 / 生效时段), 或选择「高级模式」调整完整治理配置
+            正在编辑规则「{{ initialTune?.name ?? '' }}」: 推荐选择「简易模式」快速修改高频字段 (名称 / 事件类型 / 设备监控点 / 生效时段), 或选择「高级模式」调整完整治理配置
           </template>
         </el-alert>
         <div class="srd-hero">
@@ -56,7 +56,7 @@
             <el-icon class="srd-card-icon"><EditPen /></el-icon>
             <div class="srd-card-main">
               <div class="srd-card-title">简易模式 <el-tag size="small" type="success" effect="dark">推荐</el-tag></div>
-              <div class="srd-card-desc">{{ editSimpleAdvanced ? '与新建简易模式同一表单: 名称 / 事件 / 时间 / 通道' : '快速修改: 名称 / 事件类型 / 设备通道 / 生效时段, 动作编排保持不变' }}</div>
+              <div class="srd-card-desc">{{ editSimpleAdvanced ? '与新建简易模式同一表单: 名称 / 事件 / 时间 / 监控点' : '快速修改: 名称 / 事件类型 / 设备监控点 / 生效时段, 动作编排保持不变' }}</div>
             </div>
             <el-icon class="srd-card-arrow"><ArrowRight /></el-icon>
           </div>
@@ -76,7 +76,7 @@
       <template v-else-if="view === 'tune' && isEdit">
         <el-alert type="info" :closable="false" style="margin-bottom: 12px">
           <template #title>
-            编辑「{{ tune.name }}」: 仅更新 名称 / 事件类型 / 设备通道 / 生效时段, 动作编排与高级治理配置保持不变
+            编辑「{{ tune.name }}」: 仅更新 名称 / 事件类型 / 设备监控点 / 生效时段, 动作编排与高级治理配置保持不变
           </template>
         </el-alert>
         <el-form label-position="top" size="default">
@@ -94,7 +94,7 @@
               </el-option>
             </el-select>
           </el-form-item>
-          <el-form-item label="设备与通道">
+          <el-form-item label="设备与监控点">
             <DeviceChannelPicker v-model="tuneScope" />
           </el-form-item>
           <el-form-item label="启用时间">
@@ -128,7 +128,7 @@
               <el-switch v-model="tune.mapLinked" active-text="触发时定位平面图" />
               <template v-if="tune.mapLinked">
                 <el-select v-model="tune.mapIds" multiple collapse-tags collapse-tags-tooltip filterable
-                  placeholder="不选=不限 (按通道绑定反查)" style="flex: 1; min-width: 220px"
+                  placeholder="不选=不限 (按监控点绑定反查)" style="flex: 1; min-width: 220px"
                   class="srd-map-select">
                   <template v-for="g in mapGroupsByScene" :key="g.label">
                     <el-option-group :label="g.label">

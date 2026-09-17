@@ -3,9 +3,9 @@
     <!-- 统计条 (跨设备规则统一预览: 命中设备 N / 覆盖通道 M) -->
     <div class="dcp-stats">
       <el-tag type="primary" effect="dark" size="small">设备 {{ value.deviceIds.length }}</el-tag>
-      <el-tag type="success" effect="dark" size="small">通道 {{ selectedChannelCount }}</el-tag>
+      <el-tag type="success" effect="dark" size="small">监控点 {{ selectedChannelCount }}</el-tag>
       <el-tag v-if="offlineSelected > 0" type="danger" effect="plain" size="small">离线 {{ offlineSelected }}</el-tag>
-      <span class="dcp-stats-hint">全部设备 = 不限定范围 (规则对所有通道生效)</span>
+      <span class="dcp-stats-hint">全部设备 = 不限定范围 (规则对所有监控点生效)</span>
     </div>
 
     <!-- 搜索 + 算法能力过滤 -->
@@ -39,7 +39,7 @@
           </el-tooltip>
           <span class="dcp-device-loc">{{ dev.location }}</span>
           <el-button size="small" text type="primary" @click="dev._expanded = !dev._expanded">
-            {{ dev._expanded ? '收起通道' : `通道 ${channelsOf(dev.id).length}` }}
+            {{ dev._expanded ? '收起监控点' : `监控点 ${channelsOf(dev.id).length}` }}
           </el-button>
         </div>
         <!-- 通道级多选继承: 勾选设备默认全通道, 展开手动剔除 -->

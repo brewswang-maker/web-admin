@@ -80,7 +80,7 @@ export interface User {
 
 export const ResourceLabels: Record<Resource, string> = {
   device: '设备管理',
-  channel: '通道管理',
+  channel: '监控点管理', // [FIX channel-monitor-point 2026-09-17] 对标海康术语统一"通道"→"监控点"
   alarm: '告警管理',
   algorithm: '算法管理',
   pipeline: 'Pipeline',

@@ -145,7 +145,7 @@
                 <button class="scene-edit-btn" :disabled="videoCurrentBatchStart + videoLayout >= videoDeviceList.length" @click="shiftVideoBatch(1)">下一个</button>
               </template>
               <span v-if="videoPollingActive" class="video-poll-countdown">下次轮巡：{{ videoPollRemainingSec }}秒</span>
-              <span style="font-size:11px;color:#236db7;">{{ videoDeviceList.length }}个通道</span>
+              <span style="font-size:11px;color:#236db7;">{{ videoDeviceList.length }}个监控点</span>
             </div>
             <!-- 全屏按钮（推至右侧） -->
             <div class="title-right-controls">
@@ -209,7 +209,7 @@
                 <div v-if="slot.loading" class="vm-loading">连接中...</div>
                 <div v-if="!slot.playing && !slot.loading" class="vm-empty">
                   <i class="iconfont1 icon1-yingyanshexiangtou" style="font-size:32px;opacity:0.3"></i>
-                  <span>{{ videoDeviceList.length ? '等待轮巡' : '无可用通道' }}</span>
+                  <span>{{ videoDeviceList.length ? '等待轮巡' : '无可用监控点' }}</span>
                 </div>
                 <div v-if="slot.playing" class="vm-label">{{ slot.deviceName }}</div>
               </div>
@@ -303,23 +303,14 @@
                 type="button"
                 class="floor-locate-toggle"
                 :class="{ 'is-active': defenseLayerOn }"
-                :title="defenseLayerOn ? '关闭布防图层' : '布防图层：联动规则绑定的通道扇形橙色高亮并显示规则数'"
+                :title="defenseLayerOn ? '关闭布防图层' : '布防图层：联动规则绑定的监控点扇形橙色高亮并显示规则数'"
                 @click="toggleDefenseLayer"
               >
                 <el-icon :size="13"><Lock /></el-icon>
                 防区
               </button>
-              <!-- [P0-1 v2 2026-09-16 iSC「可配置初始视野」对标 · 显式配置] 保存当前缩放平移
-                    为该图初始视野 (重进从此展示); 普通浏览不再自动落库, 避免多人值班互覆 -->
-              <button
-                type="button"
-                class="floor-locate-toggle"
-                title="设为初始视野：把当前缩放/平移状态保存为该图的默认进入视野"
-                @click="onSetInitialViewport"
-              >
-                <el-icon :size="13"><MapLocation /></el-icon>
-                视野
-              </button>
+              <!-- [FM-VIEWPORT 2026-09-17] 「视野」设置已迁回配置页 (平面图管理 /maps
+                    工具栏「视野→保存视野」), 预览页保持纯只读展示不写库 -->
               <!-- [P2-11a 2026-09-16 iSC「标记」对标] 自定义标记工具 (与测距/框选共用
                     toolMode 互斥; 激活态青色高亮, 点击底图放置 → 命名 → localStorage 持久化) -->
               <button
@@ -398,7 +389,6 @@
                 :defense-channels="defenseChannels"
                 :pins="currentPins"
                 :fav-channels="favChannels"
-                ref="floorCanvasRef"
                 @device-click="onFloorDeviceClick"
                 @tool-cancel="onToolCancel"
                 @marquee-select="onMarqueeSelect"
@@ -412,7 +402,7 @@
               </div>
             </div>
             <div v-if="floorAlarmCount > 0" class="floor-alarm-badge">
-              <span class="floor-alarm-dot" />实时告警联动 {{ floorAlarmCount }} 通道
+              <span class="floor-alarm-dot" />实时告警联动 {{ floorAlarmCount }} 监控点
             </div>
             <!-- [P0-4 2026-09-16 iSC「过滤资源点」对标] 点位计数徽标按过滤后口径显示 -->
             <div class="floor-point-badge">点位 {{ visiblePointCount }}/{{ floorBindings.length }}</div>
@@ -480,18 +470,23 @@
                       {{ alarmStatusText(alarm.status) }}
                     </el-tag>
                   </span>
-                  <button
-                    v-if="alarm.channelId"
-                    class="alarm-action alarm-locate"
-                    type="button"
-                    title="图上定位 (平面图居中显示报警点位)"
-                    @click.stop="locateAlarmOnMap(alarm)"
-                  >
-                    <el-icon :size="13"><Aim /></el-icon>
-                  </button>
-                  <button class="alarm-action" type="button" @click.stop="openAlarmDetail(alarm)">
-                    {{ alarm.status === '已处置' ? t('situationScreen.viewDetail') : t('situationScreen.toHandle') }}
-                  </button>
+                  <!-- [FIX alarm-ops-col 2026-09-17] 双钮收进操作单元格容器: 原 9 个
+                       grid 子元素 > 8 轨, 处置文字按钮被挤到隐式换行轨 (P0-3 加
+                       图上定位钮后操作列显示不下的根因) -->
+                  <span class="alarm-ops">
+                    <button
+                      v-if="alarm.channelId"
+                      class="alarm-action alarm-locate"
+                      type="button"
+                      title="图上定位 (平面图居中显示报警点位)"
+                      @click.stop="locateAlarmOnMap(alarm)"
+                    >
+                      <el-icon :size="13"><Aim /></el-icon>
+                    </button>
+                    <button class="alarm-action" type="button" @click.stop="openAlarmDetail(alarm)">
+                      {{ alarm.status === '已处置' ? t('situationScreen.viewDetail') : t('situationScreen.toHandle') }}
+                    </button>
+                  </span>
                 </div>
                 <div v-if="!latestAlarms.length" class="empty-state panel-empty" style="margin-top:20px;">{{ t('situationScreen.noLatestAlarm') }}</div>
               </div>
@@ -591,7 +586,7 @@
                   <button class="scene-edit-btn" :disabled="videoCurrentBatchStart + videoLayout >= videoDeviceList.length" @click="shiftVideoBatch(1)">下一个</button>
                 </template>
                 <span v-if="videoPollingActive" class="video-poll-countdown">下次轮巡：{{ videoPollRemainingSec }}秒</span>
-                <span style="font-size:12px;color:#236db7;margin-left:auto">{{ videoDeviceList.length }}个通道</span>
+                <span style="font-size:12px;color:#236db7;margin-left:auto">{{ videoDeviceList.length }}个监控点</span>
               </div>
               <div class="fullscreen-video-grid" :class="'vm-grid-' + videoLayout">
                 <div v-for="(slot, idx) in videoDisplaySlots" :key="idx" class="vm-cell">
@@ -600,7 +595,7 @@
                   <div v-if="slot.loading" class="vm-loading">连接中...</div>
                   <div v-if="!slot.playing && !slot.loading" class="vm-empty">
                     <i class="iconfont1 icon1-yingyanshexiangtou" style="font-size:32px;opacity:0.3"></i>
-                    <span>{{ videoDeviceList.length ? '等待轮巡' : '无可用通道' }}</span>
+                    <span>{{ videoDeviceList.length ? '等待轮巡' : '无可用监控点' }}</span>
                   </div>
                   <div v-if="slot.playing" class="vm-label">{{ slot.deviceName }}</div>
                 </div>
@@ -663,7 +658,7 @@ import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
 // [P0-2 2026-09-16 iSC 报警定位对标] 定位开关图标
-import { Aim, Filter, PriceTag, ScaleToOriginal, Grid, Lock, Flag, StarFilled, MapLocation } from '@element-plus/icons-vue'
+import { Aim, Filter, PriceTag, ScaleToOriginal, Grid, Lock, Flag, StarFilled } from '@element-plus/icons-vue'
 // [PERF 2026-09-14] echarts 改动态 import (见 ensureEcharts): 解除本页 chunk 对
 //   vendor-echarts(1.5MB) 的静态依赖 (实测该下载拖慢首页框架渲染 3.9s@隧道带宽),
 //   图表库在 initCharts 数据就绪后才按需拉取。
@@ -689,7 +684,7 @@ import FloorMapCanvas from '@/components/map/FloorMapCanvas.vue'
 import DeviceDetailDialog from '@/components/map/DeviceDetailDialog.vue'
 // [P1-4 2026-09-16 大华 DSS 框选对标] 框选批量预览宫格内核 (自管理播放器生命周期)
 import MiniPlayer from '@/components/video/MiniPlayer.vue'
-import { useFloorMap, channelIdVariants } from '@/composables/useFloorMap'
+import { useFloorMap, channelIdVariants, loadDefenseRules, buildDefenseChannels } from '@/composables/useFloorMap'
 // [P0-1 2026-09-16 iSC 初始视野对标] 视野变更 PATCH 落库
 import { floorMapApi } from '@/api/floorMap'
 import type { FloorMapWithCameras, CameraMapBinding } from '@/types/floorMap'
@@ -703,8 +698,8 @@ import SceneEditPanel from '@/components/SceneEditPanel.vue'
 import type flvjs from 'flv.js'
 import type Hls from 'hls.js'
 import { channelApi } from '@/api/channel'
-import { linkageApi } from '@/api/linkage'
-// [P2-9 2026-09-16 iSC「虚拟防区上图」对标] 布防图层规则源 (enabled 规则空间绑定)
+// [FM-DEF-SHARE 2026-09-17] 布防数据链已抽至 useFloorMap 单例 (loadDefenseRules /
+//   buildDefenseChannels), 与编辑页共用同一解析口径, 本页不再自持 linkageApi
 import { useChannelStore } from '@/stores/channel'
 import {
   normalizeMapDevicePoint,
@@ -1141,66 +1136,27 @@ function togglePointLabels() {
 //   (未标定) 时按钮禁用 — 距离换算无意义。
 const mapToolMode = ref<'' | 'measure' | 'marquee' | 'pin'>('')
 
-// ═══ [P2-9 2026-09-16 iSC「虚拟防区上图」对标] 布防可视化图层 ═══
+// ═══ [P2-9 2026-09-16 iSC「虚拟防区上图」对标 · FM-DEF-SHARE 2026-09-17 数据链共用] ═══
 // 规则 ROI 是画面归一化坐标, 平面图无单应标定不可精确上图 (useFloorMap 注释实锚)
 // → 落地为布防图层: 绑定 enabled 规则的通道 FOV 扇形橙色布防态 + 规则数角标。
-// 空间绑定形态 (LinkageRuleView 实锚): spatial_cond.bound_channel_ids = 字符串 GB 码数组;
-// 无通道绑定且无形状的纯时间/事件规则不上图 (布防语义=空间防区)。
+// 拉取/解析抽至 useFloorMap 单例 (编辑页常开, 本页 defenseLayerOn 门控, 同一数据源);
+// 失败提示与图层回退等 UI 副作用仍留在宿主。
 const defenseLayerOn = ref(false)
-const defenseRulesRaw = ref<Record<string, string[]>>({})  // 归一通道(去 _chN) → 规则名列表
-const defenseLoading = ref(false)
 async function toggleDefenseLayer() {
-  if (defenseLayerOn.value) {
-    defenseLayerOn.value = false
-    return
-  }
-  defenseLayerOn.value = true
-  if (!Object.keys(defenseRulesRaw.value).length) await loadDefenseRules()
-}
-async function loadDefenseRules() {
-  if (defenseLoading.value) return
-  defenseLoading.value = true
-  try {
-    const res = await linkageApi.getAllRules({ enabled_only: true })
-    const items: any[] = (res.data as any)?.data?.items ?? (res.data as any)?.items ?? []
-    const map: Record<string, string[]> = {}
-    for (const r of items) {
-      if (!r || r.enabled === false) continue
-      const sp = r.spatial_cond || {}
-      let bounds: string[] = []
-      try {
-        bounds = typeof sp.bound_channel_ids === 'string'
-          ? JSON.parse(sp.bound_channel_ids)
-          : (sp.bound_channel_ids || [])
-      } catch { bounds = [] }
-      const hasShape = !!sp.roi_shapes_json || !!sp.roi_shapes_by_channel
-      if (!bounds.length && !hasShape) continue
-      const name = String(r.name || r.id || '未命名规则')
-      for (const raw of bounds) {
-        const ch = String(raw).replace(/_ch\d+$/, '')
-        if (!ch) continue
-        ;(map[ch] = map[ch] || []).push(name)
-      }
-    }
-    defenseRulesRaw.value = map
-  } catch (e) {
-    console.warn('[P2-9] defense rules load failed', e)
+  defenseLayerOn.value = !defenseLayerOn.value
+  if (!defenseLayerOn.value) return
+  // 开启即重拉最新规则 (布防配置可能已被修改; 数据链 FM-DEF-SHARE 单例, 失败回退关图层)
+  const ok = await loadDefenseRules()
+  if (!ok) {
     ElMessage.warning('布防规则拉取失败, 图层已关闭')
     defenseLayerOn.value = false
-  } finally {
-    defenseLoading.value = false
   }
 }
 // 当前图 bindings × 归一规则通道 → 画布注入映射 (键=binding.channel_id 原样, 画布精确匹配;
 // computed 派生, 换图自动跟随不重拉规则)
 const defenseChannels = computed<Record<string, string[]>>(() => {
   if (!defenseLayerOn.value) return {}
-  const out: Record<string, string[]> = {}
-  for (const b of floorBindings.value) {
-    const rules = defenseRulesRaw.value[String(b.channel_id).replace(/_ch\d+$/, '')]
-    if (rules?.length) out[b.channel_id] = rules
-  }
-  return out
+  return buildDefenseChannels(floorBindings.value)
 })
 
 // ═══ [P2-11a 2026-09-16 iSC「标记」对标] 自定义标记 (localStorage 按图隔离持久化) ═══
@@ -1350,31 +1306,9 @@ function onDeviceDetailClose() {
   detailBinding.value = null
   floorHighlight.value = ''
 }
-// [P0-1 v2 2026-09-16 iSC「可配置初始视野」对标 · 改显式配置] 原自动持久化
-//   (缩放平移防抖 PATCH) 会让任意临时浏览覆盖初始视野, 多人值班场景互覆;
-//   改为 iSC 管理模式: 「视野」按钮确认后落库当前视野, 普通浏览不写库
-const floorCanvasRef = ref<InstanceType<typeof FloorMapCanvas>>()
-async function onSetInitialViewport() {
-  const m = currentFloorMap.value
-  const v = floorCanvasRef.value?.getViewpoint()
-  if (!m || !v) return
-  try {
-    await ElMessageBox.confirm(
-      `把「${m.name}」当前缩放/平移状态设为初始视野？下次进入将从此视野展示。`,
-      '设为初始视野',
-      { confirmButtonText: '设置', cancelButtonText: '取消', type: 'info' },
-    )
-  } catch {
-    return
-  }
-  try {
-    await floorMapApi.updateMap(m.id, { name: m.name, viewport: JSON.stringify(v) })
-    m.viewport = JSON.stringify(v) // 本地同步: 换图/重挂载立即生效, 无需重拉列表
-    ElMessage.success('初始视野已设置')
-  } catch {
-    ElMessage.error('保存失败，请重试')
-  }
-}
+// [FM-VIEWPORT 2026-09-17] 「设为初始视野」(onSetInitialViewport/floorCanvasRef)
+//   已迁至平面图管理页 (FloorMapView) 工具栏「视野→保存视野」: 视野设置属配置操作,
+//   归位配置页; 预览页普通浏览不写库, 原防多人值班互覆语义不变
 const slideDirection = ref<'slide-left' | 'slide-right'>('slide-left')
 // [P0-3 2026-09-16 iSC「快速定位」对标] 告警列表行 → 图上定位 (任意行非仅最新;
 //   iSC: 单击事件列可在地图中快速定位资源点并居中)。先清后设保证重复点击同条
@@ -1382,7 +1316,7 @@ const slideDirection = ref<'slide-left' | 'slide-right'>('slide-left')
 const floorFocusChannel = ref('')
 async function locateAlarmOnMap(a: Alarm) {
   const ch = a.channelId || ''
-  if (!ch) { ElMessage.warning('该告警未携带通道信息, 无法图上定位'); return }
+  if (!ch) { ElMessage.warning('该告警未携带监控点信息, 无法图上定位'); return }
   if (centerView.value !== 'floor') setCenterView('floor')
   if (!floorMaps.value.length) {
     await loadFloorMapsQ().catch(() => [])
@@ -1583,7 +1517,7 @@ async function loadVideoDeviceList() {
     if (Array.isArray(channels) && channels.length) {
       videoDeviceList.value = channels.map((ch: any) => ({
         channelId: ch.id || ch.channel_id || ch.deviceId || '',
-        deviceName: ch.name || ch.channel_name || ch.deviceName || '未命名通道',
+        deviceName: ch.name || ch.channel_name || ch.deviceName || '未命名监控点',
       })).filter((c: any) => c.channelId)
     }
   } catch { /* ignore */ }
@@ -3304,7 +3238,12 @@ function onAlarmPush(data: unknown) {
     id: sid,
     level: resolveAlarmLevel(raw),
     description: raw.description || raw.alarm_type || '未知告警',
-    deviceName: raw.deviceName || raw.device_name || raw.channel_id || '',
+    // [FIX dev-name-fallback 2026-09-17] 末级兜底 raw.channel_id → raw.channel_name:
+    //   linkage_alarm 帧 (LinkageExecutor) 的 device_name 曾被后端旧覆盖逻辑
+    //   冲空, channel_id 兜底把 20 位国标码当设备名裸显 (设备名称列
+    //   "3402...(3402...")。channel_name 是后端 findChannelNameById 反查的
+    //   真实通道名, alarm.new / linkage_alarm 双帧均携带。
+    deviceName: raw.deviceName || raw.device_name || raw.channel_name || '',
     time: raw.time || time,
     timestamp_ms: raw.timestamp_ms,
     timestampMs: raw.timestampMs,
@@ -3467,9 +3406,11 @@ onUnmounted(() => {
   min-height: 0;
   overflow: hidden;
 }
-.left-col { width: 400px; flex-shrink: 0; flex: none; overflow: hidden; }
+/* [FIX alarm-ops-col 2026-09-17] 三栏 400→384: 各让 16px 给中栏告警表格
+   (操作列加宽 44px, 其中 32px 由面板让位承担, 12px 由级别/快照列内让位) */
+.left-col { width: 384px; flex-shrink: 0; flex: none; overflow: hidden; }
 .center-col { flex: 1; min-width: 0; min-height: 0; overflow: hidden; }
-.right-col { width: 400px; flex-shrink: 0; flex: none; overflow: hidden; }
+.right-col { width: 384px; flex-shrink: 0; flex: none; overflow: hidden; }
 
 .left-col > .ss-panel,
 .right-col > .ss-panel {
@@ -3727,8 +3668,12 @@ onUnmounted(() => {
 
 .alarm-table-row {
   display: grid;
-  /* [DEV-NAME-COL 2026-09-07] 7→8 列: 类型后新增设备名称; 分组收窄让位 */
-  grid-template-columns: 54px 84px minmax(0, 0.8fr) minmax(0, 0.9fr) minmax(0, 1.2fr) 150px 70px 60px;
+  /* [DEV-NAME-COL 2026-09-07] 7→8 列: 类型后新增设备名称; 分组收窄让位
+     [FIX alarm-ops-col 2026-09-17] 操作列 60→104px 容纳「图上定位」icon +
+     处置文字按钮双钮并排; 级别 54→48 / 快照 84→78 让位; 时间/状态不动
+     (150px 已贴 19 字时间戳); 固定列 +32px 由左右栏各让 16px 抵消,
+     弹性列 (分组/类型/设备) 宽度无损 */
+  grid-template-columns: 48px 78px minmax(0, 0.8fr) minmax(0, 0.9fr) minmax(0, 1.2fr) 150px 70px 104px;
   align-items: center;
 }
 
@@ -3876,6 +3821,14 @@ onUnmounted(() => {
 .alarm-action.alarm-locate:focus-visible {
   color: #00E4FF;
   border-color: rgba(0, 228, 255, 0.5);
+}
+
+/* [FIX alarm-ops-col 2026-09-17] 操作单元格双钮容器 (并排居中) */
+.alarm-ops {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
 }
 
 .alarm-scroll :deep(.el-scrollbar__bar.is-vertical) {

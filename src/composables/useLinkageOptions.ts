@@ -296,7 +296,7 @@ async function fetchChannelOptions(): Promise<ChannelOption[]> {
         const deviceId = String(ch.device_id ?? ch.deviceId ?? '')
         const dev = devMap.get(deviceId)
         return {
-          label: ch.name || `通道 ${ch.channel_id ?? ch.channelNo ?? ''}`,
+          label: ch.name || `监控点 ${ch.channel_id ?? ch.channelNo ?? ''}`,
           value: String(ch.channel_id ?? ch.id ?? ''),
           deviceType: ch.deviceType || 'IPCamera',
           deviceId: deviceId || undefined,

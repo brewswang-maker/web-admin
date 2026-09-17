@@ -199,15 +199,18 @@ export function alarmDevLabel(a: Pick<AlarmEvent, 'deviceName' | 'deviceId' | 'c
 }
 
 // 通道标签 [chan-col 2026-09-11]: 可读 channelName 直接用; 空名/纯数字形态
-//   (20 位国标码 / 截断 hash) → 目录反查通道名, 反查不中回落「通道{channelId}」占位
+//   (20 位国标码 / 截断 hash) → 目录反查通道名, 反查不中回落「监控点{channelId}」占位
 //   (任务书口径: 无名称时回落占位, 不裸显数字也不吞成 '-')
+//   [FIX channel-monitor-point 2026-09-17] 对标海康术语统一"通道"→"监控点":
+//   占位词改为「监控点」— 本函数为告警列表/场景事件页显示值 SSOT, 一处改全平台生效;
+//   目录命中时显示的 channelName (设备侧命名如「...通道01」) 属数据内容不改。
 export function alarmChLabel(a: Pick<AlarmEvent, 'channelId'> & { channelName?: string }): string {
   const cn = String(a.channelName ?? '').trim()
   if (cn && !isNumericId(cn)) return cn
   const resolved = resolveAlarmDeviceName('', '', a.channelId)
   if (resolved) return resolved
   const id = String(a.channelId ?? '').trim()
-  return id ? `通道${id}` : '-'
+  return id ? `监控点${id}` : '-'
 }
 
 /** [P0-10/13] 未完结生命周期 = 可处警态 (与 DisposeDialog.EDITABLE_STATUSES 对齐) */

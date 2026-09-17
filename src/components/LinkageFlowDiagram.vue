@@ -34,7 +34,7 @@
               <span class="detail-value">{{ flowData.event?.alarm_type || '-' }}</span>
             </div>
             <div class="node-detail">
-              <span class="detail-label">通道:</span>
+              <span class="detail-label">监控点:</span>
               <span class="detail-value">{{ flowData.event?.channel_id || '-' }}</span>
             </div>
             <div class="node-detail">

@@ -3,7 +3,7 @@
     <!-- 返回栏 -->
     <div class="page-header">
       <el-button link @click="goBack">
-        <el-icon><ArrowLeft /></el-icon>返回通道列表
+        <el-icon><ArrowLeft /></el-icon>返回监控点列表
       </el-button>
       <div class="header-actions">
         <el-button size="small" @click="loadDetail">
@@ -18,7 +18,7 @@
     <!-- 加载状态 -->
     <div v-if="loading" style="text-align:center;padding:80px 0">
       <el-icon class="is-loading" :size="32"><Loading /></el-icon>
-      <p style="color:#8c8c8c">加载通道详情...</p>
+      <p style="color:#8c8c8c">加载监控点详情...</p>
     </div>
 
     <template v-else-if="detail">
@@ -33,11 +33,11 @@
               <h3>{{ detail.name }}</h3>
             </div>
             <div class="info-row">
-              <span class="label">通道 ID</span>
+              <span class="label">监控点 ID</span>
               <span class="value mono">{{ detail.id }}</span>
             </div>
             <div class="info-row">
-              <span class="label">通道号</span>
+              <span class="label">监控点号</span>
               <span class="value">CH{{ detail.channelNo || 1 }}</span>
             </div>
             <div class="info-row">
@@ -124,10 +124,10 @@
           <span class="value">{{ eventSourceLabel(recCfg?.effective?.eventSource) }}</span>
         </div>
         <div class="info-row">
-          <span class="label">通道覆盖状态</span>
+          <span class="label">监控点覆盖状态</span>
           <span class="value">
             <el-tag v-if="!recCfg?.override?.continuous && !recCfg?.override?.eventSource" type="info" size="small">跟随全局</el-tag>
-            <el-tag v-else type="warning" size="small">通道覆盖已启用</el-tag>
+            <el-tag v-else type="warning" size="small">监控点覆盖已启用</el-tag>
           </span>
         </div>
       </el-card>
@@ -214,12 +214,12 @@
     </template>
 
     <!-- 未找到 -->
-    <el-empty v-else description="未找到通道" />
+    <el-empty v-else description="未找到监控点" />
 
     <!-- 编辑抽屉 -->
-    <el-drawer v-model="showEditDrawer" title="编辑通道配置" size="460px">
+    <el-drawer v-model="showEditDrawer" title="编辑监控点配置" size="460px">
       <el-form :model="editForm" label-width="100px">
-        <el-form-item label="通道名称">
+        <el-form-item label="监控点名称">
           <el-input v-model="editForm.name" />
         </el-form-item>
         <el-form-item label="编码格式">
@@ -249,7 +249,7 @@
             <el-option label="8 Mbps" :value="8192" />
           </el-select>
         </el-form-item>
-        <el-form-item label="启用通道">
+        <el-form-item label="启用监控点">
           <el-switch v-model="editForm.enabled" />
         </el-form-item>
         <!-- [REC-ARCH 2026-09-17] 通道级录像覆盖 ('' = 跟随全局; 连续录像受全局总闸约束) -->
@@ -391,7 +391,7 @@ async function loadDetail() {
       editForm.value.recEventSource = recCfg.value?.override?.eventSource || ''
     } catch { recCfg.value = null }
   } catch {
-    ElMessage.error('加载通道详情失败')
+    ElMessage.error('加载监控点详情失败')
   } finally {
     loading.value = false
   }

@@ -2,7 +2,7 @@
   <div class="algo-config-view">
     <div class="page-header">
       <h2 class="page-title">{{ $t('algoConfig', '算法查看') }}</h2>
-      <span class="page-desc">{{ $t('algoConfigDesc', '查看各通道已绑定的推理算法、调度状态与 ROI 资源 — 本页仅供查看, 全部配置与绘制请前往「事件规则」') }}</span>
+      <span class="page-desc">{{ $t('algoConfigDesc', '查看各监控点已绑定的推理 算法、调度状态与 ROI 资源 — 本页仅供查看, 全部配置与绘制请前往「事件规则」') }}</span>
     </div>
 
     <div class="layout-body">
@@ -13,14 +13,14 @@
       <el-card class="panel-left" shadow="never">
         <template #header>
           <div class="panel-title">
-            <span>{{ $t('channelList', '通道列表') }}</span>
+            <span>{{ $t('channelList', '监控点列表') }}</span>
             <el-button size="small" text @click="loadData" :loading="loading">
               <el-icon><Refresh /></el-icon>
             </el-button>
           </div>
         </template>
         <div class="ch-toolbar">
-          <el-input v-model="treeFilter" size="small" clearable placeholder="搜索区域 / 设备 / 通道" class="ch-search">
+          <el-input v-model="treeFilter" size="small" clearable placeholder="搜索区域 / 设备 / 监控点" class="ch-search">
             <template #prefix><el-icon><Search /></el-icon></template>
           </el-input>
         </div>
@@ -49,7 +49,7 @@
               </span>
             </template>
           </el-tree>
-          <el-empty v-if="!loading && channelTreeData.length === 0" description="暂无通道" :image-size="60" />
+          <el-empty v-if="!loading && channelTreeData.length === 0" description="暂无监控点" :image-size="60" />
         </div>
       </el-card>
 
@@ -65,7 +65,7 @@
           </div>
         </template>
         <el-table v-if="selected" :data="algoRows" size="small" class="algo-table" height="100%"
-          row-key="algoId" empty-text="该通道尚未绑定算法 — 新建事件规则后将自动绑定">
+          row-key="algoId" empty-text="该监控点尚未绑定算法 — 新建事件规则后将自动绑定">
           <el-table-column label="算法" min-width="110">
             <template #default="{ row }">
               <div class="algo-name-cell">
@@ -101,7 +101,7 @@
             </template>
           </el-table-column>
         </el-table>
-        <el-empty v-else :description="$t('selectChannelHint', '请先从左侧通道树选择一个通道')" :image-size="80" />
+        <el-empty v-else :description="$t('selectChannelHint', '请先从左侧监控点树选择一个监控点')" :image-size="80" />
       </el-card>
     </div>
 

@@ -87,7 +87,7 @@ function resolveValue(
   if (devName) {
     const chs = lookup.devChannelsOf(v)
     if (chs.length) {
-      for (const c of chs) items.push({ label: c.name || `通道 ${c.raw}`, raw: c.raw })
+      for (const c of chs) items.push({ label: c.name || `监控点 ${c.raw}`, raw: c.raw })
       return items
     }
     return [{ label: devName, raw: v }]
@@ -124,20 +124,20 @@ export function collectRuleBoundChannels(
   // ① bound_channel_ids — 通道级精确绑定 (空项剔除)
   for (const v of rule.spatial_cond?.bound_channel_ids ?? []) {
     const s = toStr(v)
-    if (s) resolveInto(s, '通道')
+    if (s) resolveInto(s, '监控点')
   }
   // ② device_ids — 设备/通道级 (树勾设备展开通道 id 集)
   for (const v of rule.source_cond?.device_ids ?? []) {
     const s = toStr(v)
-    if (s) resolveInto(s, '通道')
+    if (s) resolveInto(s, '监控点')
   }
   // ③ channel_ids — int32 哈希口径 (老规则): 目录反投影, 不中诚实兜底
   for (const v of rule.source_cond?.channel_ids ?? []) {
     const n = typeof v === 'number' ? v : Number(toStr(v))
     if (!Number.isFinite(n) || n === 0) continue
     const hit = lookup.findChannelByHash(n)
-    if (hit) push({ label: hit.name || `通道 ${hit.raw}`, raw: hit.raw })
-    else push({ label: `通道 ${n}`, raw: String(n) })
+    if (hit) push({ label: hit.name || `监控点 ${hit.raw}`, raw: hit.raw })
+    else push({ label: `监控点 ${n}`, raw: String(n) })
   }
   // ④ location_id — 设备编码域收窄; 仅反查命中时计入 (位置文本非通道域不误导)
   const loc = toStr(rule.spatial_cond?.location_id)

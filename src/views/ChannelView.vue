@@ -26,12 +26,12 @@
            勾选集合并集过滤右侧通道表; 上方 P1.5 区域树筛选作为外部筛选器保留) -->
       <div class="area-aside__divider" />
       <div class="area-aside__head">
-        <span class="area-aside__title">通道目录</span>
+        <span class="area-aside__title">监控点目录</span> <!-- [FIX channel-monitor-point 2026-09-17] 海康术语: 通道→监控点 -->
         <el-button v-if="treeCheckedChannelIds.size" link size="small" type="primary" @click="clearChannelTreeFilter">清除</el-button>
       </div>
       <el-input
         v-model="channelTreeFilterText"
-        placeholder="筛选设备/通道..."
+        placeholder="筛选设备/监控点..."
         size="small"
         clearable
         style="margin-bottom:6px"
@@ -47,7 +47,7 @@
         :filter-node-method="filterChannelTreeNode"
         :expand-on-click-node="false"
         default-expand-all
-        empty-text="暂无区域/设备/通道"
+        empty-text="暂无区域/设备/监控点"
         @check="onChannelTreeCheck"
       />
     </aside>
@@ -68,14 +68,14 @@
           </span>
         </template>
         <template v-else>
-          <strong style="font-size:16px">通道管理</strong>
+          <strong style="font-size:16px">监控点管理</strong>
         </template>
       </div>
       <div class="header-right">
         <el-tag v-if="hasDeviceId" :type="deviceOnline ? 'success' : 'danger'" size="small" effect="dark">
           {{ deviceOnline ? '设备在线' : '设备离线' }}
         </el-tag>
-        <el-tag v-else type="info" size="small">共 {{ filteredChannels.length }} 个通道</el-tag>
+        <el-tag v-else type="info" size="small">共 {{ filteredChannels.length }} 个监控点</el-tag>
         <el-button size="small" style="margin-left:8px" @click="loadChannels">
           <el-icon><Refresh /></el-icon>刷新
         </el-button>
@@ -86,7 +86,7 @@
     <div class="filter-bar">
       <el-input
         v-model="searchKeyword"
-        placeholder="搜索通道名称/ID..."
+        placeholder="搜索监控点名称/ID..."
         size="small"
         clearable
         style="width:220px"
@@ -131,7 +131,7 @@
     <!-- 批量操作栏 -->
     <transition name="el-zoom-in-top">
       <div v-if="viewMode === 'table' && selectedIds.length > 0" class="batch-bar">
-        <span class="batch-info">已选 <strong>{{ selectedIds.length }}</strong> 个通道</span>
+        <span class="batch-info">已选 <strong>{{ selectedIds.length }}</strong> 个监控点</span>
         <el-button size="small" type="danger" plain @click="handleBatchDelete">
           <el-icon><Delete /></el-icon>批量删除
         </el-button>
@@ -148,11 +148,11 @@
     <!-- 加载状态 -->
     <div v-if="loading" style="text-align:center;padding:80px 0">
       <el-icon class="is-loading" :size="32"><Loading /></el-icon>
-      <p style="color:#8c8c8c">加载通道信息...</p>
+      <p style="color:#8c8c8c">加载监控点信息...</p>
     </div>
 
     <!-- 空状态 -->
-    <el-empty v-else-if="!filteredChannels.length" :description="hasDeviceId ? '该设备暂无通道' : '暂无通道数据'" />
+    <el-empty v-else-if="!filteredChannels.length" :description="hasDeviceId ? '该设备暂无监控点' : '暂无监控点数据'" />
 
     <!-- ====== 卡片视图 ====== -->
     <div v-else-if="viewMode === 'card'" class="channel-grid">
@@ -179,8 +179,8 @@
         </template>
         <div class="card-body">
           <el-descriptions :column="2" border size="small" title="基本信息">
-            <el-descriptions-item label="通道号">{{ ch.channelNo }}</el-descriptions-item>
-            <el-descriptions-item label="通道名称">{{ ch.name }}</el-descriptions-item>
+            <el-descriptions-item label="监控点号">{{ ch.channelNo }}</el-descriptions-item>
+            <el-descriptions-item label="监控点名称">{{ ch.name }}</el-descriptions-item>
             <el-descriptions-item label="分辨率">{{ ch.resolution || '-' }}</el-descriptions-item>
             <el-descriptions-item label="编码格式">
               <el-tag size="small" type="primary">{{ ch.codec || 'Unknown' }}</el-tag>
@@ -238,7 +238,7 @@
                     <el-icon><EditPen /></el-icon>重命名
                   </el-dropdown-item>
                   <el-dropdown-item command="detail">
-                    <el-icon><View /></el-icon>通道详情
+                    <el-icon><View /></el-icon>监控点详情
                   </el-dropdown-item>
                   <el-dropdown-item command="algo">
                     <el-icon><Cpu /></el-icon>算法插件
@@ -247,7 +247,7 @@
                     <el-icon><CopyDocument /></el-icon>复制 RTSP 地址
                   </el-dropdown-item>
                   <el-dropdown-item command="delete" divided>
-                    <el-icon><Delete /></el-icon>删除通道
+                    <el-icon><Delete /></el-icon>删除监控点
                   </el-dropdown-item>
                 </el-dropdown-menu>
               </template>
@@ -267,8 +267,8 @@
         @sort-change="onSortChange"
       >
         <el-table-column type="selection" width="45" />
-        <el-table-column prop="channelNo" label="通道号" width="70" sortable="custom" />
-        <el-table-column prop="name" label="通道名称" min-width="140" sortable="custom">
+        <el-table-column prop="channelNo" label="监控点号" width="70" sortable="custom" />
+        <el-table-column prop="name" label="监控点名称" min-width="140" sortable="custom">
           <template #default="{ row }">
             <span class="table-name-cell" @dblclick.stop="startInlineRename(row)">{{ row.name }}</span>
             <el-icon v-if="row._renaming" style="margin-left:4px"><EditPen /></el-icon>
@@ -332,9 +332,9 @@
     </div>
 
     <!-- 参数配置对话框 -->
-    <el-dialog v-model="showConfigDialog" title="通道参数配置" width="480px">
+    <el-dialog v-model="showConfigDialog" title="监控点参数配置" width="480px">
       <el-form v-if="currentChannel" :model="configForm" label-width="100px">
-        <el-form-item label="通道名称">
+        <el-form-item label="监控点名称">
           <el-input v-model="configForm.name" />
         </el-form-item>
         <el-form-item label="分辨率">
@@ -364,7 +364,7 @@
             <el-option label="8 Mbps" value="8 Mbps" />
           </el-select>
         </el-form-item>
-        <el-form-item label="启用通道">
+        <el-form-item label="启用监控点">
           <el-switch v-model="configForm.enabled" />
         </el-form-item>
       </el-form>
@@ -375,8 +375,8 @@
     </el-dialog>
 
     <!-- 快速重命名弹窗 -->
-    <el-dialog v-model="showRenameDialog" title="通道重命名" width="360px">
-      <el-input v-model="renameValue" placeholder="请输入新的通道名称" @keyup.enter="confirmRename" />
+    <el-dialog v-model="showRenameDialog" title="监控点重命名" width="360px">
+      <el-input v-model="renameValue" placeholder="请输入新的监控点名称" @keyup.enter="confirmRename" />
       <template #footer>
         <el-button @click="showRenameDialog = false">取消</el-button>
         <el-button type="primary" :loading="saving" @click="confirmRename">确定</el-button>
@@ -688,7 +688,7 @@ function streamLabel(s: string) {
   return s === 'streaming' || s === 'active' ? '在线' : s === 'error' ? '异常' : '离线'
 }
 function statusTooltip(s: string) {
-  return s === 'streaming' || s === 'active' ? '通道正在推送视频流' : s === 'error' ? '通道发生错误，需检查' : '通道空闲，未推流'
+  return s === 'streaming' || s === 'active' ? '监控点正在推送视频流' : s === 'error' ? '监控点发生错误，需检查' : '监控点空闲，未推流'
 }
 function bitrateClass(bitrate: string | number) {
   if (!bitrate || bitrate === '-') return ''
@@ -723,7 +723,7 @@ async function loadChannels() {
       id: String(ch.channel_id ?? ch.id ?? `ch_${idx}`),
       deviceId: String(ch.device_id ?? ch.deviceId ?? ''),
       channelNo: Number(ch.channelNo ?? ch.channel_no ?? idx + 1),
-      name: String(ch.name || ch.channel_name || `通道 ${idx + 1}`),
+      name: String(ch.name || ch.channel_name || `监控点 ${idx + 1}`),
       status: (ch.status === 'online' || ch.status === 'active') ? 'active'
             : (ch.status === 'error') ? 'error'
             : 'inactive',
@@ -760,7 +760,7 @@ async function loadChannels() {
       // el-table 内部管理 selection
     }
   } catch {
-    ElMessage.error('加载通道信息失败')
+    ElMessage.error('加载监控点信息失败')
   } finally {
     loading.value = false
   }
@@ -795,14 +795,14 @@ async function handleSnapshot(ch: Channel) {
       ElMessage.warning('截图返回空')
     }
   } catch {
-    ElMessage.error('截图失败，请确认通道正在推流')
+    ElMessage.error('截图失败，请确认监控点正在推流')
   }
 }
 
 async function handleRecordToggle(ch: Channel) {
   const action = ch.isRecording ? '停止录像' : '开始录像'
   try {
-    await ElMessageBox.confirm(`确认对通道 ${ch.name} ${action}？`, action)
+    await ElMessageBox.confirm(`确认对监控点 ${ch.name} ${action}？`, action)
     const endpoint = ch.isRecording ? `/api/v1/channels/${ch.id}/stop-record` : `/api/v1/channels/${ch.id}/start-record`
     await http.post(endpoint)
     ch.isRecording = !ch.isRecording
@@ -857,12 +857,12 @@ function handleRowDblClick(row: Channel) {
 async function handleDelete(ch: Channel) {
   try {
     await ElMessageBox.confirm(
-      `确认删除通道「${ch.name}」？此操作不可撤销。`,
+      `确认删除监控点「${ch.name}」？此操作不可撤销。`,
       '删除确认',
       { type: 'warning' }
     )
     await channelApi.remove(ch.id)
-    ElMessage.success('通道已删除')
+    ElMessage.success('监控点已删除')
     await loadChannels()
   } catch { /* cancelled */ }
 }
@@ -872,7 +872,7 @@ async function handleBatchDelete() {
   if (!selectedIds.value.length) return
   try {
     await ElMessageBox.confirm(
-      `确认删除选中的 ${selectedIds.value.length} 个通道？此操作不可撤销。`,
+      `确认删除选中的 ${selectedIds.value.length} 个监控点？此操作不可撤销。`,
       '批量删除确认',
       { type: 'warning' }
     )
@@ -904,7 +904,7 @@ function isValidChannelName(n: string): boolean {
   const v = (n || '').trim()
   if (!v) return false
   if (/^\d+$/.test(v)) {
-    ElMessage.warning('通道名称禁止纯数字, 请使用可读名称 (如「大门口摄像头」)')
+    ElMessage.warning('监控点名称禁止纯数字, 请使用可读名称 (如「大门口摄像头」)')
     return false
   }
   return true
@@ -943,7 +943,7 @@ async function saveChannelConfig() {
       codec: configForm.value.codec,
       bitrate: typeof configForm.value.bitrate === 'string' ? parseFloat(configForm.value.bitrate) : configForm.value.bitrate,
     } as any)
-    ElMessage.success('通道配置已保存')
+    ElMessage.success('监控点配置已保存')
     showConfigDialog.value = false
     loadChannels()
   } catch {

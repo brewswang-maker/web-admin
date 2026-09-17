@@ -119,7 +119,7 @@
       <el-col :span="8">
         <el-card shadow="never" class="block-card side-card">
           <template #header>
-            <div class="card-header"><span class="card-title">通道与安全实况</span></div>
+            <div class="card-header"><span class="card-title">监控点与安全实况</span></div>
           </template>
           <div class="dev-line">
             <div class="dev-stat">
@@ -128,7 +128,7 @@
             </div>
             <div class="dev-stat">
               <span class="dev-num val-blue">{{ channelsTotal }}</span>
-              <span class="dev-label">接入通道</span>
+              <span class="dev-label">接入监控点</span>
             </div>
             <div class="dev-stat">
               <span class="dev-num val-purple">{{ feedbackTotal }}</span>
@@ -137,7 +137,7 @@
           </div>
           <el-progress v-if="devicesTotal" :percentage="Math.round(devicesOnline / devicesTotal * 100)"
                        :stroke-width="6" :show-text="false" class="dev-bar" status="success" />
-          <div class="rank-title">通道告警排行 <span class="rank-sub">(窗口内)</span></div>
+          <div class="rank-title">监控点告警排行 <span class="rank-sub">(窗口内)</span></div>
           <template v-if="topChannels.length">
             <div v-for="c in topChannels" :key="c.key" class="rank-row">
               <div class="rank-head">
@@ -153,7 +153,7 @@
               </div>
             </div>
           </template>
-          <el-empty v-else :image-size="48" description="窗口内无通道告警" />
+          <el-empty v-else :image-size="48" description="窗口内无监控点告警" />
           <div class="rank-title">安全事件构成 <span class="rank-sub">(Top 5)</span></div>
           <template v-if="topTypes.length">
             <div v-for="t in topTypes" :key="t.key" class="rank-row">
@@ -245,7 +245,7 @@ const kpiCards = computed(() => {
     {
       label: '设备在线', value: `${devicesOnline.value}/${devicesTotal.value}`, tone: 'green', icon: Monitor,
       alert: devicesTotal.value > 0 && devicesOnline.value < devicesTotal.value, to: '/school/campus3d',
-      sub: `接入通道 ${channelsTotal.value}`,
+      sub: `接入监控点 ${channelsTotal.value}`,
     },
     {
       label: 'VLM 研判量', value: vlmSubmitted.value == null ? '—' : fmtNum(vlmSubmitted.value),
@@ -389,7 +389,7 @@ const zones = ref<Zone[]>([
       { name: '接打电话', status: 'green' },
       { name: '吸烟检测', status: 'green' },
       { name: '遗留物', status: 'green' },
-      { name: '考勤联动', status: 'yellow', note: 'face_pass 通道级考勤' },
+      { name: '考勤联动', status: 'yellow', note: 'face_pass 监控点级考勤' },
     ],
     match: t => ['phone_call', 'smoking', 'unattended_baggage', 'abandoned'].includes(t),
     todayCount: 0, lastEventTime: '-',

@@ -57,9 +57,9 @@
       </el-col>
       <el-col :xs="24" :lg="9">
         <el-card shadow="never" class="chart-card">
-          <template #header><span class="card-title">通道告警分布 ({{ days }} 天)</span></template>
+          <template #header><span class="card-title">监控点告警分布 ({{ days }} 天)</span></template>
           <LazyChart v-if="channelBarOption" :option="channelBarOption" height="280px" />
-          <el-empty v-else :image-size="60" description="暂无通道数据" />
+          <el-empty v-else :image-size="60" description="暂无监控点数据" />
         </el-card>
       </el-col>
       <el-col :xs="24" :lg="7">
@@ -339,7 +339,7 @@ const schedTiles = computed(() => {
   const irm = tpu.value?.irm
   return [
     { label: '并发推理', value: s?.active_inferences != null ? String(s.active_inferences) : '—' },
-    { label: '活跃通道', value: s?.active_channels != null ? String(s.active_channels) : '—' },
+    { label: '活跃监控点', value: s?.active_channels != null ? String(s.active_channels) : '—' },
     { label: '均推理延迟', value: irm?.avg_inference_ms != null ? `${irm.avg_inference_ms}ms` : '—' },
     { label: '吞吐', value: irm?.throughput_fps != null ? `${irm.throughput_fps}fps` : '—' },
     { label: '跳帧率', value: s?.motion_gate?.skip_rate_pct != null ? `${s.motion_gate.skip_rate_pct}%` : '—' },

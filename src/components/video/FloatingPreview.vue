@@ -40,7 +40,7 @@
           />
           <div v-else class="float-empty">
             <el-icon :size="24"><VideoCamera /></el-icon>
-            <span>无活跃通道</span>
+            <span>无活跃监控点</span>
           </div>
         </div>
 
