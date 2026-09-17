@@ -709,6 +709,15 @@ const alarmImageList = computed<GalleryImage[]>(() => {
   const alarm = currentAlarm.value
   if (!alarm) return []
   const metaSrc = popupMetaSrc()
+  // [FIX dup-main 2026-09-17] 主图近似同帧去重: 对齐帧 (ev_<hash>_snapshot_url)
+  //   与落库主图/取证 mid 帧同一次触发常为同 hash 不同 URL — 字符串比较
+  //   必不等, 且 evidence 循环仅按 URL 精确去重 → 画廊出现两张几乎同帧
+  //   的「主快照」(用户实锚 14:40 电话告警)。同 ev_ hash 视为同帧证据,
+  //   只保留首位 (对齐帧优先: bbox 归一化基准与它严格对齐)。
+  const evHash = (u?: string): string => {
+    const m = /\/ev_([0-9a-f]+)_/.exec(u || '')
+    return m ? m[1] : ''
+  }
   // [P0-8 2026-09-04 人脸比对] 场景图优先 (保留"场景+人"画面, 对标大华; 后端 face_detector 落盘)
   const scene = typeof metaSrc.scene_url === 'string' && metaSrc.scene_url ? metaSrc.scene_url : ''
   const direct = metaSrc.snapshot_urls as string[] | undefined
@@ -730,17 +739,26 @@ const alarmImageList = computed<GalleryImage[]>(() => {
     //   ZLM 主码流) — 走动目标上红框会漂移。对齐帧放首位, 落库帧次位供对比。
     const aligned = typeof metaSrc.snapshot_url === 'string' ? metaSrc.snapshot_url : ''
     const primary = snapshotImageUrl.value
-    if (aligned && aligned !== primary) list = [aligned, primary].filter(Boolean)
+    const alignedHash = evHash(aligned)
+    if (aligned && aligned !== primary) {
+      // 落库主图与对齐帧同帧 → 只留对齐帧; 异帧 → 双图供对比 (B2 语义)
+      list = (alignedHash && evHash(primary) === alignedHash)
+        ? [aligned]
+        : [aligned, primary].filter(Boolean)
+    }
     else if (primary) list = [primary]
   }
   const mainUrls = scene ? [scene, ...list] : list
+  const mainHashes = new Set(mainUrls.map((u) => evHash(u)).filter(Boolean))
   // [EV-TRIPLE 2026-09-14] 取证帧: 共享语义模块构建 (pre→mid→post 固定序 +
   //   算法语义标签 + evidence_ts 相对时间角标; 契约过滤宁缺毋假, 与
   //   详情抽屉 EvidenceFrames 同源 — 原硬编码「事前/事中/事后」就地废除)
   const algoKey = String(metaSrc.algo_id ?? '') || String(alarm.type || '')
   const evidence: GalleryImage[] = []
   for (const f of buildEvidenceFrames(metaSrc, algoKey, alarmTsMs.value)) {
-    if (!mainUrls.includes(f.url) && !evidence.some(e => e.url === f.url)) {
+    const fHash = evHash(f.url)
+    if (!mainUrls.includes(f.url) && !(fHash && mainHashes.has(fHash)) &&
+        !evidence.some(e => e.url === f.url)) {
       evidence.push({ url: f.url, tag: f.label, rel: f.rel, abs: f.abs, key: f.key })
     }
   }
@@ -1951,11 +1969,16 @@ const popupAlarmShapes = computed<unknown[]>(() => {
   const src = ((m[0] && typeof m[0] === 'object') ? m[0] : m) as Record<string, unknown>
   return Array.isArray(src.alarm_shapes) ? (src.alarm_shapes as unknown[]) : []
 })
-/** [FEAT 2026-09-04] 触发算法 id (形状叠加区域库回退链匹配键) */
+/** [FEAT 2026-09-04] 触发算法 id (形状叠加区域库回退链匹配键)
+ *  [FIX popup-algo-fallback 2026-09-17] metadata 空 (WS 精简帧 + 富化失败)
+ *  时回退 alarm.type — 事件类型即算法名尾段 (tripwire/loitering/climbing),
+ *  区域库 algoMatch 尾段匹配同口径; ②回退的 !algoId 空守卫原本把
+ *  「metadata 缺失」误判为「无算法信息」直接不画 (弹窗绊线不画实锚:
+ *  002001 14501 绊线 alarm_shapes 在库但全程未渲染) */
 const popupAlgoId = computed(() => {
   const m = (currentAlarm.value?.metadata || {}) as Record<string, unknown>
   const src = ((m[0] && typeof m[0] === 'object') ? m[0] : m) as Record<string, unknown>
-  return String(src.algo_id ?? src.algoId ?? '')
+  return String(src.algo_id ?? src.algoId ?? currentAlarm.value?.type ?? '')
 })
 /** [FIX 2026-09-16 P2 叠加层通道反解] 区域/规则 ROI 按「真实告警通道」存储,
  *  而 GB 告警的 channelId 可能被后端归并为父设备码 (NVR, 同 PREV-CHFIX),
