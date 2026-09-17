@@ -12,7 +12,7 @@
  */
 import type { AlarmEvent } from '@/types/alarm'
 import { normalizeAlarmCore } from '@/types/alarm'
-import { resolveAlarmDeviceName, isNumericId } from '@/composables/useAlarmDeviceLabel'
+import { resolveAlarmDeviceName, isNumericId, chNameOf } from '@/composables/useAlarmDeviceLabel'
 
 // ── 归一化 + 旧字段兼容补丁 (与 AlarmsView.normalizeAlarm 同款) ──
 // normalizeAlarmCore 产出 level/aiConclusion/confidence; AlarmsView 模板与筛选
@@ -204,9 +204,26 @@ export function alarmDevLabel(a: Pick<AlarmEvent, 'deviceName' | 'deviceId' | 'c
 //   [FIX channel-monitor-point 2026-09-17] 对标海康术语统一"通道"→"监控点":
 //   占位词改为「监控点」— 本函数为告警列表/场景事件页显示值 SSOT, 一处改全平台生效;
 //   目录命中时显示的 channelName (设备侧命名如「...通道01」) 属数据内容不改。
-export function alarmChLabel(a: Pick<AlarmEvent, 'channelId'> & { channelName?: string }): string {
+//   [FIX mon-point-name 2026-09-17] 监控点列显示设备名修复 (海康口径: 监控点=通道级):
+//   多通道设备 (展厅 CH2 等) 告警顶层 channel_id_str=父设备码, 后端 channel_name 兜底
+//   拼出的又是设备名 → 旧「可读名直用」把设备名当监控点名 (监控点列 ≈ 设备列, 用户投诉)。
+//   真通道码在 metadata.channel_id_str (normalizeAlarmCore 已将 gov 首元素展开透传) —
+//   改为目录反查优先: ① metadata.channel_id_str → ② 顶层 channelId (本身即通道码的告警)
+//   → ③ 可读 channelName 直用 (目录未收录/未就绪兜底) → ④ 反查/占位。
+export function alarmChLabel(a: Pick<AlarmEvent, 'channelId'> & { channelName?: string; metadata?: Record<string, unknown> }): string {
+  // ① 通道码 (metadata 首元素) 目录反查: 用户配置的监控点级名优先
+  const mch = String(a.metadata?.channel_id_str ?? '').trim()
+  if (mch) {
+    const hit = chNameOf(mch)
+    if (hit) return hit
+  }
+  // ② 顶层 channelId 目录反查 (channelId 自身即通道码形态的告警)
+  const topHit = chNameOf(a.channelId)
+  if (topHit) return topHit
+  // ③ 可读 channelName 直用 (目录未收录/未就绪 — 兼容插件 meta 通道级名)
   const cn = String(a.channelName ?? '').trim()
   if (cn && !isNumericId(cn)) return cn
+  // ④ 空名/纯数字形态 → 设备链反查 → 占位
   const resolved = resolveAlarmDeviceName('', '', a.channelId)
   if (resolved) return resolved
   const id = String(a.channelId ?? '').trim()

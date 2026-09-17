@@ -380,11 +380,23 @@
         </el-table-column>
 
         <!-- [P0-4 2026-09-14] 事件态 (后端事件生命周期: event_start/end_ms + end 帧;
-             进行中/已结束, 与 AlarmEventsPanel 同构列) -->
-        <el-table-column label="事件" width="88" align="center">
+             进行中/已结束, 与 AlarmEventsPanel 同构列)
+             [FIX ev-instant 2026-09-17] 无轨迹告警 (后端 track<0 直通事件链, 不产生
+             生命周期) 恒「—」优化为「瞬时」占位 — 空列易被误读为故障; 有轨未达
+             时长门/历史行仍「—」 (与 AlarmEventsPanel 同构同步) -->
+        <el-table-column width="88" align="center">
+          <template #header>
+            <span title="进行中=持续事件活跃；已结束=事件已收尾；瞬时=无目标轨迹的单次上报">事件</span>
+          </template>
           <template #default="{ row }">
             <el-tag v-if="row.eventEnded" size="small" type="info" effect="plain">已结束</el-tag>
             <el-tag v-else-if="row.eventStartMs > 0" size="small" type="success" effect="light">进行中</el-tag>
+            <span
+              v-else-if="(row.trackId ?? -1) < 0"
+              class="text-secondary"
+              style="font-size:11px"
+              title="无目标轨迹的单次上报，不产生进行中/已结束周期"
+            >瞬时</span>
             <span v-else class="text-secondary" style="font-size:11px">—</span>
           </template>
         </el-table-column>

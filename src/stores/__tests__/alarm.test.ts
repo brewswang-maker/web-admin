@@ -172,9 +172,11 @@ describe('stores/alarm', () => {
       //   fetchAlarms → normalizeAlarmCore 白名单重建 (含 R1 origin 字段族 /
       //   P2-2 review 字段族 / 默认值填充), 旧断言 toEqual(raw items) 为
       //   源数据形态、未随实现演进 → 恒失败 (R11 登记的既存漂移, 本轮修准)
+      //   [FIX channel-monitor-point 2026-09-17] 占位词随 types/alarm.ts 同步
+      //   「通道<id>」→「监控点<id>」(显示层海康术语统一; 上批漏改此断言)
       const expected = items.map(it => ({
         id: it.id, type: 'intrusion', level: 'high', category: 'alarm',
-        description: '周界入侵检测', channelId: 'ch-001', channelName: '通道ch-001',
+        description: '周界入侵检测', channelId: 'ch-001', channelName: '监控点ch-001',
         deviceId: 'dev-001', deviceName: '',
         snapshotUrl: '', videoClipUrl: '', aiConclusion: '',
         confidence: 0.92, status: 'unhandled',
