@@ -729,7 +729,8 @@
       destroy-on-close
       align-center
     >
-      <SnapshotAnnotated :src="previewImageUrl" :metadata="previewMeta ?? undefined" />
+      <SnapshotAnnotated :src="previewImageUrl" :metadata="previewMeta ?? undefined"
+        :channel-id="previewChannelId" />
       <!-- [ROI-GAP 2026-09-06] 多帧取证 (预览弹窗同步展示, 字段缺失自动隐藏) -->
       <EvidenceFrames :metadata="(previewMeta ?? undefined) as Record<string, unknown> | undefined" />
     </el-dialog>
@@ -971,8 +972,16 @@ const previewImageUrl = ref('')
 // [vp6 P1-3 2026-09-01] 预览快照的标注 metadata (store normalizeAlarm 已兜底合并
 //   原始键; 此处再防御字符串形态 — 历史/直赋值链不至于又断)
 const previewMeta = ref<Record<string, unknown> | null>(null)
+// [FIX 2026-09-16 P2 叠加层通道反解] 同 AlarmPopup popupOverlayChannelId 口径:
+// 形状叠加按「真实告警通道」查规则/区域 ROI, GB 告警 channelId 可能被后端归并
+// 为父设备码 (NVR, 同 PREV-CHFIX) — 快照 URL 内嵌真实流名 (gb_<裸码>) 优先反解,
+// 无线索兜底 channelId。原未传 → useAlarmShapes 区域库链退化全库拉取 (串扰根因)。
+const previewChannelId = ref('')
 function openSnapshotPreview(row: any) {
   previewImageUrl.value = getSnapshotUrl(row)
+  const mStream = previewImageUrl.value.match(/\/(?:snapshots|record)\/rtp\/([^/]+)\//)?.[1]
+  previewChannelId.value = mStream?.replace(/^gb_/, '')
+    || String(row?.channelId || row?.channel_id || '')
   let m = row?.metadata
   if (typeof m === 'string') {
     try { m = JSON.parse(m) } catch { m = null }

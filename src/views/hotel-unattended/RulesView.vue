@@ -90,10 +90,13 @@
           </el-table-column>
           <el-table-column :label="t('hotel.rules.colEventTypes')" min-width="200">
             <template #default="{ row }">
+              <!-- [UX-ZH 2026-09-16] 中文名展示 (SSOT canonical), tooltip 保留裸 key (对齐周界 RulesView) -->
               <el-tag v-for="et in (row.source_cond?.event_types ?? []).slice(0, 2)"
-                      :key="et" size="small" effect="plain" class="evt-tag">{{ et }}</el-tag>
+                      :key="et" size="small" effect="plain" class="evt-tag">
+                <span :title="et">{{ zh(et) }}</span>
+              </el-tag>
               <el-tooltip v-if="(row.source_cond?.event_types?.length ?? 0) > 2"
-                          :content="(row.source_cond?.event_types ?? []).join(', ')" placement="top">
+                          :content="zhAll(row.source_cond?.event_types ?? [])" placement="top">
                 <el-tag size="small" type="info" effect="plain">
                   +{{ (row.source_cond?.event_types?.length ?? 0) - 2 }}
                 </el-tag>
@@ -220,6 +223,8 @@ import { linkageApi, type LinkageRule, type RuleTemplate, type RuleTriggerStat }
 import { displayRuleBoundChannels, type BoundChannelDisplay } from '@/composables/useRuleChannelDisplay'
 // [TRIGGER-DETAIL 2026-09-14] 触发条件标签 + 报警级别渲染 (平台页同款 SSOT)
 import { ruleTriggerTags, ruleLevelInfo } from '@/composables/useRuleTriggerTags'
+import { useEventTypeZh } from '@/composables/useEventTypeZh'
+const { zh, zhAll, ensure: ensureEventTypesZh } = useEventTypeZh()
 import { loadAlarmNameDirectory } from '@/composables/useAlarmDeviceLabel'
 // [SCENE-EDIT-INPLACE 2026-09-03] 就地编辑: 内嵌平台编辑器 (嵌入模式, 编辑器单一来源)
 import LinkageRuleView from '@/views/LinkageRuleView.vue'
@@ -345,6 +350,7 @@ function openTriggerDetail(row: LinkageRule) {
 onMounted(() => {
   fetchAll()
   loadAlarmNameDirectory() // [CH-BINDING-DISPLAY] 通道/设备目录预热 (绑定通道列名称反查)
+  ensureEventTypesZh() // [UX-ZH] 事件类型中文名预热 (canonical SSOT)
 })
 </script>
 

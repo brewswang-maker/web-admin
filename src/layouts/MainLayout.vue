@@ -865,7 +865,14 @@ const activeScenarioMenu = computed(() => {
 const isActivePrimaryScenario = computed(() => isMultiScenariosGroup.value || !!activeScenarioMenu.value)
 // [场景菜单 2026-09-16] 哪些场景在侧栏可见 (供 admin 6 入口拼装; 单场景账号走 primaryMenus 不走这里)
 const visibleScenariosForSidebar = computed(() => scenarioMenus.value.filter(s => matchMenuRoles(s.roles)))
-const displayedScenarioEntries = computed<Array<{ key: PrimaryMenuKey; label: string; icon: Component; scenario: ScenarioDef }>>(() => {
+// [TS-FIX 2026-09-16] 侧栏场景入口条目: computed 输出与交互函数共用 (修复函数签名内联类型缺 key 字段的 TS2339)
+type ScenarioEntry = {
+  key: PrimaryMenuKey
+  label: string
+  icon: Component
+  scenario: ScenarioDef
+}
+const displayedScenarioEntries = computed<ScenarioEntry[]>(() => {
   if (isMultiScenariosGroup.value) {
     return visibleScenariosForSidebar.value.map(s => ({
       key: s.key,
@@ -885,13 +892,13 @@ const displayedScenarioEntries = computed<Array<{ key: PrimaryMenuKey; label: st
   }
   return []
 })
-function isCurrentScenario(entry: { scenario: ScenarioDef }): boolean {
+function isCurrentScenario(entry: ScenarioEntry): boolean {
   return route.path === entry.scenario.prefix || route.path.startsWith(`${entry.scenario.prefix}/`)
 }
 
 // [场景菜单 2026-09-16] admin 模式下当前展开的场景 key (点 trigger toggle, 点 tab 跳路由后同步)
 const expandedScenarioKey = ref<PrimaryMenuKey | null>(null)
-function onScenarioTriggerClick(entry: { scenario: ScenarioDef }) {
+function onScenarioTriggerClick(entry: ScenarioEntry) {
   // 单场景账号走的是 primaryMenus + el-menu-item 路径, 此函数仅被 admin 多场景场景触发
   if (expandedScenarioKey.value === entry.key) {
     // 同一 trigger 二次点击 -> 收起 (不放路由)

@@ -37,7 +37,8 @@ import goldenRaw from '../../../../../box-sdk/tests/fixtures/verdict_golden_case
 // ── fixture 类型 (宽松声明, 仅覆盖本测试消费的字段; 运行时以 JSON 实值为准) ──
 interface GoldenSourceCond {
   event_types?: string[]
-  channel_ids?: number[]
+  // [CID-P2 2026-09-17] 后端 channel_ids string 化, golden fixture 同步串形态
+  channel_ids?: string[]
   device_ids?: string[]
   min_severity?: number
   min_confidence?: number

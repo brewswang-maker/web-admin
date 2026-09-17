@@ -66,7 +66,8 @@
                     :empty-text="'暂无大型活动相关事件'">
             <el-table-column prop="type" label="类型" min-width="150">
               <template #default="{ row }">
-                <span class="evt-key">{{ row.type }}</span>
+                <!-- [UX-ZH 2026-09-16] 中文名展示 (SSOT canonical), title 保留裸 key -->
+                <span class="evt-key" :title="row.type">{{ zh(row.type) }}</span>
               </template>
             </el-table-column>
             <el-table-column label="级别" width="90">
@@ -146,10 +147,14 @@ import { LARGE_EVENT_SCENES, LARGE_EVENT_CIRCLES, NEW_LARGE_EVENT_TYPES } from '
 import type { AlarmEvent } from '@/types/alarm'
 import type { EventTypeMetadataItem } from '@/api/eventTypes'
 import { useRealtimeAlarmEvents } from '@/composables/useRealtimeAlarmEvents'
+// [UX-ZH 2026-09-16] 事件类型中文名展示 (SSOT canonical 单例缓存; 对齐周界/酒店等场景页)
+import { useEventTypeZh } from '@/composables/useEventTypeZh'
 // [FIX realtime-push 2026-09-06] 场景页实时刷新: WS 告警到达去抖重拉 (零新增连接)
 useRealtimeAlarmEvents(() => fetchRecentEvents())
 
 const router = useRouter()
+// [UX-ZH 2026-09-16] 事件类型中文名 (title 保留裸 key 供排查)
+const { zh, ensure: ensureEventTypesZh } = useEventTypeZh()
 
 // ── 状态 ──
 const loading = ref(false)
@@ -319,6 +324,7 @@ function formatTime(t?: string) {
 
 // ── 生命周期 (10s 轮询, 慢数据 60s) ──
 onMounted(async () => {
+  ensureEventTypesZh() // [UX-ZH 2026-09-16] 事件类型中文名预热 (SSOT canonical)
   await Promise.allSettled([fetchSceneMetadata(), refreshAll()])
   pollTimer = setInterval(refreshAll, 10000)
 })
@@ -356,7 +362,8 @@ onUnmounted(() => {
 .circle-count .num { font-size: 20px; font-weight: 700; }
 .circle-count .unit { font-size: 12px; color: #909399; margin-left: 4px; }
 .circle-footer { font-size: 13px; color: #606266; display: flex; align-items: center; gap: 10px; }
-.evt-key { font-family: monospace; font-size: 12px; }
+/* [UX-ZH 2026-09-16] 事件类型列: 中文名展示 (原 monospace 为裸 key 设计, 移除) */
+.evt-key { font-size: 12px; }
 .level-chip {
   display: inline-block; padding: 1px 8px; border-radius: 4px;
   font-size: 12px; margin-right: 6px; color: #fff;

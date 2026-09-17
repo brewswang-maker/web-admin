@@ -148,7 +148,9 @@ export interface AttributeCondition {
 
 /** 事件源条件 */
 export interface SourceCondition {
-  channel_ids: number[]
+  // [CID-P2 2026-09-17] 后端 SourceCondition.channel_ids 已 string 化 (vector<string>,
+  //   引擎 chanStrIdListMatches 投影候选同域匹配), 老分类「GB 串→device_ids」废除
+  channel_ids: string[]
   device_ids: string[]
   event_types: string[]
   min_severity: number
@@ -607,6 +609,9 @@ export const linkageApi = {
     rule_id?: string
     alarm_type?: string
     channel_id?: number
+    /** [CID-P1 2026-09-16] 完整通道串主形态 (GB 20 位码超 int32; 后端 test-trigger
+     *  消费 RestApiHandlers L18736); 与 channel_id 二选一, 字符串形态优先 */
+    channel_id_str?: string
     device_id?: string
     confidence?: number
     severity?: number

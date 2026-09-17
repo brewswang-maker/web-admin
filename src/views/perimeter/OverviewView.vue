@@ -109,7 +109,7 @@
                   </div>
                 </div>
               </template>
-              <div class="floor-canvas-box">
+              <div class="floor-canvas-box" :style="floorCanvasBoxStyle">
                 <FloorMapCanvas v-if="currentFloorMap"
                   :map="currentFloorMap" :bindings="floorBindings"
                   @device-click="onFloorDeviceClick" />
@@ -364,6 +364,14 @@ const currentFloorMap = computed(() =>
   floorMaps.value.find(m => m.id === activeMapId.value) ?? floorMaps.value[0] ?? null)
 const floorBindings = computed<CameraMapBinding[]>(() =>
   currentFloorMap.value ? bindingsOfMap(currentFloorMap.value.id) : [])
+// [FIX 2026-09-16 v2] 画布盒宽高比 = 底图原始宽高比 (如 2752×1536 ≈ 16:9)。原固定 260px 高
+//   使容器比例 ≈ 3.9:1, object-fit contain 左右各留 ~26% 深色 letterbox 且点位 (相对容器
+//   百分比定位) 与底图内容错位; 等比后底图满铺容器、点位/FOV 严格对齐
+const floorCanvasBoxStyle = computed(() => {
+  const m = currentFloorMap.value
+  if (!m?.width_px || !m?.height_px) return undefined
+  return { aspectRatio: `${m.width_px} / ${m.height_px}` }
+})
 function onFloorMapChange(id: number) { activeMapId.value = id }
 function onFloorDeviceClick(b: CameraMapBinding) {
   // 点位点击 → 实时监控定位通道 (LiveView 支持 ?channelId= 预选)
@@ -619,8 +627,10 @@ onMounted(() => {
 .card-head-ops { display: flex; align-items: center; gap: 8px; }
 .card-hint { font-size: 12px; color: var(--el-text-color-secondary); font-weight: 400; }
 
-/* ── [FLOOR-MAP 2026-09-16] 平面图卡 (中间第一单元): 固定高画布盒 (FloorMapCanvas 自撑满) ── */
-.floor-canvas-box { height: 260px; }
+/* ── [FLOOR-MAP 2026-09-16 v2] 平面图卡 (中间第一单元): 画布盒宽高比随底图自适应
+      (floorCanvasBoxStyle 注入 aspect-ratio, 2752×1536 ≈ 16:9) — contain letterbox 与
+      点位对齐偏差消除; 宽高比数据缺失时 min-height 兜底 ── */
+.floor-canvas-box { min-height: 240px; }
 .floor-canvas-box .el-empty { height: 100%; padding: 0; }
 
 /* ── 通道统计 ── */

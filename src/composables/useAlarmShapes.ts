@@ -62,6 +62,10 @@ export const CLASS_COLORS: Record<string, string> = {
   fire: '#FF4444',
   smoke: '#888888',
   face: '#3B82F6',
+  // [FIX anno-phone 2026-09-16] 打电话告警双类标注: 电话青色 (与 person
+  //   红/汽车系绿黄区隔), head 头部浅蓝 (备用)
+  phone: '#00E5FF',
+  head: '#9AD0FF',
 }
 
 /** GB28181 通道编码去子码流后缀 (34020...02_ch0 → 34020...02) */
@@ -246,6 +250,13 @@ async function loadFromRules(channelId: string, algoId?: string): Promise<Overla
 /** ② 区域库回退: regions/counting-zones 按 algo 匹配; tripwires 按通道字符串匹配 */
 async function loadFromRegionStore(channelId: string, algoId: string): Promise<OverlayShape[]> {
   const chNorm = stripChSuffix(channelId)
+  // [FIX 2026-09-16 P2 通道×算法双守卫] 通道或算法缺一即不画 (宁缺勿串):
+  //   原空 chNorm 时 regions/counting-zones 查询退化为 {channel_id:0} 全库拉取,
+  //   循环内仅 algo 过滤无通道维度 → 该算法在所有通道的区域全画到当前告警
+  //   上 (证据链弹窗 SnapshotAnnotated 未传 channelId 时必现, 用户实锚
+  //   「弹窗画的是其他事件规则的检测区域」)。与后端判定 getEffectiveRegions
+  //   [FIX 2026-09-08 通道一对一] 同口径: 判定空区域=无布防, 展示同样不回退。
+  if (!chNorm || !algoId) return []
   const [rRes, tRes, czRes] = await Promise.all([
     // [FIX 2026-09-08 通道一对一] regions 传 str 通道键: 原全量拉取+前端仅 algo
     //   过滤, ch=0 孤儿区域 (通道键丢失) 被串到任意通道的告警标注; 后端已改
@@ -593,6 +604,11 @@ const LABEL_ZH: Record<string, string> = {
   suitcase: '行李箱',
   shoulder_bag: '单肩包',
   other_bag: '其他物品',
+  // [FIX anno-phone 2026-09-16] 打电话告警双目标标注 (phone_call 插件
+  //   detections 透传 phone 类; raw "cell phone" 兼容在案)
+  phone: '电话',
+  'cell phone': '电话',
+  head: '头部',
 }
 export function zhLabel(label: string): string {
   return LABEL_ZH[label] || label

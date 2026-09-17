@@ -100,7 +100,8 @@
                       :empty-text="t('hotel.overview.noEvents')">
               <el-table-column prop="type" :label="t('hotel.events.colType')" min-width="130">
                 <template #default="{ row }">
-                  <span class="mono evt-key">{{ row.type }}</span>
+                  <!-- [UX-ZH 2026-09-16] 中文名展示 (SSOT canonical), title 保留裸 key -->
+                  <span class="evt-key" :title="row.type">{{ zh(row.type) }}</span>
                 </template>
               </el-table-column>
               <el-table-column :label="t('hotel.events.colLevel')" width="90">
@@ -262,11 +263,15 @@ import type { AlarmEvent } from '@/types/alarm'
 import type { FaceDatabaseStats, FacePassRecord } from '@/api/face'
 import { useRealtimeAlarmEvents } from '@/composables/useRealtimeAlarmEvents'
 import { useFaceGroupSwitches } from '@/composables/useFaceGroupSwitches'
+// [UX-ZH 2026-09-16] 事件类型中文名展示 (SSOT canonical 单例缓存; 对齐周界/大型活动总览)
+import { useEventTypeZh } from '@/composables/useEventTypeZh'
 // [FIX realtime-push 2026-09-06] 场景页实时刷新: WS 告警到达去抖重拉 (零新增连接)
 useRealtimeAlarmEvents(() => fetchEvents())
 
 const { t } = useI18n()
 const router = useRouter()
+// [UX-ZH 2026-09-16] 事件类型中文名 (title 保留裸 key 供排查)
+const { zh, ensure: ensureEventTypesZh } = useEventTypeZh()
 
 const loading = ref(false)
 const loadError = ref('')
@@ -473,7 +478,10 @@ async function reload() {
   loadGroupSwitches()
 }
 
-onMounted(() => { reload() })
+onMounted(() => {
+  reload()
+  ensureEventTypesZh() // [UX-ZH 2026-09-16] 事件类型中文名预热 (SSOT canonical)
+})
 </script>
 
 <style scoped>

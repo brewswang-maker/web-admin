@@ -163,12 +163,15 @@ const router = useRouter()
 function goTrajectory(row: AlarmEvent) {
   const meta = (row.metadata ?? {}) as Record<string, unknown>
   const trackId = Number(meta.track_id) || 0
-  const camId = Number(meta.channel_id)
-    || Number(String(row.channelId).replace(/\D/g, '')) || 0
+  // [CID-P1 2026-09-16] camera_id 形态治理: 完整通道串原样透传 (后端
+  //   /retrieval/trajectory 已用 channelIdFromJson 双形态投影 + device_id
+  //   双路匹配, RestApiHandlers L6570-6578/L6614)。原 Number() 对 GB 20 位码
+  //   产生 double 尾数损失 → read_int 双路皆 false → 误报 400「缺参」。
+  const camId = String(meta.channel_id || row.channelId || '').trim()
   if (trackId && camId) {
     router.push({
       path: '/retrieval',
-      query: { tab: 'trajectory', camera_id: String(camId), track_id: String(trackId) },
+      query: { tab: 'trajectory', camera_id: camId, track_id: String(trackId) },
     })
     return
   }

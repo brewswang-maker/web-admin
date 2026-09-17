@@ -185,6 +185,24 @@ function checkTimeCondition(rule: LinkageRule): boolean {
 //   第二分支 (cachedRules 缓存链) L215 引用不到 → TS2304; 纯函数无状态提升零风险)
 const normMinConf = (mc: number) => (mc > 1 ? mc / 100 : mc)
 // [规则驱动弹窗 2026-09-01] 导出供 useGlobalAlarm 弹窗前置门槛复用
+// [CID-P2 2026-09-17] channel_ids string 化后的前端匹配口径 (与后端 chanStrIdListMatches
+//   /chanStrListMatches 同域): 规则条目 ① 事件全串/基码直比 ② 条目 FNV hash ∈ 事件
+//   hash 集 ③ 纯数字串 stamp 直取数值比对 (channelEntryProjCandidates 直取分支,
+//   老 hash 形态存量/数字通道兼容), 双形态家族失配结构性消除。
+function channelEntryHit(entries: string[] | undefined, evFull: string, evBase: string, evHashes: Set<number>): boolean {
+  if (!entries?.length) return true
+  for (const raw of entries) {
+    const c = String(raw ?? '').trim()
+    if (!c) continue
+    if (c === evFull || c === evBase) return true
+    if (evHashes.has(safeChannelHash(c))) return true
+    if (/^\d+$/.test(c)) {
+      const n = Number(c)
+      if (Number.isSafeInteger(n) && evHashes.has(n)) return true
+    }
+  }
+  return false
+}
 export async function findMatchingRule(alarm: AlarmEvent): Promise<LinkageRule | null> {
   try {
     // [SSOT R2 2026-09-12] 缓存刷新抽为 ensureRulesLoaded (双写对比打点复用);
@@ -230,7 +248,7 @@ export async function findMatchingRule(alarm: AlarmEvent): Promise<LinkageRule |
         if (!typeMatch) continue
       }
       // 通道匹配 (hash 口径, 与后端 LinkageEngine 同源)
-      if (src.channel_ids?.length && !src.channel_ids.some((h) => chHashes.has(h))) continue
+      if (!channelEntryHit(src.channel_ids, chIdStr, baseId, chHashes)) continue
       // [FIX F2 2026-09-11] 设备白名单双形态匹配 (对齐后端 d==device_id || d==channel_id_str)
       if (src.device_ids?.length && !src.device_ids.some((d) => alarmDevIds.has(String(d)))) continue
       // 严重度匹配
@@ -275,7 +293,7 @@ export async function findMatchingRule(alarm: AlarmEvent): Promise<LinkageRule |
           if (!typeMatch) continue
         }
         // 通道匹配 (hash 口径, 同上)
-        if (src.channel_ids?.length && !src.channel_ids.some((h) => chHashes2.has(h))) continue
+        if (!channelEntryHit(src.channel_ids, chIdStr2, baseId2, chHashes2)) continue
         // [FIX F2 2026-09-11] 回退路径同步: 设备白名单双形态检查
         if (src.device_ids?.length && !src.device_ids.some((d) => alarmDevIds2.has(String(d)))) continue
         if (severity < src.min_severity) continue

@@ -519,7 +519,13 @@
                 </el-form-item>
                 </div>
                 <div class="spatial-split__right">
-                <el-form-item label="ROI绘制区域" label-position="top" class="cond-form-item">
+                <!-- [pw-single-canvas 2026-09-16] 纯尾随规则 (尾随事件且无绊线消费事件) 时
+                     本画板隐藏: 画板形状对尾随只是引擎层二次过滤 (roi_shapes_json),
+                     与通道区判定语义重叠 — 双画布并存既让用户困惑「画哪个/画两遍」, 两区
+                     不一致时还会「通道区判定通过但引擎过滤拦截」静默失效。隐藏后尾随
+                     通道画布上移至本位 (单画布); 混合规则 (含绊线) 画板仍承担绊线绘制。
+                     存量形状不自动清 — 由尾随块内提示条显式暴露 + 一键清除。 -->
+                <el-form-item v-if="!tailgatingOnlyRule" label="ROI绘制区域" label-position="top" class="cond-form-item">
                   <!-- [FIX 2026-09-02] 形状范式 (对标海康 iVMS/大华 DSS 联动规则编辑器);
                        绘制提示在画布下方状态栏 (画布内零提示文字)。
                        多边形/矩形进 roi_polygon+roi_shapes_json 由后端 pointInPolygon 判定
@@ -570,6 +576,21 @@
                       <p class="cond-hint roi-workspace__hint">
                         触发双层判定: ①通道圈定（绑定通道 ∪ 安保区域[位置条件]，并集）②本画板形状（逐通道模式下仅对已绘通道生效）。
                       </p>
+                      <!-- [UX-ROI-HINT 2026-09-16 P3 画线/画框要求提示] 按所选事件的
+                           算法动态给出绘制要求 (must=插件层不画不工作)。口径=插件层
+                           判定行为实证 (见 ROI_HINT_BY_ALGO_SEG 注释); 保存侧面类
+                           双写 regions 表/绊线双写 tripwires 表 → 画板即布防入口。 -->
+                      <div v-if="roiHintTypesSelected" class="roi-req-hints">
+                        <p v-for="h in roiRequirementHints" :key="h.key" class="roi-req-hint"
+                           :class="`roi-req-hint--${h.level}`">
+                          <span class="roi-req-hint__badge">{{ ROI_HINT_LEVEL_LABEL[h.level] }}</span>
+                          <span><b>{{ h.label }}</b>{{ h.text }}</span>
+                        </p>
+                        <p class="roi-req-hint roi-req-hint--optional">
+                          <span class="roi-req-hint__badge">可选绘制</span>
+                          <span>未列出的算法 (行为/烟火/交通等) 不绘制默认全画面检测，绘制后仅区域内命中的事件触发</span>
+                        </p>
+                      </div>
                       <RoiPolygonEditor
                         :key="activeRoiChannel || 'roi-general'"
                         v-model="form.conditions.region.config.roiPolygon"
@@ -587,42 +608,56 @@
                     </div>
                   </div>
                 </el-form-item>
-                </div>
-                </div>
-                <!-- [FIX 2026-08-27 P0-PERIMETER v3] 绊线 (Tripwire) 联动
-                     [FIX tw-route 2026-09-12] 同契约 gate: 绊线/方向按消费算法集显示
-                     (tripwire/boundary/客流/违停 4 类事件; 其余事件选绊线 id 不参与
-                     判定) — 画板画的绊线保存时按消费算法写库。 -->
-                <el-form-item v-if="isTripwireRule" label="绊线" label-position="top" class="cond-form-item">
-                  <el-select v-model="form.conditions.region.config.tripwireId" placeholder="选择已有绊线 (不选=不限)" clearable style="width: 100%" @focus="loadTripwireOptions" v-loading="tripwireLoading">
-                    <template v-if="tripwireOptions.length > 0">
-                      <el-option v-for="t in tripwireOptions" :key="t.id" :label="t.label" :value="t.id" />
-                    </template>
-                    <template #empty><span class="text-secondary">{{ tripwireEmptyHint }}</span></template>
-                  </el-select>
-                  <p class="cond-hint">可在上方画板直接画绊线（选"绊线"类型，点击两点后点「确认添加」，保存规则时自动同步到算法库并关联）；或从下方下拉选择本通道已保存的绊线</p>
-                </el-form-item>
-                <el-form-item v-if="isTripwireRule" label="绊线方向" label-position="top" class="cond-form-item">
-                  <el-radio-group v-model="form.conditions.region.config.direction">
-                    <el-radio value="">不限</el-radio>
-                    <el-radio value="A_TO_B">A → B</el-radio>
-                    <el-radio value="B_TO_A">B → A</el-radio>
-                    <el-radio value="BOTH">双向</el-radio>
-                  </el-radio-group>
-                  <p class="cond-hint" style="margin-top:4px">
-                    💡 仅选择绊线后, 方向过滤才生效; 仅选择方向则任意绊线的该方向都会触发。
-                  </p>
-                </el-form-item>
                 <!-- [pw-in-rule 2026-09-12 绘制收敛] 尾随通道绘制并入规则页: 算法查看页
                      PassagewayEditor 下线 → 本表单承接绘制 (直写通道库, 实时生效);
                      已保存列表带开关/删除。显示层过滤 _ch0 结尾为防御 (通道库无
                      自动镜像机制: upsertPassageway 单条写入, 与绊线
                      createTripwireWithMirror 不同), 过滤仅兼容存量/未来形态。 -->
+                <!-- [pw-single-canvas 2026-09-16 单画布收敛] 本块上移至 spatial-split
+                     右栏 (通用画板位): 纯尾随规则全抽屉仅一个绘制区域; 混合规则时与
+                     画板同栏堆叠 (画板=绊线/形状, 本块=通道区, 语义分区仍清晰)。 -->
                 <el-form-item v-if="isTailgatingRule" label="尾随通道" label-position="top" class="cond-form-item">
                   <div style="width: 100%">
+                    <!-- [pw-single-canvas 2026-09-16] 存量空间形状显式暴露: 画板隐藏后
+                         roi_shapes_json 仍在引擎层过滤事件 (无编辑入口 → 静默失效风险),
+                         提示 + 一键清除, 不自动清 (尊重存量行为) -->
+                    <el-alert v-if="legacySpatialShapes.length" type="warning" :closable="false" show-icon style="margin-bottom: 8px">
+                      <template #title>
+                        <span>本规则存有 {{ legacySpatialShapes.length }} 个「空间区域」形状, 引擎层仍在按其过滤事件 (与通道区叠加判定); 尾随判定建议以通道区为唯一区域。</span>
+                        <el-button size="small" text type="danger" @click="clearLegacySpatialShapes">清除空间形状</el-button>
+                      </template>
+                    </el-alert>
                     <p class="cond-hint" style="margin: 0 0 8px">
-                      通道多边形供尾随判定消费: 点击 ≥3 个顶点围成通行区后点「确认添加」；删除/停用立即生效, 不随规则保存/丢弃。
+                      通道多边形供尾随判定消费: 点击 ≥3 个顶点围成通行区后点「确认添加」；删除/停用立即生效, 不随规则保存/丢弃。<template v-if="pwTabsVisible">多通道: 点「绘制通道」切换目标通道分别绘制 (各通道独立保存); 未绘通道按内置中央矩形兜底。</template>
                     </p>
+                    <!-- [pw-per-channel 2026-09-16] 逐通道页签: 纯尾随画板隐藏后唯一的工作
+                         通道切换入口 (混合规则不显示 — 画板页签 switchRoiChannel 已同步
+                         channelId/底图); 徽标=各通道已启用通道区数 -->
+                    <div v-if="pwTabsVisible" class="pw-ch-tabs">
+                      <div class="pw-ch-tabs__label">绘制通道</div>
+                      <div class="pw-ch-tabs__list">
+                        <div
+                          v-for="t in pwTabChannels"
+                          :key="t.value"
+                          class="roi-ch-tag"
+                          :class="{
+                            'roi-ch-tag--active': t.value === pwActiveChannel,
+                            'roi-ch-tag--unpainted': t.value !== pwActiveChannel && pwCountOf(t.value) === 0,
+                          }"
+                          @click="switchPwChannel(t.value)"
+                        >
+                          <i class="iconfont1 icon1-shexiangtou1-copy roi-ch-tag__icon" aria-hidden="true" />
+                          <span class="roi-ch-tag__name">
+                            <span class="roi-ch-tag__title" :title="t.label">{{ t.label }}</span>
+                            <span v-if="t.detail" class="roi-ch-tag__detail" :title="t.detail">{{ t.detail }}</span>
+                          </span>
+                          <span
+                            class="roi-ch-tag__status"
+                            :title="pwCountOf(t.value) > 0 ? `已配置 ${pwCountOf(t.value)} 个启用通道区` : '未配置: 该通道按内置中央矩形兜底'"
+                          >{{ pwCountOf(t.value) > 0 ? `已绘 ${pwCountOf(t.value)}` : '未绘' }}</span>
+                        </div>
+                      </div>
+                    </div>
                     <PassagewayEditor
                       v-if="form.conditions.region.config.channelId"
                       :key="`pw_${form.conditions.region.config.channelId}`"
@@ -653,6 +688,34 @@
                     </div>
                   </div>
                 </el-form-item>
+                </div>
+                </div>
+                <!-- [FIX 2026-08-27 P0-PERIMETER v3] 绊线 (Tripwire) 联动
+                     [FIX tw-route 2026-09-12] 同契约 gate: 绊线/方向按消费算法集显示
+                     (tripwire/boundary/客流/违停 4 类事件; 其余事件选绊线 id 不参与
+                     判定) — 画板画的绊线保存时按消费算法写库。 -->
+                <el-form-item v-if="isTripwireRule" label="绊线" label-position="top" class="cond-form-item">
+                  <el-select v-model="form.conditions.region.config.tripwireId" placeholder="选择已有绊线 (不选=不限)" clearable style="width: 100%" @focus="loadTripwireOptions" v-loading="tripwireLoading">
+                    <template v-if="tripwireOptions.length > 0">
+                      <el-option v-for="t in tripwireOptions" :key="t.id" :label="t.label" :value="t.id" />
+                    </template>
+                    <template #empty><span class="text-secondary">{{ tripwireEmptyHint }}</span></template>
+                  </el-select>
+                  <p class="cond-hint">可在上方画板直接画绊线（选"绊线"类型，点击两点后点「确认添加」，保存规则时自动同步到算法库并关联）；或从下方下拉选择本通道已保存的绊线</p>
+                </el-form-item>
+                <el-form-item v-if="isTripwireRule" label="绊线方向" label-position="top" class="cond-form-item">
+                  <el-radio-group v-model="form.conditions.region.config.direction">
+                    <el-radio value="">不限</el-radio>
+                    <el-radio value="A_TO_B">A → B</el-radio>
+                    <el-radio value="B_TO_A">B → A</el-radio>
+                    <el-radio value="BOTH">双向</el-radio>
+                  </el-radio-group>
+                  <p class="cond-hint" style="margin-top:4px">
+                    💡 仅选择绊线后, 方向过滤才生效; 仅选择方向则任意绊线的该方向都会触发。
+                  </p>
+                </el-form-item>
+                <!-- [pw-single-canvas 2026-09-16] 尾随通道块已上移至 spatial-split 右栏
+                     (通用画板位) — 原画板下方独立画布撤销, 消灭双绘制区域 -->
                 <!-- [UI-CONVERGE 2026-09-12] 空间卡片「安保区域」下拉下线 (与位置条件双入口重复):
                      area_id 唯一 UI 入口收敛到位置卡片级联; 本键 (region.config.group) 保留
                      序列化读 (L4249 rc.group || cascade) 与回显兼容 (sc.area_id →
@@ -1039,7 +1102,12 @@
               <template #default="{ row }"><span class="time-text">{{ formatTime(row.trigger_at) }}</span></template>
             </el-table-column>
             <el-table-column prop="rule_name" label="规则" width="140" show-overflow-tooltip />
-            <el-table-column prop="event_type" label="事件类型" width="120" show-overflow-tooltip />
+            <!-- [UX-ZH 2026-09-16] 触发日志事件类型: 中文名展示 (SSOT canonical), title 保留裸 key -->
+            <el-table-column label="事件类型" width="120">
+              <template #default="{ row }">
+                <span :title="row.event_type">{{ zh(row.event_type) }}</span>
+              </template>
+            </el-table-column>
             <el-table-column prop="channel_id" label="通道" width="80" />
             <el-table-column label="执行动作" min-width="180">
               <template #default="{ row }">
@@ -1064,7 +1132,7 @@
                   <div>
                     <span style="font-weight: 600">{{ log.rule_name }}</span>
                     <el-tag size="small" :type="log.severity >= 4 ? 'danger' : 'warning'" effect="plain" style="margin-left: 6px">
-                      {{ log.event_type || '未知事件' }}
+                      {{ zh(log.event_type) || '未知事件' }}
                     </el-tag>
                     <el-tag size="small" type="info" effect="plain" style="margin-left: 4px">通道 {{ log.channel_id }}</el-tag>
                   </div>
@@ -1441,7 +1509,12 @@
         <el-table-column label="窗口" width="100">
           <template #default="{ row }">{{ (row.window_ms / 1000).toFixed(0) }}s</template>
         </el-table-column>
-        <el-table-column prop="output_event_type" label="输出事件" width="160" show-overflow-tooltip />
+        <!-- [UX-ZH 2026-09-16] 输出事件中文名 (SSOT canonical; 未注册回退裸 key) -->
+        <el-table-column label="输出事件" width="160">
+          <template #default="{ row }">
+            <span :title="row.output_event_type">{{ zh(row.output_event_type) }}</span>
+          </template>
+        </el-table-column>
         <el-table-column label="状态" width="90">
           <template #default="{ row }">
             <el-tag :type="row.enabled ? 'success' : 'info'" size="small">{{ row.enabled ? '启用' : '禁用' }}</el-tag>
@@ -1484,6 +1557,8 @@ import type { LinkageRule, LinkageAction, LinkageLog, ActionLogEntry, TimeTempla
 import { useLinkageOptions, type ChannelOption } from '@/composables/useLinkageOptions'
 // [TRIGGER-DETAIL 2026-09-14] 触发条件标签 SSOT (场景规则实例页「触发条件」列共用)
 import { ruleTriggerTags } from '@/composables/useRuleTriggerTags'
+// [UX-ZH 2026-09-16] 事件类型中文名展示 (SSOT canonical 单例缓存; 触发日志/CEP 输出事件列)
+import { useEventTypeZh } from '@/composables/useEventTypeZh'
 // [FIX area-cascade-label 2026-09-11] 通道友好 label/回显反查兑底/区域收窄 纯函数 (自内联提取)
 // [FIX ghost-chan 2026-09-12] locationFilterKind: 位置树节点类型判定 (区域/设备),
 //   设备节点时已选绑定通道严格跟随收窄 (消除幽灵通道)
@@ -1527,6 +1602,9 @@ import type { RoiData } from '@/composables/useRoiCanvas'
 import { isFullscreenPoints } from '@/composables/useAlarmShapes'  // [FEAT guard-badge] 满屏识别同口径 (与弹窗角标/满屏按钮一致)
 
 // ── 常量 ──
+
+// [UX-ZH 2026-09-16] 事件类型中文名映射 (SSOT canonical; 触发日志/CEP 输出事件列展示)
+const { zh, ensure: ensureEventTypesZh } = useEventTypeZh()
 
 // [UI-CONVERGE 2026-09-12 P1/P7] eventSource/autoMerge 卡片下线: 事件源双编辑器收敛
 //   (通道唯一入口 = 绑定通道/picker), autoMerge 0 使用+业界无 per-rule 合并窗口 UI
@@ -2187,6 +2265,21 @@ let roiSuppressTouch = false
 /** 通道基准码 (剥 _chN 后缀; 与后端 channelBaseCode / stripChSuffix 同口径) */
 const roiBaseOf = (ch: string) => String(ch || '').replace(/_ch\d+$/, '')
 const roiClone = <T,>(v: T): T => JSON.parse(JSON.stringify(v))
+/** 通道基准码 → 页签展示 (label + 设备 detail; 候选=绑定/快照/动态三池 —
+ *  ROI 画板页签与尾随通道区页签共用, 避免两处展示口径漂移) */
+function channelTabLabelOf(base: string): { label: string; detail: string } {
+  const candidates = [...boundChannelOptions.value, ...snapshotChannelOptions.value, ...channelOptionsDynamic.value]
+  const hit = candidates.find(o => roiBaseOf(String(o.value)) === base && (o.deviceName || o.deviceIp || o.deviceId))
+    || candidates.find(o => roiBaseOf(String(o.value)) === base)
+  const deviceMeta = hit?.deviceId
+    ? cascadeDevices.value.get(String(hit.deviceId))
+    : undefined
+  const detail = hit?.deviceName || hit?.deviceIp || deviceMeta?.name || deviceMeta?.ip || ''
+  const label = detail && hit
+    ? String(hit.label).replace(` (${detail})`, '')
+    : (hit?.label || base)
+  return { label, detail }
+}
 /** 通道页签集: 绑定通道 ∪ 快照通道 ∪ 已序列化/回显通道 (基准码去重) */
 const roiTabChannels = computed<Array<{ value: string; label: string; detail: string }>>(() => {
   const seen = new Map<string, string>()
@@ -2201,20 +2294,7 @@ const roiTabChannels = computed<Array<{ value: string; label: string; detail: st
   }
   for (const k of roiEchoed.value) push(k)
   for (const k of roiTouched.value) push(k)
-  const labeled = [...seen.keys()].map(base => {
-    const candidates = [...boundChannelOptions.value, ...snapshotChannelOptions.value, ...channelOptionsDynamic.value]
-    const hit = candidates.find(o => roiBaseOf(String(o.value)) === base && (o.deviceName || o.deviceIp || o.deviceId))
-      || candidates.find(o => roiBaseOf(String(o.value)) === base)
-    const deviceMeta = hit?.deviceId
-      ? cascadeDevices.value.get(String(hit.deviceId))
-      : undefined
-    const detail = hit?.deviceName || hit?.deviceIp || deviceMeta?.name || deviceMeta?.ip || ''
-    const label = detail && hit
-      ? String(hit.label).replace(` (${detail})`, '')
-      : (hit?.label || base)
-    return { value: base, label, detail }
-  })
-  return labeled
+  return [...seen.keys()].map(base => ({ value: base, ...channelTabLabelOf(base) }))
 })
 /** 严格模式 (逐通道生效): 回显含 by_channel 或本次会话有触碰 */
 //新增 绘制通道默认选中第一路。
@@ -2429,6 +2509,48 @@ const isTripwireRule = computed(() => legalRoiTypes.value.includes('tripwire'))
 const activeAreaRoiCount = computed(() =>
   form.conditions.region.config.roiPolygon
     .filter(r => r.is_active && AREA_ROI_TYPES.includes(r.roi_type)).length)
+// ═══ [UX-ROI-HINT 2026-09-16 P3 画线/画框要求提示] ═══
+//   用户实锚: 「周界入侵不画线不能工作」但规则页无任何提示说明哪些算法必须画。
+//   口径=插件层判定行为实证 (box-sdk, 非拍脑袋):
+//   ① must 插件层必须绘制: intrusion (未配置区域=不布防, intrusion_detector
+//      isInRegion region_points_ 空 → return false [FIX 2026-09-04], 海康/大华
+//      同语义)、tripwire (GB 通道内置竖线兜底 08-31 已关闭, 无绊线不判定)。
+//   ② builtin 插件层内置兜底: boundary (内置中央垂直线仍可触发,
+//      validateRegionStore 仅诊断日志)、climbing (内置三线判定; 检测区域仅
+//      空间前置过滤 roi-region-src)。
+//   ③ note 兕底语义有差异需说明: loitering (兜底链最底层为中心圆 (0.5,0.5,
+//      r=0.15) 非全画面 — 不画区域只检中心圆, [FIX roi-region-src] 注释实锚)。
+//   其余算法 isInROI roi_points_ 空 → 全画面 (行为/烟火/交通等), 绘制为可选。
+//   保存链已保证画板即布防入口: 面类双写 regions 表 (createRegion)、绊线双写
+//   tripwires 表 (createTripwireWithMirror) → 提示与判定行为一致。
+const ROI_HINT_BY_ALGO_SEG: Record<string, { level: 'must' | 'builtin' | 'note'; text: string }> = {
+  intrusion: { level: 'must', text: '：必须绘制检测区域，未绘制区域的通道不布防，不会产生告警' },
+  tripwire: { level: 'must', text: '：必须绘制绊线，未绘制不产生越线判定' },
+  boundary: { level: 'builtin', text: '：可绘制绊线；未绘制时使用内置中央垂直线兜底（仍会告警，位置/方向不可控）' },
+  climbing: { level: 'builtin', text: '：内置三线攀爬判定可全画面工作；绘制检测区域后仅区域内人员参与判定' },
+  loitering: { level: 'note', text: '：建议绘制检测区域；未绘制默认仅检测画面中心圆形区域（半径 15%），绘制后按区域判定' },
+}
+// 事件短名 → 提示键别名 (canonical 事件 key 与插件 algo 尾段不同名者)
+const ROI_HINT_ALGO_ALIAS: Record<string, string> = {
+  loiter: 'loitering', climb: 'climbing', fence_climb: 'climbing',
+}
+const ROI_HINT_LEVEL_LABEL: Record<string, string> = {
+  must: '必须绘制', builtin: '有内置兜底', note: '建议绘制',
+}
+/** 事件类型 → 提示 (覆盖率矩阵 algo_id 优先; 未就绪短名/别名兜底, 同
+ *  isTripwireConsumerEvent 先例模式)。无映射 (可选级) 返回 null。 */
+function roiHintForEvent(t: string): { key: string; label: string; level: string; text: string } | null {
+  const c = eventCoverageMap.value[t]
+  let seg = c?.algo_id ? String(c.algo_id).split('.').pop() || '' : ''
+  if (!seg) seg = String(t).split('.').pop() || String(t)
+  seg = ROI_HINT_ALGO_ALIAS[seg] || seg
+  const hit = ROI_HINT_BY_ALGO_SEG[seg]
+  if (!hit) return null
+  // 中文名反查 (label 形如「中文名 (key)」)
+  const o = eventTypeOptions.value.find(x => x.value === t)
+  const label = o ? String(o.label).replace(/\s*\([^)]*\)\s*$/, '') : t
+  return { key: t, label, level: hit.level, text: hit.text }
+}
 async function fetchSnapshotUrl(channelId: string): Promise<string> {
   const res = await fetch(`/api/v1/channels/${channelId}/snapshot`, { credentials: 'include' })
   if (!res.ok) return ''
@@ -2518,11 +2640,14 @@ function dedupeChannelForms(raw: string[]): string[] {
   return [...byBase.values()]
 }
 
-// [FIX 2026-09-04 老规则通道反解] 存量规则 (vp9 2026-09-01 前) 通道绑定只落
-//   source_cond.channel_ids (safeChannelHash int32; 真机实证 2056149937 =
-//   hash('11010500001110000001_ch0') 带后缀形态), 无 spatial_cond.bound_channel_ids
-//   字符串形态 → 编辑回填时绑定通道为空/事件源勾选不回显/ROI 快照无通道可加载。
-//   对通道选项双形态 (原样 + 剥 _chN) 建 hash→id 映射反解, 与后端逐位一致。
+// [FIX 2026-09-04 老规则通道反解] [CID-P2 2026-09-17 转只读兼容层] 存量规则
+//   (vp9 2026-09-01 前) 通道绑定只落 source_cond.channel_ids (safeChannelHash
+//   int32; 真机实证 2056149937 = hash('11010500001110000001_ch0') 带后缀形态),
+//   无 spatial_cond.bound_channel_ids 字符串形态 → 编辑回填时绑定通道为空/事件
+//   源勾选不回显/ROI 快照无通道可加载。对通道选项双形态 (原样 + 剥 _chN) 建
+//   hash→id 映射反解, 与后端逐位一致。
+//   [CID-P2] 新规则保存已直存完整串 (见保存路径 chanIdStrings), 本映射仅
+//   存量 hash 规则读回显用; 后端匹配侧同域读兼容由 chanStrIdListMatches 承担。
 function buildChannelHashIndex(): Map<number, string> {
   const m = new Map<number, string>()
   for (const opt of channelOptionsDynamic.value) {
@@ -2994,6 +3119,27 @@ async function loadEventCoverage() {
   }
 }
 
+// [UX-ROI-HINT 2026-09-16 P3] 绘制要求提示 computed — 置于 eventCoverageMap
+//   声明之后 (本文件 TDZ 陷阱先例: watch/computed 回调若在声明前求值会白屏,
+//   09-10/09-12 两处同因注释)。roiHintForEvent 虽定义在前, 但 computed 惰性
+//   求值时机在 setup 完成后, 与 isTripwireConsumerEvent 同模式安全。
+const roiRequirementHints = computed(() => {
+  const types = (form.conditions.eventType?.config?.types ?? []).map(t => String(t).trim()).filter(Boolean)
+  const out: Array<{ key: string; label: string; level: string; text: string }> = []
+  const seen = new Set<string>()
+  for (const t of types) {
+    const hit = roiHintForEvent(t)
+    if (!hit) continue
+    const dedup = `${hit.label}|${hit.level}`   // 多事件同算法 (攀爬/翻墙) 去重
+    if (seen.has(dedup)) continue
+    seen.add(dedup)
+    out.push(hit)
+  }
+  return out
+})
+const roiHintTypesSelected = computed(() =>
+  (form.conditions.eventType?.config?.types ?? []).length > 0)
+
 // ── [pw-in-rule 2026-09-12 绘制收敛] 尾随通道绘制并入规则页 ──
 //   算法查看页已整体只读化 (PassagewayEditor 下线) → 全部绘制收敛到事件规则:
 //   尾随 (tailgating) 事件的规则表单内嵌 PassagewayEditor + 已保存列表 (开关/
@@ -3066,12 +3212,14 @@ const displayPassageways = computed(() =>
   rulePassageways.value.filter((p) => !String(p.channel_id_str || '').endsWith('_ch0')))
 async function loadRulePassageways() {
   const chStr = String(form.conditions.region.config.channelId || '').replace(/_ch\d+$/, '')
-  if (!chStr) { rulePassageways.value = []; return }
+  if (!chStr) { rulePassageways.value = []; void loadPwChannelCounts(); return }
   try {
     const res = await regionApi.listPassageways({ channel_id_str: chStr, algo_id: TAILGATING_ALGO_ID, include_disabled: true })
     rulePassageways.value = ((res.data as any)?.data?.passageways ?? (res.data as any)?.passageways ?? [])
       .filter((p: any) => String(p.channel_id_str || '').replace(/_ch\d+$/, '') === chStr)
   } catch { rulePassageways.value = [] }
+  // [pw-per-channel 2026-09-16] 页签徽标 (各通道已绘通道区计数) 同步刷新
+  void loadPwChannelCounts()
 }
 // 关联通道切换 → 重载已保存通道 (画布底图由既有 @change=loadChannelSnapshot 链负责)
 watch(() => form.conditions.region.config.channelId, (v) => {
@@ -3080,6 +3228,89 @@ watch(() => form.conditions.region.config.channelId, (v) => {
 })
 // 事件类型切换 → 进入/退出尾随上下文时刷新
 watch(isTailgatingRule, (on) => { if (on) loadRulePassageways() })
+
+// ── [pw-single-canvas 2026-09-16 单画布收敛] ──
+//   纯尾随规则 (尾随事件且无绊线消费事件): 通用画板隐藏, 尾随通道画布上移至画板位
+//   (spatial-split 右栏) → 全抽屉仅一个绘制区域。画板形状对尾随只是引擎层二次过滤
+//   (roi_shapes_json pointInPolygon, LinkageEngine L1671 实锚), 与通道区判定语义
+//   重叠; 双画布并存曾致「画哪个/画两遍」困惑与两区不一致时的静默拦截。
+//   混合规则 (含绊线消费事件) 画板仍承担绊线绘制 → 保持显示。
+const tailgatingOnlyRule = computed(() => isTailgatingRule.value && !isTripwireRule.value)
+/** 画板隐藏后仍在引擎层生效的存量空间形状 (无编辑入口 → 需显式暴露, 见尾随块提示条;
+ *   口径同 activeAreaRoiCount/drawnAreas: 激活态区域类形状) */
+const legacySpatialShapes = computed(() =>
+  form.conditions.region.config.roiPolygon.filter(
+    r => r.is_active && AREA_ROI_TYPES.includes(r.roi_type)))
+/** 一键清除存量空间形状 (roiPolygon 置空; 保存规则后引擎层不再按形状过滤,
+ *   尾随判定完全由通道区承担)。不自动清 — 尊重存量行为, 用户显式决策。 */
+async function clearLegacySpatialShapes() {
+  try {
+    await ElMessageBox.confirm(
+      '清除后本规则不再按「空间区域」过滤事件, 尾随判定完全由通道区承担 (引擎层 roi_shapes_json 同步置空, 保存规则后生效)。确定清除?',
+      '清除存量空间形状', { type: 'warning', confirmButtonText: '清除', cancelButtonText: '取消' })
+  } catch { return }
+  form.conditions.region.config.roiPolygon = []
+  ElMessage.success('已清除存量空间形状 (保存规则后生效)')
+}
+
+// ── [pw-per-channel 2026-09-16] 尾随通道区逐通道绘制 (多通道工作通道切换) ──
+//   背景: 通道区 (passageway) 按 channel_id_str 存通道库, 画布底图/已保存列表/保存
+//   目标全部跟随单一「工作通道」(config.channelId); 纯尾随规则画板隐藏后, 唯一可切换
+//   工作通道的 ROI「绘制通道」页签随画板一起不可见 → 勾选 ≥2 通道后无处切换 (用户
+//   反馈)。本组为尾随块补「绘制通道」页签: 切换 = 换 channelId + 快照底图, 通道区
+//   列表经既有 channelId watch 自动重载 (loadRulePassageways)。
+//   边界: 仅纯尾随显示 — 混合规则画板页签在场 (switchRoiChannel 已同步 channelId/
+//   底图), 双入口并存会致两处激活态分歧; 切换不触碰 ROI 逐通道状态
+//   (roiByChannel/activeRoiChannel/touched), 尾随通道区与 ROI 逐通道两套状态解耦。
+/** 工作通道基准码 (剥 _chN 后缀; 与通道库 channel_id_str 同口径) */
+const pwActiveChannel = computed(() => roiBaseOf(String(form.conditions.region.config.channelId || '')))
+/** 通道区页签集: 绑定通道去重 (基准码); 无绑定勾选时退当前工作通道 (单页签不显示) */
+const pwTabChannels = computed<Array<{ value: string; label: string; detail: string }>>(() => {
+  const seen = new Set<string>()
+  for (const c of form.conditions.region.config.boundChannelIds || []) {
+    const base = roiBaseOf(String(c))
+    if (base) seen.add(base)
+  }
+  if (seen.size === 0) {
+    const base = roiBaseOf(String(form.conditions.region.config.channelId || ''))
+    if (base) seen.add(base)
+  }
+  return [...seen].map(base => ({ value: base, ...channelTabLabelOf(base) }))
+})
+/** 页签可见性: 纯尾随 (画板隐藏) 且 ≥2 路 — 单通道无需切换 */
+const pwTabsVisible = computed(() => tailgatingOnlyRule.value && pwTabChannels.value.length >= 2)
+/** 各通道「已绘通道区」计数 (页签徽标; 口径同 displayPassageways: 过滤 _ch0 镜像, 仅计启用) */
+const pwCountByChannel = ref<Record<string, number>>({})
+function pwCountOf(base: string): number { return pwCountByChannel.value[base] ?? 0 }
+async function loadPwChannelCounts() {
+  if (!isTailgatingRule.value) { pwCountByChannel.value = {}; return }
+  const bases = pwTabChannels.value.map(t => t.value)
+  if (bases.length === 0) { pwCountByChannel.value = {}; return }
+  const results = await Promise.allSettled(bases.map(ch =>
+    regionApi.listPassageways({ channel_id_str: ch, algo_id: TAILGATING_ALGO_ID, include_disabled: true })))
+  const m: Record<string, number> = {}
+  results.forEach((r, i) => {
+    if (r.status !== 'fulfilled') return
+    const body = (r.value as any)?.data
+    const list = (body?.data?.passageways ?? body?.passageways ?? []) as any[]
+    m[bases[i]] = list.filter(p =>
+      !String(p.channel_id_str || '').endsWith('_ch0') &&
+      String(p.channel_id_str || '').replace(/_ch\d+$/, '') === bases[i] &&
+      p.enabled !== false).length
+  })
+  pwCountByChannel.value = m
+}
+// 页签集变化 (绑定通道编辑/回显/收窄) → 刷新徽标; 通道区增删改走 loadRulePassageways 尾调,
+//   两处并行触发时以后到者为准 (计数幂等无害)
+watch(pwTabChannels, () => { void loadPwChannelCounts() }, { immediate: true })
+/** 切页签: 换工作通道 (channelId + 快照底图); 先清底图防 remount 瞬间残留上一通道画面 */
+async function switchPwChannel(target: string) {
+  const base = roiBaseOf(target)
+  if (!base || base === pwActiveChannel.value) return
+  form.conditions.region.config.channelId = base
+  roiBackgroundUrl.value = ''
+  await loadChannelSnapshot(base)
+}
 
 async function onPassagewayConfirm(payload: {
   transit_polygon: [number, number][]
@@ -4290,13 +4521,39 @@ async function handleSave(): Promise<boolean> {
     //   area_device_ids ← 级联设备勾选 (后端白名单暂丢弃, 真实持久化走 ui_state_json)
     const cascadeAreaId = lc.enabled ? areaCascadeAreaId.value : ''
     const cascadeChIds = lc.enabled ? [...areaCascadeChannelIds.value] : []
-    const mergedBoundChannelIds = [...new Set([...(rc.config.boundChannelIds || []).map(String), ...cascadeChIds])]
+    // [ROI-BIND-SYNC 2026-09-17] 逐通道形状键自动并入绑定 (严格模式): 画了形状 = 期望
+    //   该通道生效 — 防「绑定改小后历史形状键残留成死配置」(引擎 bound 先拦截,
+    //   roi_shapes_by_channel 键 ⊄ bound 的形状永不被评估; 实锚: VP-gate-vehicle
+    //   roiKeys=[2001,2002] 而 bound/device_ids 仅 [2001], 2002 形状被 source+spatial
+    //   双重拦截永不生效)。通用模式不并入 (roi_shapes_json 不查通道表, 无绑定=全
+    //   通道通用 ROI 语义, 并入反而收窄改变行为)。
+    const shapeChannelIds = roiStrictMode.value
+      ? [...roiSerializeKeys.value].filter((k) => {
+          const list = k === activeRoiChannel.value
+            ? rc.config.roiPolygon
+            : (roiByChannel.value[k]?.list || [])
+          return list.some(r => r.is_active && (AREA_ROI_TYPES.includes(r.roi_type) || r.roi_type === 'tripwire'))
+        })
+      : []
+    const mergedBoundChannelIds = [...new Set([...(rc.config.boundChannelIds || []).map(String), ...cascadeChIds, ...shapeChannelIds.map(String)])]
+    // [STALE-LOC-SELFHEAL 2026-09-17] 池外死值自愈前置判定: 规则是否仍有其他空间
+    //   收窄维度 (绑定∪级联∪形状通道 / 区域选择器 / 分组 / ROI 逐通道) —
+    //   供 location_id 死值清理分支防「唯一维度被清后扩大为全通道触发」。
+    const spatialHasOtherScope = !!(mergedBoundChannelIds.length || rc.config.roi || rc.config.group || cascadeAreaId
+      || (rc.enabled && rc.config.roiPolygon?.some(r => r.is_active)) || roiStrictMode.value)
     const spatial_cond = (rc.enabled || lc.enabled) ? {
       region_id: cleanLocation(rc.config.roi || ''),
       // [UI-CONVERGE 2026-09-12 P2] location_id 唯一管辖 = 位置条件卡 (point):
       // 位置卡关 = 该维度不收窄 (旧「空间卡 location 兑底」链随 UI 下线移除;
       // 老规则回显 enabled 从 !!sc.location_id 推导, 原值往返零丢失)
-      location_id: cleanLocation(lc.enabled ? lc.config.point : ''),
+      // [STALE-LOC-SELFHEAL 2026-09-17] 池外死值自愈: 位置卡 point 不在任何当前池
+      //   (安保区域/位置表/设备提取 — legacyPointEcho 命中即死值) = 指向已删除实体,
+      //   引擎 location_id 四形态回退 (str/hash/基码/设备域) 对死值永不命中 → 规则
+      //   被静默拦截永不触发 (实锚: 周界出入口尾随残留已下线设备码, enabled 规则
+      //   真实事件零联动)。自愈条件: 死值 且 仍有其他空间收窄维度 (spatialHasOther
+      //   Scope) — 无其他维度时保留原值 (现状死拦截, 由 legacyPointEcho 只读节点
+      //   暴露给用户决策, 避免清后扩大触发面)。合法值 (区域/位置表/设备) 往返零丢失。
+      location_id: cleanLocation(lc.enabled && (!legacyPointEcho.value || !spatialHasOtherScope) ? lc.config.point : ''),
       // [P1 2026-09-10 更名] 写新键 area_id (后端序列化双键镜像; 存量规则旧键双键读兼容)
       area_id: cleanGroup(rc.config.group || cascadeAreaId),
       // [vp9 2026-09-01] 显式绑定通道 (多选, 字符串形态与引擎侧双形态匹配兼容)
@@ -4337,25 +4594,25 @@ async function handleSave(): Promise<boolean> {
     const srcChannels = (spatialOn && mergedBoundChannelIds.length > 0)
       ? dedupeChannelForms([...mergedBoundChannelIds, ...esc.config.channels])
       : esc.config.channels
-    // 通道分类: 小整数 ID → channel_ids (int32), 字符串 ID → device_ids
-    // [FIX 2026-08-28 双形态存储] GB28181 通道有主码流(不带 _ch0)/子码流(带 _ch0)
-    //   双实例, 告警的 channel_id_str 两种形态都可能出现; 后端 device_ids 是
-    //   精确比对 → 规则同时存两种形态, 任一实例的告警都能命中。
-    const numericChannels: number[] = []
-    const stringChannels: string[] = []
+    // [CID-P2 2026-09-17] channel_ids 字符串化 (后端 SourceCondition.channel_ids 已
+    //   vector<string>): 全部通道串直存完整串 (本地短数字/GB 20 位码), 老分类
+    //   「小整数→channel_ids / GB 串→device_ids」随 int32 退役废除 — 后端
+    //   chanStrIdListMatches 投影候选 (数字直取/std::hash/FNV 三链) 同域匹配。
+    // [FIX 2026-08-28 双形态存储语义保留] GB28181 主码流(不带 _ch0)/子码流
+    //   (带 _chN) 双实例双形态并集仍存 (base + 原样), 任一实例告警都命中;
+    //   存量规则 device_ids 老串读路径后端兼容, 编辑保存自然迁移。
+    const chanIdStrings: string[] = []
     for (const c of srcChannels) {
-      const n = parseInt(c, 10)
-      if (!isNaN(n) && String(n) === c.trim()) numericChannels.push(n)
-      else {
-        const base = c.replace(/_ch\d+$/, '')
-        stringChannels.push(base)
-        if (base !== c && !stringChannels.includes(c)) stringChannels.push(c)
-      }
+      const t = String(c ?? '').trim()
+      if (!t) continue
+      const base = t.replace(/_ch\d+$/, '')
+      if (!chanIdStrings.includes(base)) chanIdStrings.push(base)
+      if (base !== t && !chanIdStrings.includes(t)) chanIdStrings.push(t)
     }
     // [任务5] 事件源 / 设备过滤 关闭态: device_ids/channel_ids 设空数组 (不限维度生效)
     const source_cond = {
-      channel_ids: srcActive ? numericChannels : [],
-      device_ids: srcActive ? stringChannels : [],
+      channel_ids: srcActive ? chanIdStrings : [],
+      device_ids: [] as string[],
       event_types,
       min_severity: etc.config.minSeverity,
       min_confidence: etc.config.minConfidence / 100,
@@ -4487,7 +4744,10 @@ async function handleDryRun() {
     const res = await linkageApi.dryRun({
       rule_id: editingRule.value.id,
       alarm_type: (form.conditions.eventType.config.types[0] as string) || 'intrusion',
-      channel_id: parseInt(form.conditions.eventSource.config.channels[0]) || 1,
+      // [CID-P1 2026-09-16] channel_id 形态治理: 完整通道串走 channel_id_str
+      //   主形态 (后端 test-trigger 消费 RestApiHandlers L18736); 原 parseInt
+      //   对 GB 20 位码截断/NaN→1 → 幻影通道 1 伪造匹配结果
+      channel_id_str: String(form.conditions.eventSource.config.channels[0] || ''),
       severity: form.conditions.eventType.config.minSeverity,
       // 使用表单设置的置信度 + 5% 作为模拟值，确保高于阈值
       confidence: Math.min((form.conditions.eventType.config.minConfidence + 5) / 100, 1.0),
@@ -4996,6 +5256,8 @@ watch(drawerVisible, (v) => {
 })
 
 onMounted(() => {
+  // [UX-ZH 2026-09-16] 事件类型中文名预热 (SSOT canonical)
+  ensureEventTypesZh()
   // [FLOOR-MAP 2026-09-03] 适用地图列/抽屉 options 预热 (30s TTL 缓存单例)
   loadFloorMaps().catch(() => {})
   // [校园二期 2026-08-30] 场景包 goRules 跳转预填 tag 过滤 (?tag=scene_pack)
@@ -5465,8 +5727,30 @@ watch(mainTab, (tab) => {
   color: var(--el-color-danger);
 }
 .roi-ch-hint { display: none; }
+/* [pw-per-channel 2026-09-16] 尾随「绘制通道」页签 (横向条; 复用 roi-ch-tag 视觉) */
+.pw-ch-tabs { display: flex; align-items: stretch; margin: 0 0 8px; overflow: hidden; border: 1px solid var(--el-border-color-lighter); border-radius: 4px; background: var(--el-fill-color-extra-light); }
+.pw-ch-tabs__label { display: flex; flex: 0 0 auto; align-items: center; padding: 0 12px; border-right: 1px solid var(--el-border-color-lighter); background: var(--el-bg-color); font-size: 13px; font-weight: 600; color: var(--el-text-color-primary); }
+.pw-ch-tabs__list { display: flex; flex: 1 1 auto; align-items: center; gap: 6px; padding: 5px 8px; overflow-x: auto; }
+.pw-ch-tabs__list .roi-ch-tag { flex: 0 1 230px; width: 230px; min-width: 170px; max-width: 230px; }
 .roi-canvas-panel { flex: 1; min-width: 0; padding: 10px; }
 .roi-workspace__hint { display: none; }
+/* [UX-ROI-HINT 2026-09-16 P3] 按算法绘制要求提示 (must 红/builtin 蓝/note 橙,
+   optional 灰 — 用 el- 色变量跟随主题) */
+.roi-req-hints { margin: 0 0 6px; display: flex; flex-direction: column; gap: 4px; }
+.roi-req-hint {
+  margin: 0; font-size: 12px; line-height: 1.5; padding: 3px 8px;
+  border-left: 3px solid transparent; border-radius: 2px;
+  background: var(--el-fill-color-light);
+}
+.roi-req-hint--must { border-left-color: var(--el-color-danger); color: var(--el-color-danger); }
+.roi-req-hint--builtin { border-left-color: var(--el-color-primary); color: var(--el-color-primary); }
+.roi-req-hint--note { border-left-color: var(--el-color-warning); color: var(--el-color-warning); }
+.roi-req-hint--optional { border-left-color: var(--el-fill-color-dark); color: var(--app-text-secondary); }
+.roi-req-hint b { color: inherit; margin-right: 2px; }
+.roi-req-hint__badge {
+  display: inline-block; margin-right: 6px; padding: 0 6px; font-size: 11px;
+  border: 1px solid currentColor; border-radius: 9px; flex-shrink: 0;
+}
 .roi-combine-row { display: flex; align-items: center; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
 .roi-combine-row .cond-sub-label { margin-bottom: 0; }
 @media (max-width: 760px) {

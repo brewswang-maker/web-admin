@@ -19,6 +19,11 @@ import { getDeviceChannels } from '@/api/devices'
 // [UI 2026-09-11] 通道目录树 (区域→设备→通道) — 与 LiveView/ChannelView 同源工具
 import { securityAreaApi } from '@/api/securityAreas'
 import { buildAreaTree, areaTreeToElTreeData } from '@/utils/areaTree'
+// [UX-ZH 2026-09-16] 事件类型中文名展示 (SSOT canonical 单例缓存; 智能检索结果告警类型列)
+import { useEventTypeZh } from '@/composables/useEventTypeZh'
+
+// [UX-ZH 2026-09-16] 事件类型中文名 (title 保留裸 key 供排查)
+const { zh, ensure: ensureEventTypesZh } = useEventTypeZh()
 
 interface Device {
   id: string
@@ -2453,6 +2458,7 @@ async function doTimeSeek() {
 // [REC-STORAGE 2026-09-11] 存储预估已迁出 → SettingsView「存储预估」Tab (calculateStorage/estParams)
 
 onMounted(() => {
+  ensureEventTypesZh() // [UX-ZH 2026-09-16] 事件类型中文名预热 (SSOT canonical)
   fetchDevices()
   fetchSmartFilterOptions()
   startOfflineCheck()
@@ -2978,7 +2984,8 @@ onUnmounted(() => {
             </el-table-column>
             <el-table-column label="告警类型" min-width="110">
               <template #default="{ row }">
-                <el-tag type="danger" size="small">{{ row.alarm_type }}</el-tag>
+                <!-- [UX-ZH 2026-09-16] 中文名展示 (SSOT canonical), title 保留裸 key -->
+                <el-tag type="danger" size="small" :title="row.alarm_type">{{ zh(row.alarm_type) }}</el-tag>
               </template>
             </el-table-column>
             <el-table-column label="目标类型" min-width="90">

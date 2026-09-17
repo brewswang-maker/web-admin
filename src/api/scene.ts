@@ -37,6 +37,14 @@ export interface SceneScheme {
   scenes: SceneConfig[]
 }
 
+/** 场景初始相机位姿（笛卡尔坐标; 与 "3D场景管理" 页"初始视角"设置对应） */
+export interface SceneCamera {
+  /** 相机位置 [x, y, z] */
+  position: [number, number, number]
+  /** 相机看向的目标点 [x, y, z] */
+  target: [number, number, number]
+}
+
 /** 单个场景配置 */
 export interface SceneConfig {
   id: string
@@ -52,6 +60,9 @@ export interface SceneConfig {
   decor?: boolean
   /** 演示设备点位（无真实设备时兜底） */
   demoDevices?: Array<Record<string, unknown>>
+  /** [CAM-POSE 2026-09-16] 进入 3D 场景时的固定初始视角（缺省兜底体育场默认
+   *  (45,35,55)→(0,5,0); "3D场景管理"页可设; 后端 scene_config.json 透传存取) */
+  camera?: SceneCamera
 }
 
 /** 场景建筑（对应前端 Building3DNode，含体育场形状扩展） */

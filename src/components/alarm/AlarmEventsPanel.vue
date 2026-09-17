@@ -296,7 +296,8 @@
 
     <!-- ===== 快照预览 (标注 overlay + 取证帧, 与 AlarmsView 同款) ===== -->
     <el-dialog v-model="previewVisible" title="告警快照" width="760px" destroy-on-close align-center>
-      <SnapshotAnnotated :src="previewImageUrl" :metadata="previewMeta ?? undefined" />
+      <SnapshotAnnotated :src="previewImageUrl" :metadata="previewMeta ?? undefined"
+        :channel-id="previewChannelId" />
       <EvidenceFrames :metadata="(previewMeta ?? undefined) as Record<string, unknown> | undefined" />
     </el-dialog>
 
@@ -596,8 +597,15 @@ function onRowClickDetail(row: any, _column: unknown, event: Event) {
 const previewVisible = ref(false)
 const previewImageUrl = ref('')
 const previewMeta = ref<Record<string, unknown> | null>(null)
+// [FIX 2026-09-16 P2 叠加层通道反解] 同 AlarmPopup popupOverlayChannelId 口径:
+// 快照 URL 内嵌真实流名 (gb_<裸码>) 优先反解, 兜底 channelId — 原未传 channelId
+// → useAlarmShapes 区域库链退化全库拉取, 该算法所有通道 ROI 串画到当前告警。
+const previewChannelId = ref('')
 function openSnapshotPreview(row: any) {
   previewImageUrl.value = getSnapshotUrl(row)
+  const mStream = previewImageUrl.value.match(/\/(?:snapshots|record)\/rtp\/([^/]+)\//)?.[1]
+  previewChannelId.value = mStream?.replace(/^gb_/, '')
+    || String(row?.channelId || row?.channel_id || '')
   let m = row?.metadata
   if (typeof m === 'string') {
     try { m = JSON.parse(m) } catch { m = null }

@@ -169,7 +169,7 @@
                     :bbox="currentFrameIsPreOrPost ? undefined : popupBbox"
                     :detections="currentFrameIsPreOrPost ? [] : popupDetections"
                     :target-label="currentFrameIsPreOrPost ? '' : popupTargetLabel"
-                    :channel-id="currentAlarm?.channelId || ''"
+                    :channel-id="popupOverlayChannelId"
                     :algo-id="popupAlgoId"
                     :alarm-shapes="popupAlarmShapes"
                   />
@@ -1943,6 +1943,13 @@ const popupAlgoId = computed(() => {
   const src = ((m[0] && typeof m[0] === 'object') ? m[0] : m) as Record<string, unknown>
   return String(src.algo_id ?? src.algoId ?? '')
 })
+/** [FIX 2026-09-16 P2 叠加层通道反解] 区域/规则 ROI 按「真实告警通道」存储,
+ *  而 GB 告警的 channelId 可能被后端归并为父设备码 (NVR, 同 PREV-CHFIX),
+ *  按归并键查规则链/区域库必 miss 或串。快照/切片 URL 内嵌真实通道
+ *  (gb_<裸码>), 与预览/回放同源反解; 无线索回退 channelId。 */
+const popupOverlayChannelId = computed(() =>
+  alarmStreamName(currentAlarm.value)?.replace(/^gb_/, '')
+  || String(currentAlarm.value?.channelId || ''))
 
 const locationNote = computed(() => {
   const m = (currentAlarm.value?.metadata || {}) as Record<string, unknown>

@@ -161,7 +161,7 @@ import {
 //   gif 自动播放语义由 <video autoplay muted loop playsinline> 等价替代 (Chrome/Edge/Firefox 全支持)
 import aiAvatarVideo from '@/assets/ai-avatar.webm'
 import { DEFAULT_DEVICES, DEFAULT_BUILDINGS, STADIUM_SCENE_META } from './scene3d/constants/defaultSceneData'
-import type { Building3DNode, SceneMeta } from './scene3d/types/scene3d'
+import type { Building3DNode, SceneMeta, Vector3Tuple } from './scene3d/types/scene3d'
 
 // ── Props ──
 interface Device3D {
@@ -205,6 +205,10 @@ const props = defineProps<{
   showMiniMap?: boolean
   /** [WEB-GLB v1.9.8] 正在 LED 大屏投放的设备 id（菜单项切换"停止投放"） */
   castingDeviceId?: string
+  /** [CAM-POSE 2026-09-16] 进入 3D 场景时的固定初始视角（scene_config.json
+   *  scenes[].camera 下发, "3D场景管理"页可设）。缺省兜底体育场默认
+   *  (45,35,55)→(0,5,0); init 与 resetCamera("复位") 均遵循该位姿 */
+  initialCamera?: { position: Vector3Tuple; target: Vector3Tuple }
 }>()
 
 const emit = defineEmits<{
@@ -950,6 +954,22 @@ const defaultDevices = DEFAULT_DEVICES as Device3D[]
 
 const defaultBuildings: Building3DNode[] = DEFAULT_BUILDINGS
 
+// ── [CAM-POSE 2026-09-16] 初始相机位姿解析 ──
+/** 缺省位姿: v1.9.5 体育场馆内 11 台 + 场边兜底位(z≤24) 视野调校值 */
+const DEFAULT_CAM_POSE: { position: Vector3Tuple; target: Vector3Tuple } = {
+  position: [45, 35, 55],
+  target: [0, 5, 0],
+}
+/** 生效初始位姿: props.initialCamera (scene_config.json 场景配置下发) 优先,
+ *  非法/缺省兜底 DEFAULT_CAM_POSE; init 与 resetCamera 均调用 */
+function resolveInitialCamera(): { position: Vector3Tuple; target: Vector3Tuple } {
+  const c = props.initialCamera
+  const isVec3 = (v: unknown): v is Vector3Tuple =>
+    Array.isArray(v) && v.length === 3 && v.every(n => Number.isFinite(n))
+  if (c && isVec3(c.position) && isVec3(c.target)) return { position: c.position, target: c.target }
+  return DEFAULT_CAM_POSE
+}
+
 function init() {
   if (!containerRef.value) return
   const container = containerRef.value
@@ -977,11 +997,12 @@ function init() {
   // near 0.1→1.0: 深度缓冲 near/far 比率从 1:5000 降到 1:500,
   // 消除 GLB 草皮(y=0)与看台底板(y=0)的 z-fighting 闪烁/黑斑
   camera = new THREE.PerspectiveCamera(50, safeW / safeH, 1.0, 500)
-  // [v1.9.5] 默认相机回滚 (52,46,64)→(45,35,55): v1.9.4 拉远是为收纳
-  // CAM_14 波浪馆东入口标签(原屏幕 y=1097 超 1080 视口)，该场外点位已删；
-  // 馆内 11 台 + 真机场边兜底位(z≤24)全部在 (45,35,55) 视野内
-  camera.position.set(45, 35, 55)
-  camera.lookAt(0, 5, 0)
+  // [v1.9.5] 默认位姿 (45,35,55)→(0,5,0) 为体育场馆内 11 台 + 场边兜底位(z≤24)
+  // 视野调校（见 DEFAULT_CAM_POSE 注释）；[CAM-POSE 2026-09-16] 场景配置下发
+  // initialCamera 时优先使用（"3D场景管理"页可设）
+  const pose = resolveInitialCamera()
+  camera.position.set(pose.position[0], pose.position[1], pose.position[2])
+  camera.lookAt(pose.target[0], pose.target[1], pose.target[2])
 
   // Renderer
   // [WEB-GLB v1.7.0] 清晰度修复: 回退 v1.5 性能降级, 恢复高质量渲染管线。
@@ -1060,7 +1081,8 @@ function init() {
   controls.maxDistance = 100
   // [WEB-GLB v1.6.0] v1.5.0 target 修正: GLB 草皮实际在 y=0 (glTF 规范校验),
   // 看台 scale=0.5 后高 ~15.4, 视觉焦点取看台中段 y=5
-  controls.target.set(0, 5, 0)
+  // [CAM-POSE 2026-09-16] 与相机初始位姿同源 (场景配置下发优先)
+  controls.target.set(pose.target[0], pose.target[1], pose.target[2])
 
   startTime = performance.now()
   raycaster = new THREE.Raycaster()
@@ -2280,10 +2302,21 @@ function onResize() {
 }
 
 function resetCamera() {
-  // [v1.9.5] 与 init 默认相机同步回滚 (见 init 处注释)
-  camera.position.set(45, 35, 55)
-  controls.target.set(0, 5, 0)
+  // [CAM-POSE 2026-09-16] 与 init 位姿同源: 场景配置下发优先, 缺省兜底默认值
+  // (见 init 处注释); "3D场景管理"页保存的初始视角在此同样生效
+  const pose = resolveInitialCamera()
+  camera.position.set(pose.position[0], pose.position[1], pose.position[2])
+  controls.target.set(pose.target[0], pose.target[1], pose.target[2])
   controls.update()
+}
+
+/** [CAM-POSE 2026-09-16] 返回当前相机位姿（"3D场景管理"页"用当前视角"捕获用） */
+function getCameraPose(): { position: Vector3Tuple; target: Vector3Tuple } | null {
+  if (!camera || !controls) return null
+  return {
+    position: [camera.position.x, camera.position.y, camera.position.z],
+    target: [controls.target.x, controls.target.y, controls.target.z],
+  }
 }
 
 function toggleAlarmPulse() { alarmPulse.value = !alarmPulse.value; requestRender() }
@@ -2314,6 +2347,8 @@ defineExpose({
   exportPerformanceReport,
   perfCollector: () => perfCollector,
   resetCamera,
+  /** [CAM-POSE 2026-09-16] 当前相机位姿（捕获"初始视角"用） */
+  getCameraPose,
   toggleLabels,
   // P2-1
   loadGroundImage,

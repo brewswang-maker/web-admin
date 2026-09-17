@@ -67,10 +67,13 @@
       <el-table-column label="事件类型" min-width="200">
         <template #default="{ row }">
           <template v-if="(row.source_cond?.event_types || []).length">
+            <!-- [UX-ZH 2026-09-16] 中文名展示 (SSOT canonical), tooltip 保留裸 key (对齐周界 RulesView) -->
             <el-tag v-for="e in (row.source_cond.event_types as string[]).slice(0, 2)" :key="e"
-                    size="small" effect="plain" class="evt-tag">{{ e }}</el-tag>
+                    size="small" effect="plain" class="evt-tag">
+              <span :title="e">{{ zh(e) }}</span>
+            </el-tag>
             <el-tooltip v-if="(row.source_cond.event_types as string[]).length > 2"
-                        :content="(row.source_cond.event_types as string[]).slice(2).join(', ')">
+                        :content="zhAll((row.source_cond.event_types as string[]).slice(2))">
               <el-tag size="small" type="info" effect="plain">+{{ (row.source_cond.event_types as string[]).length - 2 }}</el-tag>
             </el-tooltip>
           </template>
@@ -195,6 +198,8 @@ import { ruleTriggerTags, ruleLevelInfo, RULE_SEVERITY_LEVELS } from '@/composab
 // [CH-BINDING-DISPLAY 2026-09-14] 绑定通道真实展示 (四源综合 + 目录名称反查)
 import { displayRuleBoundChannels, type BoundChannelDisplay } from '@/composables/useRuleChannelDisplay'
 import { loadAlarmNameDirectory } from '@/composables/useAlarmDeviceLabel'
+// [UX-ZH 2026-09-16] 事件类型中文名展示 (SSOT canonical 单例缓存; 对齐周界/酒店/加油站/校园 RulesView)
+import { useEventTypeZh } from '@/composables/useEventTypeZh'
 
 /** 安检场景事件集 (与 EventTypeAliases.h scene_tags security_screening 对齐) */
 const SCREENING_EVENTS: Array<{ key: string; name: string }> = [
@@ -237,6 +242,8 @@ const SCREENING_EVENTS: Array<{ key: string; name: string }> = [
 
 const screeningKeys = new Set(SCREENING_EVENTS.map(e => e.key))
 const router = useRouter()
+// [UX-ZH 2026-09-16] 事件类型中文名 (tooltip 保留裸 key 供排查)
+const { zh, zhAll, ensure: ensureEventTypesZh } = useEventTypeZh()
 const loading = ref(false)
 const rules = ref<LinkageRuleInfo[]>([])
 const toggling = reactive<Record<string, boolean>>({})
@@ -401,6 +408,7 @@ function openTriggerDetail(row: LinkageRuleInfo) {
 
 onMounted(() => {
   loadRules()
+  ensureEventTypesZh() // [UX-ZH 2026-09-16] 事件类型中文名预热 (SSOT canonical)
   loadAlarmNameDirectory() // [CH-BINDING-DISPLAY] 通道/设备目录预热 (绑定通道列名称反查)
 })
 </script>
@@ -416,7 +424,8 @@ onMounted(() => {
 .dry-label { color: #909399; font-size: 13px; display: inline-flex; align-items: center; gap: 4px; }
 .r-name { font-weight: 500; }
 .r-id { font-family: monospace; font-size: 11px; color: #909399; }
-.evt-tag { margin-right: 4px; font-family: monospace; }
+/* [UX-ZH 2026-09-16] 事件类型 tag: 中文名展示 (原 monospace 为裸 key 设计, 移除) */
+.evt-tag { margin-right: 4px; }
 /* [CH-BINDING-DISPLAY 2026-09-14] 绑定通道列: 长通道名截断 + 多 chip 换行 (tooltip 全名) */
 .ch-bound-cell { display: inline-flex; flex-wrap: wrap; align-items: center; }
 .ch-tag { margin: 0 2px 2px 0; }

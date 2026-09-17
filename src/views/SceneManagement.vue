@@ -4,7 +4,7 @@
       <h2>3D 场景管理</h2>
       <div class="sm-actions">
         <el-button type="primary" size="small" @click="addScene">新建场景</el-button>
-        <el-button size="small" @click="saveConfig" :loading="saving">保存配置</el-button>
+        <el-button size="small" @click="saveConfig" :loading="saving" :disabled="loadFailed">保存配置</el-button>
       </div>
     </div>
     <div class="sm-body">
@@ -44,28 +44,55 @@
         <Scene3D
           v-if="activeScene?.buildings?.length || groundImageUrl"
           ref="previewScene3dRef"
+          :key="activeSceneId"
           class="preview-3d"
           :devices="[]"
           :buildings="previewBuildings"
           :ground-image-url="groundImageUrl"
           :draw-building-mode="drawBuildingMode"
           :show-mini-map="false"
+          :initial-camera="activeScene?.camera"
           @building-create="onBuildingCreate"
         />
         <div v-else class="preview-empty">暂无建筑数据</div>
+        <!-- [CAM-POSE 2026-09-16] 初始视角设置: 进入 3D 场景(大屏/全屏)时的固定相机位姿,
+             存 scene_config.json scenes[].camera; 可在预览里拖好视角后点"用当前预览视角"捕获 -->
+        <div class="sm-camera-card">
+          <div class="sm-section-title">初始视角
+            <span class="sm-camera-badge" :class="{ custom: camCustomized }">{{ camCustomized ? '已自定义' : '默认位姿' }}</span>
+          </div>
+          <div class="sm-camera-row">
+            <span class="sm-camera-label">位置</span>
+            <el-input-number v-model="camForm.px" size="small" :controls="false" style="width:72px" @change="camCustomized = true" />
+            <el-input-number v-model="camForm.py" size="small" :controls="false" style="width:72px" @change="camCustomized = true" />
+            <el-input-number v-model="camForm.pz" size="small" :controls="false" style="width:72px" @change="camCustomized = true" />
+          </div>
+          <div class="sm-camera-row">
+            <span class="sm-camera-label">目标</span>
+            <el-input-number v-model="camForm.tx" size="small" :controls="false" style="width:72px" @change="camCustomized = true" />
+            <el-input-number v-model="camForm.ty" size="small" :controls="false" style="width:72px" @change="camCustomized = true" />
+            <el-input-number v-model="camForm.tz" size="small" :controls="false" style="width:72px" @change="camCustomized = true" />
+          </div>
+          <div class="sm-camera-row">
+            <el-button size="small" type="primary" plain @click="captureCamFromPreview">用当前预览视角</el-button>
+            <el-button size="small" @click="resetCamForm">恢复默认</el-button>
+          </div>
+        </div>
       </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, reactive } from 'vue'
 import { ElMessage } from 'element-plus'
-import { sceneApi, type SceneConfig, type SceneScheme } from '@/api/scene'
+import { sceneApi, type SceneConfig, type SceneScheme, type SceneCamera } from '@/api/scene'
 import type { Building3DNode } from '@/components/scene3d/types/scene3d'
 import Scene3D from '@/components/Scene3D.vue'
 
 const saving = ref(false)
+/** [FIX 2026-09-16] 配置加载失败标志: 失败时页面仅展示默认模板, 禁止保存以免全量 PUT 覆盖设备场景数据 */
+const loadFailed = ref(false)
 const scenes = ref<SceneConfig[]>([])
 const activeSceneId = ref('default')
 const activeScene = computed(() => scenes.value.find(s => s.id === activeSceneId.value) || scenes.value[0] || null)
@@ -79,10 +106,18 @@ onMounted(async () => {
     if (config?.scenes?.length) {
       scenes.value = config.scenes
       activeSceneId.value = config.activeSceneId || config.scenes[0].id
+      loadFailed.value = false
     } else {
       scenes.value = [createDefaultScene()]
+      loadFailed.value = true
     }
-  } catch { scenes.value = [createDefaultScene()] }
+  } catch {
+    // [FIX 2026-09-16] 加载失败不再静默降级: 标记失败态并提示 (曾导致隧道波动时默认模板覆盖设备体育场场景)
+    scenes.value = [createDefaultScene()]
+    loadFailed.value = true
+    ElMessage.warning('场景配置加载失败，已禁止保存以避免覆盖设备数据；请刷新页面重试')
+  }
+  syncCamForm()
 })
 
 function createDefaultScene(): SceneConfig {
@@ -106,11 +141,12 @@ function createDefaultScene(): SceneConfig {
   }
 }
 
-function selectScene(id: string) { activeSceneId.value = id }
+function selectScene(id: string) { activeSceneId.value = id; syncCamForm() }
 function addScene() {
   const id = 'scene-' + Date.now()
   scenes.value.push({ id, name: '新场景', buildings: [], ground: { width: 120, height: 100 } })
   activeSceneId.value = id
+  syncCamForm()
 }
 function addBuilding() {
   if (!activeScene.value) return
@@ -118,11 +154,71 @@ function addBuilding() {
 }
 function removeBuilding(idx: number) { activeScene.value?.buildings.splice(idx, 1) }
 async function saveConfig() {
+  // [FIX 2026-09-16] 加载失败时禁止保存(全量 PUT 会覆盖设备真实场景)
+  if (loadFailed.value) {
+    ElMessage.error('场景配置未成功加载，禁止保存以避免覆盖设备数据；请刷新页面重试')
+    return
+  }
+  applyCamForm()
   saving.value = true
   try {
     await sceneApi.saveConfig({ version: '1.0.0', activeSceneId: activeSceneId.value, scenes: scenes.value })
     ElMessage.success('场景配置已保存')
   } catch (err) { ElMessage.error('保存失败') } finally { saving.value = false }
+}
+
+// ── [CAM-POSE 2026-09-16] 初始视角设置 ──
+/** 初始视角 = 进入 3D 场景(大屏/全屏)时的固定相机位姿；存 scene_config.json
+ *  scenes[].camera（后端透传存取）；缺省时 Scene3D 内部兜底同一默认位姿 */
+/** 默认位姿（与 Scene3D.vue DEFAULT_CAM_POSE 保持一致: 体育场调校值） */
+const CAM_DEFAULT: SceneCamera = { position: [45, 35, 55], target: [0, 5, 0] }
+/** 表单缓冲（camera 缺省时也能直接编辑; 保存/捕获时再写回场景） */
+const camForm = reactive({
+  px: CAM_DEFAULT.position[0], py: CAM_DEFAULT.position[1], pz: CAM_DEFAULT.position[2],
+  tx: CAM_DEFAULT.target[0], ty: CAM_DEFAULT.target[1], tz: CAM_DEFAULT.target[2],
+})
+const camCustomized = ref(false)
+
+/** 切换/加载场景后同步表单（已保存 camera → 回显; 无 → 默认位姿） */
+function syncCamForm() {
+  const c = activeScene.value?.camera
+  camCustomized.value = !!c
+  camForm.px = c?.position?.[0] ?? CAM_DEFAULT.position[0]
+  camForm.py = c?.position?.[1] ?? CAM_DEFAULT.position[1]
+  camForm.pz = c?.position?.[2] ?? CAM_DEFAULT.position[2]
+  camForm.tx = c?.target?.[0] ?? CAM_DEFAULT.target[0]
+  camForm.ty = c?.target?.[1] ?? CAM_DEFAULT.target[1]
+  camForm.tz = c?.target?.[2] ?? CAM_DEFAULT.target[2]
+}
+
+/** 捕获当前预览视角填入表单（预览里拖动相机调好位置后点击） */
+function captureCamFromPreview() {
+  const pose = previewScene3dRef.value?.getCameraPose?.()
+  if (!pose) { ElMessage.warning('预览场景未就绪，无法捕获视角'); return }
+  const r1 = (n: number) => Math.round(n * 10) / 10
+  camForm.px = r1(pose.position[0]); camForm.py = r1(pose.position[1]); camForm.pz = r1(pose.position[2])
+  camForm.tx = r1(pose.target[0]); camForm.ty = r1(pose.target[1]); camForm.tz = r1(pose.target[2])
+  camCustomized.value = true
+  ElMessage.success('已捕获当前预览视角，点"保存配置"生效')
+}
+
+/** 恢复默认位姿（保存时移除本场景 camera 字段） */
+function resetCamForm() {
+  camCustomized.value = false
+  camForm.px = CAM_DEFAULT.position[0]; camForm.py = CAM_DEFAULT.position[1]; camForm.pz = CAM_DEFAULT.position[2]
+  camForm.tx = CAM_DEFAULT.target[0]; camForm.ty = CAM_DEFAULT.target[1]; camForm.tz = CAM_DEFAULT.target[2]
+}
+
+/** 表单写回场景（保存配置前调用）: 已自定义→写 camera 字段; 恢复默认→移除字段 */
+function applyCamForm() {
+  const s = activeScene.value
+  if (!s) return
+  if (!camCustomized.value) { delete s.camera; return }
+  const r1 = (n: number) => Math.round(n * 10) / 10
+  s.camera = {
+    position: [r1(camForm.px), r1(camForm.py), r1(camForm.pz)],
+    target: [r1(camForm.tx), r1(camForm.ty), r1(camForm.tz)],
+  }
 }
 
 // P2-1: CAD 底图上传
@@ -175,4 +271,10 @@ function onBuildingCreate(payload: { x: number; z: number; w: number; d: number 
 .sm-preview { width: 400px; display: flex; flex-direction: column; }
 .preview-3d { flex: 1; border-radius: 8px; overflow: hidden; border: 1px solid rgba(100,150,255,0.15); }
 .preview-empty { flex: 1; display: flex; align-items: center; justify-content: center; color: rgba(255,255,255,0.3); }
+.sm-camera-card { margin-top: 10px; padding: 8px 10px; border: 1px solid rgba(100,150,255,0.15); border-radius: 8px; background: rgba(26,115,232,0.06); }
+.sm-camera-card .sm-section-title { margin-bottom: 6px; }
+.sm-camera-row { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
+.sm-camera-label { font-size: 12px; color: rgba(255,255,255,0.55); width: 28px; }
+.sm-camera-badge { font-size: 11px; font-weight: 400; padding: 1px 6px; border-radius: 3px; color: rgba(255,255,255,0.45); background: rgba(255,255,255,0.08); }
+.sm-camera-badge.custom { color: #39C76F; background: rgba(57,199,111,0.15); }
 </style>

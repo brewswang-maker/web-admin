@@ -27,8 +27,11 @@
           </template>
           <div class="t-desc">{{ t.description }}</div>
           <div class="t-events">
-            <el-tag v-for="e in eventTypesOf(t).slice(0, 3)" :key="e" size="small" effect="plain" class="event-tag">{{ e }}</el-tag>
-            <el-tooltip v-if="eventTypesOf(t).length > 3" :content="eventTypesOf(t).slice(3).join(', ')" placement="top">
+            <!-- [UX-ZH 2026-09-16] 中文名展示 (SSOT canonical), tooltip 保留裸 key -->
+            <el-tag v-for="e in eventTypesOf(t).slice(0, 3)" :key="e" size="small" effect="plain" class="event-tag">
+              <span :title="e">{{ zh(e) }}</span>
+            </el-tag>
+            <el-tooltip v-if="eventTypesOf(t).length > 3" :content="zhAll(eventTypesOf(t).slice(3))" placement="top">
               <el-tag size="small" type="info" effect="plain">+{{ eventTypesOf(t).length - 3 }}</el-tag>
             </el-tooltip>
           </div>
@@ -88,7 +91,9 @@
         <div class="d-section">
           <span class="d-label">触发事件 ({{ eventTypesOf(current).length }}):</span>
           <div class="d-tags">
-            <el-tag v-for="e in eventTypesOf(current)" :key="e" size="small" effect="plain">{{ e }}</el-tag>
+            <el-tag v-for="e in eventTypesOf(current)" :key="e" size="small" effect="plain">
+              <span :title="e">{{ zh(e) }}</span>
+            </el-tag>
           </div>
         </div>
         <div class="d-section">
@@ -145,6 +150,11 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { Document, Check, InfoFilled, Finished } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { screeningApi, type ScreeningRuleTemplate } from '@/api/screening'
+// [UX-ZH 2026-09-16] 事件类型中文名展示 (SSOT canonical; 对齐周界/安检规则管理等页)
+import { useEventTypeZh } from '@/composables/useEventTypeZh'
+
+// [UX-ZH 2026-09-16] 事件类型中文名 (tooltip 保留裸 key 供排查)
+const { zh, zhAll, ensure: ensureEventTypesZh } = useEventTypeZh()
 
 const loading = ref(false)
 const loadError = ref('')
@@ -292,7 +302,10 @@ function priorityTag(p: number): 'success' | 'warning' | 'info' | 'danger' {
   return 'info'
 }
 
-onMounted(loadTemplates)
+onMounted(() => {
+  loadTemplates()
+  ensureEventTypesZh() // [UX-ZH 2026-09-16] 事件类型中文名预热 (SSOT canonical)
+})
 </script>
 
 <style scoped>
@@ -303,7 +316,8 @@ onMounted(loadTemplates)
 .t-name { font-weight: 500; display: inline-flex; align-items: center; gap: 6px; }
 .t-desc { color: #606266; font-size: 13px; line-height: 1.5; margin-bottom: 10px; min-height: 40px; }
 .t-events { margin-bottom: 8px; }
-.event-tag { margin-right: 4px; margin-bottom: 4px; font-family: monospace; }
+/* [UX-ZH 2026-09-16] 事件类型 tag: 中文名展示 (原 monospace 为裸 key 设计, 移除) */
+.event-tag { margin-right: 4px; margin-bottom: 4px; }
 .t-actions { margin-bottom: 8px; }
 .actions-label { color: #909399; font-size: 12px; margin-right: 4px; }
 .t-meta { display: flex; justify-content: space-between; gap: 8px; color: #909399; font-size: 12px; padding-top: 8px; border-top: 1px dashed #ebeef5; }
