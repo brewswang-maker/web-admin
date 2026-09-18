@@ -160,8 +160,10 @@ export function alarmDirReady() {
 //   迁入共享): 首页平面地图与定位追踪页室内面板共用, 防两处口径漂移。
 //   平面图点位绑定按通道码 (真机实锚 map25: 绑定 …1320002001/002), 顶层 channelId
 //   (父设备码) 变体永不命中 → 定位/涟漪/自动切图/标签全链共用此解析。 ──
-/** metadata 解包 (治理帧形态数组取首元素 — 与 toAlarm govSrc 解析同口径; 对象原样) */
-export function unpackAlarmMeta(alarm: { metadata?: unknown }): Record<string, unknown> {
+/** metadata 解包 (治理帧形态数组取首元素 — 与 toAlarm govSrc 解析同口径; 对象原样)
+ *  [FIX loc-note 2026-09-18] 签名放宽 null/undefined: AlarmPopup locationNote 传
+ *  可能为 null 的 currentAlarm, 函数体本就有 alarm?. 防御, 仅签名未收 */
+export function unpackAlarmMeta(alarm: { metadata?: unknown } | null | undefined): Record<string, unknown> {
   const metaRaw = alarm?.metadata
   if (Array.isArray(metaRaw))
     return (metaRaw[0] && typeof metaRaw[0] === 'object' ? metaRaw[0] : {}) as Record<string, unknown>

@@ -762,20 +762,28 @@ const alarmImageList = computed<GalleryImage[]>(() => {
     else if (primary) list = [primary]
   }
   const mainUrls = scene ? [scene, ...list] : list
-  const mainHashes = new Set(mainUrls.map((u) => evHash(u)).filter(Boolean))
   // [EV-TRIPLE 2026-09-14] 取证帧: 共享语义模块构建 (pre→mid→post 固定序 +
   //   算法语义标签 + evidence_ts 相对时间角标; 契约过滤宁缺毋假, 与
   //   详情抽屉 EvidenceFrames 同源 — 原硬编码「事前/事中/事后」就地废除)
+  // [FIX ev-triple-dup 2026-09-18] 删除 mainHashes 同 hash 折叠 (2026-09-17
+  //   dup-main 修复时引入, 判据过宽): pre/mid/post 三帧本共享 ev_<hash>
+  //   前缀 (同一次触发的三帧), hash 级去重把三帧连同主图一起折叠 →
+  //   画廊恒显 1 张 (用户实锚 18:29 周界告警 1/1, 三帧实际均落盘完整)。
+  //   同帧去重回归「精确 URL」口径 — 主图=mid 时 mid 由 includes 精确
+  //   跳过; 主图候选之间的同 hash 去重 (aligned/primary) 已在上方另行
+  //   处理, 各司其职。
   const algoKey = String(metaSrc.algo_id ?? '') || String(alarm.type || '')
   const evidence: GalleryImage[] = []
   for (const f of buildEvidenceFrames(metaSrc, algoKey, alarmTsMs.value)) {
-    const fHash = evHash(f.url)
-    if (!mainUrls.includes(f.url) && !(fHash && mainHashes.has(fHash)) &&
-        !evidence.some(e => e.url === f.url)) {
+    if (!mainUrls.includes(f.url) && !evidence.some(e => e.url === f.url)) {
       evidence.push({ url: f.url, tag: f.label, rel: f.rel, abs: f.abs, key: f.key })
     }
   }
-  return [...mainUrls.map(u => ({ url: u, tag: '' })), ...evidence]
+  // [FIX ev-triple-dup 2026-09-18] 主图与证据帧精确同 URL 时只留证据帧
+  //   (带语义角标 + pre→mid→post 固定序); 其余主图 (对齐帧/落库帧/场景图)
+  //   保持队首。修复前主图 (mid) 霸占首位且证据帧被折叠 → 1/1。
+  const mainOnly = mainUrls.filter(u => !evidence.some(e => e.url === u))
+  return [...mainOnly.map(u => ({ url: u, tag: '' })), ...evidence]
 })
 const totalImageCount = computed(() => Math.max(1, alarmImageList.value.length))
 /** [FIX popup-conf 2026-09-17] 检测置信度显示兜底链: WS 实时精简帧
@@ -1084,6 +1092,10 @@ const deviceRecordings = ref<DeviceRecording[]>([])
 const recordingsLoading = ref(false)
 // [POPUP-PLAYBACK 2026-09-11] 回放候选链的尾部回退 (MiniPlayer src 逐个尝试)
 const playbackFallbackUrls = ref<string[]>([])
+// [NVR-PRIO 2026-09-18 用户令] NVR 回放流已接管视频源: /play 成功置位; 队列接管/
+//   NVR 流失败/切告警复位。evidence 异步晚到以此为守卫 (否则会把 NVR 连续流
+//   切回本地片直链, 属 NVR 优先时序下新引入的竞态)。
+const nvrDirectActive = ref(false)
 // [POPUP-3MIN] 连播状态机: queueSrc=当前段播放源, queueSeekStart/queueStopAt=当前段裁剪点;
 //   queueEpoch 在重播时自增, 强制 MiniPlayer 重建 (同 URL 重播也重新触发).
 const playbackQueue = ref<PlaybackQueueItem[]>([])
@@ -1162,10 +1174,20 @@ function buildPlaybackQueue(recs: DeviceRecording[]): PlaybackQueueItem[] {
       return { url: x.url, seekStart, stopAt, rec: x.r }
     })
 }
+// [NVR-PRIO 2026-09-18 用户令] NVR 回放优先: 判定 GB28181 (NVR) 条目 — source
+//   显式标注优先; 旧后端缺 source 时以「无任何本地直链」兜底 (本地片恒带 url)。
+function isNvrRecording(rec: DeviceRecording): boolean {
+  if (rec.source === 'gb28181') return true
+  if (rec.source === 'zlm') return false
+  return !recordingDirectUrl(rec) && !recordingMp4DirectUrl(rec)
+}
 // [POPUP-3MIN] GB28181 (NVR) 兜底: 无法多片连播时自动播覆盖事件时刻的那片
-function pickCoveringRecording(recs: DeviceRecording[], tMs: number): DeviceRecording | null {
-  if (!recs.length || !Number.isFinite(tMs)) return null
-  const scored = recs.map((r) => {
+// [NVR-PRIO 2026-09-18] onlyNvr=true → 仅从 NVR 条目中挑 (弹窗默认源选择用);
+//   自愈回退链保持全量池 (本地片优先)。
+function pickCoveringRecording(recs: DeviceRecording[], tMs: number, onlyNvr = false): DeviceRecording | null {
+  const pool = onlyNvr ? recs.filter(isNvrRecording) : recs
+  if (!pool.length || !Number.isFinite(tMs)) return null
+  const scored = pool.map((r) => {
     const rs = parseRecTime(r.start_time), re = parseRecTime(r.end_time)
     if (!Number.isFinite(rs) || !Number.isFinite(re)) return { r, covers: 0, dist: Number.MAX_SAFE_INTEGER }
     const covers = rs <= tMs && tMs < re ? 1 : 0
@@ -1221,6 +1243,7 @@ function startQueuePlayback(items: PlaybackQueueItem[]) {
   skippedSegments.value = 0
   tailRefreshes = 0
   void stopGbPlayback()  // [FIX p1-session 2026-09-12] 队列接管 → 释放可能残留的 GB 会话
+  nvrDirectActive.value = false  // [NVR-PRIO 2026-09-18] 队列接管 → NVR 直控标记复位
   playQueueItem(0)
   stopRecordingPoll()  // 连播接管后无需再等 clip 回填
 }
@@ -1251,6 +1274,9 @@ function onPlaybackError() {
     //   候选链全败后无任何自愈 → 「持续 playerError」死局。现每次告警最多自愈一次:
     //   重查 ±2.5min 段 → 有相交片走连播队列; 否则挑覆盖事件时刻的段重播 (设备回放流
     //   瞬时不可用/会话被抢占时给第二次机会)。
+    // [NVR-PRIO 2026-09-18] NVR 优先模式下本分支=「NVR 流失败」的主回退入口:
+    //   复位直控标记, 自愈链本地片连播优先 (反向回退)。
+    nvrDirectActive.value = false
     void healPlaybackFailure()
     return
   }
@@ -1313,6 +1339,7 @@ function resetQueue() {
   queueFinished.value = false
   skippedSegments.value = 0
   queueSrc.value = ''
+  nvrDirectActive.value = false  // [NVR-PRIO 2026-09-18] 切告警 (经 watch→resetQueue) 复位
   // [FIX rec-tc 2026-09-15] 复位转码等待态 + 作废在途转码回调 (切告警时防旧源覆盖)
   queuePreparing.value = false
   pbAttempt++
@@ -1364,6 +1391,11 @@ async function refreshQueueTail() {
 // [PB-AUTOLOAD 2026-09-13] 首次切入回放 tab 且无任何播放源时自动 loadPlayback:
 //   此前空态需手点「加载设备录像」, 老-告警 (age>120s 无本地 clip) 用户不知要手点 →
 //   体感"回放不能看"。自动触发后走 queryRecordings → 本地片连播 / NVR 兜底链。
+// [NVR-PRIO 2026-09-18 用户令] 条件放宽: 原 `!alarm.videoClipUrl` 使有 clip 的
+//   告警永不进入 NVR 优先选源 — 现只要有告警 id 且尚无已解析录像源即触发一次
+//   (loadPlayback 内部做 NVR 优先); playbackAutoLoaded 防切 tab 反复打 NVR
+//   SIP RecordInfo 查询。
+const playbackAutoLoaded = new Set<string>()
 watch(activePrimaryTab, (t, prev) => {
   if (t !== 'playback' || prev === 'playback') return
   if (queueActive.value && playbackQueue.value.length) {
@@ -1374,8 +1406,9 @@ watch(activePrimaryTab, (t, prev) => {
     return
   }
   const alarm = currentAlarm.value
-  if (alarm?.id && !alarm.videoClipUrl && !recordingsLoading.value
+  if (alarm?.id && !playbackAutoLoaded.has(alarm.id) && !recordingsLoading.value
       && !deviceRecordings.value.length) {
+    playbackAutoLoaded.add(alarm.id)
     loadPlayback()
   }
 })
@@ -1385,13 +1418,15 @@ function loadPlayback() {
   recordingsLoading.value = true
   deviceRecordings.value = []
   alarmApi.getEvidence(currentAlarm.value.id).then((ev: any) => {
-    if (ev?.videoClipUrl) {
+    // [NVR-PRIO 2026-09-18] 守卫扩展到 NVR 回放流: NVR 已接管 (nvrDirectActive) 或
+    //   队列在播时, 证据晚到跳过覆盖 — 否则本地片直链会把 NVR 连续流切走。
+    if (ev?.videoClipUrl && !nvrDirectActive.value && !queueActive.value) {
       // [FIX rec-layer 2026-09-11] 证据接口 video_clip.url 是单层 /record/rtp/... (实测
       //   播放恒 404）；经 recordUrlCandidates 补齐双层同源作首选，失败链兜底。
       const cands = recordUrlCandidates(ev.videoClipUrl)
       // [FIX pb-fb-race 2026-09-12] 队列已接管时候选链归 playQueueItem 按当前段维护,
       //   证据回调异步晚到不得覆盖 (原无条件覆盖会盖掉队列段的 :8088 兜底候选)
-      if (!queueActive.value) playbackFallbackUrls.value = cands.slice(1)
+      playbackFallbackUrls.value = cands.slice(1)
       currentAlarm.value!.videoClipUrl = cands[0]
     }
     if (ev?.snapshotUrl && !currentAlarm.value!.snapshotUrl) currentAlarm.value!.snapshotUrl = ev.snapshotUrl
@@ -1409,6 +1444,17 @@ function loadPlayback() {
     }).then((recs) => {
       if (currentAlarm.value?.id !== alarmId) return  // 查询期间已切告警
       deviceRecordings.value = recs
+      const tMs = t.getTime()
+      // [NVR-PRIO 2026-09-18 用户令] NVR 回放优先 (原: 本地片连播优先, NVR 仅兜底):
+      //   覆盖事件时刻的 GB28181 段直接走回放流 — 一段连续, 窗口由
+      //   playSelectedRecording 裁剪 (NVR-PB 2026-09-13, GB28181 Playback 原生
+      //   支持任意起点)。失败回退反向链: /play 失败 (catch) 或流挂
+      //   (onPlaybackError) → healPlaybackFailure → 本地片连播。
+      const nvr = pickCoveringRecording(recs, tMs, /*onlyNvr=*/true)
+      if (nvr && !queueActive.value) {
+        void playSelectedRecording(nvr, { silent: true })
+        return
+      }
       const items = buildPlaybackQueue(recs)
       if (items.length) {
         // [POPUP-3MIN] 有相交片 → 自动连播 3 分钟 (取代人工选片列表)
@@ -1416,7 +1462,7 @@ function loadPlayback() {
         return
       }
       // 无本地片 → GB28181 兜底: 自动播覆盖事件时刻的那片 (NVR 场景无法多片连播)
-      const covering = pickCoveringRecording(recs, t.getTime())
+      const covering = pickCoveringRecording(recs, tMs)
       if (covering && !currentAlarm.value!.videoClipUrl && !queueActive.value) {
         void playSelectedRecording(covering, { silent: true })
       }
@@ -1464,6 +1510,7 @@ async function playSelectedRecording(rec: DeviceRecording, opts?: { silent?: boo
     const cands = recordUrlCandidates(playUrl)
     playbackFallbackUrls.value = cands.slice(1)
     currentAlarm.value!.videoClipUrl = cands[0]
+    nvrDirectActive.value = false  // [NVR-PRIO 2026-09-18] 本地直链分支 → NVR 标记复位
     if (!silent) ElMessage.success(h264 ? '录像已就绪，开始播放' : '已尝试直接播放原始录像')
     return
   }
@@ -1510,6 +1557,7 @@ async function playSelectedRecording(rec: DeviceRecording, opts?: { silent?: boo
         playerSrcIsLive.value = false
         playbackFallbackUrls.value = [...new Set([wsFlv, flv].filter((u) => !!u && u !== main))]
         currentAlarm.value!.videoClipUrl = main
+        nvrDirectActive.value = true  // [NVR-PRIO 2026-09-18] NVR 流已接管 (见声明处)
       } else ElMessage.warning('无可用播放地址')
     } else if (!silent) ElMessage.warning('设备不支持回放')
   } catch (e: any) {
