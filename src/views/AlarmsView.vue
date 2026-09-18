@@ -126,6 +126,20 @@
       <span class="rule-filter-hint">已按联动规则过滤事件列表 (当前 {{ totalAlarms }} 条)</span>
     </div>
 
+    <!-- [FIX paged-insert 2026-09-18 海康 iSC/iVMS 对标] 翻页/筛选态新告警聚合提示条:
+         WS 新告警不插入当前页 (防漏看/防筛选视图污染), 累计计数点击回第一页重拉 -->
+    <div
+      v-if="newAlarmPendCount > 0"
+      class="alarms-new-tip"
+      role="button"
+      tabindex="0"
+      @click="jumpToLatestAlarms"
+      @keydown.enter="jumpToLatestAlarms"
+    >
+      <span class="alarms-new-tip__dot"></span>
+      <span>{{ newAlarmPendCount }} 条新告警，点击返回第一页查看最新</span>
+    </div>
+
     <!-- ===== [安检对标优化 2026-08-30] 复核质控统计条 ===== -->
     <el-alert
       v-if="fbStats"
@@ -820,7 +834,7 @@ import { useWebSocket } from '@/composables/useWebSocket'
 // [P0-9/6/10 2026-09-04] canonical zh SSOT + 规范处警对话框
 import { useEventTypeZh } from '@/composables/useEventTypeZh'
 // [FIX dev-name-num 2026-09-11] 设备名称数字形态治理 (共享目录反查)
-import { alarmDevLabel, alarmChLabel, mergedCountOf } from '@/composables/useAlarmTableHelpers'  // [chan-col 2026-09-11] 展示口径 SSOT 单一源 (替代内联同款); [FIX-P1-2] mergedCountOf
+import { alarmDevLabel, alarmChLabel, mergedCountOf, isAlarmStateSyncFrame } from '@/composables/useAlarmTableHelpers'  // [chan-col 2026-09-11] 展示口径 SSOT 单一源 (替代内联同款); [FIX-P1-2] mergedCountOf; [FIX ws-frame-classify 2026-09-18] 帧分类判定共用
 import DisposeDialog from '@/components/alarm/DisposeDialog.vue'
 // [P3 2026-09-10] 右侧设备树筛选面板 (安保区域→子区域→设备 多选)
 import AlarmDeviceTreePanel from '@/components/alarm/AlarmDeviceTreePanel.vue'
@@ -1426,12 +1440,45 @@ const { connected: wsConnected, subscribe: wsSubscribe } = useWebSocket('/ws')
 let exportPollTimer: ReturnType<typeof setInterval> | null = null
 
 const unsubscribeAlarm = wsSubscribe('alarm.new', (data: any) => {
+  // [FIX ws-frame-classify 2026-09-18 三方对齐] 帧分类消费 (与弹窗 useGlobalAlarm/
+  //   首页 SituationScreen.onAlarmPush 同口径, helper 共用)。原实现无条件 unshift →
+  //   ① is_duplicate 短窗去重帧不落库 (DB 无行) → 幽灵行, REST 重拉后整行消失;
+  //   ② alarm.new + linkage_alarm 双帧同 id → 重复行; ③ backfill/evidence_update/
+  //   event_phase=update|end 状态同步帧被当新事件插入。修复后: 状态同步帧仅就地
+  //   更新当前页命中行 (不命中丢弃, REST 重拉自然可见); 新事件帧同 id 富化合并;
+  //   新告警按翻页态智能落位 (见 ③)。
+  const raw = data as Record<string, any> | null
+  if (!raw || typeof raw !== 'object') return
+  const sid = String(raw.id || raw.alarm_id || raw.event_id || '')
+  if (!sid) return
   // 关键: WS 推过来的 payload 是 snake_case 原始数据, 必须先 normalize,
   // 否则 snapshotUrl/videoClipUrl/level 等 camelCase 字段都是 undefined.
-  const normalized = normalizeAlarm(data)
-  // §13 Fix L2: 上限 200, 避免 alarms.value 持续增长导致 filter 链 O(n²) 退化
-  alarms.value = [normalized, ...alarms.value].slice(0, 200)
-  totalAlarms.value++
+  const normalized = normalizeAlarm(raw)
+  // ① 状态同步帧 (is_duplicate/backfill/evidence_update/event_phase=update|end):
+  //    仅就地更新当前页命中行, 不命中丢弃 — 不新增/不重复行/不进聚合明细
+  if (isAlarmStateSyncFrame(raw)) {
+    const idx = alarms.value.findIndex(a => a.id === sid)
+    if (idx >= 0) mergeAlarmRowLocal(idx, normalized)
+    return
+  }
+  // ② 新事件帧同 id 已存在 (alarm.new + linkage_alarm 双帧归一): 富化合并, 不重复插入
+  const existIdx = alarms.value.findIndex(a => a.id === sid)
+  if (existIdx >= 0) {
+    mergeAlarmRowLocal(existIdx, normalized)
+    return
+  }
+  // ③ 新告警落位 [FIX paged-insert 2026-09-18 海康 iSC/iVMS 对标]: 最新告警恒在
+  //    第一页顶部。翻页 (currentPage>1) / 筛选激活 / 多值下钻本地窗口 时,
+  //    新告警不插入当前页数组 (用户正在看的第 N 页内容被无预警顶出行 = 漏看,
+  //    且筛选视图被不相关行污染) → 累计「N 条新告警」提示条, 点击回第一页重拉;
+  //    无筛选第一页保持即时插顶 (插顶即最新在顶, 与 REST 首屏同形态)。
+  if (currentPage.value > 1 || hasActiveFilter.value || treeDrillLocal.value) {
+    newAlarmPendCount.value++
+  } else {
+    // §13 Fix L2: 上限 200, 避免 alarms.value 持续增长导致 filter 链 O(n²) 退化
+    alarms.value = [normalized, ...alarms.value].slice(0, 200)
+    totalAlarms.value++
+  }
   // 仅在前 3 页弹 ElMessage, 深层页静默更新避免刷屏
   if (currentPage.value <= 3) {
     ElMessage({
@@ -1441,6 +1488,39 @@ const unsubscribeAlarm = wsSubscribe('alarm.new', (data: any) => {
     })
   }
 })
+
+// [FIX ws-frame-classify 2026-09-18] WS 帧就地富化 (当前页命中行, 对齐 pushRealtimeAlarm
+//   同 id 合并口径): level/snapshot/videoClip/名称字段后到非空才补, metadata 浅合并不清空
+function mergeAlarmRowLocal(idx: number, normalized: any) {
+  const cur = alarms.value[idx] as any
+  if (!cur) return
+  if (normalized.level) cur.level = normalized.level
+  if (normalized.severity) cur.severity = normalized.severity
+  if (normalized.snapshotUrl && !cur.snapshotUrl) cur.snapshotUrl = normalized.snapshotUrl
+  if (normalized.videoClipUrl && !cur.videoClipUrl) cur.videoClipUrl = normalized.videoClipUrl
+  if (normalized.deviceName) cur.deviceName = normalized.deviceName
+  if (normalized.channelName) cur.channelName = normalized.channelName
+  const nm = normalized.metadata as Record<string, unknown> | undefined
+  if (nm && typeof nm === 'object') cur.metadata = { ...(cur.metadata || {}), ...nm }
+}
+
+// [FIX paged-insert 2026-09-18] 翻页/筛选态新告警累计计数 + 提示条 (模板在
+//   rule-filter-bar 下方, 三视图共用): 点击回第一页重拉; 手动翻回第一页也清零
+const newAlarmPendCount = ref(0)
+// 筛选激活判定 (与 fetchAlarms params 组装同源): 任一命中即视为筛选视图
+const hasActiveFilter = computed(() =>
+  !!(levelFilter.value || typeFilter.value || statusFilter.value
+    || ruleIdFilter.value || search.value
+    || (Array.isArray(dateRange.value) && dateRange.value.length === 2 && dateRange.value[0] && dateRange.value[1])
+    || (alarmTreeSel.value?.drillValues?.length ?? 0) > 0))
+function jumpToLatestAlarms() {
+  newAlarmPendCount.value = 0
+  if (currentPage.value !== 1) {
+    currentPage.value = 1
+    fetchAlarms()
+  }
+}
+watch(currentPage, (p) => { if (p === 1) newAlarmPendCount.value = 0 })
 
 // ── 处警保存后, 全局 CustomEvent 通知列表刷新 ──
 // useAlarmPopup.handleAlarm 成功后派发 alarm-handled. 本视图维护自己的
@@ -2022,7 +2102,7 @@ async function showEvidence(row: any) {
   // 避免 channel_id (国标 340 开头) 与实际流名 (设备注册 131 开头) 不匹配导致查不到录像
   const clipUrl = rawClip || row.videoClipUrl || ''
   // [FIX rec-layer2 2026-09-11] 绝对 URL / 双层形态宽容匹配 (原 ^/record/rtp/  永不命中)
-  // [FIX rec-snapstream 2026-09-15 排查 verify1] 无 clip 告警从快照路径兑底提取流名
+  // [FIX rec-snapstream 2026-09-15 排查 verify1] 无 clip 告警从快照路径兜底提取流名
   //   (channel_id 常为 NVR 国标码猜不中 ZLM 流目录, 快照路径携带真实 gb_ 流名)
   const streamMatch = clipUrl.match(/\/record\/(?:record\/)?rtp\/([^/]+)\//)
     || String(row.snapshotUrl || row.snapshot_url || '').match(/\/snapshots\/rtp\/([^/]+)\//)
@@ -2341,6 +2421,41 @@ onUnmounted(() => {
 .rule-filter-hint {
   font-size: 12px;
   color: var(--app-text-secondary);
+}
+
+/* [FIX paged-insert 2026-09-18] 翻页/筛选态新告警聚合提示条 (三视图共用):
+   强调色可点击行 + dot 呼吸动画引导点击; 点击回第一页重拉最新 */
+.alarms-new-tip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: -2px 0 12px;
+  padding: 8px 14px;
+  border-radius: 6px;
+  border: 1px solid var(--el-color-primary-light-5, rgba(64, 158, 255, 0.35));
+  background: var(--el-color-primary-light-9, rgba(64, 158, 255, 0.12));
+  color: var(--el-color-primary, #409eff);
+  font-size: 13px;
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.2s, border-color 0.2s;
+}
+.alarms-new-tip:hover,
+.alarms-new-tip:focus-visible {
+  background: var(--el-color-primary-light-8, rgba(64, 158, 255, 0.2));
+  border-color: var(--el-color-primary, #409eff);
+  outline: none;
+}
+.alarms-new-tip__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--el-color-danger, #f56c6c);
+  animation: alarms-tip-pulse 1.2s ease-in-out infinite;
+}
+@keyframes alarms-tip-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.45; transform: scale(0.78); }
 }
 
 .toolbar-card :deep(.el-card__body) {

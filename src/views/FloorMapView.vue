@@ -315,6 +315,7 @@
         <!-- 画布 + 绑定面板 -->
         <div class="floormap-view__editor">
           <div class="floormap-view__canvas-wrap">
+            <!-- [FM-VIEWPORT 2026-09-18] viewport 态 zoombar 落右下 (zoombar-placement), 避让右上「添加设备」工具箱 -->
             <FloorMapCanvas
               ref="fmCanvasRef"
               :map="selectedMap"
@@ -329,6 +330,7 @@
               :tool-mode="canvasTool"
               :defense-channels="defenseChannels"
               :pan-zoom="canvasTool === 'viewport' ? true : undefined"
+              zoombar-placement="bottom"
               @canvas-click="onCanvasClick"
               @binding-move="onBindingMove"
               @marquee-select="onMarqueeSelect"

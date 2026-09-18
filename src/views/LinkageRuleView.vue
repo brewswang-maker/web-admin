@@ -591,6 +591,11 @@
                           <span>未列出的算法 (行为/烟火/交通等) 不绘制默认全画面检测，绘制后仅区域内命中的事件触发</span>
                         </p>
                       </div>
+                      <!-- [FIX roi-bg 2026-09-18] 底图空态提示条: 加载中/缺失显式暴露
+                           (不再静默空白); missing = 设备离线/失效绑定/快照未生成,
+                           画板仍可绘制, 不阻塞布防保存 -->
+                      <div v-if="roiBgStatus === 'loading'" class="roi-bg-tip roi-bg-tip--loading">正在加载监控点快照…</div>
+                      <div v-else-if="roiBgStatus === 'missing'" class="roi-bg-tip roi-bg-tip--missing">该监控点暂无可用快照（设备离线或快照未生成），画板仍可绘制、不影响布防保存；设备恢复在线后重开本页将自动加载底图</div>
                       <RoiPolygonEditor
                         :key="activeRoiChannel || 'roi-general'"
                         v-model="form.conditions.region.config.roiPolygon"
@@ -661,6 +666,10 @@
                       <p class="cond-hint" style="margin: 0 0 8px">
                         通道多边形供尾随判定消费: 点击 ≥3 个顶点围成通行区后点「确认添加」；删除/停用立即生效, 不随规则保存/丢弃。<template v-if="pwTabsVisible">多通道: 点「绘制监控点」切换目标监控点分别绘制 (各监控点独立保存); 未绘监控点按内置中央矩形兜底。</template>
                       </p>
+                      <!-- [FIX roi-bg 2026-09-18] 尾随画布同源底图 (roiBackgroundUrl) 的
+                           空态提示条: 与 ROI 画板共用状态机, 加载中/缺失显式暴露 -->
+                      <div v-if="roiBgStatus === 'loading'" class="roi-bg-tip roi-bg-tip--loading">正在加载监控点快照…</div>
+                      <div v-else-if="roiBgStatus === 'missing'" class="roi-bg-tip roi-bg-tip--missing">该监控点暂无可用快照（设备离线或快照未生成），可先在「绑定监控点」核对勾选；设备恢复在线后重开本页将自动加载底图</div>
                       <PassagewayEditor
                         v-if="form.conditions.region.config.channelId"
                         :key="`pw_${form.conditions.region.config.channelId}`"
@@ -2242,6 +2251,16 @@ const roiOptions = ['全部区域', '周界线A', '绊线B', '区域C']
 // 改为解析 url 后预加载校验 (nginx 已 alias /snapshots/ → /data/shield/snapshots/);
 // ZLM getSnap 偶发产出 0 字节 JPEG (~3%), 加载失败自动重试一次。
 const roiBackgroundUrl = ref('')
+// [FIX roi-bg 2026-09-18] 底图加载状态机: 此前仅 roiBackgroundUrl 裸值, 加载与否全靠
+//   各激活路径自觉调用 loadChannelSnapshot — 页签出现/默认激活/编辑回显多处只设通道
+//   不加载, switchRoiChannel 又有 channelId===base 短路 → 逐通道模式切页签/编辑回显
+//   画板静默空白 (回归根因为结构性缺口, 非单点)。三件套:
+//   roiBgStatus (idle/loading/ready/missing, 兼作画板空态提示条数据源 — missing=
+//   设备离线/失效绑定/快照未生成, 显式暴露不再静默) + roiBgChannelOf (底图归属通道,
+//   收敛 watch 判据) + roiBgLoadSeq (竞态序号, 快速切页签防旧响应覆盖新请求)。
+const roiBgStatus = ref<'idle' | 'loading' | 'ready' | 'missing'>('idle')
+const roiBgChannelOf = ref('')
+let roiBgLoadSeq = 0
 
 // ═══ [ROI-PER-CHANNEL 2026-09-12] 逐通道绘制状态 (海康式多通道 ROI) ═══
 // 背景: 原规则级 roi_shapes_json 一份几何对全部绑定通道统一判定 — 不同视角
@@ -2355,7 +2374,18 @@ function roiEnsureActive(base: string) {
 /** 切换通道页签: 存档当前工作副本 → 载入目标包 (无包则继承通用基线副本) */
 async function switchRoiChannel(target: string) {
   const base = roiBaseOf(target)
-  if (!base || base === activeRoiChannel.value) return
+  if (!base) return
+  // [FIX roi-bg 2026-09-18] 早退收窄: 激活页签未变, 但 channelId/底图归属被尾随页签
+  //   (switchPwChannel 与 ROI 页签共用 channelId+底图) 拉走时, 点击本页签仍需复位
+  //   补载 — 旧逻辑 base===activeRoiChannel 直接 return → 画板残留他通道画面。
+  if (base === activeRoiChannel.value) {
+    if (roiBaseOf(String(form.conditions.region.config.channelId || '')) === base && roiBgChannelOf.value === base) return
+    if (roiBaseOf(String(form.conditions.region.config.channelId || '')) !== base) {
+      form.conditions.region.config.channelId = base
+    }
+    ensureRoiBackground(base)
+    return
+  }
   roiSyncWorkCopyToPack()
   roiEnsureActive(base)
   roiSuppressTouch = true
@@ -2367,11 +2397,14 @@ async function switchRoiChannel(target: string) {
     ? roiClone(pack.list)
     : (roiStrictMode.value ? [] : roiClone(roiGeneralBaseline.value))
   form.conditions.region.config.roiCombine = pack?.combine || 'union'
-  // 关联通道(快照背景) 跟随页签 — 底图与工作副本一致 (旧 watch 链 @change 失效, 手动加载)
+  // 关联通道(快照背景) 跟随页签 — 底图与工作副本一致。
+  // [FIX roi-bg 2026-09-18] 去掉 channelId===base 短路 + 改幂等补载: 默认激活的第一路
+  //   页签被点击时 channelId 已等于 base, 旧条件直接跳过加载 → 首次进入画板静默空白
+  //   (回归实锚); ensureRoiBackground 按归属/状态去重, 已在途/已就绪不重复请求
   if (form.conditions.region.config.channelId !== base) {
     form.conditions.region.config.channelId = base
-    await loadChannelSnapshot(base)
   }
+  ensureRoiBackground(base)
   await nextTick()
   roiSuppressTouch = false
 }
@@ -2572,15 +2605,39 @@ function preloadSnapshot(url: string): Promise<boolean> {
   })
 }
 async function loadChannelSnapshot(channelId: string) {
-  if (!channelId) { roiBackgroundUrl.value = ''; return }
+  // [FIX roi-bg 2026-09-18] 状态机化: 归属通道/状态/竞态序号随加载全程维护 —
+  //   missing 也收敛 (接口 400/空 url = 设备离线/失效绑定/快照未生成), 供画板
+  //   空态提示条显式暴露 (不再静默空白); seq 防快速切页签时旧响应覆盖新请求
+  const seq = ++roiBgLoadSeq
+  roiBgChannelOf.value = String(channelId || '')
+  if (!channelId) {
+    roiBackgroundUrl.value = ''
+    roiBgStatus.value = 'idle'
+    return
+  }
+  roiBgStatus.value = 'loading'
   try {
     let url = await fetchSnapshotUrl(channelId)
     if (url && !(await preloadSnapshot(url))) {
       const retryUrl = await fetchSnapshotUrl(channelId) // 偶发空快照, 重试一次
       if (retryUrl && (await preloadSnapshot(retryUrl))) url = retryUrl
     }
+    if (seq !== roiBgLoadSeq) return // 已有更新的切换, 丢弃本次结果 (防旧覆盖新)
     roiBackgroundUrl.value = url
-  } catch { roiBackgroundUrl.value = '' }
+    roiBgStatus.value = url ? 'ready' : 'missing'
+  } catch {
+    if (seq !== roiBgLoadSeq) return
+    roiBackgroundUrl.value = ''
+    roiBgStatus.value = 'missing'
+  }
+}
+/** [FIX roi-bg 2026-09-18] 底图补载统一入口 (幂等): 同通道在途/已就绪/已判定缺失
+ *  不重复拉取; switchRoiChannel 与收敛 watch 共用, 消除「重复请求」与「该载不载」
+ *  两类问题 */
+function ensureRoiBackground(base: string) {
+  if (!base) return
+  if (roiBgChannelOf.value === base && roiBgStatus.value !== 'idle') return
+  void loadChannelSnapshot(base)
 }
 
 // [FIX 2026-08-27 P0-PERIMETER v3] 加载越界绊线选项 (按需, 仅在用户聚焦下拉时拉一次)
@@ -2983,6 +3040,24 @@ const form = reactive({
 watch(roiTabChannels, (tabs) => {
   if (!activeRoiChannel.value && tabs.length > 0) roiEnsureActive(tabs[0].value)
 }, { flush: 'post' })
+// [FIX roi-bg 2026-09-18] 底图收敛安全网 ×2 (置于 form 声明后, 无 TDZ 风险):
+//   ① channelId (底图语义真值, 见 UI-CONVERGE 2026-09-12) 变化/底图归属过期 → 自动
+//      补载: 页签出现/勾选链/编辑回显/尾随页签等一切改写 channelId 的路径统一收敛,
+//      不再依赖各调用点自觉记得 loadChannelSnapshot (回归根因即多处短路/遗漏叠加);
+//      依赖含 roiBgChannelOf — 加载完成/失败后重评估, 归属已对齐则零动作。
+//   ② 激活页签变化 → 对齐 channelId + 补载: 修复 watch roiTabChannels 默认激活第一路
+//      / 编辑回显程序性赋值只设 activeRoiChannel、channelId 与底图无人跟进的断链。
+//      两 watch 经 ensureRoiBackground 幂等去重, 多路触发只拉一次。
+watch([() => form.conditions.region.config.channelId, roiBgChannelOf], ([ch, bgCh]) => {
+  const base = ch ? roiBaseOf(String(ch)) : ''
+  if (base && roiBaseOf(String(bgCh)) !== base) ensureRoiBackground(base)
+}, { flush: 'post' })
+watch(activeRoiChannel, (ch) => {
+  if (!ch) return
+  const cfg = form.conditions.region.config
+  if (roiBaseOf(String(cfg.channelId || '')) !== ch) cfg.channelId = ch
+  ensureRoiBackground(ch)
+}, { flush: 'post' })
 // [FIX tdz 2026-09-10] guard-badge 的 watch 从 guard-badge 块投至此 (form 之后):
 //   Vue watch 建立即同步取 source 初值, boundChannelDraft getter 读 form,
 //   声明顺序错误 = setup 崩溃。挂载后回填/勾选/重置均自然触发刷新。
@@ -3308,7 +3383,9 @@ async function loadPwChannelCounts() {
 // 页签集变化 (绑定通道编辑/回显/收窄) → 刷新徽标; 通道区增删改走 loadRulePassageways 尾调,
 //   两处并行触发时以后到者为准 (计数幂等无害)
 watch(pwTabChannels, () => { void loadPwChannelCounts() }, { immediate: true })
-/** 切页签: 换工作通道 (channelId + 快照底图); 先清底图防 remount 瞬间残留上一通道画面 */
+/** 切页签: 换工作通道 (channelId + 快照底图); 先清底图防 remount 瞬间残留上一通道画面。
+ *  [FIX roi-bg 2026-09-18] 行为不变; 底图加载由 loadChannelSnapshot 状态机收敛
+ *  (发起即归属/loading, 完成后 ready/missing), 与 ROI 页签收敛 watch 无拉扯 */
 async function switchPwChannel(target: string) {
   const base = roiBaseOf(target)
   if (!base || base === pwActiveChannel.value) return
@@ -3722,6 +3799,13 @@ function resetEditorState(rule: LinkageRule | null) {
   roiEchoed.value = new Set()
   roiGeneralBaseline.value = []
   activeRoiChannel.value = ''
+  // [FIX roi-bg 2026-09-18] 底图状态机随编辑会话重置: 上一条规则/上一次新建的快照
+  //   底图跨会话残留 (rule=null 或新规则通道不同 → 画板显示错图); seq 递增使在途
+  //   快照请求作废。编辑态随后由回显链/收敛 watch 重新加载。
+  roiBgLoadSeq++
+  roiBackgroundUrl.value = ''
+  roiBgChannelOf.value = ''
+  roiBgStatus.value = 'idle'
   vlmSuppressThreshold.value = typeof (rule as any)?.vlm_suppress_threshold === 'number' ? (rule as any).vlm_suppress_threshold : 0.85
   // [r25] 折叠默认收起条件中删除 enableVlmVerify/responseDeadlineS (这两项不再为用户主动配置,
   //   VLM 已默认启用 (新建 enableVlmVerify=true)、response_deadline_s 后端仅存不用, 不该在高级折叠里提示)
@@ -3918,8 +4002,14 @@ function resetEditorState(rule: LinkageRule | null) {
     }
     // [FIX 2026-09-04 老规则快照] 编辑回填后 ROI 背景快照自动加载 (原仅 ROI 通道选择器
     //   @change 触发; 老规则无 ui 态 channelId → 打开编辑画布恒空)
-    const snapChannel = form.conditions.region.config.channelId
-    if (snapChannel) loadChannelSnapshot(snapChannel)
+    // [FIX roi-bg 2026-09-18] 回显通道兜底: 三级兜底 (ui 态/首摄像头/location_id) 全空
+    //   但逐通道页签已由 roiEchoed 生成时, 用激活页签补拉 — 此前只认 config.channelId,
+    //   「页签在、通道空」→ 画板静默空白 (回归现象实锚: 页签显示但底图黑屏)
+    const snapChannel = form.conditions.region.config.channelId || activeRoiChannel.value
+    if (snapChannel) {
+      form.conditions.region.config.channelId = snapChannel
+      loadChannelSnapshot(snapChannel)
+    }
   } else {
     form.conditions = defaultConditions()
   }
@@ -5742,6 +5832,26 @@ watch(mainTab, (tab) => {
 .roi-ch-toolbar .pw-mig-hint { flex: 1 1 100%; margin: 0; }
 .roi-canvas-panel { flex: 1; min-width: 0; padding: 10px; }
 .roi-workspace__hint { display: none; }
+/* [FIX roi-bg 2026-09-18] 底图空态提示条 (loading 蓝/missing 橙, 跟随主题色变量;
+   ROI 画板与尾随画布共用同一状态源, 两面板各自渲染一份) */
+.roi-bg-tip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 8px;
+  padding: 6px 10px;
+  border-radius: 4px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.roi-bg-tip--loading {
+  color: var(--el-color-primary);
+  background: var(--el-color-primary-light-9);
+}
+.roi-bg-tip--missing {
+  color: var(--el-color-warning);
+  background: var(--el-color-warning-light-9);
+}
 /* [UX-ROI-HINT 2026-09-16 P3] 按算法绘制要求提示 (must 红/builtin 蓝/note 橙,
    optional 灰 — 用 el- 色变量跟随主题) */
 .roi-req-hints { margin: 0 0 6px; display: flex; flex-direction: column; gap: 4px; }

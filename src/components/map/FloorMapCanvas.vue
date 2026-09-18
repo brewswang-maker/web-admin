@@ -183,7 +183,10 @@
     </div><!-- /fm-canvas__viewport -->
 
     <!-- [FLOOR-MAP 2026-09-05 v2] 缩放控件 (海康/大宇对标; 只读缩放态显示) -->
-    <div v-if="panEnabled" class="fm-canvas__zoombar">
+    <!-- [FM-VIEWPORT 2026-09-18 设置页避让] 默认右上; zoombar-placement=bottom 落右下 ——
+         设置页画布右上被「添加设备」工具箱 (add-kit top:10px) 占用, viewport 态 zoombar
+         右上出现会完全叠上去 (用户实测重叠); 预览页无冲突保持右上 -->
+    <div v-if="panEnabled" class="fm-canvas__zoombar" :class="{ 'fm-canvas__zoombar--bottom': zoombarPlacement === 'bottom' }">
       <button type="button" :disabled="view.z >= ZOOM_MAX" @click="zoomBy(1.25)">＋</button>
       <span class="fm-canvas__zoom-read">{{ Math.round(view.z * 100) }}%</span>
       <button type="button" :disabled="view.z <= ZOOM_MIN" @click="zoomBy(1 / 1.25)">−</button>
@@ -260,6 +263,9 @@ const props = withDefaults(defineProps<{
    *  'marquee'=框选 (拖拽选点位); [P2-11a] 'pin'=标记 (点击放置)。非 '' 态空白拖拽平移短路,
    *  滚轮缩放/zoombar 保留 */
   toolMode?: string
+  /** [FM-VIEWPORT 2026-09-18] 缩放控件条落位: 'top'=右上 (默认, 预览页);
+   *  'bottom'=右下 (设置页 viewport 态专用, 避让右上「添加设备」工具箱) */
+  zoombarPlacement?: string
   /** [P2-9 2026-09-16 iSC「虚拟防区上图」对标] 布防通道映射 (binding.channel_id → 绑定规则名
    *  列表; 宿主由联动规则 spatial_cond.bound_channel_ids 归一匹配后注入。规则 ROI 为画面
    *  坐标, 平面图无单应标定不可精确上图 → FOV 扇形橙色布防态 + 规则数角标即通道防区的
@@ -880,6 +886,11 @@ const bboxStyle = computed(() => {
   background: rgba(5, 14, 48, 0.82);
   border: 1px solid #3A5A8C;
   border-radius: 4px;
+}
+/* [FM-VIEWPORT 2026-09-18] 设置页 viewport 态落位: 右下避让右上 add-kit */
+.fm-canvas__zoombar--bottom {
+  top: auto;
+  bottom: 8px;
 }
 .fm-canvas__zoombar button {
   width: 22px;

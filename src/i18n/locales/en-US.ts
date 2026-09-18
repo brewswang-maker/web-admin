@@ -1432,6 +1432,7 @@ const enUS: MessageSchema = {
     colGroup: 'Group',
     colType: 'Type',
     colDevice: 'Device',
+    colChannel: 'Monitoring Point',
     colTime: 'Time',
     colStatus: 'Status',
     colAction: 'Action',

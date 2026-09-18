@@ -1443,6 +1443,7 @@ const zhCN = {
     colGroup: '所属分组',
     colType: '告警类型',
     colDevice: '设备名称',
+    colChannel: '监控点',
     colTime: '告警时间',
     colStatus: '处理状态',
     colAction: '操作',

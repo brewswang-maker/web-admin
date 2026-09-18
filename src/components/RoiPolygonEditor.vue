@@ -358,7 +358,9 @@ const drawHint = computed(() => {
 
 // 非绘制态状态栏提示 (画布外部)
 const idleHint = computed(() => {
-  if (rois.value.length === 0) return '点击画布任意位置开始绘制；可先「获取快照/导入底图」作参考'
+  // [FIX roi-bg 2026-09-18] 原文案提「获取快照/导入底图」— 两按钮已在工具栏注释下线,
+  //   底图改由宿主 (LinkageRuleView) 按所选监控点自动加载, 文案同步收敛
+  if (rois.value.length === 0) return '点击画布任意位置开始绘制'
   return '拖动顶点可微调（矩形拖角保持矩形）；右键顶点删除；Del 键删除选中区域；点画布空白处开始新绘制'
 })
 
@@ -419,6 +421,9 @@ watch(() => props.backgroundImageUrl, async (url) => {
   const img = new Image()
   img.crossOrigin = 'anonymous'
   img.onload = () => { bgImage.value = img; renderCanvas() }
+  // [FIX roi-bg 2026-09-18] 失败静默清底图 (保持本组件无 UI 依赖, PipelineEditorView
+  //   无底图宿主复用); 空态提示由宿主层收敛 — LinkageRuleView 的 roiBgStatus 提示条
+  //   在快照接口空 url/非 ok 时已置 missing 显式暴露, 不再静默空白
   img.onerror = () => { bgImage.value = null }
   img.src = url
 }, { immediate: true })

@@ -84,7 +84,10 @@
                   </div>
 
                   <div class="alarm-popup__preview-tags">
-                    <span class="alarm-popup__switch-tag">切换中</span>
+                    <!-- [FIX switch-tag-del 2026-09-18] 删「切换中」遗留标签 (用户实锚:
+                         实际并没有在切换 — 预览区无轮播逻辑, 回放队列切换属联动回放
+                         tab 且自带第 N/M 段指示; 无条件恒显误导) 且同位遮盖播放器
+                         LIVE 徽标。location-tag 同步下移避让 (见 CSS) -->
                     <span class="alarm-popup__location-tag">{{ locationNote }}</span>
                   </div>
 
@@ -243,7 +246,7 @@
                       <span>FOV 半径: {{ activeMapPair.binding.fov_radius_m }}m</span>
                     </div>
                   </div>
-                  <!-- GPS 占位兑底: 未绑定通道 或 3d 模式 (保留原有渲染不动 — 零破坏) -->
+                  <!-- GPS 占位兜底: 未绑定通道 或 3d 模式 (保留原有渲染不动 — 零破坏) -->
                   <div v-show="!(mapMode === 'plan' && mapPairs.length)" class="alarm-popup__map-placeholder">
                     <div class="alarm-popup__map-coords">
                       <span>设备 GPS: {{ mapCoords.lat }}°, {{ mapCoords.lng }}°</span>
@@ -366,6 +369,12 @@
                     <div class="alarm-popup__detail-row">
                       <span class="alarm-popup__detail-key">设备编号:</span>
                       <span class="alarm-popup__detail-val">{{ currentAlarm.deviceId || '-' }}</span>
+                    </div>
+                    <!-- [FEAT mon-point-popup 2026-09-18] 监控点行: 多通道设备区分具体监控点
+                         (与实时报警列表「监控点」列同口径 SSOT; 单通道设备目录同名不冗余) -->
+                    <div class="alarm-popup__detail-row">
+                      <span class="alarm-popup__detail-key">监控点:</span>
+                      <span class="alarm-popup__detail-val">{{ resolvedChannelName || '-' }}</span>
                     </div>
                     <!-- 人脸比对: 放在告警图片前，便于先核对抓拍与注册照。 -->
                     <div v-if="faceCompare" class="alarm-popup__detail-section">
@@ -651,7 +660,10 @@ import { useRouter } from 'vue-router'
 import FloorMapCanvas from '@/components/map/FloorMapCanvas.vue'
 import { useFloorMap } from '@/composables/useFloorMap'
 // [FIX dev-name-num 2026-09-11] 设备名称数字形态治理 (face 插件 channel_id 截断等历史数据)
-import { resolveAlarmDeviceName } from '@/composables/useAlarmDeviceLabel'
+import { resolveAlarmDeviceName, unpackAlarmMeta, alarmChannelIdOf } from '@/composables/useAlarmDeviceLabel'
+// [FEAT mon-point-popup 2026-09-18] 弹窗详情监控点行: 复用列表 SSOT alarmChLabel
+//   (与实时报警列表「监控点」列完全同口径, 防双实现漂移)
+import { alarmChLabel } from '@/composables/useAlarmTableHelpers'
 import type { MapChannelPair, CameraMapBinding } from '@/types/floorMap'
 // [P3 轮 2026-09-14 §6.2 W-7] 弹窗 E2E 埋点 (渲染/处置确认/关闭; 纯日志不改业务语义)
 import { trackPopupShow, trackPopupDispose, trackPopupClose } from '@/utils/alarmPopupTelemetry'
@@ -683,7 +695,7 @@ watch(priorityMode, (v) => localStorage.setItem(PRIORITY_KEY, v))
 
 // ── 图片 Tab 缩略图翻页 ──
 // [POPUP-IMAGE-LIST 2026-09-03] 本次报警事件图片: 有几张显示几张 (1 张 = 1/1, 多张 = 1/N 可翻页)
-//   数据源优先级: metadata.snapshot_urls[] > metadata.snapshot_urls_json > alarm.snapshotUrl/base64 兑底 1 张
+//   数据源优先级: metadata.snapshot_urls[] > metadata.snapshot_urls_json > alarm.snapshotUrl/base64 兜底 1 张
 // [POPUP-EV-MERGE 2026-09-07] 取证帧并入画廊: pre/mid/post_snapshot_url 追加在主快照后
 //   (带语义角标), metadata 兼容数组/对象两形态 (DB 存数组, REST 部分路径 flatten);
 //   与已有 URL 去重 (同一帧可能既是主快照又入 evidence)
@@ -730,7 +742,7 @@ const alarmImageList = computed<GalleryImage[]>(() => {
       try {
         const arr = JSON.parse(raw)
         if (Array.isArray(arr) && arr.length > 0) list = arr.filter((u: unknown): u is string => typeof u === 'string' && !!u)
-      } catch { /* 非法 JSON 忽略, 走单图兑底 */ }
+      } catch { /* 非法 JSON 忽略, 走单图兜底 */ }
     }
   }
   if (list.length === 0) {
@@ -770,7 +782,7 @@ const totalImageCount = computed(() => Math.max(1, alarmImageList.value.length))
  *   (linkage_alarm 双写帧, LinkageEvent 无 metadata 成员) 可能缺顶层
  *   confidence → 「检测置信度 0%」。metadata.detections[0].confidence
  *   与 REST 详情同源 (AlarmDispatcher detections 透传链, 真机 DB 12/12
- *   置信度非零实锚), 逐级兑底。 */
+ *   置信度非零实锚), 逐级兜底。 */
 const detConfidence = computed<number>(() => {
   const top = Number(currentAlarm.value?.confidence ?? 0)
   if (top > 0) return top
@@ -837,7 +849,7 @@ function nextImage() { if (imageIndex.value < totalImageCount.value - 1) imageIn
 // ── 联动地图位置（GPS + 扇形 FOV + 平面/3D 切换） ──
 const mapMode = ref<'plan' | '3d'>('3d')
 // [FLOOR-MAP 2026-09-03] 真实平面图: channelId 反查绑定地图 (主图在前);
-//   空结果负缓存 10s — 未绑定通道弹窗不重复打反查; 无绑定 → GPS 占位兑底不动
+//   空结果负缓存 10s — 未绑定通道弹窗不重复打反查; 无绑定 → GPS 占位兜底不动
 const { mapsByChannel: mapsByChannelQ, loadMaps: loadFloorMapsQ, bindingsOfMap } = useFloorMap()
 const mapPairs = ref<MapChannelPair[]>([])
 const activeMapIdx = ref(0)
@@ -932,7 +944,7 @@ watch(currentAlarm, async (a) => {
       mapMode.value = 'plan'
       loadFloorMapsQ().catch(() => {})  // 预热全量缓存 (同图全部点位)
     }
-  } catch { /* 反查失败 → GPS 占位兑底 */ }
+  } catch { /* 反查失败 → GPS 占位兜底 */ }
 }, { immediate: true })
 const mapCoords = computed(() => {
   const m = (currentAlarm.value?.metadata || {}) as Record<string, unknown>
@@ -1253,7 +1265,7 @@ function onPlaybackError() {
 }
 // [FIX rec-snapstream 2026-09-15 排查 verify1] 联动回放查询需真实 ZLM 流名:
 //   channel_id 常为 NVR 国标码, 后端据此拼 gb_<NVR码> 猜不中流目录; 告警的
-//   clip / 快照路径本身携带真实流名 (/record|/snapshots/rtp/gb_.../), 提取兑底。
+//   clip / 快照路径本身携带真实流名 (/record|/snapshots/rtp/gb_.../), 提取兜底。
 function alarmStreamName(alarm: any): string | undefined {
   const clip = String(alarm?.videoClipUrl || '')
   const snap = String(alarm?.snapshotUrl || '')
@@ -1799,6 +1811,15 @@ const resolvedDeviceName = computed(() => {
   if (!a) return ''
   return resolveAlarmDeviceName(a.deviceName, a.deviceId, a.channelId)
 })
+// [FEAT mon-point-popup 2026-09-18] 监控点行: 多通道设备 (华盾展厅 001/002 等) 告警
+//   需区分具体监控点 — 真通道码解析 (共享 alarmChannelIdOf: metadata[0].channel_id_str
+//   优先/哈希反查兜底) + 列表 SSOT alarmChLabel 目录反查, 同一条告警弹窗与列表
+//   「监控点」列显示完全一致。
+const resolvedChannelName = computed(() => {
+  const a = currentAlarm.value
+  if (!a) return ''
+  return alarmChLabel({ channelId: alarmChannelIdOf(a), metadata: unpackAlarmMeta(a) })
+})
 // [FIX-P0-1/P1-2 2026-09-12] 目标轨迹 + 合并计数 (后端 track_id/aggregated_count,
 //   归一化于 AlarmEvent): track>=0 才展示轨迹行; 计数 >1 才展示合并行
 const mergedCount = computed(() => {
@@ -1939,9 +1960,9 @@ const popupBbox = computed<number[]>(() => {
   //   与 EventsView 兜底口径对齐。
   const src = ((m[0] && typeof m[0] === 'object') ? m[0] : m) as Record<string, unknown>
   let b = src.bbox as number[] | undefined
-  // [FIX face_box 2026-09-08 R3] 人脸链字段兑底: face_detector metadata 用
+  // [FIX face_box 2026-09-08 R3] 人脸链字段兜底: face_detector metadata 用
   //   face_box [x1,y1,x2,y2] 归一 (基准=scene_url 场景图, 画廊已置首位);
-  //   无此兑底实时弹窗人脸告警恒无框。
+  //   无此兜底实时弹窗人脸告警恒无框。
   if (!Array.isArray(b) || b.length < 4) {
     b = src.face_box as number[] | undefined
   }
@@ -1990,9 +2011,14 @@ const popupOverlayChannelId = computed(() =>
   || String(currentAlarm.value?.channelId || ''))
 
 const locationNote = computed(() => {
-  const m = (currentAlarm.value?.metadata || {}) as Record<string, unknown>
+  // [FIX loc-note 2026-09-18] 两处收口: ① metadata 数组形态解包 (realtime-alarms
+  //   metadata=[{...}], 原样直读 m.location_note 恒 miss); ② location 为空时原
+  //   兜底「联动 所属区域…」语义不通 (用户问询"这个提示是啥意思"的根因) —
+  //   回退设备名, 再空则省略前段只留行为提示。
+  const m = unpackAlarmMeta(currentAlarm.value)
   if (m.location_note) return String(m.location_note)
-  const loc = currentAlarm.value?.location || '所属区域'
+  const loc = currentAlarm.value?.location || resolvedDeviceName.value
+  if (!loc) return '本设备告警触发，请关注后续视频片段'
   return `联动 ${loc}，本设备告警触发，请关注后续视频片段`
 })
 
@@ -2239,7 +2265,9 @@ void jumpToPlayback; void openImageTab
   z-index: 2;
 }
 .alarm-popup__preview-tags {
-  position: absolute; top: 10px; right: 10px;
+  /* [FIX switch-tag-del 2026-09-18] top 10→34px: 避让播放器右上角 LIVE 徽标
+     (mini-player__live-badge top:8 right:8 高约 22px, 原 10px 同位叠盖) */
+  position: absolute; top: 34px; right: 10px;
   display: flex; gap: 6px;
   z-index: 2;
 }
@@ -2259,13 +2287,6 @@ void jumpToPlayback; void openImageTab
   color: #00E5FF;
   cursor: pointer;
   text-decoration: underline;
-}
-.alarm-popup__switch-tag {
-  background: #FFB800;
-  color: #1a1a1a;
-  font-size: 11px; font-weight: 600;
-  padding: 2px 8px;
-  border-radius: 4px;
 }
 .alarm-popup__location-tag {
   background: rgba(255, 107, 107, 0.92);

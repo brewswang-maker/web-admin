@@ -9,6 +9,9 @@ import { alarmApi } from '@/api/alarm'
 import type { AlarmEvent, AlarmStats, AlarmQuery, AlarmHandleForm, AlarmType } from '@/types/alarm'
 import { normalizeAlarmCore } from '@/types/alarm'
 import { ElMessage, ElMessageBox } from 'element-plus'
+// [FIX ws-frame-classify 2026-09-18 三方对齐] 状态同步帧判定 (归一化对象版) —
+//   弹窗/列表/首页/store 四处共用单一实现 (useAlarmTableHelpers), 防口径漂移
+import { isAlarmStateSyncNormalized } from '@/composables/useAlarmTableHelpers'
 
 export const useAlarmStore = defineStore('alarm', () => {
   // ===== 状态 =====
@@ -227,6 +230,12 @@ export const useAlarmStore = defineStore('alarm', () => {
     //   与 useAlarmPopup.showAlarmPopup 同 id 富化合并同语义: 同 id 后到帧
     //   不重复入队/不重复计数, 只补稀疏字段 (metadata 深合并/快照/视频 URL)。
     const existIdx = realtimeAlarms.value.findIndex((a) => a.id === norm.id)
+    // [FIX ws-frame-classify 2026-09-18 三方对齐] 状态同步帧兜底 (与列表/
+    //   首页 onAlarmPush 同口径, helper 共用): 同 id 不在实时窗口 (50 条滑出/
+    //   会话早期帧) → 丢弃不新增 — is_duplicate 短窗去重帧不落库 (DB 无行),
+    //   unshift 会造出幽灵条目污染弹窗队列/未处理计数 (原实现仅靠同 id 合并
+    //   兜底, 窗口外状态帧漏网)。命中窗口仍走下方富化合并。
+    if (existIdx < 0 && isAlarmStateSyncNormalized(norm)) return
     if (existIdx >= 0) {
       const cur = realtimeAlarms.value[existIdx] as any
       const mergedMeta = { ...(cur.metadata || {}), ...(norm.metadata || {}) } as any

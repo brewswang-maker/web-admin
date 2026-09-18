@@ -156,6 +156,36 @@ export function alarmDirReady() {
   return dirReady
 }
 
+// ── [FIX ind-floormap-parity 2026-09-18] 告警真通道码统一解析 (原 SituationScreen 局部实现
+//   迁入共享): 首页平面地图与定位追踪页室内面板共用, 防两处口径漂移。
+//   平面图点位绑定按通道码 (真机实锚 map25: 绑定 …1320002001/002), 顶层 channelId
+//   (父设备码) 变体永不命中 → 定位/涟漪/自动切图/标签全链共用此解析。 ──
+/** metadata 解包 (治理帧形态数组取首元素 — 与 toAlarm govSrc 解析同口径; 对象原样) */
+export function unpackAlarmMeta(alarm: { metadata?: unknown }): Record<string, unknown> {
+  const metaRaw = alarm?.metadata
+  if (Array.isArray(metaRaw))
+    return (metaRaw[0] && typeof metaRaw[0] === 'object' ? metaRaw[0] : {}) as Record<string, unknown>
+  return (metaRaw && typeof metaRaw === 'object' ? metaRaw : {}) as Record<string, unknown>
+}
+
+/** 告警真通道码解析: metadata[0].channel_id_str (监控点级通道码) 优先, int32 哈希投影
+ *  反查三级兜底, 顶层 channelId (父设备码) 末级兜底 */
+export function alarmChannelIdOf(alarm: { metadata?: unknown; channelId?: string }): string {
+  const meta = unpackAlarmMeta(alarm)
+  const s = String(meta.channel_id_str || '').trim()
+  if (s) return s
+  // [FIX ch-id-str 2026-09-18] int 哈希通道投影反查 (三级兜底): climbing 等插件旧
+  //   数据 meta 只带 int32 投影 channel_id (FNV-1a &0x7FFFFFFF, 与 safeChannelHash
+  //   同源) — 目录通道 raw/base 双形态逐一试算命中即反解真通道码 (存量未重启
+  //   期间产生的历史告警同样受益)。
+  const h = Number(meta.channel_id)
+  if (Number.isFinite(h) && h > 0) {
+    const hit = findChannelByHash(h)
+    if (hit?.raw) return hit.raw
+  }
+  return alarm.channelId || ''
+}
+
 // [chan-col 2026-09-11 完成锚点] 设备→通道目录扩展批次 · 部署产物 entry=index-wS8-Hc--kp.js tgz md5=57e4f6f0d728c29eeca8f2a8f6dd629b
 
 // [t3-tree-channel 2026-09-11 完成锚点] 三级树通道级服务端下钻(单值直传+多值 fan-out)批次 · 部署产物 entry=index-CvT0U9Nv4f.js tgz md5=07a2e26224ed93a40c47f987c04b7bb5

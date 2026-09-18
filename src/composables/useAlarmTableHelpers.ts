@@ -251,3 +251,28 @@ export function mergedCountOf(row: any): number {
 }
 
 // [chan-col 2026-09-11 完成锚点] alarmChLabel 占位口径批次 · 部署产物 entry=index-wS8-Hc--kp.js tgz md5=57e4f6f0d728c29eeca8f2a8f6dd629b
+
+/** [FIX ws-frame-classify 2026-09-18 三方对齐] WS 告警帧分类判定 (报警弹窗/告警列表/
+ *  首页态势同口径, 单一实现防三处漂移): 状态同步帧 = 仅就地更新、绝不新增行。
+ *  后端 BoxService.cpp alarm.new 推送体字段 (REST 无此字段, merged_into 仅在
+ *  REST 响应侧): is_duplicate=true (短窗去重帧 — 不落库, DB 无行; unshift 即
+ *  幽灵帧, REST 重拉整行消失) / backfill (clip 回填) / evidence_update (取证
+ *  补位) / event_phase=update|end (事件生命周期; start=新事件)。注意 is_duplicate
+ *  聚合帧可能携带 event_phase=start (聚合命中但事件未结束) → is_duplicate 必须
+ *  独立判定, 不能只看 event_phase。 */
+export function isAlarmStateSyncFrame(raw: unknown): boolean {
+  const r = raw as Record<string, unknown> | null | undefined
+  if (!r || typeof r !== 'object') return false
+  return r.is_duplicate === true || r.backfill === true || r.evidence_update === true
+    || r.event_phase === 'update' || r.event_phase === 'end'
+}
+
+/** [FIX ws-frame-classify 2026-09-18] 同上判定的归一化对象版 (camelCase):
+ *  供 stores/alarm.pushRealtimeAlarm 对已 normalize 的条目做兜底判定 —
+ *  normalizeAlarmPayload 补挂 isDuplicate/eventPhase 后语义与 raw 版严格等价。 */
+export function isAlarmStateSyncNormalized(a: unknown): boolean {
+  const n = a as Record<string, unknown> | null | undefined
+  if (!n || typeof n !== 'object') return false
+  return n.isDuplicate === true || n.backfill === true || n.evidenceUpdate === true
+    || n.eventEnded === true || n.eventPhase === 'update' || n.eventPhase === 'end'
+}

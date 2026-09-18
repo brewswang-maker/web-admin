@@ -425,6 +425,7 @@
               <span>{{ t('situationScreen.colGroup') }}</span>
               <span>{{ t('situationScreen.colType') }}</span>
               <span>{{ t('situationScreen.colDevice') }}</span>
+              <span>{{ t('situationScreen.colChannel') }}</span>
               <span>{{ t('situationScreen.colTime') }}</span>
               <span>{{ t('situationScreen.colStatus') }}</span>
               <span>{{ t('situationScreen.colAction') }}</span>
@@ -464,6 +465,10 @@
                   <!-- [DEV-NAME-COL 2026-09-07] 设备名称列: 后端 deviceName 已经三级兜底
                        (设备列表页口径), location 即设备名; 空时 '-' -->
                   <span class="alarm-device" :title="alarmDeviceText(alarm)">{{ alarmDeviceText(alarm) }}</span>
+                  <!-- [FIX mon-point-col 2026-09-18] 监控点列: 对齐 AlarmsView/场景页列序
+                       (设备→监控点), alarmChLabel SSOT 口径 (目录反查优先 +
+                       「监控点{id}」占位, 不裸显国标码) -->
+                  <span class="alarm-channel" :title="alarmChannelText(alarm)">{{ alarmChannelText(alarm) }}</span>
                   <span class="alarm-time">{{ alarm.time }}</span>
                   <span class="alarm-status">
                     <el-tag :type="alarm.status === '已处置' ? 'success' : 'warning'" size="small" effect="dark">
@@ -602,6 +607,178 @@
               </div>
             </div>
           </template>
+          <!-- 全屏：平面地图 — [FIX fs-floor 2026-09-18] 补齐 floor 分支 (原覆盖层仅
+               3d/video 两分支, 平面地图点全屏 → 覆盖层内容区空白 = 「全屏失效」可感知根因)。
+               9 项能力工具栏 + FloorMapCanvas 全量 props/events 与主视图逐项同源复用
+               (共享同一批 ref/computed → 全屏内外状态零漂移)。画布采用独立实例, 刻意
+               不做 video 分支式 `!isFullscreen` 互斥守卫: 主视图画布保留值班员缩放/平移
+               现场, 退出全屏即复原 (3d/video 互斥守卫重挂载会丢视野; floor 无播放器资源
+               约束, 双实例纯 DOM 渲染代价可忽略)。 -->
+          <template v-if="centerView === 'floor'">
+            <div class="fullscreen-floor-area">
+              <div class="fullscreen-floor-toolbar">
+                <el-select v-if="floorMaps.length > 1" v-model="currentFloorMapId" size="small" style="width: 150px">
+                  <el-option v-for="m in floorMaps" :key="m.id" :label="floorMapLabel(m)" :value="m.id" />
+                </el-select>
+                <button
+                  type="button"
+                  class="floor-locate-toggle"
+                  :class="{ 'is-on': alarmLocateEnabled }"
+                  :title="alarmLocateEnabled ? '告警时自动切换到报警点所在平面图（点击关闭）' : '已关闭告警自动定位（点击开启）'"
+                  @click="toggleAlarmLocate"
+                >
+                  <el-icon :size="13"><Aim /></el-icon>
+                  告警定位
+                </button>
+                <el-popover placement="bottom-start" :width="168" trigger="click">
+                  <template #reference>
+                    <button
+                      type="button"
+                      class="floor-locate-toggle"
+                      :class="{ 'is-filter': hiddenDeviceTypes.length > 0 }"
+                      title="按设备类型显示/隐藏点位"
+                    >
+                      <el-icon :size="13"><Filter /></el-icon>
+                      图层
+                    </button>
+                  </template>
+                  <el-checkbox-group v-model="hiddenDeviceTypes" class="fm-layer-checks">
+                    <el-checkbox v-for="t in FLOOR_MAP_DEVICE_TYPES" :key="t.value" :value="t.value" size="small">
+                      <span class="fm-layer-dot" :style="{ background: DEVICE_ICON_META[t.value]?.color }" />
+                      {{ t.label }}
+                    </el-checkbox>
+                  </el-checkbox-group>
+                </el-popover>
+                <button
+                  type="button"
+                  class="floor-locate-toggle"
+                  :class="{ 'is-active': showPointLabels }"
+                  :title="showPointLabels ? '隐藏点位名称标签（点击隐藏）' : '显示点位名称标签（点击显示）'"
+                  @click="togglePointLabels"
+                >
+                  <el-icon :size="13"><PriceTag /></el-icon>
+                  名称
+                </button>
+                <button
+                  type="button"
+                  class="floor-locate-toggle"
+                  :class="{ 'is-active': mapToolMode === 'measure' }"
+                  :disabled="!canMeasure"
+                  :title="canMeasure
+                    ? (mapToolMode === 'measure' ? '退出测距（ESC）' : '底图测距：点击两点量取实际距离')
+                    : '当前平面图未标定比例尺，无法测距'"
+                  @click="toggleMeasureTool"
+                >
+                  <el-icon :size="13"><ScaleToOriginal /></el-icon>
+                  测距
+                </button>
+                <button
+                  type="button"
+                  class="floor-locate-toggle"
+                  :class="{ 'is-active': mapToolMode === 'marquee' }"
+                  :title="mapToolMode === 'marquee' ? '退出框选（ESC）' : '框选预览：拖拽框选多个点位批量打开实时画面'"
+                  @click="toggleMarqueeTool"
+                >
+                  <el-icon :size="13"><Grid /></el-icon>
+                  框选
+                </button>
+                <button
+                  type="button"
+                  class="floor-locate-toggle"
+                  :class="{ 'is-active': defenseLayerOn }"
+                  :title="defenseLayerOn ? '关闭布防图层' : '布防图层：联动规则绑定的监控点扇形橙色高亮并显示规则数'"
+                  @click="toggleDefenseLayer"
+                >
+                  <el-icon :size="13"><Lock /></el-icon>
+                  防区
+                </button>
+                <button
+                  type="button"
+                  class="floor-locate-toggle"
+                  :class="{ 'is-active': mapToolMode === 'pin' }"
+                  :title="mapToolMode === 'pin' ? '退出标记（ESC）' : '自定义标记：点击底图放置旗标并命名（点击已有标记可删除）'"
+                  @click="togglePinTool"
+                >
+                  <el-icon :size="13"><Flag /></el-icon>
+                  标记
+                </button>
+                <el-popover placement="bottom-start" :width="248" trigger="click" popper-class="floor-fav-popper">
+                  <template #reference>
+                    <button
+                      type="button"
+                      class="floor-locate-toggle"
+                      :title="favChannels.length ? `收藏点位 ${favChannels.length} 个` : '收藏夹（悬停点位点击左上星标添加）'"
+                    >
+                      <el-icon :size="13" color="#F4B400"><StarFilled /></el-icon>
+                      收藏
+                      <span v-if="favChannels.length" class="floor-fav-count">{{ favChannels.length }}</span>
+                    </button>
+                  </template>
+                  <div v-if="favBindings.length" class="floor-fav-list">
+                    <div
+                      v-for="b in favBindings" :key="b.channel_id"
+                      class="floor-fav-row"
+                      :title="`定位到「${previewNameOf(b)}」`"
+                      @click="locateFav(b)"
+                    >
+                      <span class="fm-layer-dot" :style="{ background: DEVICE_ICON_META[b.device_type || 'camera']?.color }" />
+                      <span class="floor-fav-name">{{ previewNameOf(b) }}</span>
+                      <span class="floor-fav-type">{{ deviceTypeLabel(b.device_type || 'camera') }}</span>
+                    </div>
+                    <button type="button" class="floor-fav-preview" @click="previewFavs">预览收藏摄像头</button>
+                  </div>
+                  <div v-else class="floor-fav-empty">暂无收藏<br><span>悬停点位点击左上角星标添加</span></div>
+                </el-popover>
+                <el-select
+                  v-model="pointSearchPick"
+                  class="floor-point-search"
+                  size="small"
+                  filterable
+                  clearable
+                  placeholder="搜索点位"
+                  title="搜索点位名称/编号/类型并定位居中"
+                  @change="onPointSearchPick"
+                >
+                  <el-option v-for="o in pointSearchOptions" :key="o.b.channel_id" :value="o.b.channel_id" :label="o.match">
+                    <span class="fm-layer-dot" :style="{ background: DEVICE_ICON_META[o.b.device_type || 'camera']?.color }" />
+                    <span class="floor-search-name">{{ o.name }}</span>
+                    <span class="floor-search-meta">{{ o.type }} · {{ o.b.channel_id.length > 8 ? '…' + o.b.channel_id.slice(-6) : o.b.channel_id }}</span>
+                  </el-option>
+                </el-select>
+              </div>
+              <div class="fullscreen-floor-canvas">
+                <FloorMapCanvas
+                  v-if="currentFloorMap"
+                  :map="currentFloorMap"
+                  :bindings="floorBindings"
+                  :alarm-channel-id="floorLatestAlarmChannel"
+                  :alarm-metadata="floorLatestAlarmMeta"
+                  :alarm-channels="floorAlarmChannels"
+                  :channel-labels="floorChannelLabels"
+                  :channel-online="floorChannelOnline"
+                  :highlight-channel-id="floorHighlight"
+                  :focus-channel-id="floorFocusChannel"
+                  :hidden-device-types="hiddenDeviceTypes"
+                  :show-labels="showPointLabels"
+                  :tool-mode="mapToolMode"
+                  :defense-channels="defenseChannels"
+                  :pins="currentPins"
+                  :fav-channels="favChannels"
+                  @device-click="onFloorDeviceClick"
+                  @tool-cancel="onToolCancel"
+                  @marquee-select="onMarqueeSelect"
+                  @pin-add="onPinAdd"
+                  @pin-click="onPinClick"
+                  @fav-toggle="onFavToggle"
+                />
+                <div v-else class="fullscreen-empty">暂无平面图 — 请先在「平面图管理」上传底图并绑定设备</div>
+                <div v-if="floorAlarmCount > 0" class="floor-alarm-badge">
+                  <span class="floor-alarm-dot" />实时告警联动 {{ floorAlarmCount }} 监控点
+                </div>
+                <div v-if="currentFloorMap" class="floor-point-badge">点位 {{ visiblePointCount }}/{{ floorBindings.length }}</div>
+              </div>
+            </div>
+          </template>
         </div>
       </div>
     </div>
@@ -672,6 +849,14 @@ import { securityAreaApi } from '@/api/securityAreas'
 // [FIX type-zh 2026-09-07] 实时告警列表类型中文化: canonical SSOT + 本地兜底
 import { ALARM_TYPE_CN } from '@/types/alarm'
 import { useEventTypeZh } from '@/composables/useEventTypeZh'
+// [FIX mon-point-col 2026-09-18] 监控点列: 显示口径 SSOT + 通道/设备目录预热 (懒加载单例,
+//   与场景 RulesView 预热同款; 失败静默 → 列走占位兜底不阻塞)
+// [FIX ws-frame-classify 2026-09-18 三方对齐] 帧分类判定换共用 helper (isAlarmStateSyncFrame):
+//   与弹窗 useGlobalAlarm / 列表 AlarmsView / store 四处单一实现, 防口径漂移
+import { alarmChLabel, isAlarmStateSyncFrame } from '@/composables/useAlarmTableHelpers'
+// [FIX ind-floormap-parity 2026-09-18] unpackAlarmMeta/alarmChannelIdOf 迁至共享
+//   (定位追踪页室内面板同口径复用, 防双实现漂移); findChannelByHash 不再直接使用
+import { loadAlarmNameDirectory, devNameOf, parentDevOfChannel, unpackAlarmMeta, alarmChannelIdOf } from '@/composables/useAlarmDeviceLabel'
 import { sceneApi, type SceneCamera } from '@/api/scene'
 import { DEFAULT_BUILDINGS, STADIUM_SCENE_META } from '@/components/scene3d/constants/defaultSceneData'
 import type { Building3DNode, SceneMeta } from '@/components/scene3d/types/scene3d'
@@ -824,7 +1009,7 @@ async function fetchDeviceGroups() {
 }
 // ── [FIX type-zh 2026-09-07] 告警类型英文 key → 中文 (与 AlarmPopup 同口径) ──
 const { ensure: ensureEventTypes, zh: eventTypeZh } = useEventTypeZh()
-/** canonical SSOT (113 事件类型) 优先, ALARM_TYPE_CN 本地表兑底, 均未注册返回原文 */
+/** canonical SSOT (113 事件类型) 优先, ALARM_TYPE_CN 本地表兜底, 均未注册返回原文 */
 function alarmTypeText(a: Alarm): string {
   const key = String(a.type || '')
   if (!key) return '未知告警'
@@ -833,9 +1018,11 @@ function alarmTypeText(a: Alarm): string {
   return ALARM_TYPE_CN[key] || key
 }
 
-/** 行归属判定: channelId 匹配 resolved_channel_ids / deviceId 剥 _chN 匹配 device_ids */
+/** 行归属判定: 真通道码 [FIX mon-point-loc 2026-09-18] (metadata[0].channel_id_str →
+ *  顶层父设备码兜底) 匹配 resolved_channel_ids / deviceId 剥 _chN 匹配 device_ids;
+ *  分组配置按通道码归组, 父设备码不命中通道级分组 */
 function groupOfAlarm(a: Alarm): string {
-  const ch = String(a.channelId || '')
+  const ch = alarmChannelIdOf(a)
   const dev = String(a.deviceId || '').replace(/_ch\d+$/, '')
   const hit = deviceGroups.value.find(g =>
     (!!ch && (g.resolved_channel_ids || []).includes(ch))
@@ -875,11 +1062,47 @@ function alarmStatusText(status: string): string {
   return status
 }
 
-/** 设备列展示名称和设备编号；编号缺失时不显示空括号。 */
+/** 设备列展示设备名称和设备编号；编号缺失时不显示空括号。
+ *  [FIX mon-point-dev 2026-09-18] WS 推送帧 deviceName=父设备级而 REST 回填通道级
+ *  → 前端直信 location 导致刷新前后形态漂移 — 已由目录反查收口。
+ *  [FIX dev-col-semantics 2026-09-18] 口径修订: 通道级口径把监控点名串进设备列
+ *  (用户红笔实锚), 恢复设备级语义 — 详见函数内注释。 */
 function alarmDeviceText(alarm: Alarm): string {
-  const name = alarm.location || '-'
-  const deviceId = String(alarm.deviceId || '').trim()
-  return deviceId ? `${name}（${deviceId}）` : name
+  // [FIX dev-col-semantics 2026-09-18] 设备名称列恢复设备级语义 (用户红笔实锚:
+  //   上一轮通道级口径把监控点名串进了设备列 — 「周界测试摄像头 照楼下」实为
+  //   华盾展厅(online 设备 34020000001180000002) 的 001 通道名, 与设备页同名
+  //   offline 设备 11010500001110000001 构成目录重名混淆 → 误读"已离线设备在
+  //   报警"; 「华盾展厅-通道2」同理是监控点名非设备名)。
+  //   两列分工: 设备名称列=设备级 (deviceId 父码 → 目录 devNameOf 反查),
+  //   监控点列=通道级 (alarmChannelText, 保持不变)。目录未就绪回退后端
+  //   deviceName (WS/REST 双路径均父设备级, 上轮实锚 deviceName=华盾展厅)。
+  const dv0 = String(alarm.deviceId || '').trim()
+  // [FIX dev-col-semantics 2026-09-18] face 直报路径顶层 device_id=通道码 (face_
+  //   detector: event.device_id = channel_id_str, E2E 实锚 ROW4 黑名单行码为
+  //   …1320002002) → 目录无此设备条目时经 parentDevOfChannel 归一父设备码
+  //   (名字不变, 码归一, 与其余行一致)。
+  const dv = dv0 && devNameOf(dv0) ? dv0 : (dv0 ? (parentDevOfChannel(dv0) || dv0) : '')
+  const devName = (dv ? devNameOf(dv) : '') || alarm.location || '-'
+  return dv ? `${devName}（${dv}）` : devName
+}
+
+// [FIX mon-point-col 2026-09-18] 监控点列: alarmChLabel SSOT 口径 (元数据通道码 →
+//   顶层码目录反查 → 可读 channelName → 「监控点{id}」占位)。Alarm.channelId 可选
+//   而 SSOT 入参必填 → 本地适配层补空串 (空串走占位 '-' 分支, 不裸显 undefined)。
+// [FIX mon-point-name2 2026-09-18] realtime-alarms 的 metadata 是数组形态 [ {..} ]
+//   (真机实锚: metadata[0].channel_id_str=真通道码 34020000001320002001/002, 与顶层
+//   channel_id=父设备码 34020000001180000002 不同) — 原样透传数组时
+//   a.metadata?.channel_id_str 恒 miss → ②级 chNameOf(父设备码) 目录无通道条目
+//   → ④级回落设备链反查显示成设备名 (用户投诉"监控点名称不是实际名称"根因)。
+//   数组取首元素解包与 toAlarm govSrc 解析同口径, 解包后 ①级目录命中实际通道名。
+// [FIX mon-point-loc 2026-09-18] 告警真通道码统一解析 (unpackAlarmMeta +
+//   alarmChannelIdOf): metadata[0].channel_id_str (监控点级通道码) 优先, 顶层
+//   channelId (父设备码) 兜底。平面图点位绑定按通道码 (真机实锚 map25: 绑定
+//   …1320002001/002), 父码变体永不命中 → 图上定位/涟漪层/自动切图/监控点列共用。
+// [FIX ind-floormap-parity 2026-09-18] 两函数已迁 useAlarmDeviceLabel 共享
+//   (定位追踪页室内面板同口径复用, 防双实现漂移) — import 见页首 import 区。
+function alarmChannelText(alarm: Alarm): string {
+  return alarmChLabel({ channelId: alarmChannelIdOf(alarm), metadata: unpackAlarmMeta(alarm) })
 }
 
 const todayStats = ref<Array<{ label: string; value: string; suffix: string; icon: string; iconColor: string }>>([])
@@ -1071,19 +1294,23 @@ const currentFloorMapId = ref(0)
 const currentFloorMap = computed(() => floorMaps.value.find(m => m.id === currentFloorMapId.value) || floorMaps.value[0])
 const floorBindings = computed(() => (currentFloorMap.value ? floorBindingsOfMap(currentFloorMap.value.id) : []))
 function floorMapLabel(m: FloorMapWithCameras) { return m.floor || m.building || m.name }
-// 告警联动映射: 告警裸形态通道展开变体 (_ch0) → 与绑定库双形态命中 (同 AlarmPopup 口径)
+// 告警联动映射: 告警通道码 (真通道码 metadata[0].channel_id_str → 顶层父设备码兜底,
+//   [FIX mon-point-loc 2026-09-18]) 展开变体 (_ch0) → 与绑定库双形态命中 (同 AlarmPopup 口径)
 const floorAlarmChannels = computed<Record<string, boolean>>(() => {
   const o: Record<string, boolean> = {}
   for (const a of latestAlarms.value) {
-    const ch = a.channelId || ''
+    const ch = alarmChannelIdOf(a)
     if (!ch) continue
     for (const v of channelIdVariants(ch)) o[v] = true
   }
   return o
 })
-const floorAlarmCount = computed(() => new Set(latestAlarms.value.map(a => a.channelId).filter(Boolean)).size)
-const floorLatestAlarmChannel = computed(() => latestAlarms.value[0]?.channelId || '')
-const floorLatestAlarmMeta = computed(() => latestAlarms.value[0]?.metadata)
+// [FIX mon-point-loc 2026-09-18] 去重口径同步真通道码 (父设备码恒同值 → 多通道告警被误并 1)
+const floorAlarmCount = computed(() => new Set(latestAlarms.value.map(alarmChannelIdOf).filter(Boolean)).size)
+const floorLatestAlarmChannel = computed(() => (latestAlarms.value[0] ? alarmChannelIdOf(latestAlarms.value[0]) : ''))
+// [FIX mon-point-loc 2026-09-18] metadata 同步解包 (数组[0]): 画布 alarmBbox 读 m['bbox']
+//   原样数组形态恒 miss → 告警涟漪有但目标示意框不渲染
+const floorLatestAlarmMeta = computed(() => (latestAlarms.value[0] ? unpackAlarmMeta(latestAlarms.value[0]) : undefined))
 // 通道名/在线态 (chKey 双兼容 + status 双值域, 与 FloorMapView 同源逻辑)
 const floorChannelLabels = ref<Record<string, string>>({})
 const floorChannelOnline = ref<Record<string, boolean>>({})
@@ -1285,8 +1512,13 @@ function previewNameOf(b: CameraMapBinding): string {
   if (b.device_type && b.device_type !== 'camera') return b.label || deviceTypeLabel(b.device_type)
   return floorChannelLabels.value[b.channel_id] || `…${b.channel_id.slice(-6)}`
 }
-watch(() => latestAlarms.value[0]?.channelId, async (ch) => {
+// [FIX mon-point-loc 2026-09-18] source 改整条告警 + 真通道码解析: 顶层 channelId 恒为
+//   父设备码 — 同设备多通道告警 channelId 相同 (watch 值不交则不触发) 且父码不匹配任何
+//   点位绑定 (自动切图永不生效)。真通道码后: 当前图已绑定该监控点 → 不切; 未绑定 →
+//   mapsByChannel(通道码) 命中点位所属图并切换。
+watch(() => latestAlarms.value[0], async (a) => {
   if (!alarmLocateEnabled.value) return
+  const ch = a ? alarmChannelIdOf(a) : ''
   if (!ch || !floorMaps.value.length) return
   const bound = floorBindings.value.some(b => channelIdVariants(ch).includes(b.channel_id))
   if (bound) return
@@ -1315,7 +1547,10 @@ const slideDirection = ref<'slide-left' | 'slide-right'>('slide-left')
 //   也重触发画布居中; FloorMapCanvas 内部复用金色光环 (floorHighlight 同值)
 const floorFocusChannel = ref('')
 async function locateAlarmOnMap(a: Alarm) {
-  const ch = a.channelId || ''
+  // [FIX mon-point-loc 2026-09-18] 定位锚点改真通道码 (metadata[0].channel_id_str → 顶层
+  //   兜底): 顶层 channelId=父设备码, 点位绑定按通道码 (…1320002001/002), 父码变体永不
+  //   命中绑定/mapsByChannel → 恒弹「未绑定平面图点位」(图上定位失效根因)。
+  const ch = alarmChannelIdOf(a)
   if (!ch) { ElMessage.warning('该告警未携带监控点信息, 无法图上定位'); return }
   if (centerView.value !== 'floor') setCenterView('floor')
   if (!floorMaps.value.length) {
@@ -1325,7 +1560,7 @@ async function locateAlarmOnMap(a: Alarm) {
   const variants = channelIdVariants(ch)
   if (!floorBindings.value.some((b) => variants.includes(b.channel_id))) {
     const pairs = await floorMapsByChannel(ch).catch(() => [])
-    if (!pairs.length) { ElMessage.warning('该设备未绑定平面图点位'); return }
+    if (!pairs.length) { ElMessage.warning('该监控点未绑定平面图点位'); return }
     currentFloorMapId.value = pairs[0].map.id
   }
   floorHighlight.value = ch
@@ -1379,6 +1614,9 @@ const isFullscreen = ref(false)
 const fullscreenScene3dRef = ref<Scene3DExposed | null>(null)
 
 function setCenterView(view: '3d' | 'video' | 'floor') {
+  // [FIX fs-floor 2026-09-18] 切中心 tab 先退出全屏: 覆盖层内容按 centerView 分支渲染,
+  //   带全屏态切 tab 会渲染到另一分支 (视图语义漂移); 原生全屏不同步退出则状态分裂
+  if (isFullscreen.value) exitFullscreen()
   // [TAB-ORDER 2026-09-16] 首位已由 '3d' 换为 'floor' → 回首位向右滑, 离开首位向左滑
   slideDirection.value = view === 'floor' ? 'slide-right' : 'slide-left'
   centerView.value = view
@@ -1438,14 +1676,32 @@ watch(isFullscreen, () => {
   }, 500)
 })
 
-// 全屏功能
+// 全屏功能 — [FIX fs-floor 2026-09-18] 双层实现: CSS 覆盖层 (视觉主体) + 原生 Fullscreen API
+//   (真全屏, 隐藏浏览器 UI; Vite 直连 / Drogon / nginx 三层部署路径一致)。历史实现只置
+//   isFullscreen ref 从不调用 requestFullscreen/exitFullscreen — 浏览器地址栏/标签栏仍在,
+//   用户感知「点了全屏没反应」。
+//   时序红线: 原生全屏请求必须在 click 用户手势的同步调用栈内发起 (transient activation),
+//   严禁挪进 nextTick/setTimeout — 部分内核不放行异步调用栈。
 function toggleFullscreen() {
   if (isFullscreen.value) exitFullscreen()
   else enterFullscreen()
 }
 
+// [FIX fs-floor] 原生全屏状态同步: 用户 ESC / 浏览器手势退出原生全屏 → fullscreenchange
+//   是唯一退出信号 (原生态下 ESC 被浏览器消费, keydown 不下发) → 覆盖层跟随关闭防状态分裂
+function onNativeFullscreenChange() {
+  if (!document.fullscreenElement && isFullscreen.value) isFullscreen.value = false
+}
+
 function enterFullscreen() {
   isFullscreen.value = true
+  // [FIX fs-floor] 原生全屏目标选 documentElement: 覆盖层此刻尚未挂载 (v-if=false) 不可作
+  //   请求目标; documentElement 全屏即整页真全屏, 覆盖层 (fixed z-index:10000) 完整性不受影响。
+  //   请求失败 (iframe 未授权 allowfullscreen / 内核限制) 静默降级 → 纯 CSS 覆盖层仍可用。
+  try {
+    const p = document.documentElement.requestFullscreen?.()
+    if (p && typeof p.catch === 'function') p.catch(() => { /* 渐进降级: 保留 CSS 覆盖层 */ })
+  } catch { /* 旧内核同步抛错: 同上降级 */ }
   nextTick(() => {
     const overlay = document.querySelector('.fullscreen-overlay') as HTMLElement
     overlay?.focus()
@@ -1460,7 +1716,19 @@ function enterFullscreen() {
 
 function exitFullscreen() {
   isFullscreen.value = false
+  // 原生全屏同步退出 (未进入原生态 — 请求失败降级 / 浏览器已先行退出 — 时 no-op)
+  if (document.fullscreenElement) {
+    document.exitFullscreen?.().catch(() => { /* 已自然退出 */ })
+  }
 }
+
+// [FIX fs-floor 2026-09-18] 覆盖层在场期间给 body 打标 (时间域开关, 关闭即摘): EP body 级
+//   弹层 (el-dialog/el-message-box/el-message/el-popper) 基线 ~2000 档远低于覆盖层 10000 →
+//   工具栏下拉/搜索/设备详情/框选预览/标记确认框/轻提示会被覆盖层完全遮挡 ("点了没反应"
+//   实为弹层在覆盖层之下 — 与 AlarmPopup [OCC-ZINDEX 2026-09-13] 同类问题; 提升规则见文件尾全局块)。
+watch(isFullscreen, (v) => {
+  document.body.classList.toggle('fs-overlay-active', v)
+})
 
 // ── T3: 视频监控布局 + 轮巡 (完整 GB28181 推流实现) ──
 const videoLayout = ref<1 | 4>(4)
@@ -2928,7 +3196,13 @@ function toAlarm(s: SituationAlarmStream): Alarm {
     snapshotUrl: s.snapshotUrl || s.snapshot_url,
     metadata: s.metadata,
     // [FLOOR-MAP 2026-09-05 v2] 通道双形态兼容 (平面图联动数据源)
-    channelId: (s as { channelId?: string; channel_id?: string }).channelId
+    // [FIX mon-point-loc 2026-09-18] 通道双形态兼容补第三形态 channel_id_str:
+    //   face_blacklist 直报路径真通道码只在顶层 channel_id_str (REST 实锚
+    //   top.ch_id_str=34020000001320002002, channel_id/channelId 均父码) —
+    //   原只读两形态 → face 行监控点列/设备名称列恒 miss 走占位。snake 三形态
+    //   等值共存 (其余类型三字段同为父码, 插件真码在 metadata ①级优先不变)。
+    channelId: (s as { channelId?: string; channel_id_str?: string; channel_id?: string }).channelId
+      || (s as { channel_id_str?: string }).channel_id_str
       || (s as { channel_id?: string }).channel_id || '',
     // [DEV-GROUP 2026-09-07] 设备 ID 透传 (分组反查 device_ids 用)
     deviceId: (s as { device_id?: string; deviceId?: string }).device_id
@@ -3209,9 +3483,9 @@ function onAlarmPush(data: unknown) {
   const id = raw.id || raw.alarm_id || raw.event_id
   if (!id) return
   const sid = String(id)
-  const isStateSync = raw.is_duplicate === true
-    || raw.backfill === true || raw.evidence_update === true
-    || raw.event_phase === 'update' || raw.event_phase === 'end'
+  // [FIX ws-frame-classify 2026-09-18 三方对齐] 内联判定换共用 helper — 语义严格等价
+  //   (is_duplicate / backfill / evidence_update / event_phase=update|end), 单一实现防漂移
+  const isStateSync = isAlarmStateSyncFrame(raw)
   if (isStateSync) {
     // 状态同步帧: 聚合明细按 merged_into 命中首行; 其余按自身 id 命中
     const targetId = String(raw.merged_into || '') || sid
@@ -3303,6 +3577,8 @@ onMounted(async () => {
 
   // [FIX type-zh 2026-09-07] 事件类型 SSOT 预热 (模块级单例缓存, 静默失败)
   ensureEventTypes()
+  // [FIX mon-point-col 2026-09-18] 通道/设备名称目录预热 (监控点列目录反查用, 单例静默)
+  loadAlarmNameDirectory()
 
   // [DEV-GROUP 2026-09-07] 分组列表 ("所属区域"列反查; 静默失败)
   fetchDeviceGroups()
@@ -3320,8 +3596,10 @@ onMounted(async () => {
   // [v8.7] 回页恢复：软关闭前的轮巡画面从 channelStore 恢复
   // (multi-urls 复用现有服务端流，不重新 SIP INVITE；流已断则重新拉流)
   restoreVideoSlotsFromStore()
-  // 全屏ESC退出
+  // 全屏ESC退出 (非原生降级态兜底; 原生态 ESC 被浏览器消费 → fullscreenchange 同步)
   window.addEventListener('keydown', onFullscreenEsc)
+  // [FIX fs-floor 2026-09-18] 原生全屏退出同步 (用户 ESC/浏览器手势 → 覆盖层跟随关闭)
+  document.addEventListener('fullscreenchange', onNativeFullscreenChange)
   // [FIX handle-refresh 2026-09-10] 处警广播 → 重拉告警条 (状态即时同步)
   window.addEventListener('alarm-handled', onAlarmHandled)
 })
@@ -3347,8 +3625,16 @@ onUnmounted(() => {
   if (channelStore.hasActive) {
     channelStore.showFloatingPreview = true
   }
+  // [FIX fs-floor 2026-09-18] 卸载清理全屏: 路由离开时若原生全屏仍挂在 documentElement →
+  //   显式退出 + 摘 body 标, 否则全屏态/标记会泄漏到下一页面 (浏览器随元素销毁虽有
+  //   自然退出, 显式清理保证过渡期无闪烁/无状态残留)
+  if (document.fullscreenElement === document.documentElement) {
+    document.exitFullscreen?.().catch(() => { /* 已自然退出 */ })
+  }
   isFullscreen.value = false
+  document.body.classList.remove('fs-overlay-active')
   window.removeEventListener('keydown', onFullscreenEsc)
+  document.removeEventListener('fullscreenchange', onNativeFullscreenChange)
   window.removeEventListener('alarm-handled', onAlarmHandled)
 })
 </script>
@@ -3673,7 +3959,7 @@ onUnmounted(() => {
      处置文字按钮双钮并排; 级别 54→48 / 快照 84→78 让位; 时间/状态不动
      (150px 已贴 19 字时间戳); 固定列 +32px 由左右栏各让 16px 抵消,
      弹性列 (分组/类型/设备) 宽度无损 */
-  grid-template-columns: 48px 78px minmax(0, 0.8fr) minmax(0, 0.9fr) minmax(0, 1.2fr) 150px 70px 104px;
+  grid-template-columns: 48px 78px minmax(0, 0.8fr) minmax(0, 0.9fr) minmax(0, 1.1fr) minmax(0, 0.9fr) 150px 70px 104px;
   align-items: center;
 }
 
@@ -3772,6 +4058,18 @@ onUnmounted(() => {
 }
 
 .alarm-device {
+  min-width: 0;
+  display: block !important;
+  align-self: center !important;
+  width: 100%;
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* [FIX mon-point-col 2026-09-18] 监控点列 (同 alarm-device 截断形态) */
+.alarm-channel {
   min-width: 0;
   display: block !important;
   align-self: center !important;
@@ -4289,6 +4587,33 @@ onUnmounted(() => {
   overflow: hidden;
 }
 
+/* [FIX fs-floor 2026-09-18] 全屏: 平面地图分支 (工具栏流式布局 + 画布铺满; 与
+   .center-view-floor 同结构, 工具栏脱离 absolute 定位适配任意屏宽; 画布为独立实例,
+   退出全屏后主视图保留原缩放/平移现场) */
+.fullscreen-floor-area {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.fullscreen-floor-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  min-height: 48px;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+
+.fullscreen-floor-canvas {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+}
+
 /* T3: 视频监控 */
 .video-monitor-grid {
   flex: 1;
@@ -4530,4 +4855,14 @@ onUnmounted(() => {
   border-radius: 50%;
 }
 .marquee-cell-name > :last-child { overflow: hidden; text-overflow: ellipsis; }
+
+/* [FIX fs-floor 2026-09-18] 全屏覆盖层 (z-index:10000) 在场期间: EP body 级弹层
+   (el-dialog/el-message-box/el-message/el-popper 基线 ≈2000 档) 全部位于覆盖层之下 →
+   点了"没反应"实为弹层被遮挡 (与 AlarmPopup [OCC-ZINDEX 2026-09-13] 同类问题 — 该注释
+   指出 el-dialog 默认 z-index≈2000 档会被完全遮挡)。isFullscreen 变化时对 body 打/摘
+   .fs-overlay-active: 时间域开关, 覆盖层关闭后对其余页面零影响; !important 用于压过
+   EP 写在元素上的内联 z-index (作者样式 !important > 内联普通声明)。 */
+body.fs-overlay-active .el-popper { z-index: 10060 !important; }
+body.fs-overlay-active .el-overlay { z-index: 10070 !important; }
+body.fs-overlay-active .el-message { z-index: 10080 !important; }
 </style>

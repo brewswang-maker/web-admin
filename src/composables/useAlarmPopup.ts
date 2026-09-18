@@ -145,6 +145,17 @@ export function normalizeAlarmPayload(raw: any): AlarmEvent {
   if (raw?.evidence_update === true || raw?.evidence_update === 1) {
     ;(n as any).evidenceUpdate = true
   }
+  // [FIX ws-frame-classify 2026-09-18 三方对齐] 剩余两分类标记补挂 (同 backfill/
+  //   evidenceUpdate 模式, 白名单重建丢弃后此处回补): isDuplicate (去重/聚合帧,
+  //   store 兜底判定用) + eventPhase (start/update/end 生命周期相位, update|end
+  //   =状态同步帧) — 语义定义见 useAlarmTableHelpers.isAlarmStateSyncFrame 注释。
+  if (raw?.is_duplicate === true || raw?.is_duplicate === 1) {
+    ;(n as any).isDuplicate = true
+  }
+  const phase = String(raw?.event_phase ?? raw?.eventPhase ?? '')
+  if (phase === 'update' || phase === 'end' || phase === 'start') {
+    ;(n as any).eventPhase = phase
+  }
   return n
 }
 
