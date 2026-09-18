@@ -2136,12 +2136,16 @@ function onBoundTreeCheck(_data: unknown, checked: unknown) {
   walk(boundChannelTreeData.value)
   const orphan = boundChannelDraft.value.filter(id => !treeChIds.has(id))
   const next = [...orphan, ...picked]
+  const prev = [...boundChannelDraft.value]  // [FIX roi-unbind-sync] 解绑联动基线 (先于写回)
   boundChannelDraft.value = next   // 触发 watch → setCheckedKeys 幂等重放 (无循环)
   onBoundChannelsChange(next)      // 首个摄像头通道自动派生画板底图 (原派生链)
+  roiSyncBoundChange(prev)         // [FIX roi-unbind-sync] 页签集/画板/序列化跟随解绑收缩
 }
 function clearBoundChannels() {
+  const prev = [...boundChannelDraft.value]  // [FIX roi-unbind-sync] 解绑联动基线
   boundChannelDraft.value = []
   onBoundChannelsChange([])
+  roiSyncBoundChange(prev)
 }
 // draft 外部变化 (编辑加载/取消/清除) → 命令式重放树勾选; setCheckedKeys 不触发
 // @check 无死循环, 用户勾选引起的写回为幂等重放 (状态一致零视觉抖动), 池外孤儿
@@ -2281,6 +2285,9 @@ interface RoiChannelPack {
 const roiByChannel = ref<Record<string, RoiChannelPack>>({})
 const roiTouched = ref(new Set<string>())
 const roiEchoed = ref(new Set<string>())
+/** [FIX roi-unbind-sync 2026-09-18] 解绑暂存: 基准码 → 来源标记; 重新勾选原样回填
+ *  (树误触解绑本会话内无损撤回; 清除逐监控点数据/重开编辑器时一并清空) */
+const roiUnboundStash = new Map<string, { echo: boolean; touched: boolean }>()
 const roiGeneralBaseline = ref<RoiData[]>([])
 /** 当前激活的通道页签 (基准码; '' = 未进入逐通道交互) */
 const activeRoiChannel = ref('')
@@ -2304,7 +2311,8 @@ function channelTabLabelOf(base: string): { label: string; detail: string } {
     : (hit?.label || base)
   return { label, detail }
 }
-/** 通道页签集: 绑定通道 ∪ 快照通道 ∪ 已序列化/回显通道 (基准码去重) */
+/** 通道页签集: 绑定通道 ∪ 快照通道 ∪ 已序列化/回显通道 (基准码去重);
+ *  解绑收缩: 取消勾选/一键清除经 roiSyncBoundChange 同步剔除 echo/touched 成员 */
 const roiTabChannels = computed<Array<{ value: string; label: string; detail: string }>>(() => {
   const seen = new Map<string, string>()
   const push = (raw: string) => {
@@ -2408,6 +2416,53 @@ async function switchRoiChannel(target: string) {
   await nextTick()
   roiSuppressTouch = false
 }
+// [FIX roi-unbind-sync 2026-09-18] 解绑联动「绘制监控点」(用户实测: 区域/设备/监控点树
+//   取消勾选后, 页签列表与画板未跟随)。三处残留根因: ① roiEchoed/roiTouched 不随绑定
+//   草稿收缩 → 页签集继续列出已解绑通道; ② 保存时 shapeChannelIds (取自 roiSerializeKeys)
+//   反向并回 bound_channel_ids → 解绑被静默撤销; ③ 活跃页签被解绑后无人重定向 → 画板
+//   停留在已解绑通道。修法: 显式解绑 (树取消勾选/一键清除) → 该通道退出页签集与保存集,
+//   来源标记进 roiUnboundStash 暂存 — 重新勾选原样恢复 (误触解绑本会话内无损撤回);
+//   逐通道数据被整体解绑清空 → 等价「清除逐监控点数据」回通用画布 (基线快照回填);
+//   活跃页签被解绑 → 改投首剩余页签 (switchRoiChannel 自带副本存档+底图切换);
+//   注: 编辑回显/位置收窄等程序性写回不经过本函数 (「打开编辑器零静默变更」契约不变)。
+function roiSyncBoundChange(prevIds: string[]) {
+  const cfg = form.conditions.region.config
+  const nowBases = new Set((cfg.boundChannelIds || []).map(v => roiBaseOf(String(v))).filter(Boolean))
+  const prevBases = new Set(prevIds.map(v => roiBaseOf(String(v))).filter(Boolean))
+  let prunedAny = false
+  for (const b of prevBases) {
+    if (nowBases.has(b)) continue
+    const wasEcho = roiEchoed.value.delete(b)
+    const wasTouched = roiTouched.value.delete(b)
+    if (!wasEcho && !wasTouched) continue
+    prunedAny = true
+    roiUnboundStash.set(b, { echo: wasEcho, touched: wasTouched })
+  }
+  for (const b of nowBases) {
+    if (prevBases.has(b)) continue
+    const stash = roiUnboundStash.get(b)
+    if (!stash) continue
+    roiUnboundStash.delete(b)
+    if (stash.echo) roiEchoed.value.add(b)
+    if (stash.touched) roiTouched.value.add(b)
+  }
+  // 整体退出逐通道 (解绑后 echo∪touched 空) → 同「清除逐监控点数据」语义
+  if (prunedAny && !roiStrictMode.value) {
+    roiSyncWorkCopyToPack()   // 活跃工作副本先存档 (重绑恢复源)
+    activeRoiChannel.value = ''
+    roiSuppressTouch = true
+    cfg.roiPolygon = roiClone(roiGeneralBaseline.value)
+    cfg.roiCombine = 'union'
+    nextTick(() => { roiSuppressTouch = false })
+    return
+  }
+  // 活跃页签掉出页签集 (解绑/掉落) → 改投首剩余页签
+  const act = activeRoiChannel.value
+  if (act && !roiTabChannels.value.some(t => t.value === act)) {
+    const first = roiTabChannels.value[0]?.value || ''
+    if (first) void switchRoiChannel(first)
+  }
+}
 // [UI-CONVERGE 2026-09-12] onRegionChannelChange 已随快照背景下拉下线:
 //   画板底图切换只走 switchRoiChannel (自带底图同步) 与 onBoundChannelsChange 派生。
 /** 标记当前激活通道已编辑 (watch roiPolygon 触发, 供保存序列化) */
@@ -2427,6 +2482,7 @@ async function clearRoiPerChannel() {
   roiByChannel.value = {}
   roiTouched.value.clear()
   roiEchoed.value.clear()
+  roiUnboundStash.clear()
   activeRoiChannel.value = ''
   roiSuppressTouch = true
   form.conditions.region.config.roiPolygon = roiClone(roiGeneralBaseline.value)
@@ -3797,6 +3853,7 @@ function resetEditorState(rule: LinkageRule | null) {
   roiByChannel.value = {}
   roiTouched.value = new Set()
   roiEchoed.value = new Set()
+  roiUnboundStash.clear()
   roiGeneralBaseline.value = []
   activeRoiChannel.value = ''
   // [FIX roi-bg 2026-09-18] 底图状态机随编辑会话重置: 上一条规则/上一次新建的快照
