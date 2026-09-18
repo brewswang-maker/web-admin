@@ -7,7 +7,8 @@
  *       与后端 matchAndVerdict 判定结果一致 (same alarm + same rules => same matched/rule_id)。
  *
  * 语义对齐说明 (fixture 用例设计时已核对双端实现):
- *   - G1 通道 hash 双形态: 前端 safeChannelHash(chIdStr)+baseId 集合 ↔ 后端 safeChannelHash
+ *   - G1 通道 hash 双形态: 前端 safeChannelHash(chIdStr)+baseId 集合 ↔ 后端 safeChannelHash;
+ *     0 哨兵条目永不命中 (CID-P2 M3 无信息语义, 双端对齐)
  *   - G2 >100 条规则尾部: 前端走 /rules/all 全量端点 (F1 事故修复) ↔ 后端全量遍历
  *   - G3 device_ids 双形态: 前端 alarmDevIds{deviceId,chIdStr,baseId} ↔ 后端 d==device_id||d==channel_id_str
  *   - G4 时间条件: 双端公式同源 (start<=end 含端点闭区间; start>end 跨天 now>=start||now<=end)

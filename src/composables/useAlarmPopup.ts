@@ -205,6 +205,11 @@ function channelEntryHit(entries: string[] | undefined, evFull: string, evBase: 
   for (const raw of entries) {
     const c = String(raw ?? '').trim()
     if (!c) continue
+    // [FIX g1-zero-sentinel 2026-09-19] 与后端 chanStrIdListMatches 对齐:
+    //   数值 0 条目 = 无信息哨兵 (channelEntryProjCandidates 剔除 proj=0, 事件侧
+    //   channelIdCandidates 剔除 0 候选) → 永不匹配任何事件 (含空通道事件)。
+    //   防双实现劈叉 (fixture G1 帧 3 空串事件不得命中 "0" 条目)。
+    if (/^-?\d+$/.test(c) && Number(c) === 0) continue
     if (c === evFull || c === evBase) return true
     if (evHashes.has(safeChannelHash(c))) return true
     if (/^\d+$/.test(c)) {
