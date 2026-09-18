@@ -15,6 +15,15 @@
       <div class="alarm-card__row alarm-card__row--main">
         <span class="alarm-card__type-cell">
           <span class="alarm-card__type" :title="alarm.type">{{ typeZh }}</span>
+          <!-- [C3 2026-09-18] 携带来源 marker: 属性合成/检测路线 (详见 useAlarmTableHelpers.carrySourceOf) -->
+          <span
+            v-if="carrySourceOf(alarm)"
+            class="alarm-card__carry"
+            :class="carrySourceOf(alarm)"
+            :title="carrySourceOf(alarm) === 'attr_synth'
+              ? '属性合成路线携带告警 (弱证据: 人包运动同步校验通过)'
+              : '检测路线携带告警 (真包检出)'"
+          >{{ carrySourceOf(alarm) === 'attr_synth' ? '合成' : '检测' }}</span>
           <!-- [FIX-P1-2 2026-09-12] 长窗聚合合并计数: ×N (N>1 展示) -->
           <span
             v-if="mergedCount > 1"
@@ -54,6 +63,8 @@ import { computed } from 'vue'
 import { Picture } from '@element-plus/icons-vue'
 import type { AlarmEvent } from '@/types/alarm'
 import { useEventTypeZh } from '@/composables/useEventTypeZh'
+// [C3 2026-09-18] 携带来源 marker (共享判定, 与列表页同口径)
+import { carrySourceOf } from '@/composables/useAlarmTableHelpers'
 // [FIX dev-name-num 2026-09-11] 设备名称数字形态治理 (共享目录反查)
 import { resolveAlarmDeviceName } from '@/composables/useAlarmDeviceLabel'
 
@@ -213,6 +224,18 @@ const timeText = computed(() => {
   line-height: 16px;
   cursor: default;
 }
+/* [C3 2026-09-18] 携带来源 marker (同列表页): 合成=橙 (弱证据) / 检测=蓝 (真包) */
+.alarm-card__carry {
+  flex-shrink: 0;
+  padding: 0 5px;
+  border-radius: 8px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 16px;
+  cursor: default;
+}
+.alarm-card__carry.attr_synth { background: rgba(230, 162, 60, 0.16); color: #E6A23C; }
+.alarm-card__carry.detect { background: rgba(64, 158, 255, 0.14); color: #409EFF; }
 /* [P0-4 2026-09-14] 事件态角标 (进行中绿 / 已结束灰) */
 .alarm-card__event {
   flex-shrink: 0;

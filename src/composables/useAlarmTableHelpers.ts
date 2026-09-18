@@ -276,3 +276,21 @@ export function isAlarmStateSyncNormalized(a: unknown): boolean {
   return n.isDuplicate === true || n.backfill === true || n.evidenceUpdate === true
     || n.eventEnded === true || n.eventPhase === 'update' || n.eventPhase === 'end'
 }
+
+/** [C3 2026-09-18] 携带来源 marker (插件 personal_item meta.carry_source 出站):
+ *  person_with_backpack 行区分「属性合成路线」与「检测路线」携带告警 —
+ *  合成=弱证据 (受运动门/速度同向校验), 检测=真包检出; 两路误报率可分别
+ *  评估 (分桶调参依据)。metadata 数组形态取首元素 (设备实况落库链),
+ *  字符串形态尝试解析; 非携带类/无字段/非法值 → '' (不渲染 marker)。 */
+export function carrySourceOf(row: any): string {
+  const t = String(row?.type || row?.alarm_type || row?.alarmType || '')
+  if (t !== 'person_with_backpack') return ''
+  let m = row?.metadata
+  if (typeof m === 'string') {
+    try { m = JSON.parse(m) } catch { return '' }
+  }
+  const gov = Array.isArray(m) ? m[0] : m
+  if (!gov || typeof gov !== 'object') return ''
+  const v = String((gov as any).carry_source ?? (gov as any).carrySource ?? '')
+  return v === 'attr_synth' || v === 'detect' ? v : ''
+}

@@ -341,6 +341,15 @@
           <template #default="{ row }">
             <span class="type-cell">
               <span class="type-badge">{{ zh(row.type) }}</span>
+              <!-- [C3 2026-09-18] 携带来源 marker: 属性合成/检测路线 (插件 meta.carry_source 出站) -->
+              <span
+                v-if="carrySourceOf(row)"
+                class="carry-source-badge"
+                :class="carrySourceOf(row)"
+                :title="carrySourceOf(row) === 'attr_synth'
+                  ? '属性合成路线携带告警 (弱证据: 人包运动同步校验通过)'
+                  : '检测路线携带告警 (真包检出)'"
+              >{{ carrySourceOf(row) === 'attr_synth' ? '合成' : '检测' }}</span>
               <!-- [FIX-P1-2 2026-09-12] 长窗聚合合并计数: ×N (N>1 展示, 同键 10min 合并)
                    [AGG-DETAIL 2026-09-12] 角标可点击: popover 懒加载展开被合并明细
                    (时间/置信度/快照 — 弹窗可合并, 列表证据链不丢, /alarms/:id/occurrences) -->
@@ -834,7 +843,7 @@ import { useWebSocket } from '@/composables/useWebSocket'
 // [P0-9/6/10 2026-09-04] canonical zh SSOT + 规范处警对话框
 import { useEventTypeZh } from '@/composables/useEventTypeZh'
 // [FIX dev-name-num 2026-09-11] 设备名称数字形态治理 (共享目录反查)
-import { alarmDevLabel, alarmChLabel, mergedCountOf, isAlarmStateSyncFrame } from '@/composables/useAlarmTableHelpers'  // [chan-col 2026-09-11] 展示口径 SSOT 单一源 (替代内联同款); [FIX-P1-2] mergedCountOf; [FIX ws-frame-classify 2026-09-18] 帧分类判定共用
+import { alarmDevLabel, alarmChLabel, mergedCountOf, isAlarmStateSyncFrame, carrySourceOf } from '@/composables/useAlarmTableHelpers'  // [chan-col 2026-09-11] 展示口径 SSOT 单一源 (替代内联同款); [FIX-P1-2] mergedCountOf; [FIX ws-frame-classify 2026-09-18] 帧分类判定共用
 import DisposeDialog from '@/components/alarm/DisposeDialog.vue'
 // [P3 2026-09-10] 右侧设备树筛选面板 (安保区域→子区域→设备 多选)
 import AlarmDeviceTreePanel from '@/components/alarm/AlarmDeviceTreePanel.vue'
@@ -2589,6 +2598,18 @@ onUnmounted(() => {
   line-height: 16px;
   cursor: default;
 }
+/* [C3 2026-09-18] 携带来源 marker (person_with_backpack 行): 合成=橙 (弱证据) / 检测=蓝 (真包) */
+.carry-source-badge {
+  flex-shrink: 0;
+  padding: 0 5px;
+  border-radius: 8px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 16px;
+  cursor: default;
+}
+.carry-source-badge.attr_synth { background: rgba(230, 162, 60, 0.16); color: #E6A23C; }
+.carry-source-badge.detect { background: rgba(64, 158, 255, 0.14); color: #409EFF; }
 /* [AGG-DETAIL 2026-09-12] ×N 角标可点击展开明细 (popover 触发器 + 面板样式) */
 .merged-count-badge.occ-trigger {
   cursor: pointer;

@@ -50,7 +50,35 @@ export interface PersonalItemConfig {
   target_fps?: number
   /** 6 类随身物品细分类 */
   classes?: string[]
+  // ── [A4 2026-09-18] 灵敏度三档矩阵键 (SSOT: personal_item._comment_a4) ──
+  /** IoU 跟踪匹配阈值 (高灵敏 0.15 / 平衡·低误报 0.3; 域 [0.05,0.9]) */
+  iou_track_match?: number
+  /** 低帧率预测匹配开关 (低误报档 false) */
+  track_match_predict_enabled?: boolean
+  /** 运动轨投票帧数 (高灵敏 1 / 平衡·低误报 2) */
+  min_continous_frames_moving?: number
+  /** 静态携带 hold 秒数 (高灵敏 2 / 平衡 3 / 低误报 5) */
+  static_carry_hold_seconds?: number
+  /** 合成包属性闸 (高灵敏 0.45 / 平衡 0.5 / 低误报 0.55) */
+  attr_event_min_confidence?: number
+  /** 当前档位标记 (high|balanced|low; 经档位端点写入) */
+  sensitivity_tier?: string
   [k: string]: unknown
+}
+
+// ── [A4 2026-09-18] 灵敏度三档切换 (对标华为/海康参数面) ──
+
+/** 档位键 (SSOT: RestApiHandlers PUT /algo/personal-item/tier 矩阵) */
+export type PersonalItemTier = 'high' | 'balanced' | 'low'
+
+/** 档位切换响应 data */
+export interface PersonalItemTierResult {
+  tier: PersonalItemTier
+  /** 本次写入的档位键值集 */
+  applied: Record<string, number | boolean>
+  /** 插件配置于服务启动时加载 — true = 重启服务后生效 */
+  restart_required: boolean
+  message: string
 }
 
 /** 人包核验部署状态 — GET /algo/personal-item/status 的 data (平铺) */
@@ -177,6 +205,18 @@ export const screeningApi = {
   getPersonalItemStatus() {
     return http.get<ApiResponse<PersonalItemStatus>>(
       '/algo/personal-item/status'
+    )
+  },
+
+  /**
+   * PUT /algo/personal-item/tier — A4 灵敏度三档切换 (high|balanced|low)
+   * 档位参数集写入 box_config personal_item 节 (SSOT 文件);
+   * 插件在服务启动时加载配置 — 重启服务后对推理生效。
+   */
+  applyPersonalItemTier(tier: PersonalItemTier) {
+    return http.put<ApiResponse<PersonalItemTierResult>>(
+      '/algo/personal-item/tier',
+      { tier }
     )
   },
 

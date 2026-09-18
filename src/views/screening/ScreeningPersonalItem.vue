@@ -67,6 +67,41 @@
       </el-result>
     </el-card>
 
+    <!-- ===== 灵敏度档位 (A4 三档矩阵: 高灵敏/平衡/低误报) ===== -->
+    <el-card shadow="never" class="tier-card">
+      <template #header>
+        <div class="card-header">
+          <span>灵敏度档位 (背包携带)</span>
+          <div class="header-right">
+            <el-tag v-if="currentTier" size="small" :type="tierTagType(currentTier)" effect="dark">
+              当前生效: {{ tierLabel(currentTier) }}
+            </el-tag>
+            <span class="hint">SSOT: box_config personal_item 节</span>
+          </div>
+        </div>
+      </template>
+      <div class="tier-body">
+        <el-radio-group v-model="selectedTier" class="tier-group" :disabled="!status" @change="tierTouched = true">
+          <el-radio-button v-for="t in TIER_PRESETS" :key="t.value" :value="t.value">
+            {{ t.label }}
+          </el-radio-button>
+        </el-radio-group>
+        <div class="tier-preview">
+          <div class="tier-desc">{{ selectedTierPreset.desc }}</div>
+          <div class="tier-params">
+            <span v-for="(v, k) in selectedTierPreset.params" :key="k" class="tier-param">
+              <span class="tp-key">{{ k }}</span><span class="tp-val">{{ v }}</span>
+            </span>
+          </div>
+        </div>
+        <div class="tier-actions">
+          <el-button type="primary" size="small" :loading="tierApplying"
+                     :disabled="!tierDirty" @click="applyTier">应用档位</el-button>
+          <span class="tier-hint">参数写入设备配置文件 (自动备份); 推理插件在服务启动时加载 — 重启服务后生效</span>
+        </div>
+      </div>
+    </el-card>
+
     <!-- ===== 三态机制说明 (SSOT: personal_item_detector.h L18-21) ===== -->
     <el-card shadow="never" class="threestate-card">
       <template #header>
@@ -165,13 +200,14 @@
  *   - 事件流筛选三态 SSOT 键: person_with_backpack / unattended_baggage / abandoned
  *   - 404 / 网络错误优雅降级, 不再裸报错
  */
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { Refresh } from '@element-plus/icons-vue'
+import { ElMessage } from 'element-plus'
 import { alarmApi } from '@/api/alarm'
 // [FIX channel-monitor-point 2026-09-17] 对标海康术语: 通道列显示值友好名化 (目录反查, 失败回退技术 ID)
 import { alarmChLabel } from '@/composables/useAlarmTableHelpers'
 import { screeningApi } from '@/api/screening'
-import type { PersonalItemStatus, PersonalItemConfig } from '@/api/screening'
+import type { PersonalItemStatus, PersonalItemConfig, PersonalItemTier } from '@/api/screening'
 import eventTypesApi from '@/api/eventTypes'
 import type { EventTypeMetadataItem } from '@/api/eventTypes'
 import type { AlarmEvent, AlarmLevel } from '@/types/alarm'
@@ -295,6 +331,100 @@ const freshnessText = computed(() => {
   if (ageMin < 60) return `${Math.round(ageMin)} 分钟前`
   return `${Math.round(ageMin / 60)} 小时前`
 })
+
+// ── 灵敏度档位 (A4 三档矩阵 2026-09-18) ──
+// 对标华为/海康参数面: 档位参数集与后端 PUT /algo/personal-item/tier 的矩阵
+// 逐字对齐 (SSOT: box_config personal_item._comment_a4)。档位写入 SSOT 配置文件,
+// 推理插件在服务启动时加载配置 — 重启服务后生效 (与全系统 box_config 变更同流程)。
+
+interface TierPreset {
+  value: PersonalItemTier
+  label: string
+  desc: string
+  params: Record<string, number | boolean>
+}
+
+const TIER_PRESETS: TierPreset[] = [
+  {
+    value: 'high', label: '高灵敏',
+    desc: '快走/短停留不漏报: IoU 放宽 + 预测匹配 + 运动轨 1hit + hold 2s + 属性闸放宽',
+    params: {
+      iou_track_match: 0.15, track_match_predict_enabled: true,
+      min_continous_frames_moving: 1, static_carry_hold_seconds: 2,
+      attr_event_min_confidence: 0.45, conf_threshold: 0.35,
+    },
+  },
+  {
+    value: 'balanced', label: '平衡',
+    desc: '两侧均衡 (P0/P1 部署现状档): 预测匹配开 + 运动轨 2hit + hold 3s',
+    params: {
+      iou_track_match: 0.3, track_match_predict_enabled: true,
+      min_continous_frames_moving: 2, static_carry_hold_seconds: 3,
+      attr_event_min_confidence: 0.5, conf_threshold: 0.5,
+    },
+  },
+  {
+    value: 'low', label: '低误报',
+    desc: '误报治理优先: 关预测匹配 + 3 hits + hold 5s + 属性闸收紧',
+    params: {
+      iou_track_match: 0.3, track_match_predict_enabled: false,
+      min_continous_frames: 3, static_carry_hold_seconds: 5,
+      attr_event_min_confidence: 0.55, conf_threshold: 0.5,
+    },
+  },
+]
+
+const selectedTier = ref<PersonalItemTier>('balanced')
+const tierTouched = ref(false)
+const tierApplying = ref(false)
+const selectedTierPreset = computed(
+  () => TIER_PRESETS.find((t) => t.value === selectedTier.value) ?? TIER_PRESETS[1]
+)
+
+/** 当前生效档位: 优先 sensitivity_tier 标记, 缺失时按矩阵键值推断 (旧固件/首装) */
+const currentTier = computed<PersonalItemTier | ''>(() => {
+  const cfg = status.value?.config as Record<string, unknown> | undefined
+  if (!cfg) return ''
+  const mark = String(cfg.sensitivity_tier ?? '')
+  if (mark === 'high' || mark === 'balanced' || mark === 'low') return mark
+  // 推断链: 高灵敏看 iou=0.15 或运动轨 1hit; 低误报看预测关或 3 hits; 其余平衡
+  if (cfg.iou_track_match === 0.15 || cfg.min_continous_frames_moving === 1) return 'high'
+  if (cfg.track_match_predict_enabled === false || cfg.min_continous_frames === 3) return 'low'
+  return 'balanced'
+})
+const tierDirty = computed(() => !!currentTier.value && selectedTier.value !== currentTier.value)
+// 状态刷新 (含应用后 reloadStatus) 时若用户未手动改选, 选择器跟随当前生效档位
+watch(currentTier, (v) => {
+  if (v && !tierTouched.value) selectedTier.value = v
+}, { immediate: true })
+
+function tierLabel(v: string): string {
+  return TIER_PRESETS.find((t) => t.value === v)?.label ?? v
+}
+function tierTagType(v: string): 'success' | 'primary' | 'warning' {
+  return v === 'high' ? 'primary' : v === 'low' ? 'warning' : 'success'
+}
+
+async function applyTier() {
+  tierApplying.value = true
+  try {
+    const resp = await screeningApi.applyPersonalItemTier(selectedTier.value)
+    const d = resp.data?.data
+    ElMessage.success(d?.message || `档位已切换为「${tierLabel(selectedTier.value)}」`)
+    tierTouched.value = false
+    await loadStatus() // config 文件值即时可见; 推理层重启服务后生效
+  } catch (e: unknown) {
+    const err = e as { code?: number; message?: string }
+    if (err?.code === 404) {
+      ElMessage.error('当前固件不支持档位端点 — 升级 smartgateway 固件后可用')
+    } else {
+      ElMessage.error(`档位应用失败: ${err?.message || String(e)}`)
+    }
+    console.error('[ScreeningPersonalItem] apply tier failed', e)
+  } finally {
+    tierApplying.value = false
+  }
+}
 
 // ── 事件类型名 (SSOT metadata) ──
 
@@ -428,4 +558,20 @@ onMounted(async () => {
 .snap-thumb { width: 50px; height: 32px; border-radius: 4px; }
 .snap-error { color: #c0c4cc; font-size: 12px; padding: 4px 8px; background: #f5f7fa; border-radius: 4px; }
 .pager { text-align: center; padding: 12px 0 0; }
+
+/* [A4 灵敏度档位卡 2026-09-18] 档位选择 + 参数预览 + 应用 */
+.tier-card { margin-bottom: 16px; }
+.tier-body { display: flex; flex-direction: column; gap: 10px; }
+.tier-preview { background: #fafbfc; border-radius: 6px; padding: 10px 12px; }
+.tier-desc { font-size: 13px; color: #303133; margin-bottom: 8px; }
+.tier-params { display: flex; flex-wrap: wrap; gap: 8px; }
+.tier-param {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: #fff; border: 1px solid #ebeef5; border-radius: 4px;
+  padding: 2px 8px; font-family: monospace; font-size: 12px;
+}
+.tier-param .tp-key { color: #909399; }
+.tier-param .tp-val { color: #1890ff; font-weight: 600; }
+.tier-actions { display: flex; align-items: center; gap: 12px; }
+.tier-hint { color: #909399; font-size: 12px; }
 </style>
