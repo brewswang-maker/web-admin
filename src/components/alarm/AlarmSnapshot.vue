@@ -96,7 +96,7 @@ const viewerVisible = ref(false)
 const overlayOn = ref(getAlarmSnapshotOverlay())
 watch(overlayOn, (on) => {
   setAlarmSnapshotOverlay(on)
-  if (on) nextTick(drawBoxes)
+  if (on) nextTick(scheduleDraw)
 })
 
 interface DetectionBox {
@@ -138,7 +138,7 @@ const { shapes, fullscreenGuard, load: loadShapes } = useAlarmShapes()
 watch(
   [() => props.channelId, () => props.algoId, () => props.alarmShapes],
   ([ch, algo, snap]) => {
-    loadShapes(ch, algo, snap).then(() => nextTick(drawBoxes)).catch(() => {})
+    loadShapes(ch, algo, snap).then(() => nextTick(scheduleDraw)).catch(() => {})
   },
   { immediate: true },
 )
@@ -194,19 +194,19 @@ const normalizedBoxes = computed<ParsedDet[]>(() => {
   }]
 })
 
-function drawBoxes() {
+function drawBoxes(): boolean {
   const canvas = canvasRef.value
   const container = containerRef.value
-  if (!canvas || !container) return
-  if (!normalizedBoxes.value.length && !shapes.value.length) return
+  if (!canvas || !container) return false
+  if (!normalizedBoxes.value.length && !shapes.value.length) return false
 
   const rect = container.getBoundingClientRect()
-  if (rect.width <= 0 || rect.height <= 0) return
+  if (rect.width <= 0 || rect.height <= 0) return false
   canvas.width = rect.width
   canvas.height = rect.height
 
   const ctx = canvas.getContext('2d')
-  if (!ctx) return
+  if (!ctx) return false
 
   ctx.clearRect(0, 0, canvas.width, canvas.height)
   // 底层: 原始检测区/绊线/方向线/计数区 (半透明, 不覆盖检测框标注)
@@ -216,6 +216,7 @@ function drawBoxes() {
   // 上层: 检测框 (触发目标危险色 #f56c6c + 其余 CLASS_COLORS 类别色;
   //   dangerColor 显式 true 时保持旧全红行为)
   drawDetsOnCtx(ctx, normalizedBoxes.value, canvas.width, canvas.height, 1, props.dangerColor === true)
+  return true
 }
 
 // 图片加载/错误处理
@@ -225,25 +226,81 @@ function onImageLoad() {
   if (img?.naturalWidth && img?.naturalHeight) {
     imageSize.value = { w: img.naturalWidth, h: img.naturalHeight }
   }
-  nextTick(() => drawBoxes())
+  nextTick(scheduleDraw)
 }
 
 // [fix 2026-09-01 真机探针] 绘制时机兜底: 弹窗默认"实时视频" tab, 快照 pane
 //   隐藏时容器 0×0 → @load 触发的 drawBoxes 画到 0 尺寸 canvas 上 (真机两次
 //   弹窗 canvas width/height=0 实证); 容器获得非零尺寸 (切 tab 挂载/窗口缩放)
 //   时 ResizeObserver 重绘。0 尺寸时跳过防空绘。
+// [FIX canvas-draw-timing 2026-09-19] 真机复测实锚 (100 设备 #6554): 弹窗
+//   「图片」tab 是 v-show 显隐 (组件常驻不重建), 切 tab 后容器 297×362 就绪,
+//   canvas 仍停留默认 300×150 全空白 (data-shapes/boxes 数据均在) — 三重时机
+//   全失效: ① @load 早在弹窗初开容器 0 尺寸期被拦截, img 命中缓存不再触发;
+//   ② ResizeObserver 回调依赖渲染帧, 窗口隐藏/后台场景不回调 (浏览器规格,
+//   实测容器改宽 canvas 不重绘); ③ 数据 watch 只在 loadShapes 回包时单次触发,
+//   彼时容器仍 0 尺寸。用户唯有手动拨「叠加层」开关才出图 (开关翻转 canvas
+//   v-if 重建 + watch 补绘)。
+// [FIX canvas-draw-timing2 2026-09-19] 重试链弃 rAF 改 setTimeout: 复测环境
+//   document.visibilityState=hidden 实锤 (rAF 1.6s 零回调暂停 / setTimeout
+//   60ms 实等 647~1000ms 节流但执行) — rAF 重试链在不可见窗口永不推进 =
+//   缺陷依旧。修复 = scheduleDraw 自愈链 + 显隐/重建感知:
+//   ① scheduleDraw: 同步首试 (容器已就绪时 0 延迟) + 未就绪 setTimeout 50ms
+//      有限重试 (画成即停; 上限 60 次 ≈ 可见 3s / hidden 节流 ≈60s), 任意
+//      可见性下均自愈;
+//   ② IntersectionObserver: 容器进入视口 (切 tab/弹窗展开) 投递 → 重绘 —
+//      覆盖「任意时刻切 tab」, 可见窗口下比重试轮询更快;
+//   ③ watch(canvasRef): canvas v-if 重建 (数据首达/告警切换 key 重建) 补绘;
+//   ④ watch(框/形状/图像尺寸): 数据晚到补绘。
 let boxResizeObserver: ResizeObserver | null = null
+let boxIntersectObserver: IntersectionObserver | null = null
+let drawTimer: ReturnType<typeof setTimeout> | 0 = 0
+let drawRetryCount = 0
+/** 重试上限 60 次 × 50ms (可见窗口 ≈3s; hidden 下 setTimeout 节流 ≥1s,
+ *  上限放宽至 ≈60s 兜底, 超时放弃防空转) */
+const DRAW_RETRY_MAX = 60
+const DRAW_RETRY_MS = 50
+
+/** 幂等绘制调度: 同步先试一次 (容器已就绪时 0 延迟), 未就绪时 setTimeout
+ *  有限次重试。窗口隐藏 rAF 暂停 — 故不用 rAF; setTimeout 虽被后台节流
+ *  但仍执行, 恢复可见后亦可由 IO/watch 更早触发 */
+function scheduleDraw() {
+  clearTimeout(drawTimer)
+  drawRetryCount = 0
+  const step = () => {
+    if (drawBoxes()) return
+    if (++drawRetryCount < DRAW_RETRY_MAX) drawTimer = setTimeout(step, DRAW_RETRY_MS)
+  }
+  step()
+}
+
+// canvas 重建 / 框·形状·图像尺寸晚到 → 补绘 (见上方 2026-09-19 注释 ③④)
+watch(canvasRef, (el) => { if (el) nextTick(scheduleDraw) })
+watch([normalizedBoxes, shapes, imageSize], () => nextTick(scheduleDraw))
+
 onMounted(() => {
-  if (!containerRef.value || typeof ResizeObserver === 'undefined') return
-  boxResizeObserver = new ResizeObserver(() => {
-    const el = containerRef.value
-    if (el && el.clientWidth > 0 && el.clientHeight > 0) drawBoxes()
-  })
-  boxResizeObserver.observe(containerRef.value)
+  if (containerRef.value && typeof ResizeObserver !== 'undefined') {
+    boxResizeObserver = new ResizeObserver(() => {
+      const el = containerRef.value
+      if (el && el.clientWidth > 0 && el.clientHeight > 0) scheduleDraw()
+    })
+    boxResizeObserver.observe(containerRef.value)
+  }
+  // 显隐感知 (见上方 2026-09-19 注释 ②)
+  if (containerRef.value && typeof IntersectionObserver !== 'undefined') {
+    boxIntersectObserver = new IntersectionObserver((entries) => {
+      if (entries.some((e) => e.isIntersecting)) scheduleDraw()
+    }, { threshold: 0 })
+    boxIntersectObserver.observe(containerRef.value)
+  }
+  scheduleDraw()
 })
 onBeforeUnmount(() => {
+  clearTimeout(drawTimer)
   boxResizeObserver?.disconnect()
   boxResizeObserver = null
+  boxIntersectObserver?.disconnect()
+  boxIntersectObserver = null
 })
 
 function onImageError() {
