@@ -482,11 +482,12 @@
             </el-button>
           </div>
         </el-form-item>
+        <!-- [algo-rule-ssot 2026-09-19] 算法插件多选控件下线:
+             唯一业务真值 = 联动规则 enabled (R6 P1-3 算法页只读化完成)。
+             新增设备阶段不预设算法，后续在「事件规则」页创建/启用规则后
+             由 AlgoDeploymentReconciler 自动收敛 -->
         <el-form-item label="算法插件">
-          <el-select v-model="addForm.algoPlugins" multiple placeholder="请选择算法（可多选）" style="width:100%">
-            <el-option label="无（不启用算法）" value="无" />
-            <el-option v-for="m in modelList" :key="m.id" :label="m.name_zh" :value="m.name_zh" />
-          </el-select>
+          <span style="color:#8c8c8c">新增设备阶段不预设算法; 请在「事件规则」页创建/启用规则后自动收敛</span>
         </el-form-item>
         <el-form-item label="配置模板">
           <el-select v-model="addForm.templateId" style="width:100%" clearable placeholder="可选">
@@ -540,11 +541,17 @@
             </el-button>
           </div>
         </el-form-item>
-        <el-form-item label="算法插件">
-          <el-select v-model="editForm.algoPlugins" multiple placeholder="请选择算法（可多选）" style="width:100%">
-            <el-option label="无（不启用算法）" value="无" />
-            <el-option v-for="m in modelList" :key="m.id" :label="m.name_zh" :value="m.name_zh" />
-          </el-select>
+        <!-- [algo-rule-ssot 2026-09-19] 算法插件多选控件下线 (编辑对话框):
+             唯一业务真值 = 联动规则 enabled。改为只读展示当前设备已绑定算法
+             + 跳转提示 -->
+        <el-form-item label="已绑定算法">
+          <el-tag v-if="editForm.algoPlugins?.filter((p: string) => p !== '无').length" type="warning" size="small">
+            {{ editForm.algoPlugins.filter((p: string) => p !== '无').join('、') }}
+          </el-tag>
+          <span v-else style="color:#8c8c8c">未配置</span>
+          <el-button size="small" type="primary" plain style="margin-left:8px" @click="$router.push('/linkage/rules')">
+            <el-icon><Setting /></el-icon>前往事件规则
+          </el-button>
         </el-form-item>
       </el-form>
       <template #footer>
@@ -1233,8 +1240,9 @@ async function confirmAdd() {
       config: {
         protocol: addForm.value.protocol,
         location: addForm.value.location,
-        algo_plugins: addForm.value.algoPlugins.filter((p: string) => p !== '无'),
-        algo_plugin: addForm.value.algoPlugins[0] || '无',
+        // [algo-rule-ssot 2026-09-19] 移除 algo_plugins/algo_plugin 写入:
+        //   唯一业务真值 = 联动规则 enabled。设备新增阶段不预设算法，由
+        //   AlgoDeploymentReconciler 在有 enabled 规则后自动收敛。
         project_id: addForm.value.projectId,
         ...Object.fromEntries(
           Object.entries(addForm.value.protocolConfig).filter(([, v]) => v !== '' && v !== undefined)

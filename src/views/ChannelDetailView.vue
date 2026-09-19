@@ -275,19 +275,29 @@
       </el-form>
     </el-drawer>
 
-    <!-- 算法配置对话框 -->
-    <el-dialog v-model="showAlgoDialog" title="配置算法插件" width="480px">
+    <!-- [algo-rule-ssot 2026-09-19] 算法配置对话框下线:
+         唯一业务真值 = 联动规则 enabled (R6 P1-3 算法页只读化完成)。
+         改为只读展示当前已绑定的算法 + 跳转提示 -->
+    <el-dialog v-model="showAlgoDialog" title="算法配置（已收敛到事件规则）" width="520px">
       <el-form label-width="100px">
-        <el-form-item label="算法插件">
-          <el-select v-model="algoPlugins" multiple placeholder="选择算法" style="width:100%">
-            <el-option label="无（不启用算法）" value="无" />
-            <el-option v-for="m in modelList" :key="m.id" :label="m.name_zh" :value="m.name_zh" />
-          </el-select>
+        <el-form-item label="当前算法">
+          <el-tag v-if="detail?.algoPlugin && detail.algoPlugin !== '无'" type="warning" size="small">
+            {{ detail.algoPlugin }}
+          </el-tag>
+          <span v-else style="color:#8c8c8c">未配置</span>
+        </el-form-item>
+        <el-alert type="info" :closable="false" style="margin-top:12px">
+          模板与启停已收敛到「事件规则」页；本页仅供查看当前已绑定的算法
+          （来源 = 联动规则 × AlgoDeploymentReconciler 自动收敛）。
+        </el-alert>
+        <el-form-item label="" style="margin-top:16px">
+          <el-button type="primary" plain @click="$router.push('/linkage/rules')">
+            <el-icon><Setting /></el-icon>前往事件规则
+          </el-button>
         </el-form-item>
       </el-form>
       <template #footer>
-        <el-button @click="showAlgoDialog = false">取消</el-button>
-        <el-button type="primary" :loading="saving" @click="saveAlgos">应用</el-button>
+        <el-button @click="showAlgoDialog = false">关闭</el-button>
       </template>
     </el-dialog>
   </div>
@@ -465,21 +475,13 @@ async function saveConfig() {
   }
 }
 
+// [algo-rule-ssot 2026-09-19] saveAlgos 废弃 no-op:
+//   原逻辑将 algoPlugins 多选写入通道 algoPlugin 字段，违反「事件规则
+//   单一真值源」架构。保留函数仅为过渡期错调用告警，不再向后端发送
+//   algo_plugin 写入请求。后续 R7 整体清除。
 async function saveAlgos() {
-  saving.value = true
-  try {
-    const plugins = algoPlugins.value.filter(p => p !== '无')
-    await channelApi.update(channelId.value, {
-      algoPlugin: plugins[0] || '无',
-    } as any)
-    ElMessage.success('算法配置已应用')
-    showAlgoDialog.value = false
-    await loadDetail()
-  } catch {
-    ElMessage.error('应用失败')
-  } finally {
-    saving.value = false
-  }
+  ElMessage.warning('算法配置已收敛到「事件规则」页, 请前往/LinkageRules 创建/启用规则后由 AlgoDeploymentReconciler 自动收敛。')
+  showAlgoDialog.value = false
 }
 
 async function removeAlgo(_algo: string) {

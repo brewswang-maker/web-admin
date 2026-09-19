@@ -193,13 +193,19 @@
     </el-card>
 
     <!-- 配置抽屉 -->
-    <el-drawer v-model="showConfigDrawer" title="设备配置" size="480px">
+    <el-drawer v-model="showConfigDrawer" title="设备配置（算法已收敛到事件规则）" size="480px">
       <el-form :model="configForm" label-width="110px">
-        <el-form-item label="算法插件">
-          <el-select v-model="configForm.algoPlugins" multiple placeholder="请选择算法（可多选）" style="width:100%">
-            <el-option label="无（不启用算法）" value="无" />
-            <el-option v-for="m in modelList" :key="m.id" :label="m.name_zh" :value="m.name_zh" />
-          </el-select>
+        <!-- [algo-rule-ssot 2026-09-19] 算法插件多选控件下线:
+             唯一业务真值 = 联动规则 enabled (R6 P1-3 算法页只读化完成)。
+             改为只读展示当前设备已绑定的算法 + 跳转提示 -->
+        <el-form-item label="已绑定算法">
+          <el-tag v-if="(device as any)?.algoPlugins?.length" type="warning" size="small">
+            {{ (device as any).algoPlugins.join('、') }}
+          </el-tag>
+          <span v-else style="color:#8c8c8c">未配置 (请前往「事件规则」页创建/启用规则后由 AlgoDeploymentReconciler 自动收敛)</span>
+          <el-button size="small" type="primary" plain style="margin-left:8px" @click="$router.push('/linkage/rules')">
+            <el-icon><Setting /></el-icon>前往事件规则
+          </el-button>
         </el-form-item>
         <el-form-item label="录像留存天数">
           <el-input-number v-model="configForm.recordDays" :min="1" :max="90" />
@@ -424,13 +430,16 @@ function handleChannelConfig(channel: any) {
   ElMessage.info(`配置监控点 ${channel.name}`)
 }
 
+// [algo-rule-ssot 2026-09-19] saveConfig 移除 algo_plugins/algo_plugin 写入:
+//   原逻辑将 configForm.algoPlugins 多选拼成 algo_plugins 数组与 algo_plugin
+//   首项发送给设备 updateConfig，违反「事件规则单一真值源」架构。
+//   其他字段（record_days / sensitivity / heartbeat_interval / scheduled_reboot）
+//   保留正常写入逻辑。
 async function saveConfig() {
   saving.value = true
   try {
     const deviceId = route.params.id as string
     await deviceApi.updateConfig(deviceId, {
-      algo_plugins: configForm.value.algoPlugins.filter((p: string) => p !== '无'),
-      algo_plugin: configForm.value.algoPlugins[0] || '无',
       record_days: configForm.value.recordDays,
       sensitivity: configForm.value.sensitivity,
       heartbeat_interval: configForm.value.heartbeatInterval,

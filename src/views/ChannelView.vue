@@ -383,25 +383,31 @@
       </template>
     </el-dialog>
 
-    <!-- 算法插件设置对话框 -->
-    <el-dialog v-model="showAlgoDialog" title="算法插件设置" width="480px">
+    <!-- [algo-rule-ssot 2026-09-19] 算法插件设置对话框下线:
+         唯一业务真值 = 联动规则 enabled (R6 P1-3 算法页只读化完成); 行操作
+         「配置插件」改为只读展示 + 跳转提示。脚本部分保留 showAlgoDialog
+         / algoForm / saveAlgoConfig 三处引用仅供废弃期回填 (过渡期内若被
+         调用仍可输出 deprecation 提示), 后续 R7 整体清除 -->
+    <el-dialog v-model="showAlgoDialog" title="算法插件设置（已收敛到事件规则）" width="520px">
       <el-form v-if="currentChannel" label-width="100px">
-        <el-form-item label="算法插件">
-          <el-select v-model="algoForm.plugins" multiple placeholder="请选择算法（可多选）" style="width:100%">
-            <el-option label="无（不启用算法）" value="无" />
-            <el-option v-for="m in modelList" :key="m.id" :label="m.name_zh" :value="m.name_zh" />
-          </el-select>
+        <el-form-item label="当前算法">
+          <el-tag v-if="currentChannel.algoPlugin && currentChannel.algoPlugin !== '无'" type="warning" size="small">
+            {{ currentChannel.algoPlugin }}
+          </el-tag>
+          <span v-else style="color:#8c8c8c">未配置</span>
         </el-form-item>
-        <el-form-item label="检测灵敏度">
-          <el-slider v-model="algoForm.sensitivity" :min="1" :max="10" show-stops />
-        </el-form-item>
-        <el-form-item label="检测间隔(秒)">
-          <el-input-number v-model="algoForm.interval" :min="1" :max="60" />
+        <el-alert type="info" :closable="false" style="margin-top:12px">
+          模板与启停已收敛到「事件规则」页；本页仅供查看当前已绑定的算法
+          （来源 = 联动规则 × AlgoDeploymentReconciler 自动收敛）。
+        </el-alert>
+        <el-form-item label="" style="margin-top:16px">
+          <el-button type="primary" plain @click="$router.push('/linkage/rules')">
+            <el-icon><Setting /></el-icon>前往事件规则
+          </el-button>
         </el-form-item>
       </el-form>
       <template #footer>
-        <el-button @click="showAlgoDialog = false">取消</el-button>
-        <el-button type="primary" :loading="saving" @click="saveAlgoConfig">应用插件</el-button>
+        <el-button @click="showAlgoDialog = false">关闭</el-button>
       </template>
     </el-dialog>
     </div>
@@ -953,22 +959,13 @@ async function saveChannelConfig() {
   }
 }
 
+// [algo-rule-ssot 2026-09-19] saveAlgoConfig 废弃 no-op:
+//   原逻辑将 algoForm.plugins (多选) 拼成算法串写入通道 algoPlugin 字段，
+//   违反「事件规则单一真值源」架构。保留函数仅为过渡期错调用告警，
+//   不再向后端发送 algo_plugin 写入请求。后续 R7 整体清除。
 async function saveAlgoConfig() {
-  if (!currentChannel.value) return
-  saving.value = true
-  try {
-    const algoPlugins = algoForm.value.plugins.filter((p: string) => p !== '无')
-    await updateChannel(currentChannel.value.id, {
-      algoPlugin: algoPlugins[0] || '无',
-    })
-    ElMessage.success(`算法插件已应用（共${algoPlugins.length}个）`)
-    showAlgoDialog.value = false
-    loadChannels()
-  } catch {
-    ElMessage.error('应用失败')
-  } finally {
-    saving.value = false
-  }
+  ElMessage.warning('算法配置已收敛到「事件规则」页, 请前往/LinkageRules 创建/启用规则后由 AlgoDeploymentReconciler 自动收敛。')
+  showAlgoDialog.value = false
 }
 
 onMounted(() => { loadModelList(); loadChannels(); loadAreaTree(); loadDeviceNames() })
