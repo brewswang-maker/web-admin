@@ -172,9 +172,17 @@
             <el-switch v-model="row.enabled" size="small" inline-prompt active-text="开" inactive-text="关" @change="toggleRule(row)" />
           </template>
         </el-table-column>
-        <el-table-column prop="name" label="规则名称" min-width="180" show-overflow-tooltip>
+        <el-table-column prop="name" label="规则名称" min-width="180">
           <template #default="{ row }">
             <span class="rule-name">{{ row.name || '未命名规则' }}</span>
+            <!-- [P0 params-check 2026-09-19] 动作级失效上浮规则级: 含未启用动作打
+                 警示徽标 (必填参数缺失被系统禁用 / 手动关闭), 消除「规则已启用但
+                 回调动作是死的」静默空转只存在于设备日志的盲区 -->
+            <el-tag v-if="disabledActionCount(row)" size="small" type="warning" effect="plain"
+                    style="margin-left:6px"
+                    title="含未启用动作: 可能必填参数(callback_url 等)缺失被系统禁用, 编辑补齐后保存可恢复; 或为手动关闭">
+              {{ disabledActionCount(row) }} 动作未启用
+            </el-tag>
           </template>
         </el-table-column>
         <!-- [FIX 2026-08-27 v5] 优先级 与 标签 拆出为独立列, 避免 flex 布局吞掉 prop="name" 的渲染 -->
@@ -3745,6 +3753,12 @@ function condBodyVisible(type: string): boolean {
   return (form.conditions as Record<string, { enabled: boolean }>)[type]?.enabled === true && !collapsedConditions[type]
 }
 function handleSortChange({ prop, order }: any) { if (prop) sortBy.value = prop; if (order) sortOrder.value = order }
+
+// [P0 params-check 2026-09-19] 未启用动作计数 (警示徽标): actions 由后端
+// serializeRuleToJson 透传, enabled=false 含系统禁用 (缺必填参数) 与手动关闭
+function disabledActionCount(row: any): number {
+  return Array.isArray(row?.actions) ? row.actions.filter((a: any) => a?.enabled === false).length : 0
+}
 function handleSelectionChange(rows: LinkageRule[]) { selectedRows.value = rows }
 
 function getParamCategory(typeStr: string): string {

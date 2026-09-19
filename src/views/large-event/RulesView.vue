@@ -112,6 +112,13 @@
               <div class="rule-cell">
                 <span class="rule-name">{{ row.name }}</span>
                 <span class="rule-id mono">{{ row.id }}</span>
+                <!-- [P0 params-check 2026-09-19] 动作级失效上浮规则级: 含未启用动作打
+                     警示徽标 (缺必填参数被系统禁用 / 手动关闭) -->
+                <el-tag v-if="disabledActionCount(row)" size="small" type="warning" effect="plain"
+                        style="margin-left:6px; flex-shrink:0"
+                        title="含未启用动作: 可能必填参数(callback_url 等)缺失被系统禁用, 编辑补齐后保存可恢复; 或为手动关闭">
+                  {{ disabledActionCount(row) }} 动作未启用
+                </el-tag>
               </div>
             </template>
           </el-table-column>
@@ -345,6 +352,12 @@ function openRuleEdit(row: LinkageRule) {
 function onEditEmbedClosed() {
   editEmbedVisible.value = false
   fetchAll()
+}
+
+// [P0 params-check 2026-09-19] 未启用动作计数 (警示徽标): actions 由后端
+// serializeRuleToJson 透传, enabled=false 含系统禁用 (缺必填参数) 与手动关闭
+function disabledActionCount(row: LinkageRule): number {
+  return Array.isArray(row?.actions) ? row.actions.filter(a => a?.enabled === false).length : 0
 }
 
 /** [TRIGGER-DETAIL 2026-09-14] 触发详情: 跳转告警中心 (事件报警列表),
