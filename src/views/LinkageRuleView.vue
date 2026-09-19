@@ -2566,6 +2566,11 @@ const AREA_ROI_TYPES = ['detection_zone', 'exclusion_zone', 'rectangle']
 const TRIPWIRE_CONSUMER_BY_KEY: Record<string, string> = {
   tripwire: 'shield.algo.perimeter.tripwire',
   boundary: 'shield.algo.perimeter.boundary',
+  // [P0-ANNOT 2026-09-19] boundary_cross: boundary 插件旧版输出形态 (真机
+  //   alarm.boundary_cross 描述键同源), kEventToPlugin L650 同键映射到
+  //   perimeter.boundary。覆盖率矩阵无此键时短名兜底放行绊线绘制 — 原缺键使
+  //   以 boundary_cross 命名的事件画不了绊线 (画板「没同步好」根因之一)。
+  boundary_cross: 'shield.algo.perimeter.boundary',
   people_count: 'shield.algo.metric.people_count',
   parking_violation: 'shield.algo.traffic.parking_violation',
 }
@@ -3313,7 +3318,7 @@ const isTailgatingRule = computed(() =>
 //   两分支字面量) + ui_state_json 记录 region.enabled 精确态, 保证「保存 → 编辑」往返一致。
 const SPATIAL_SENSITIVE_KEYS = new Set([
   'intrusion', 'loiter', 'loitering', 'climb', 'fence_climb',           // 周界区域类
-  'tripwire', 'boundary', 'people_count', 'parking_violation',          // 绊线消费类
+  'tripwire', 'boundary', 'boundary_cross', 'people_count', 'parking_violation',          // 绊线消费类
   'illegal_parking', 'crowd', 'gathering',                              // 区域计数/交通类
   'tailgating', 'tailgate', 'face_tailgate',                            // 尾随类
 ])

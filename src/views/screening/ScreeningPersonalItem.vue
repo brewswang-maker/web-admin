@@ -336,6 +336,9 @@ const freshnessText = computed(() => {
 // 对标华为/海康参数面: 档位参数集与后端 PUT /algo/personal-item/tier 的矩阵
 // 逐字对齐 (SSOT: box_config personal_item._comment_a4)。档位写入 SSOT 配置文件,
 // 推理插件在服务启动时加载配置 — 重启服务后生效 (与全系统 box_config 变更同流程)。
+// [FIX tier-preset-idempotent 2026-09-19 审计 task-24g] 帧门槛两键 (min_continous_frames /
+// _moving) 三档均成对展示: 插件静止轨读 static、运动轨取 min(moving, static),
+// 单键档位跨档切换会残留上一档值 (后端 preset 已同步成对写全, 此处展示口径对齐)。
 
 interface TierPreset {
   value: PersonalItemTier
@@ -350,7 +353,8 @@ const TIER_PRESETS: TierPreset[] = [
     desc: '快走/短停留不漏报: IoU 放宽 + 预测匹配 + 运动轨 1hit + hold 2s + 属性闸放宽',
     params: {
       iou_track_match: 0.15, track_match_predict_enabled: true,
-      min_continous_frames_moving: 1, static_carry_hold_seconds: 2,
+      min_continous_frames: 2, min_continous_frames_moving: 1,
+      static_carry_hold_seconds: 2,
       attr_event_min_confidence: 0.45, conf_threshold: 0.35,
     },
   },
@@ -359,7 +363,8 @@ const TIER_PRESETS: TierPreset[] = [
     desc: '两侧均衡 (P0/P1 部署现状档): 预测匹配开 + 运动轨 2hit + hold 3s',
     params: {
       iou_track_match: 0.3, track_match_predict_enabled: true,
-      min_continous_frames_moving: 2, static_carry_hold_seconds: 3,
+      min_continous_frames: 2, min_continous_frames_moving: 2,
+      static_carry_hold_seconds: 3,
       attr_event_min_confidence: 0.5, conf_threshold: 0.5,
     },
   },
@@ -368,7 +373,8 @@ const TIER_PRESETS: TierPreset[] = [
     desc: '误报治理优先: 关预测匹配 + 3 hits + hold 5s + 属性闸收紧',
     params: {
       iou_track_match: 0.3, track_match_predict_enabled: false,
-      min_continous_frames: 3, static_carry_hold_seconds: 5,
+      min_continous_frames: 3, min_continous_frames_moving: 3,
+      static_carry_hold_seconds: 5,
       attr_event_min_confidence: 0.55, conf_threshold: 0.5,
     },
   },
