@@ -909,9 +909,18 @@ export function normalizeAlarmCore(raw: any): AlarmEvent {
       String(raw.device_admin_id ?? '') ||
       (md && typeof md === 'object' ? String(md.device_admin_id ?? '') : '') ||
       (Array.isArray(md) && md[0] && typeof md[0] === 'object' ? String(md[0].device_admin_id ?? '') : '') ||
+      // [FIX devcode-idem 2026-09-18] 二次归一化幂等: camel deviceId (AlarmEvent 归一
+      //   化产物) 优先于 md.device_id 兜底 —— metadata 白名单 `...gov` 展开携带原始
+      //   治理字段 device_id (通道码 340200000013xxx), 弹窗链 (AlarmsView 列表行已
+      //   归一化对象 → showAlarmPopup 再 normalize) 二次归一化时该候选会覆盖已算好的
+      //   父设备号 → 弹窗「设备编号」回显通道码 + 回放 query device_id 传通道码 →
+      //   后端 device==channel 误判 NVR 自查 skip SIP RecordInfo → 0 条「无录像可用」
+      //   (实机: 21:48:51 视频遮挡告警)。19:56 类告警因 device_id==device_admin_id
+      //   同值未暴露。裸 raw.device_id 形态入参 (API 行) 不受影响: 首候选命中。
+      String(raw.deviceId ?? '') ||
       (md && typeof md === 'object' ? String(md.device_id ?? '') : '') ||
       (Array.isArray(md) && md[0] && typeof md[0] === 'object' ? String(md[0].device_id ?? '') : '') ||
-      raw.device_id || raw.deviceId || raw.channel_id || '',
+      raw.device_id || raw.channel_id || '',
     // [P0-13 回归 2026-09-04] 后端 AlarmEvent 无 device_name 字段, GB28181 场景
     //   deviceId 是 20 位国标编码 —— 弹窗「设备名称」兜底 deviceId 时裸显编号
     //   (实机: "设备名称: 34020000001320000002")。channel_name 为后端拼好的

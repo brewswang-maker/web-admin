@@ -1081,7 +1081,19 @@ function alarmDeviceText(alarm: Alarm): string {
   //   detector: event.device_id = channel_id_str, E2E 实锚 ROW4 黑名单行码为
   //   …1320002002) → 目录无此设备条目时经 parentDevOfChannel 归一父设备码
   //   (名字不变, 码归一, 与其余行一致)。
-  const dv = dv0 && devNameOf(dv0) ? dv0 : (dv0 ? (parentDevOfChannel(dv0) || dv0) : '')
+  // [FIX dev-col-hashid 2026-09-18] int32 hash 形态归一 (真机实锚: face_pass_
+  //   whitelist 顶层 device_id=1510139042 = 通道2 34020000001320002002 的
+  //   int32 hash — 上报链 channel_id_str 缺失时退化 std::to_string(int32),
+  //   同 scripts/c5_indoor_rule_cleanup.py 注记): hash 对目录 devNameOf/
+  //   parentDevOfChannel 双 miss → 裸显 "1510139042 (1510139042…"。走告警
+  //   metadata[0].channel_id_str (真通道码, 真机实锚 8/8 条 face 告警均携带,
+  //   与监控点列 alarmChannelIdOf 同源) 反查父设备码归一, 与其余行一致。
+  let dv = dv0 && devNameOf(dv0) ? dv0 : (dv0 ? (parentDevOfChannel(dv0) || dv0) : '')
+  if (dv === dv0 && /^\d{1,15}$/.test(dv0)) {
+    const ch = alarmChannelIdOf(alarm)
+    const parent = ch && ch !== dv0 ? parentDevOfChannel(ch) : ''
+    if (parent) dv = parent
+  }
   const devName = (dv ? devNameOf(dv) : '') || alarm.location || '-'
   return dv ? `${devName}（${dv}）` : devName
 }
@@ -3477,6 +3489,30 @@ function resolveAlarmLevel(raw: Record<string, any>): string {
  *    evidence_update) 仅就地更新已有条目 (merged_into 优先命中首行),
  *    找不到则丢弃 — 不新增; 新事件帧同 id 已存在时富化合并 (双帧归一),
  *    否则插入。列表恒与 REST 重拉口径一致 (HEAD-only)。 */
+// [FIX today-total-refresh 2026-09-18] 今日告警总数不刷新根因: fetchSituationData
+//   仅 onMounted 调一次, WS 新告警只插列表行不触达统计卡 (todayStats 来自
+//   overview.alarmStats.todayTotal; 后端口径 = AlarmService::getStats()["today"]
+//   本地 0 点起 DB 计数, 真机取证口径正常) → 大屏统计卡恒显旧值 (用户实锚:
+//   实时列表已 2+ 条统计卡仍 1)。修复: WS 新事件帧去抖 5s 轻量重拉 overview,
+//   只就地更新统计卡数字 — 不动 overview/loading/图表/视频轮巡 (全量
+//   fetchSituationData 会重置 overviewLoading 触发整屏骨架, 且图表数据源
+//   不随单条告警变化)。
+let todayTotalRefreshTimer: ReturnType<typeof setTimeout> | null = null
+function scheduleTodayTotalRefresh() {
+  if (todayTotalRefreshTimer) clearTimeout(todayTotalRefreshTimer)
+  todayTotalRefreshTimer = setTimeout(() => {
+    todayTotalRefreshTimer = null
+    situationApi.getOverview().then(res => {
+      const stats = res.data?.data?.alarmStats
+      if (!stats) return
+      const idx = todayStats.value.findIndex(s => s.label === t('situationScreen.todayAlarmTotal'))
+      if (idx >= 0) {
+        todayStats.value[idx] = { ...todayStats.value[idx], value: String(stats.todayTotal ?? 0) }
+      }
+    }).catch(() => { /* 静默 — 统计卡刷新失败保持现有值 */ })
+  }, 5000)
+}
+
 function onAlarmPush(data: unknown) {
   const raw = data as Record<string, any>
   if (!raw || typeof raw !== 'object') return
@@ -3531,6 +3567,8 @@ function onAlarmPush(data: unknown) {
   }
   latestAlarms.value.unshift(toAlarm(s))
   if (latestAlarms.value.length > 20) latestAlarms.value.length = 20
+  // [FIX today-total-refresh 2026-09-18] 新告警入列后去抖刷新统计卡
+  scheduleTodayTotalRefresh()
 }
 
 function onFullscreenEsc(e: KeyboardEvent) {
@@ -3613,6 +3651,8 @@ onUnmounted(() => {
   // 清理延迟定时器
   if (centerViewTimer) { clearTimeout(centerViewTimer); centerViewTimer = null }
   if (fullscreenTimer) { clearTimeout(fullscreenTimer); fullscreenTimer = null }
+  // [FIX today-total-refresh 2026-09-18] 统计卡去抖刷新定时器清理
+  if (todayTotalRefreshTimer) { clearTimeout(todayTotalRefreshTimer); todayTotalRefreshTimer = null }
   // T3/T4 cleanup — [v8.7 软关闭] 页面卸载不再停服务端流：
   // 活跃通道保留在 channelStore，由 FloatingPreview 浮窗接管预览；
   // 回页经 restoreVideoSlotsFromStore 恢复；真正停流由显式关闭时的

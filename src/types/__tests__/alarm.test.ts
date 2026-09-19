@@ -112,6 +112,42 @@ describe('aiConclusion 兜底链 (顶层 ai_conclusion 不存在 → ai_review �
   })
 })
 
+describe('deviceId 链 — 二次归一化幂等 (FIX devcode-idem 2026-09-18)', () => {
+  /** 模拟弹窗链: AlarmsView 列表行 (已归一化对象) → showAlarmPopup 再 normalize。
+   *  隐患: metadata 白名单 `...gov` 展开携带原始治理 device_id (通道码), 二次归一
+   *  化时覆盖已算好的父设备号 → 弹窗「设备编号」+ 回放 query device_id 用通道码
+   *  → 后端 device==channel 误判 NVR 自查 skip RecordInfo → 0 条「无录像可用」。 */
+  it('列表行二次归一化: camel deviceId (父设备号) 不被 metadata 通道码覆盖', () => {
+    const first = normalizeAlarmCore({
+      id: 'al-dc-1', type: 'camera_tamper', description: '视频遮挡',
+      device_id: '34020000001320002002',        // 告警库形态: 通道码
+      device_admin_id: '34020000001180000002',  // REST enrich: 父设备码
+      metadata: [{ device_id: '34020000001320002002', algo_id: 'camera_tamper' }],
+    })
+    expect(first.deviceId).toBe('34020000001180000002')
+    // 二次归一化 (弹窗链): 修复前 = 通道码 (md.device_id 命中), 修复后 = 父设备号
+    const second = normalizeAlarmCore(first)
+    expect(second.deviceId).toBe('34020000001180000002')
+  })
+
+  it('camel deviceId 单源 (无 admin 字段) 优先于 metadata 通道码', () => {
+    const a = normalizeAlarmCore({
+      id: 'al-dc-2', type: 'camera_tamper', description: '视频遮挡',
+      deviceId: '34020000001180000002',
+      metadata: { device_id: '34020000001320002002' },
+    })
+    expect(a.deviceId).toBe('34020000001180000002')
+  })
+
+  it('裸 API 行不受影响: 无 admin/camel → device_id 兜底行为保持', () => {
+    const a = normalizeAlarmCore({
+      id: 'al-dc-3', type: 'camera_tamper', description: '视频遮挡',
+      device_id: '34020000001320002002',
+    })
+    expect(a.deviceId).toBe('34020000001320002002')
+  })
+})
+
 describe('aiReviewText / aiReviewVerdictLabel 锚点词契约', () => {
   it('retracted → 误报：reason (EventsView 筛选「误报」锚点)', () => {
     expect(aiReviewText({ verdict: 'retracted', reason: '树影晃动' }))
