@@ -878,12 +878,23 @@ const SEVERITY_LABELS: Record<string, string> = {
 }
 
 // ── 筛选状态 ──
-const levelFilter = ref('')
-const typeFilter = ref('')
-const statusFilter = ref('')
+// [TASK-99F 2026-09-20] 深链初始化: 态势大屏指标抽屉明细跳转携带
+//   ?level=&alarm_type=&status=&start_ms=&end_ms= (±5min 窗口), 打开即回填筛选器
+const route = useRoute()
+const levelFilter = ref(String(route.query.level ?? ''))
+const typeFilter = ref(String(route.query.alarm_type ?? ''))
+const statusFilter = ref(String(route.query.status ?? ''))
 // [STAGE1 P0-1 2026-09-10] 复核状态筛选 (与 statusFilter 独立,两者并存)
 const reviewFilter = ref('')
-const dateRange = ref<any[]>([])
+/** [TASK-99F] 深链时间窗还原: start_ms/end_ms (epoch ms) → [Date, Date] */
+function initDateRange(): any[] {
+  const s = Number(route.query.start_ms)
+  const e = Number(route.query.end_ms)
+  return Number.isFinite(s) && s > 0 && Number.isFinite(e) && e > 0
+    ? [new Date(s), new Date(e)]
+    : []
+}
+const dateRange = ref<any[]>(initDateRange())
 const search = ref('')
 const selected = ref<any[]>([])
 const currentPage = ref(1)
@@ -894,7 +905,6 @@ const loading = ref(false)
 //   场景规则实例页「触发详情」跳转带入 ?rule_id=&rule_name= (见各
 //   RulesView.openTriggerDetail); 非空 → 服务端按 matched_rule_ids
 //   快照过滤 (GET /alarms?rule_id=, 后端 filter_rule_id 参数), 徽章可清除。
-const route = useRoute()
 const ruleIdFilter = ref(String(route.query.rule_id ?? ''))
 const ruleNameFilter = ref(String(route.query.rule_name ?? ''))
 

@@ -18,7 +18,10 @@
             <i class="iconfont1 icon1-anquanpingfen panel-title-icon" aria-hidden="true"></i>
             <span>{{ t('situationScreen.securityScore') }}</span>
           </div>
-          <div class="score-gauge" ref="scoreGaugeRef" v-if="!overviewFailed && overview"></div>
+          <!-- [Task-99f] 安全评分下钻: 悬停 tooltip + 点击开抽屉 -->
+          <el-tooltip v-if="!overviewFailed && overview" :content="t('metricDetail.tips.securityScore')" placement="top" :show-after="300">
+            <div class="score-gauge score-gauge-clickable" ref="scoreGaugeRef" @click="openMetric('securityScore')"></div>
+          </el-tooltip>
           <div v-else-if="!overviewFailed" class="empty-state panel-empty">
             <!-- <i class="iconfont1 icon1-anquanpingfen score-empty-icon" aria-hidden="true"></i> -->
             <span>{{ t('situationScreen.noScoreData') }}</span>
@@ -34,15 +37,24 @@
             <span>{{ t('situationScreen.todayStats') }}</span>
           </div>
           <div class="stats-grid" v-if="!overviewFailed && todayStats.length">
-            <div class="stat-card" v-for="s in todayStats" :key="s.label">
-              <div class="stat-main">
-                <i :class="['iconfont1', s.icon, 'stat-icon']" :style="{ color: s.iconColor }" aria-hidden="true"></i>
-                <div class="stat-value">
-                  {{ s.value }}<span v-if="s.suffix" class="stat-unit">{{ s.suffix }}</span>
+            <!-- [Task-99f] 每卡悬停 tooltip + 点击打开对应指标抽屉 -->
+            <el-tooltip
+              v-for="s in todayStats"
+              :key="s.key"
+              :content="t('metricDetail.tips.' + s.key)"
+              placement="top"
+              :show-after="300"
+            >
+              <div class="stat-card stat-card-clickable" @click="openMetric(s.key)">
+                <div class="stat-main">
+                  <i :class="['iconfont1', s.icon, 'stat-icon']" :style="{ color: s.iconColor }" aria-hidden="true"></i>
+                  <div class="stat-value">
+                    {{ s.value }}<span v-if="s.suffix" class="stat-unit">{{ s.suffix }}</span>
+                  </div>
                 </div>
+                <div class="stat-label">{{ s.label }}</div>
               </div>
-              <div class="stat-label">{{ s.label }}</div>
-            </div>
+            </el-tooltip>
           </div>
           <div v-else-if="!overviewFailed" class="empty-state panel-empty">{{ t('situationScreen.noTodayStats') }}</div>
           <div v-else class="empty-state error">
@@ -50,7 +62,9 @@
             <el-button size="small" link type="primary" @click="fetchSituationData">{{ t('situationScreen.retry') }}</el-button>
           </div>
         </div>
-        <div class="ss-panel">
+        <!-- [Task-99f] 设备状态面板下钻: 悬停 tooltip + 点击开抽屉 -->
+        <el-tooltip :content="t('metricDetail.tips.deviceStatus')" placement="top" :show-after="300">
+        <div class="ss-panel ss-panel-clickable" @click="openMetric('deviceStatus')">
           <div class="panel-title">
             <i class="iconfont1 icon1-shebeizhuangtai panel-title-icon" aria-hidden="true"></i>
             <span>{{ t('situationScreen.deviceStatus') }}</span>
@@ -89,9 +103,10 @@
           <div v-else-if="!overviewFailed" class="empty-state panel-empty">{{ t('situationScreen.noDeviceData') }}</div>
           <div v-else class="empty-state error">
             <span>{{ t('situationScreen.deviceFailed') }}</span>
-            <el-button size="small" link type="primary" @click="fetchSituationData">{{ t('situationScreen.retry') }}</el-button>
+            <el-button size="small" link type="primary" @click.stop="fetchSituationData">{{ t('situationScreen.retry') }}</el-button>
           </div>
         </div>
+        </el-tooltip>
       </div>
 
       <!-- 中间地图 -->
@@ -511,7 +526,7 @@
             <i class="iconfont1 icon1-zhongguohangtiantubiaoheji-weizhuanlunkuo- panel-title-icon" aria-hidden="true"></i>
             <span>{{ t('situationScreen.alarmTypeDist') }}</span>
           </div>
-          <div class="chart-box" ref="alarmTypeRef" v-if="!overviewFailed && overview"></div>
+          <div class="chart-box chart-box-clickable" ref="alarmTypeRef" v-if="!overviewFailed && overview"></div>
           <div v-else-if="!overviewFailed" class="empty-state panel-empty">{{ t('situationScreen.noAlarmType') }}</div>
           <div v-else class="empty-state error">
             <span>{{ t('situationScreen.alarmTypeFailed') }}</span>
@@ -526,7 +541,7 @@
               <button v-for="m in trendModes" :key="m.value" :class="['mode-btn', { active: alarmTrendMode === m.value }]" @click="switchAlarmTrendMode(m.value)">{{ m.label }}</button>
             </div>
           </div>
-          <div class="chart-box" ref="alarmTrendRef" v-if="!hourlyFailed && (hourlyData.length || alarmTrendData.length)"></div>
+          <div class="chart-box chart-box-clickable" ref="alarmTrendRef" v-if="!hourlyFailed && (hourlyData.length || alarmTrendData.length)"></div>
           <div v-else-if="!hourlyFailed" class="empty-state panel-empty">{{ t('situationScreen.noHourlyData') }}</div>
           <div v-else class="empty-state error">
             <span>{{ t('situationScreen.hourlyFailed') }}</span>
@@ -538,7 +553,7 @@
             <i class="iconfont1 icon1-agent panel-title-icon" aria-hidden="true"></i>
             <span>{{ t('situationScreen.agentBar') }}</span>
           </div>
-          <div class="chart-box" ref="agentBarRef" v-if="!agentsFailed && agentData.length"></div>
+          <div class="chart-box chart-box-clickable" ref="agentBarRef" v-if="!agentsFailed && agentData.length"></div>
           <div v-else-if="!agentsFailed" class="empty-state panel-empty">{{ t('situationScreen.noAgentData') }}</div>
           <div v-else class="empty-state error">
             <span>{{ t('situationScreen.agentFailed') }}</span>
@@ -548,6 +563,9 @@
       </div>
     </div>
   </div>
+
+  <!-- [Task-99f] 指标详情抽屉 (全局单例; 9 项关键数字下钻) -->
+  <MetricDetailDrawer />
 
   <!-- 全屏覆盖层 -->
   <Teleport to="body">
@@ -863,6 +881,11 @@ import type { Building3DNode, SceneMeta } from '@/components/scene3d/types/scene
 import { useWebSocket } from '@/composables/useWebSocket'
 // [UX 2026-08-31] 实时告警条目点击 → 弹出详情弹窗 (不再跳转报警中心)
 import { openAlarmDetailById } from '@/composables/useAlarmPopup'
+// [Task-99f 2026-09-20] 关键指标下钻: 卡片点击 → 统一详情抽屉 (三段式; 见计划 §一/§3.3)
+import { openMetric, type MetricKey } from '@/composables/useMetricDetail'
+import MetricDetailDrawer from '@/components/metrics/MetricDetailDrawer.vue'
+// [Task-99f 卡1 真实化] 算法启用总数数据源 = GET /algorithms/all (全量, enabled 计数)
+import algorithmsApi from '@/api/algorithms'
 // [FLOOR-MAP 2026-09-05 v2] 平面地图中央视图 (华为 IVS 多视图联动对标)
 import FloorMapCanvas from '@/components/map/FloorMapCanvas.vue'
 // [FLOOR-MAP 2026-09-05 v5] 设备详情弹窗 (点位点击 → 预览/录像/告警就地查看)
@@ -1118,7 +1141,23 @@ function alarmChannelText(alarm: Alarm): string {
   return alarmChLabel({ channelId: alarmChannelIdOf(alarm), metadata: unpackAlarmMeta(alarm) })
 }
 
-const todayStats = ref<Array<{ label: string; value: string; suffix: string; icon: string; iconColor: string }>>([])
+// [Task-99f] 每卡携带 MetricKey (点击 → 对应指标抽屉; tooltip 文案取 metricDetail.tips.<key>)
+const todayStats = ref<Array<{ key: MetricKey; label: string; value: string; suffix: string; icon: string; iconColor: string }>>([])
+
+// [Task-99f 卡1 真实化] 算法启用总数 = GET /algorithms/all 的 enabled 计数
+//   (替代后端 overview.totalAgents 硬编码 4; 失败 → '--', 不显示假值)
+const algoStats = ref<{ enabled: number; total: number; byStatus: Record<string, number> } | null>(null)
+
+/** 卡1 时序双向收敛: algorithms 请求先到/后到均同步 value, 失败保持 '--' */
+function syncAlgoStatCard() {
+  const idx = todayStats.value.findIndex(s => s.key === 'totalAgents')
+  if (idx >= 0) {
+    todayStats.value[idx] = {
+      ...todayStats.value[idx],
+      value: algoStats.value ? String(algoStats.value.enabled) : '--',
+    }
+  }
+}
 
 function formatRate(value: number | null | undefined): string {
   if (value == null) return '--'
@@ -2566,6 +2605,17 @@ function closeVideoPreview(soft = false) {
 }
 
 /**
+ * [SCENE-HIDE 2026-09-19] 3D 体育场不展示的设备 id 名单（过滤点见 loadSceneDevices）：
+ *  华盾互联办公室摄像头 (34020000001320000002) + 周界测试摄像头 照楼下
+ *  (11010500001110000001)。两台均为与场馆无关的离线设备，2026-09-19 前曾作
+ *  为 CAM_09/CAM_01 点位的临时占用方；通道级绑定（华盾展厅 ch1/ch2）落地后，
+ *  二者退为南侧兜底位 (z=20) 的空壳点位——紧邻 CAM_01 区域造成视觉干扰
+ *  （用户反馈「都绑定到CAM_01了」实为此两空壳点位），明确要求从 3D 场景去掉。
+ *  仅过滤 3D 场景节点组装，不删除平台设备，其它页面不受影响；恢复删对应 id。
+ */
+const SCENE_HIDDEN_DEVICE_IDS = new Set(['34020000001320000002', '11010500001110000001'])
+
+/**
  * 加载 3D 场景设备（真实设备数据驱动，三路合并）。
  * 1. 场景配置 API (buildings/fences) 替换硬编码；
  * 2. 态势点位 + gb28181选点 + 手动放置(scene_*) 三路合并；
@@ -2620,6 +2670,10 @@ async function loadSceneDevices() {
     : []
 
   let merged = mergeDeviceLocations(normalized, gbLocations)
+  // [SCENE-HIDE 2026-09-19] 剔除 3D 场景不展示设备（名单见 SCENE_HIDDEN_DEVICE_IDS
+  //   注释）: 须在 mapDevicesToScene 之前过滤——无坐标设备经 southPerimeterPoint
+  //   兜底布局, 若先映射再剔除会扰动其余设备的兜底位分布
+  merged = merged.filter(d => !SCENE_HIDDEN_DEVICE_IDS.has(d.id))
   let sceneNodes = mapDevicesToScene(merged)
 
   // [v1.9.6] 第三路：手动放置(device_attributes scene_x/y/z)合并。
@@ -3113,6 +3167,14 @@ async function initCharts() {
         data: alarmTypeData,
       }]
     })
+    // [Task-99f] 扇区点击 → 该级别下钻抽屉 (dataIndex 0-3 = critical/high/medium/low)
+    c.on('click', (params: any) => {
+      const idx = Number(params?.dataIndex)
+      const levels = ['critical', 'high', 'medium', 'low']
+      if (Number.isFinite(idx) && idx >= 0 && idx < levels.length) {
+        openMetric('alarmDist', { level: levels[idx] })
+      }
+    })
     charts.push(c)
   }
 
@@ -3169,6 +3231,12 @@ async function initCharts() {
           formatter: '{c}%',
         },
       }]
+    })
+    // [Task-99f] 柱子点击 → 该 Agent 负载抽屉 (dataIndex 对齐 agentData)
+    c.on('click', (params: any) => {
+      const idx = Number(params?.dataIndex)
+      const agent = agentData.value[idx]
+      if (agent) openMetric('agentLoad', { agentName: agent.name })
     })
     charts.push(c)
   }
@@ -3367,7 +3435,32 @@ async function renderAlarmTrendChart() {
       emphasis: { focus: 'series' },
     })),
   })
+  // [Task-99f] 数据点点击 → 该时间窗告警明细抽屉
+  c.on('click', (params: any) => {
+    const idx = Number(params?.dataIndex)
+    if (!Number.isFinite(idx) || idx < 0) return
+    const win = trendWindowAt(idx)
+    if (win) openMetric('alarmTrendSlot', win)
+  })
   charts.push(c)
+}
+
+/** [Task-99f] 趋势数据点 → 时间窗 (24h 模式=该小时; 7d/30d 模式=该天) */
+function trendWindowAt(idx: number): { windowStartMs: number; windowEndMs: number; windowLabel: string } | null {
+  if (alarmTrendMode.value === '24h') {
+    const item = hourlyData.value[idx]
+    if (!item) return null
+    const day = new Date()
+    day.setHours(0, 0, 0, 0)
+    const start = day.getTime() + Number(item.hour) * 3600000
+    return { windowStartMs: start, windowEndMs: start + 3599999, windowLabel: `${String(item.hour).padStart(2, '0')}:00` }
+  }
+  const item = alarmTrendData.value[idx]
+  if (!item || !item.hour) return null
+  const m = /^(\d{2})-(\d{2})/.exec(String(item.hour))
+  if (!m) return null
+  const d = new Date(new Date().getFullYear(), Number(m[1]) - 1, Number(m[2]), 0, 0, 0, 0)
+  return { windowStartMs: d.getTime(), windowEndMs: d.getTime() + 86399999, windowLabel: String(item.hour) }
 }
 
 /** 切换告警趋势模式 (今日/7天/30天) */
@@ -3420,11 +3513,14 @@ function fetchSituationData() {
       alarmFalsePositiveRate.value = typeof rawFalsePositiveRate === 'number' ? rawFalsePositiveRate : null
       const aStats = d.alarmStats
       todayStats.value = [
-        { label: t('situationScreen.totalAgents'), value: String(d.totalAgents ?? 0), suffix: '', icon: 'icon1-AIsuanfa', iconColor: '#01B9E7' },
-        { label: t('situationScreen.todayAlarmTotal'), value: String(aStats?.todayTotal ?? 0), suffix: '', icon: 'icon1-gaojing', iconColor: '#D13838' },
-        { label: t('situationScreen.alarmHandleRate'), value: formatRate(d.handleRate), suffix: d.handleRate != null ? '%' : '', icon: 'icon1-anquanguanli', iconColor: '#3EB011' },
-        { label: t('situationScreen.edgeCompute'), value: d.totalAgents > 0 ? String(d.activeAgents) : '--', suffix: '', icon: 'icon1-agent', iconColor: '#7938D1' },
+        // [Task-99f 卡1 真实化] 算法启用总数 = /algorithms/all enabled 计数 (非 overview.totalAgents 硬编码)
+        { key: 'totalAgents', label: t('situationScreen.totalAgents'), value: algoStats.value ? String(algoStats.value.enabled) : '--', suffix: '', icon: 'icon1-AIsuanfa', iconColor: '#01B9E7' },
+        { key: 'todayAlarms', label: t('situationScreen.todayAlarmTotal'), value: String(aStats?.todayTotal ?? 0), suffix: '', icon: 'icon1-gaojing', iconColor: '#D13838' },
+        { key: 'handleRate', label: t('situationScreen.alarmHandleRate'), value: formatRate(d.handleRate), suffix: d.handleRate != null ? '%' : '', icon: 'icon1-anquanguanli', iconColor: '#3EB011' },
+        { key: 'edgeCompute', label: t('situationScreen.edgeCompute'), value: d.totalAgents > 0 ? String(d.activeAgents) : '--', suffix: '', icon: 'icon1-agent', iconColor: '#7938D1' },
       ]
+      // 时序双向收敛: algorithms 先到 → 上面已读到; 后到 → 请求回调里的 syncAlgoStatCard 刷新
+      syncAlgoStatCard()
       const ds = d.deviceStats
       if (ds) {
         deviceStatusGroups.value = [{
@@ -3471,6 +3567,28 @@ function fetchSituationData() {
       nextTick(() => initCharts())
     } else hourlyFailed.value = true
   }).catch(() => { hourlyFailed.value = true })
+
+  // 6. [Task-99f 卡1 真实化] 算法清单 (全量) → 启用计数; 失败 → 卡1 '--'
+  //    提取口径与 EventTestDrawer L289 一致 (algorithms/items 双写兼容)
+  algorithmsApi.listAll().then(res => {
+    const raw: any = (res as any)?.data
+    const list: any[] = raw?.data?.algorithms ?? raw?.data?.items ?? raw?.algorithms ?? raw?.items ?? []
+    if (Array.isArray(list) && list.length) {
+      const byStatus: Record<string, number> = {}
+      for (const a of list) {
+        const st = String(a?.status || 'normal') || 'normal'
+        byStatus[st] = (byStatus[st] ?? 0) + 1
+      }
+      algoStats.value = {
+        enabled: list.filter(a => a?.enabled !== false).length,
+        total: list.length,
+        byStatus,
+      }
+    } else {
+      algoStats.value = null
+    }
+    syncAlgoStatCard()
+  }).catch(() => { algoStats.value = null; syncAlgoStatCard() })
 }
 
 /** 抓拍图加载失败时的兜底 — 自动隐藏并打印 warn, 避免列表卡顿 */
@@ -3535,7 +3653,7 @@ function scheduleTodayTotalRefresh() {
     situationApi.getOverview().then(res => {
       const stats = res.data?.data?.alarmStats
       if (!stats) return
-      const idx = todayStats.value.findIndex(s => s.label === t('situationScreen.todayAlarmTotal'))
+      const idx = todayStats.value.findIndex(s => s.key === 'todayAlarms')
       if (idx >= 0) {
         todayStats.value[idx] = { ...todayStats.value[idx], value: String(stats.todayTotal ?? 0) }
       }
@@ -3861,7 +3979,13 @@ onUnmounted(() => {
 }
 
 .chart-box { width: 100%; height: 200px; padding:10px;box-sizing: border-box;}
+/* [Task-99f] 可下钻图表容器: 指针提示 (点击 → 指标抽屉) */
+.chart-box-clickable { cursor: pointer; }
+/* [Task-99f] 设备状态面板下钻指针 */
+.ss-panel-clickable { cursor: pointer; }
 .score-gauge { width: 100%; height: 180px; }
+/* [Task-99f] 安全评分 gauge 下钻指针 */
+.score-gauge-clickable { cursor: pointer; }
 .left-col .chart-box,
 .left-col .score-gauge,
 .right-col .chart-box {
@@ -4222,6 +4346,9 @@ onUnmounted(() => {
 .stats-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding: 12px; }
 .left-col .stats-grid { flex: 1; grid-template-rows: repeat(2, minmax(0, 1fr)); min-height: 0; }
 .stat-card { text-align: center; padding: 6px 2px; background: transparent; }
+/* [Task-99f] 统计卡下钻: 指针 + hover 高亮 */
+.stat-card-clickable { cursor: pointer; border-radius: 6px; transition: background 0.2s; }
+.stat-card-clickable:hover { background: rgba(0, 180, 255, 0.12); }
 .left-col .stat-card { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 0; }
 .stat-main { display: flex; align-items: center;width: 50%; }
 .stat-icon { flex: 0 0 auto; font-size: 50px;line-height: 30px;width: 28px;height: 30px;text-align: center;margin-right: 20px; }

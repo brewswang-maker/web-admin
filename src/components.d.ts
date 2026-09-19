@@ -127,6 +127,7 @@ declare module 'vue' {
     Location: typeof import('@element-plus/icons-vue')['Location']
     LocationFilled: typeof import('@element-plus/icons-vue')['LocationFilled']
     LocationPickerDialog: typeof import('./components/LocationPickerDialog.vue')['default']
+    MetricDetailDrawer: typeof import('./components/metrics/MetricDetailDrawer.vue')['default']
     Microphone: typeof import('@element-plus/icons-vue')['Microphone']
     MiniPlayer: typeof import('./components/video/MiniPlayer.vue')['default']
     MoreFilled: typeof import('@element-plus/icons-vue')['MoreFilled']
