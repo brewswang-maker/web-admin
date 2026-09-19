@@ -13,7 +13,7 @@ import {
 //   首屏依赖链; 见下方 ensurePlayerLibs 动态单例)
 import type flvjs from 'flv.js'   // 仅类型空间 (编译期擦除, 无运行时依赖)
 import axios from 'axios'
-// [REC-UI 2026-09-11] 设计图回放页控制条图标 (上一段/播放暂停/下一段/全屏)
+// [REC-UI 2026-09-11] 设计图回放页控制条图标 (播放暂停/退进/全屏等; [REC-SEEK 2026-09-19] 段导航已改 ±10s)
 import { Search, VideoPlay, VideoPause, DArrowLeft, DArrowRight, FullScreen } from '@element-plus/icons-vue'
 import { getDeviceChannels } from '@/api/devices'
 // [UI 2026-09-11] 通道目录树 (区域→设备→通道) — 与 LiveView/ChannelView 同源工具
@@ -85,7 +85,7 @@ const currentSessionId = ref('')
 //   对分段文件 (段 14:00 开始) 必越界 → 定位失效。playSegment 成功后记录段起点,
 //   jumpToTime 换算为「段内 offset 秒」, stopPlay 清零。
 const currentSegmentStartMs = ref(0)
-// [REC-UI 2026-09-11] 当前播放段 id (控制条「上一段/下一段」导航 + 片段列表高亮)
+// [REC-UI 2026-09-11] 当前播放段 id (片段列表高亮 + 连播/回放钟/快进后退段基准)
 const currentRecId = ref('')
 // [REC-TSEEK 2026-09-11] 按时间点观看弹窗
 const timeSeekVisible = ref(false)
@@ -421,35 +421,90 @@ function normalizeDeviceRecording(raw: Record<string, unknown>): RecordingSegmen
 // [FIX p2-autoplay 2026-09-12] 回归修复: 片段列表已去除 → 查询成功后必须自动播放首段
 //   (零人工操作进入播放)。opts.autoPlay 仅由「查询」按钮与无定位目标的告警自动查询
 //   传入; doTimeSeek/告警跳转等自带目标点的链路保持默认 false, 由各自定位逻辑主导。
+// [REC-FAST 2026-09-19] 查询代际守卫 + 旧请求取消: 快速切换设备/通道/日期/时间窗时,
+//   先发出的旧响应不得覆盖后发查询的结果, 在途旧请求主动 abort (免无谓等待与服务端负载)
+//   — 「查询结果与所选条件严格对应」的第一道保障。
+let recQuerySeq = 0
+let recQueryAbort: AbortController | null = null
+/** 当前清单来源签名 (设备|通道|日期|窗口): 时间定位链路据此判断清单是否与所选条件一致 */
+const recListKey = ref('')
+
+/** 清单来源签名与当前所选条件是否一致 (时间定位链路免查判定用) */
+function recListMatchesSel(): boolean {
+  const qStart = queryStartTime.value || '00:00:00'
+  const qEnd = queryEndTime.value || '23:59:59'
+  return recListKey.value === `${selectedDeviceId.value}|${selectedChannelId.value}|${selectedDate.value}|${qStart}|${qEnd}`
+}
+
 async function fetchRecordings(opts?: { autoPlay?: boolean }) {
   if (!selectedDeviceId.value || !selectedChannelId.value || !selectedDate.value) {
     ElMessage.warning('请选择设备、监控点和日期')
     return
   }
+  // [REC-FAST 2026-09-19] 日内起止校验: 结束须晚于开始 (原静默提交后端返回空, 用户不知为何无结果)
+  const qStart = queryStartTime.value || '00:00:00'
+  const qEnd = queryEndTime.value || '23:59:59'
+  const winStart = new Date(`${selectedDate.value}T${qStart}`).getTime()
+  const winEnd = new Date(`${selectedDate.value}T${qEnd}`).getTime()
+  if (!(winEnd > winStart)) {
+    ElMessage.warning('结束时间需晚于开始时间')
+    return
+  }
+  recQueryAbort?.abort()  // [REC-FAST] 取消在途旧查询 (新查询接管)
+  const ctrl = new AbortController()
+  recQueryAbort = ctrl
+  const seq = ++recQuerySeq
+  const qKey = `${selectedDeviceId.value}|${selectedChannelId.value}|${selectedDate.value}|${qStart}|${qEnd}`
   loading.value = true
   try {
     // 使用 POST /api/v1/recordings/query 查询GB28181设备录像
     // [REC-UI 2026-09-13] 支持日内起止时间范围 (效果图双时间选择器; 默认 00:00:00~23:59:59 全天)
-    // [FIX rec-window 2026-09-16] 同步记录查询窗口 (autoPlayFirstSegment 播放起点钳制用)
-    queryWindowStartMs.value = new Date(`${selectedDate.value}T${queryStartTime.value || '00:00:00'}`).getTime()
-    queryWindowEndMs.value = new Date(`${selectedDate.value}T${queryEndTime.value || '23:59:59'}`).getTime()
     const { data } = await recordingHttp.post('/query', {
       device_id: selectedDeviceId.value,
       channel_id: selectedChannelId.value,
-      start_time: `${selectedDate.value}T${queryStartTime.value || '00:00:00'}`,
-      end_time: `${selectedDate.value}T${queryEndTime.value || '23:59:59'}`,
-    })
+      start_time: `${selectedDate.value}T${qStart}`,
+      end_time: `${selectedDate.value}T${qEnd}`,
+    }, { signal: ctrl.signal })
+    if (seq !== recQuerySeq) return  // [REC-FAST] 过期响应: 已被更新查询取代, 丢弃
+    // [FIX rec-window 2026-09-16] 查询窗口基准仅在响应有效时落地 (过期/失败请求不污染定位基准)
+    queryWindowStartMs.value = winStart
+    queryWindowEndMs.value = winEnd
+    recListKey.value = qKey
     // [FIX rec-snake 2026-09-11] 见 normalizeDeviceRecording 注释: 先映射再入 store
     const rawList: Array<Record<string, unknown>> = data?.data?.recordings || data?.data || []
     recordings.value = rawList.map(normalizeDeviceRecording)
     await nextTick()
+    if (seq !== recQuerySeq) return
     drawTimeline()
     if (opts?.autoPlay) await autoPlayFirstSegment()
   } catch (e: any) {
+    if (ctrl.signal.aborted) return  // [REC-FAST] 主动取消: 不提示 (已有新查询接管)
     ElMessage.error('查询录像失败: ' + (e.message || ''))
   } finally {
-    loading.value = false
+    if (seq === recQuerySeq) loading.value = false
   }
+}
+
+/** [REC-FAST 2026-09-19] 时间定位前置守卫: 确保清单与当前所选条件 (设备|通道|日期|窗口)
+ *  一致、且覆盖目标时刻 — 不满足则自动补查 (窗口扩为全天后重查)。定位链路 (按时间点
+ *  观看/告警点击/告警跳转/智能检索跳转) 先过守卫, 杜绝「用旧通道/旧窗口残留清单匹配
+ *  → 错位/漏查/定位错片段」。已有覆盖段时零请求快速返回。
+ *  返回 true=清单已覆盖目标时刻 (±5s 段边界容差)。 */
+async function ensureRecordingsCover(targetMs: number): Promise<boolean> {
+  const covers = (r: RecordingSegment) => {
+    const s = Date.parse(r.startTime || ''), e = Date.parse(r.endTime || '')
+    return !isNaN(s) && s <= targetMs && targetMs <= e + 5000
+  }
+  const inWin = queryWindowStartMs.value > 0
+    && targetMs >= queryWindowStartMs.value && targetMs <= queryWindowEndMs.value
+  if (recListMatchesSel() && inWin) return recordings.value.some(covers)
+  // 条件不一致 / 目标在窗口外 → 现有清单必不完整; 窗口扩为全天补查 (切片粒度下覆盖目标
+  // 时刻的切片起点可能早于目标 ~30min, 全天窗口是唯一能保证命中的查询; 面板同步展示)
+  queryStartTime.value = '00:00:00'
+  queryEndTime.value = '23:59:59'
+  ElMessage.info('正在查询该时刻所在录像…')
+  await fetchRecordings()
+  return recordings.value.some(covers)
 }
 
 /** [FIX p2-autoplay 2026-09-12] 查询后自动播放首段 (按 start 升序) + 时间轴聚焦
@@ -531,7 +586,11 @@ function buildSegs(): TlSeg[] {
 }
 
 /** [P0-3] 时刻→段 公共匹配 (复用 doTimeSeek 四级选择):
- *  ① 本地段覆盖 ② 就近本地段 ③ 任意覆盖段 ④ 就近任意段。
+ *  ① 本地段覆盖 ② 任意覆盖段 ③ 就近本地段 ④ 就近任意段。
+ *  [REC-FAST 2026-09-19] ②③ 对调 (原「就近本地段」先于「任意覆盖段」): 目标时刻被设备
+ *  存储段覆盖、而近旁恰有 ≤60s 的本地片时, 原序会选中不覆盖的本地片 (near) → 提示
+ *  "无精确覆盖段"并错位播放。覆盖优先保证「时间定位准确命中目标时刻所在片段」;
+ *  同为覆盖/同为就近时仍本地片优先 (①/③), 与本地片秒开取舍不冲突。
  *  hit=覆盖段可直接定位; near=仅就近段(不保证覆盖), 由调用方决定提示/跳转。 */
 function resolveSegmentAt(targetMs: number, segs?: TlSeg[]): { hit?: TlSeg; near?: TlSeg } {
   const list = segs || buildSegs()
@@ -539,11 +598,20 @@ function resolveSegmentAt(targetMs: number, segs?: TlSeg[]): { hit?: TlSeg; near
   const dist = (x: TlSeg) => Math.min(Math.abs(x.s - targetMs), Math.abs(x.e - targetMs))
   const locals = list.filter(x => x.r.url)
   const hit = locals.find(covers)
-    || locals.filter(x => dist(x) <= TL_SEEK_NEAR_MS).sort((a, b) => dist(a) - dist(b))[0]
     || list.find(covers)
+    || locals.filter(x => dist(x) <= TL_SEEK_NEAR_MS).sort((a, b) => dist(a) - dist(b))[0]
     || list.reduce<TlSeg | undefined>((best, cur) => (!best || dist(cur) < dist(best) ? cur : best), undefined)
   if (!hit) return {}
   return covers(hit) ? { hit } : { near: hit }
+}
+
+/** [REC-FAST 2026-09-19] 全量段列表 (不过滤「存储位置」): 快进/后退等时间操作须与显示
+ *  过滤解耦 — 目标时刻被过滤隐藏的段覆盖时仍应正确跳转, 而非误报"无录像"。 */
+function buildAllSegs(): TlSeg[] {
+  return recordings.value
+    .map(r => ({ r, s: Date.parse(r.startTime || ''), e: Date.parse(r.endTime || '') }))
+    .filter(x => !isNaN(x.s))
+    .sort((a, b) => a.s - b.s)
 }
 
 /** 视口起点统一钳制: 与当天交集 ≥ 半个视口 (头部最多提前 12h / 尾部最多滞后 12h) */
@@ -811,6 +879,9 @@ async function activateTimeline(clickedMs: number, width: number) {
         // [FIX p2-alarm-click 2026-09-12] 回归修复: 未播放态原仅存 pendingJumpMs 等待
         //   「先加载录像」— 但点击场景无任何消费者 (死值), 表现为「点击没反应」。
         //   现直接定位: 解析覆盖告警时刻的段并播放; 60s 内就近段从段起点播; 否则保留提示。
+        // [REC-FAST 2026-09-19] 前置守卫: 清单未覆盖告警时刻 (如刚切通道未重查) → 自动补查
+        //   后再匹配, 保证「点告警标记必命中所属片段」而非错落「请先加载录像」
+        await ensureRecordingsCover(ts)
         const { hit: alarmHit, near: alarmNear } = resolveSegmentAt(ts)
         const alarmSeg = alarmHit || (alarmNear && Math.abs(alarmNear.s - ts) <= TL_SEEK_NEAR_MS ? alarmNear : undefined)
         if (alarmSeg) {
@@ -1269,8 +1340,8 @@ const qpChannelLabel = computed(() => {
 })
 
 /** 存储位置过滤 (设计图「全部录像 / 中心储存」下拉): zlm=中心存储 MP4 / gb28181=设备端录像
- *  [FIX rec-sort 2026-09-12] 输出按 start 升序 (验收发现后端返回未排序, 列表末行出现短段错位,
- *  且 navSegment 的「上一段/下一段」依赖时间序) */
+ *  [FIX rec-sort 2026-09-12] 输出按 start 升序 (验收发现后端返回未排序, 列表末行出现短段错位;
+ *  [REC-SEEK 2026-09-19] 原「上一段/下一段」已替换为 ±10s, 时间序仍为连播/时间轴/定位链所依赖) */
 const filteredRecordings = computed(() => {
   const list = recordTypeFilter.value === 'zlm'
     ? recordings.value.filter(r => r.source === 'zlm')
@@ -1289,33 +1360,90 @@ const playbackClockLabel = computed(() => {
 })
 
 
-/** 控制条「上一段/下一段」 (设计图控制条导航) */
-function navSegment(dir: -1 | 1) {
-  const list = filteredRecordings.value
-  if (!list.length) return
-  let idx = list.findIndex(r => r.id === currentRecId.value)
-  if (idx < 0) idx = dir > 0 ? -1 : 0
-  const next = list[idx + dir]
-  if (next) playSegment(next)
-  else ElMessage.info(dir > 0 ? '已是最后一段' : '已是第一段')
-}
-function playPrevSegment() { navSegment(-1) }
-function playNextSegment() { navSegment(1) }
-
-/** [REC-UI 2026-09-13 效果图对标] 快退/快进: 目标=当前绝对时刻±N秒, 复用时间轴点击链路
- *  (命中当前段 → jumpToTime 段内精准 seek; 跨段/空档 → resolveSegmentAt 切段播放)
- *  [FIX rec-seek-step 2026-09-16] 3.3 步长统一 10s (Shift+点击=30s): 原 ±5s 偏小,
- *  对齐用户「±10s 或 ±30s 可配」诉求 (快捷键 ←/→ 同步 10s / Shift+←/→ 30s)。 */
+/** [FIX rec-seek-step 2026-09-16] 步长统一 10s (快捷键 ←/→ 同步 10s / Shift+←/→ 30s)。 */
 const SEEK_STEP_SEC = 10
 const SEEK_STEP_LARGE_SEC = 30
+
+/** [REC-SEEK 2026-09-19] 控制条「后退/快进 10 秒」快速链路 (替换原「上一段/下一段」):
+ *  基于回放钟绝对时刻 (段起点+进度) ±N 秒, 分档处理保证「不越界/不跳错位置/点击必有效」:
+ *  ① 目标仍在当前段内 → ZLM 直链直接写 video.currentTime (无请求/无重载, 即时响应);
+ *     GB28181 回放流无 Range seek → 重新起会话从目标时刻推流 (设备固有限制, 附受理提示)
+ *  ② 跨段 → 命中覆盖目标时刻的段 (本地片优先, 同 resolveSegmentAt 口径) 从目标时刻开播;
+ *  ③ 空档 → 前进衔接近邻下一段起点 / 后退回退近邻上一段末尾 (明示, 不静默);
+ *  ④ 首尾越界 → 明确提示 (已是当日录像开头/末尾)。
+ *  [REC-FAST] 段列表用全量 recordings (含被存储位置过滤隐藏的段): 时间操作不因显示过滤失准。 */
+let seekHintTs = 0  // GB 重起流受理提示节流 (1s, 连点不刷屏)
 async function seekBy(deltaSec: number) {
-  const cur = currentAbsMs()
-  if (!cur) {
+  if (!isPlaying.value || !currentSegmentStartMs.value) {
     ElMessage.info('请先播放录像')
     return
   }
-  const w = canvasRef.value?.getBoundingClientRect().width || 1200
-  await activateTimeline(cur + deltaSec * 1000, w)
+  const targetMs = currentAbsMs() + deltaSec * 1000
+  const curRec = recordings.value.find(r => String(r.id) === String(currentRecId.value))
+  const curS = curRec ? Date.parse(curRec.startTime || '') : NaN
+  const curE = curRec ? Date.parse(curRec.endTime || '') : NaN
+  const segs = buildAllSegs()
+  // ① 目标仍在当前段内 (留 0.3s 尾部余量) → 段内快速定位
+  if (curRec && Number.isFinite(curS) && Number.isFinite(curE)
+    && targetMs >= curS && targetMs < curE - 300) {
+    if (seekWithinCurrentSegment(targetMs)) return
+    // GB 回放会话: 流式推流无段内 seek → 重起会话从目标时刻推流 (设备固有限制)
+    const now = Date.now()
+    if (now - seekHintTs > 1000) {
+      seekHintTs = now
+      ElMessage.info('设备回放流正在从目标时刻重新起流…')
+    }
+    await playSegment(curRec, { startAtMs: targetMs })
+    return
+  }
+  // 清单缺失兜底 (切设备清空 records 但仍在播): ZLM 直链仍可段内快退/快进; GB 需清单重起会话
+  if (!segs.length) {
+    if (seekWithinCurrentSegment(targetMs)) return
+    ElMessage.info('请先查询当日录像后再快进/后退')
+    return
+  }
+  // ② 跨段: 命中覆盖目标时刻的段 (含段尾 5s 容差; 与 resolveSegmentAt 同优先级)
+  const coversT = (x: TlSeg) => x.s <= targetMs && targetMs <= x.e + 5000
+  const hit = segs.filter(x => x.r.url).find(coversT) || segs.find(coversT)
+  if (hit) {
+    // 命中当前段 (目标落段尾余量内): 段内收敛, 避免无谓重载
+    if (String(hit.r.id) === String(currentRecId.value) && seekWithinCurrentSegment(targetMs)) return
+    await playSegment(hit.r, { startAtMs: targetMs })
+    return
+  }
+  // ③ 空档: 按方向衔接最近一段 (不静默)
+  if (deltaSec > 0) {
+    const next = segs.find(x => x.s > targetMs)
+    if (next) {
+      ElMessage.info(`目标时刻无录像，已跳至下一段 ${fmtClockMs(next.s)} 开播`)
+      await playSegment(next.r, { startAtMs: next.s })
+      return
+    }
+    ElMessage.info('已到当日录像末尾')
+    return
+  }
+  const prev = [...segs].reverse().find(x => x.e <= targetMs)
+  if (prev) {
+    ElMessage.info(`目标时刻无录像，已回退至上一段末尾 ${fmtClockMs(prev.e)}`)
+    await playSegment(prev.r, { startAtMs: Math.max(prev.s, prev.e - 1000) })
+    return
+  }
+  ElMessage.info('已到当日录像开头')
+}
+
+/** [REC-SEEK 2026-09-19] 段内快速定位 (即时写 currentTime; duration 已知时钳尾部 0.1s
+ *  防越界): 仅 ZLM 直链/MSE 可用, GB 回放会话返回 false (流式推流无段内 seek, 由调用
+ *  方改走 playSegment 重起会话)。写入后同步回放钟与从窗。 */
+function seekWithinCurrentSegment(targetMs: number): boolean {
+  if (currentSessionId.value) return false
+  const v = videoRef.value
+  if (!v) return false
+  let offSec = Math.max(0, (targetMs - currentSegmentStartMs.value) / 1000)
+  if (isFinite(v.duration) && v.duration > 0) offSec = Math.min(offSec, Math.max(0, v.duration - 0.1))
+  try { v.currentTime = offSec } catch { return false }
+  currentTime.value = offSec
+  void syncTo(targetMs)  // [P2-1] 主通道段内定位 → 从窗对齐
+  return true
 }
 
 /** [REC-UI 2026-09-13] 片段抽屉选段 → 从段起点播放并收起抽屉 (复用 playSegment 全链路) */
@@ -1810,11 +1938,17 @@ function onFullscreenChange() {
 //   resolveSegmentAt (上方) 替代: 点击/拖动任意点即定位, 告警命中按 ms 距离判定
 
 // [P3-VP1] 加载通道当天的告警事件用于时间轴标记
+// [REC-FAST 2026-09-19] 代际守卫 + 去噪: 快速切换通道/日期时旧响应不得覆盖新结果 (否则
+//   标记会错挂到新通道上); 去掉每次成功的 success 弹窗 (切通道即弹属噪声); 空条件分支
+//   补重绘以清除上一条通道的残留标记。
+let tlAlarmSeq = 0
 async function fetchTimelineAlarms() {
   if (!selectedChannelId.value || !selectedDate.value) {
     timelineAlarms.value = []
+    drawTimeline()
     return
   }
+  const seq = ++tlAlarmSeq
   try {
     const dayStart = new Date(selectedDate.value + 'T00:00:00').getTime()
     const dayEnd = dayStart + 24 * 3600 * 1000
@@ -1824,13 +1958,15 @@ async function fetchTimelineAlarms() {
       end_time: dayEnd,
       pageSize: 200,
     } as any)
+    if (seq !== tlAlarmSeq) return  // [REC-FAST] 过期响应: 已被新通道/日期查询取代
     timelineAlarms.value = (res?.data?.items || []) as unknown as Array<{
       timestamp: number; alarm_type: string; level: string; description?: string
     }>
     await nextTick()
+    if (seq !== tlAlarmSeq) return
     drawTimeline()
-    ElMessage.success(`[P3-VP1] 已加载 ${timelineAlarms.value.length} 个告警标记`)
   } catch (e: any) {
+    if (seq !== tlAlarmSeq) return
     console.warn('[P3-VP1] fetchTimelineAlarms failed:', e?.message)
   }
 }
@@ -2058,7 +2194,6 @@ async function playSmartResult(r: SmartSearchResult) {
   const ts = smartTsMs(r.timestamp)
   // ① 切源 + 反查通道: 真实通道优先 (hash channel_id 不可用于录像查询)
   recordingSource.value = 'device'
-  let changed = false
   const realCh = extractRealChannel(r)
   const target = realCh || String(r.channel_id || '')
   if (target && target !== selectedChannelId.value) {
@@ -2074,12 +2209,10 @@ async function playSmartResult(r: SmartSearchResult) {
       }
       if (selectedChannelId.value !== hitCh.c.id) {
         selectedChannelId.value = hitCh.c.id
-        changed = true
       }
     } else if (realCh) {
       // 树内未命中但提取到真实通道 → 直接使用 (后端已兼容裸码), 不投毒 hash
       selectedChannelId.value = realCh
-      changed = true
     }
     // 既无真实通道又未命中树 → 保留当前选择, 仅走时间跳转 + recording_id 兜底
   }
@@ -2088,12 +2221,11 @@ async function playSmartResult(r: SmartSearchResult) {
     const wantDate = toLocalISOString(new Date(ts)).split('T')[0]
     if (selectedDate.value !== wantDate) {
       selectedDate.value = wantDate
-      changed = true
     }
-    // 通道/设备/日期任一变化都需强制重查, 避免用旧通道的残留列表做覆盖段匹配
-    if (changed || !recordings.value.length) {
-      await fetchRecordings()
-    }
+    // [REC-FAST 2026-09-19] 定位守卫取代原「changed||空才查」粗判: 清单签名与所选条件
+    //   不一致或未覆盖目标时刻 → 自动补查 (设备/通道/日期切换的清残由此接管);
+    //   已覆盖 → 零请求直接匹配 (免每次智能检索跳转都全量重查)
+    await ensureRecordingsCover(ts)
     // 覆盖段匹配 (含 +5s 容差, 同 doTimeSeek 口径)
     const segs = recordings.value
       .map(x => ({ r: x, s: Date.parse(x.startTime || ''), e: Date.parse(x.endTime || '') }))
@@ -2206,6 +2338,9 @@ async function autoFetchRecordingsIfNeeded() {
     await nextTick()
     // 自动播放包含告警时间的录像段
     const alarmMs = pendingJumpMs.value
+    // [REC-FAST 2026-09-19] 前置守卫: 告警时刻在查询窗口外/切片跨窗时补查 (窗口扩全天),
+    //   保证下方时间区间匹配不在残缺清单上做 (「漏查」根因)
+    await ensureRecordingsCover(alarmMs)
     const alarmDate = new Date(alarmMs)
     const alarmStr = alarmDate.toTimeString().substring(0, 8)
     // [T5-P5 2026-09-06] 告警详情「回放页」跳转带 recordingId: 优先精确命中
@@ -2380,7 +2515,7 @@ async function doSegmentDownload() {
 
 // ---- [REC-TSEEK 2026-09-11] 按时间点观看 ----
 // 行业通用回放交互: 选日期 + HH:mm:ss → 定位到该时刻播放。
-// 链路: 同步日期 → queryRecordings (fetchRecordings) → 覆盖段匹配 →
+// 链路: 同步日期 → ensureRecordingsCover (签名校验+自动补查) → 覆盖段匹配 →
 //   playSegment(seg, {startAtMs}) → ZLM: MP4 Range seek / GB28181: 设备从目标时刻起推流。
 function openTimeSeek() {
   if (!selectedDeviceId.value || !selectedChannelId.value) {
@@ -2420,21 +2555,21 @@ async function doTimeSeek() {
   }
   timeSeekLoading.value = true
   try {
-    // 1. 目标日期与列表日期不同步时先刷新录像列表 (fetchRecordings 按 selectedDate 查询)
-    if (selectedDate.value !== timeSeekDate.value) {
-      selectedDate.value = timeSeekDate.value
-      await fetchRecordings()
-    } else if (!recordings.value.length) {
-      await fetchRecordings()
-    }
-    // 2. 目标时刻 ms (本地时区, 与录像条目 ISO 同基准)
+    // 1. 目标时刻 ms (本地时区, 与录像条目 ISO 同基准)
     const targetMs = new Date(`${timeSeekDate.value}T${timeSeekTime.value}`).getTime()
     if (isNaN(targetMs)) {
       ElMessage.error('时间格式无效')
       return
     }
+    // 2. [REC-FAST 2026-09-19] 定位前置守卫 (取代原「日期不同/列表空才查」粗判): 清单签名与
+    //    所选条件 (设备|通道|日期|窗口) 不一致、或未覆盖目标时刻 → 自动补查; 已覆盖 → 零请求
+    //    直接匹配 — 查得快 (免重复请求) + 查得准 (不吃旧通道/旧窗口残留清单)
+    if (selectedDate.value !== timeSeekDate.value) {
+      selectedDate.value = timeSeekDate.value
+    }
+    await ensureRecordingsCover(targetMs)
     // 3. 段选择: [TL-VIEW 2026-09-12] 复用 resolveSegmentAt 四级匹配 (与时间轴点击同源):
-    //    ① 本地片覆盖 (end 容差 +5s) ② 就近本地片 (≤60s) ③ 任意覆盖段 ④ 就近任意段。
+    //    ① 本地片覆盖 (end 容差 +5s) ② 任意覆盖段 ③ 就近本地片 (≤60s) ④ 就近任意段。
     //    hit=覆盖段可直接定位; near=仅就近段, 提示后仍从目标时刻开播。
     const { hit, near } = resolveSegmentAt(targetMs)
     const chosen = hit || near
@@ -2707,9 +2842,9 @@ onUnmounted(() => {
                 </div>
               </div>
             </div>
-            <!-- 控制条 (设计图: 上一段/播放暂停/下一段 + 回放钟 + 倍速 + 停止/全屏) -->
+            <!-- 控制条 ([REC-SEEK 2026-09-19] 段导航「上一段/下一段」已替换为「后退/快进 10 秒」) -->
             <!-- v-if="isPlaying" -->
-            <!-- [REC-UI 2026-09-13 效果图对标] 控制条三簇: 左(列表/音量/截图) 中(段导航+退进+回放钟+连播/倍速) 右(停止/全屏) -->
+            <!-- [REC-UI 2026-09-13 效果图对标] 控制条三簇: 左(列表/音量/截图) 中(后退/快进+回放钟+连播/倍速) 右(停止/全屏) -->
             <div  class="player-controls">
               <div class="pc-group pc-media-group">
                 <button class="pc-icon-btn" title="录像片段列表" @click="clipDrawerVisible = true"><span class="pc-list-glyph">☰</span></button>
@@ -2725,16 +2860,16 @@ onUnmounted(() => {
               </div>
               <div class="pc-group pc-center-group">
               <div class="pc-group pc-nav-group">
-                <button class="pc-icon-btn" title="上一段" @click="playPrevSegment"><i class="iconfont1 icon1-xiayige-copy" /></button>
+                <!-- [REC-SEEK 2026-09-19] 后退/快进 10 秒 (步长固定): 基于回放钟绝对时刻分档
+                     seek (段内即时 seek / GB 重起流 / 跨段切段 / 空档衔接 / 边界明示), 见 seekBy 头注 -->
+                <button class="pc-icon-btn" title="后退 10 秒" @click="seekBy(-SEEK_STEP_SEC)"><i class="iconfont1 icon1-houtui" /></button>
                 <button class="pc-icon-btn pc-play-btn" :title="isPaused ? '播放' : '暂停'" @click="togglePause"><i class="iconfont1" :class="isPaused ? 'icon1-bofang1' : 'icon1-zanting-copy'" /></button>
-                <button class="pc-icon-btn" title="下一段" @click="playNextSegment"><i class="iconfont1 icon1-xiayige" /></button>
+                <button class="pc-icon-btn" title="快进 10 秒" @click="seekBy(SEEK_STEP_SEC)"><i class="iconfont1 icon1-qianjin" /></button>
               </div>
               <div class="pc-group pc-frame-group">
-                <button class="pc-icon-btn" title="后退 10 秒 (Shift+点击 = 30 秒)" @click.exact="seekBy(-SEEK_STEP_SEC)" @click.shift="seekBy(-SEEK_STEP_LARGE_SEC)"><i class="iconfont1 icon1-houtui" /></button>
                 <button class="pc-icon-btn" :disabled="!!currentSessionId" title="上一帧" @click="stepFrame(-1)"><i class="iconfont1 icon1-xiayige-copy" /></button>
                 <div class="pc-clock pc-clock-click" title="回放钟 (段起点+进度) — 点击打开按时间点观看" @click="openTimeSeek">{{ playbackClockLabel }}</div>
                 <button class="pc-icon-btn" :disabled="!!currentSessionId" title="下一帧" @click="stepFrame(1)"><i class="iconfont1 icon1-xiayige" /></button>
-                <button class="pc-icon-btn" title="前进 10 秒 (Shift+点击 = 30 秒)" @click.exact="seekBy(SEEK_STEP_SEC)" @click.shift="seekBy(SEEK_STEP_LARGE_SEC)"><i class="iconfont1 icon1-qianjin" /></button>
                 <div class="pc-group pc-continuous" title="段播完自动衔接相邻下一段 (间隙 ≤ 30s)">
                   <el-switch v-model="continuousPlay" size="small" />
                   <span class="pc-switch-label">连播</span>

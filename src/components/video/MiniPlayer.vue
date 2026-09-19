@@ -263,11 +263,27 @@ function fmtSec(s: number): string {
   return h > 0 ? `${h}:${p2(m)}:${p2(sec)}` : `${p2(m)}:${p2(sec)}`
 }
 /** 3.3 快退/快进: 段内 ±seekStep 秒, clamp 到 [0, duration-0.1] (越 stopAt 由
- *  srcTimeUpdateHandler 自然触发 ended → 连播推进下一段, 无需特殊处理) */
+ *  srcTimeUpdateHandler 自然触发 ended → 连播推进下一段, 无需特殊处理)
+ *  [REC-SEEK 2026-09-19] ① duration 未知 (元数据未就绪/H265 异常) 不再静默 return
+ *  (「点击无反应」观感) — 改无上界写入由浏览器收敛; ② 贴边 (位移 <0.05s) 给 1s 节流
+ *  轻提示, 对齐窗口模式 seekEdgeHintTs 的反馈体验 */
+let mp4EdgeHintTs = 0
 function seekByMp4(deltaSec: number) {
   const video = videoRef.value
-  if (!video || !isFinite(video.duration) || video.duration <= 0) return
-  video.currentTime = Math.min(Math.max(0, video.currentTime + deltaSec), Math.max(0, video.duration - 0.1))
+  if (!video) return
+  const cur = video.currentTime
+  const target = isFinite(video.duration) && video.duration > 0
+    ? Math.min(Math.max(0, cur + deltaSec), Math.max(0, video.duration - 0.1))
+    : Math.max(0, cur + deltaSec)
+  if (Math.abs(target - cur) < 0.05) {
+    const now = Date.now()
+    if (now - mp4EdgeHintTs > 1000) {
+      mp4EdgeHintTs = now
+      ElMessage.info(deltaSec < 0 ? '已到录像开头' : '已到录像末尾')
+    }
+    return
+  }
+  video.currentTime = target
   srcCur.value = video.currentTime
 }
 /** [FIX seek-ux 2026-09-19] mp4 进度条键盘路径: input 仅更新待提交值 (指针路径由 track 承担) */
