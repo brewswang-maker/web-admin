@@ -23,15 +23,24 @@ export interface ChannelBrief { raw: string; base: string; name: string }
 
 /** 纯数字 ID 形态 (GB28181 20 位 / int32 截断 hash / _chN 子码流后缀 / 「通道+数字」兜底产物 —
  *  二次 normalize 时 channelName 兜底会经 raw.channelName 回流进 deviceName, 同口径拦截;
- *  自定义名如「通道01」仅 2 位数字不受影响) */
+ *  自定义名如「通道01」仅 2 位数字不受影响)
+ *  [FIX mon-ph 2026-09-19] 增补拦截 normalizeAlarmCore 合成占位「监控点<通道ID>」(channel_name
+ *  缺失时以 channelId 拼出, 真机 corridor_gate_01 告警实测): 该形态非用户数据, 若放行
+ *  alarmChLabel ③ 可读直用会把它当通道名返回, 短路「监控点 N」序号占位链 (用户「越改越差」
+ *  投诉含此项)。前缀后须为 ASCII 通道 ID 形态才拦截, 中文自定义名「监控点北门」不受影响。 */
 export const isNumericId = (v: unknown): boolean =>
-  /^(?:通道)?\d{6,}(_ch\d+)?$/.test(String(v ?? '').trim())
+  /^(?:(?:通道)?\d{6,}(_ch\d+)?|监控点[0-9A-Za-z_-]{4,})$/.test(String(v ?? '').trim())
 /** 剥子码流后缀 (_chN) — 国标 20 位主形态与子码流形态互认 */
 export const baseChannelId = (v: unknown): string =>
   String(v ?? '').replace(/_ch\d+$/, '')
 
 // ── 目录单例 (懒加载一次; 失败静默 — 显示层保持原兜底不阻塞) ──
 const devNameById = ref<Map<string, string>>(new Map())   // 设备 id → 设备名
+// [FIX dev-col-ip 2026-09-19] 设备 id → IP: 设备名=国标编码 (GB28181 注册未命名, 真机
+//   192.168.0.100 三台全如此) 时告警「设备」列退化显示 IP — 用户自配置/设备管理页主字段/
+//   全局唯一/与监控点列零重复 (原下沉通道名致两列完全重复, 用户「越改越差」投诉)。
+//   用户改名后 devNameById 优先命中, IP 永不遮蔽可读名。
+const devIpById = ref<Map<string, string>>(new Map())
 const chNameById = ref<Map<string, string>>(new Map())    // 通道 id → 通道名 (原值 + 剥 _chN 双形态)
 const chDevById = ref<Map<string, string>>(new Map())     // 通道父码 → 父设备 id
 // [chan-tree 2026-09-11] 设备 id → 其通道列表 (AlarmDeviceTreePanel 三级树叶子数据源)
@@ -56,9 +65,14 @@ export function loadAlarmNameDirectory(): void {
       const devRaw = (devRes as any)?.data ?? null
       const devices: any[] = devRaw?.data?.devices ?? devRaw?.data ?? devRaw?.devices ?? devRaw?.items ?? []
       const dMap = new Map<string, string>()
+      const ipMap = new Map<string, string>()
       for (const d of devices) {
         const id = String(d?.id ?? '')
-        if (id && d?.name) dMap.set(id, String(d.name))
+        if (!id) continue
+        if (d?.name) dMap.set(id, String(d.name))
+        // [FIX dev-col-ip 2026-09-19] IP 目录填充 (空/占位值跳过)
+        const ip = String(d?.ip ?? '').trim()
+        if (ip && ip !== '-' && ip !== '0.0.0.0') ipMap.set(id, ip)
       }
       const cMap = new Map<string, string>()
       const pMap = new Map<string, string>()
@@ -80,6 +94,7 @@ export function loadAlarmNameDirectory(): void {
         }
       }
       devNameById.value = dMap
+      devIpById.value = ipMap
       chNameById.value = cMap
       chDevById.value = pMap
       devChsById.value = devChs
@@ -99,23 +114,43 @@ export function resolveAlarmDeviceName(
 ): string {
   loadAlarmNameDirectory()
   const dn = String(deviceName ?? '').trim()
-  if (dn && !isNumericId(dn)) return dn
-  const dv = baseChannelId(deviceId)
   const cv = String(channelId ?? '').trim()
+  // [FIX dev-col-leak 2026-09-19] dn 同源泄漏拦截 (用户「越改越差」投诉核心 — 设备列=监控点列):
+  //   后端 enrich device_name=ch_name (AlarmService L1158) / WS 帧同源赋值 (BoxService L5030)
+  //   / normalizeAlarmCore 历史 channel_name 兜底 — 可读 dn 实为通道级名时不得当设备级返回。
+  //   判据: 与 channelId 目录通道名完全相等, 或为后端占位「未知设备」→ 视为无效继续下沉
+  //   (下沉后 dv 层目录设备名优先 — 设备真名与通道名同值时仍能命中, 仅无名设备落 IP 兜底,
+  //   用户改名场景零回归)。编码/合成占位形态由 isNumericId 拦截 (含「监控点<id>」扩展)。
+  if (dn && !isNumericId(dn) && dn !== '未知设备') {
+    const dnCh = cv ? chNameOf(cv) : ''
+    if (!(dnCh && dnCh === dn)) return dn
+  }
+  const dv = baseChannelId(deviceId)
   // [FIX dev-name-enc 2026-09-19] 目录命中须过 isNumericId 二次校验: 设备注册未命名时
   //   device_name 落库=国标编码 (真机 192.168.0.100 三台设备全如此), 命中即返回会让
-  //   告警「设备」列裸显编码 (用户投诉)。编码形态视为无效, 继续下沉通道名/父设备链;
-  //   全链不中回 '' 走显示层占位 — 与入参 dn 校验同口径 (宁显占位不裸显编号)。
+  //   告警「设备」列裸显编码 (用户投诉)。编码形态视为无效, 继续下沉; 全链不中回 ''
+  //   走显示层占位 — 与入参 dn 校验同口径 (宁显占位不裸显编号)。
   if (dv) {
     const hit = devNameById.value.get(dv)
     if (hit && !isNumericId(hit)) return hit
+    // [FIX dev-col-ip 2026-09-19] 设备未命名 → IP 兜底 (设备维度稳定标识): 原实现继续
+    //   下沉通道名致「设备」列=「监控点」列完全重复 + 同设备多行值漂移 (摄像头1/
+    //   Camera 02/-, 用户「越改越差」投诉显性特征); IP 全局唯一且与监控点列零重复。
+    const ipHit = devIpById.value.get(dv)
+    if (ipHit) return ipHit
   }
   if (cv) {
+    // 父设备链 (channelId 所属设备 — deviceId 可能为空而 channelId 可定位设备): 名 → IP
+    const pid = chDevById.value.get(baseChannelId(cv))
+    if (pid) {
+      const devHit = devNameById.value.get(pid)
+      if (devHit && !isNumericId(devHit)) return devHit
+      const ipHit2 = devIpById.value.get(pid)
+      if (ipHit2) return ipHit2
+    }
+    // 通道名末位兜底 (目录无设备上下文时的合理名; 单一设备多通道时序号口径见 alarmChLabel)
     const chHit = chNameById.value.get(cv) ?? chNameById.value.get(baseChannelId(cv))
     if (chHit && !isNumericId(chHit)) return chHit
-    const pid = chDevById.value.get(baseChannelId(cv))
-    const devHit = pid ? devNameById.value.get(pid) : undefined
-    if (devHit && !isNumericId(devHit)) return devHit
   }
   return ''
 }

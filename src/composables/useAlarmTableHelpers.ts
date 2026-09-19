@@ -12,7 +12,9 @@
  */
 import type { AlarmEvent } from '@/types/alarm'
 import { normalizeAlarmCore } from '@/types/alarm'
-import { resolveAlarmDeviceName, isNumericId, chNameOf } from '@/composables/useAlarmDeviceLabel'
+// [FIX dev-col-ip 2026-09-19] 占位链/设备列治理补依赖: devNameOf/parentDevOfChannel/devChannelsOf/
+//   baseChannelId 目录反查 + alarmChannelIdOf 真通道码解析 (监控点序号链)
+import { resolveAlarmDeviceName, isNumericId, chNameOf, devNameOf, parentDevOfChannel, devChannelsOf, baseChannelId, alarmChannelIdOf } from '@/composables/useAlarmDeviceLabel'
 
 // ── 归一化 + 旧字段兼容补丁 (与 AlarmsView.normalizeAlarm 同款) ──
 // normalizeAlarmCore 产出 level/aiConclusion/confidence; AlarmsView 模板与筛选
@@ -193,9 +195,13 @@ export function getSnapshotUrl(row: any): string {
 
 // [FIX dev-name-num 2026-09-11] 设备标签: 空名/纯数字形态 (face 插件截断 hash 等历史数据)
 //   → 目录反查设备/通道名, 反查不中兜底 '-' (不裸显 deviceId 数字串)
+// [FIX dev-col-ip 2026-09-19 用户「越改越差」二次治理] 「设备」列语义纯净化 (设备级标识):
+//   撤销 channelName 优先传入 (原实现把通道名当设备名直显 = 两列完全重复的传送门, 真机
+//   摄像头1/Camera 02 行 设备列=监控点列); 通道名泄漏 (值等于通道目录名/后端「未知设备」
+//   占位) 由 resolveAlarmDeviceName 内统一拦截; 反查链: 设备名可读 → 设备 IP → 父设备链
+//   → 通道名可读, 全不中 '-'; 设备列永不回落通道名, 与监控点列零重复。
 export function alarmDevLabel(a: Pick<AlarmEvent, 'deviceName' | 'deviceId' | 'channelId'> & { channelName?: string }): string {
-  // deviceName 可读直接用; 数字形态/空 → channelName 兜底传入 (resolve 内部同形态拦截)
-  return resolveAlarmDeviceName(a.deviceName || a.channelName || '', a.deviceId, a.channelId) || '-'
+  return resolveAlarmDeviceName(a.deviceName || '', a.deviceId, a.channelId) || '-'
 }
 
 // 通道标签 [chan-col 2026-09-11]: 可读 channelName 直接用; 空名/纯数字形态
@@ -224,14 +230,30 @@ export function alarmChLabel(a: Pick<AlarmEvent, 'channelId'> & { channelName?: 
   // ② 顶层 channelId 目录反查 (channelId 自身即通道码形态的告警)
   const topHit = chNameOf(a.channelId)
   if (topHit && !isNumericId(topHit)) return topHit
-  // ③ 可读 channelName 直用 (目录未收录/未就绪 — 兼容插件 meta 通道级名)
+  // ③ 可读 channelName 直用 (目录未收录/未就绪 — 兼容插件 meta 通道级名;
+  //    normalize 合成占位「监控点<id>」已由 isNumericId 拦截 [FIX mon-ph 2026-09-19])
   const cn = String(a.channelName ?? '').trim()
   if (cn && !isNumericId(cn)) return cn
-  // ④ 空名/纯数字形态 → 设备链反查 → 占位
-  const resolved = resolveAlarmDeviceName('', '', a.channelId)
-  if (resolved) return resolved
-  const id = String(a.channelId ?? '').trim()
-  return id ? `监控点${id}` : '-'
+  // ④ [FIX mon-point-seq 2026-09-19] 占位链重构 (原「监控点{20位编码}」长串裸显 — 真机
+  //    137 未命名通道告警: 监控点13120000…, 用户「越改越差」投诉项):
+  //    真通道码解析 (metadata 真码 / int32 hash 反投影 / 顶层) → 设备内监控点序号
+  //    (多通道设备按通道码字典序位, 137 → 监控点 3) → 父设备可读名 → 尾4位短占位。
+  const realId = alarmChannelIdOf(a)
+  if (!realId) return '-'
+  const pid = parentDevOfChannel(realId)
+  if (pid) {
+    const chs = devChannelsOf(pid)
+    if (chs.length > 1) {
+      const sorted = [...chs].sort((x, y) => (x.base < y.base ? -1 : x.base > y.base ? 1 : 0))
+      const idx = sorted.findIndex(c => c.base === baseChannelId(realId))
+      if (idx >= 0) return `监控点 ${idx + 1}`
+    }
+    const devHit = devNameOf(pid)
+    if (devHit && !isNumericId(devHit)) return devHit
+  }
+  // ⑥ 末级兜底: 数字编码短占位 (不裸显 20 位长串); 非数字流名 (corridor_gate_01 等) 原值可读保留
+  const base = baseChannelId(realId)
+  return isNumericId(base) ? `监控点…${base.slice(-4)}` : base
 }
 
 /** [P0-10/13] 未完结生命周期 = 可处警态 (与 DisposeDialog.EDITABLE_STATUSES 对齐) */

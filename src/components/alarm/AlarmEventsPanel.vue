@@ -307,7 +307,9 @@
                :close-on-click-modal="false" :close-on-press-escape="false">
       <div v-if="reviewTarget" class="review-body">
         <div class="review-target">
-          {{ reviewTarget.description || reviewTarget.type }} · {{ reviewTarget.channelName || reviewTarget.channelId }}
+          <!-- [FIX dev-col-leak 2026-09-19] 类型 zh 化 + 监控点走 alarmChLabel
+               (原裸显 type key 与 channelId 编码; 监控点 '-' 时省略该段) -->
+          {{ reviewTarget.description || zh(reviewTarget.type) }}<template v-if="alarmChLabel(reviewTarget) !== '-'"> · {{ alarmChLabel(reviewTarget) }}</template>
         </div>
         <el-radio-group v-model="reviewVerdict" class="review-verdicts">
           <el-radio-button label="true_positive">真实告警</el-radio-button>
@@ -406,8 +408,10 @@
           <div class="evidence-section" style="margin-top:16px">
             <div class="evidence-section-title">
               设备录像
-              <el-tag v-if="evidenceAlarmRow?.deviceName" size="small" type="info" style="margin-left:8px">
-                {{ evidenceAlarmRow.deviceName }}
+              <!-- [FIX dev-col-leak 2026-09-19] 设备标签走显示层口径 (原裸显 deviceName:
+                   后端 enrich/WS 帧该字段可能是通道名或 20 位编码) -->
+              <el-tag v-if="evidenceAlarmRow && alarmDevLabel(evidenceAlarmRow) !== '-'" size="small" type="info" style="margin-left:8px">
+                {{ alarmDevLabel(evidenceAlarmRow) }}
               </el-tag>
               <span v-if="recordingsLoading" style="margin-left:8px;font-size:12px;color:#999">加载中...</span>
               <span v-else-if="deviceRecordings.length" style="margin-left:8px;font-size:12px;color:#999">

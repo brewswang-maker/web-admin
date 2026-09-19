@@ -165,7 +165,9 @@
                :close-on-click-modal="false" :close-on-press-escape="false">
       <div v-if="reviewTarget" class="review-body">
         <div class="review-target">
-          {{ reviewTarget.description || reviewTarget.type }} · {{ reviewTarget.channelName || reviewTarget.channelId }}
+          <!-- [FIX dev-col-leak 2026-09-19] 类型 zh 化 + 监控点走 alarmChLabel
+               (原裸显 type key 与 channelId 编码; 监控点 '-' 时省略该段) -->
+          {{ reviewTarget.description || zh(reviewTarget.type) }}<template v-if="alarmChLabel(reviewTarget) !== '-'"> · {{ alarmChLabel(reviewTarget) }}</template>
         </div>
         <el-radio-group v-model="reviewVerdict" class="review-verdicts">
           <el-radio-button label="true_positive">真实告警</el-radio-button>
@@ -217,7 +219,8 @@
             </div>
             <div style="margin-top:8px;font-size:12px">
               <div style="font-weight:600;display:flex;justify-content:space-between">
-                <span>{{ item.type }}</span>
+                <!-- [FIX dev-col-leak 2026-09-19] 证据库卡片类型与表格列同口径 (canonical zh) -->
+                <span>{{ zh(item.type) }}</span>
                 <el-tag size="small" :type="levelTagType(item.severity)" :effect="levelTagEffect(item.severity)">{{ severityLabel(item.severity) }}</el-tag>
               </div>
               <div style="color:#909399;margin-top:4px">{{ alarmDevLabel(item) }} · {{ alarmChLabel(item) }}</div>
@@ -683,8 +686,10 @@
           <div class="evidence-section" style="margin-top:16px">
             <div class="evidence-section-title">
               设备录像
-              <el-tag v-if="evidenceAlarmRow?.deviceName" size="small" type="info" style="margin-left:8px">
-                {{ evidenceAlarmRow.deviceName }}
+              <!-- [FIX dev-col-leak 2026-09-19] 设备标签走显示层口径 (原裸显 deviceName:
+                   后端 enrich/WS 帧该字段可能是通道名或 20 位编码) -->
+              <el-tag v-if="evidenceAlarmRow && alarmDevLabel(evidenceAlarmRow) !== '-'" size="small" type="info" style="margin-left:8px">
+                {{ alarmDevLabel(evidenceAlarmRow) }}
               </el-tag>
               <span v-if="recordingsLoading" style="margin-left:8px;font-size:12px;color:#999">加载中...</span>
               <span v-else-if="deviceRecordings.length" style="margin-left:8px;font-size:12px;color:#999">
@@ -1048,6 +1053,10 @@ const galleryItems = computed(() => {
     createdAt: a.createdAt,
     snapshot: getSnapshotUrl(a),
     videoClip: getVideoClipUrl(a),
+    // [FIX mon-point-seq 2026-09-19] metadata 透传: alarmChLabel ① 依赖
+    //   metadata.channel_id_str 反查真通道码 (137 未命名通道「监控点 3」序号链);
+    //   原映射剥离该字段 → 证据库卡片口径与表格列不一致
+    metadata: a.metadata,
   }))
 })
 function getVideoClipUrl(alarm: any): string {
@@ -1095,7 +1104,8 @@ async function loadInlineClip(url: string): Promise<void> {
 async function openInlineVideo(item: any) {
   inlineVideoItem.value = item
   // [FIX dev-name-num 2026-09-11] 视频弹窗标题同口径治理 (不裸显数字编号)
-  inlineVideoTitle.value = `${item.type} · ${alarmDevLabel(item)} · ${formatTime(item.createdAt)}`
+  // [FIX dev-col-leak 2026-09-19] 类型同步 zh 化 (原裸显 type key)
+  inlineVideoTitle.value = `${zh(item.type)} · ${alarmDevLabel(item)} · ${formatTime(item.createdAt)}`
   inlineVideoVisible.value = true
   inlineVideoLoading.value = true
   inlineVideoUrl.value = ''
@@ -1490,9 +1500,17 @@ const unsubscribeAlarm = wsSubscribe('alarm.new', (data: any) => {
   }
   // 仅在前 3 页弹 ElMessage, 深层页静默更新避免刷屏
   if (currentPage.value <= 3) {
+    // [FIX dev-col-leak 2026-09-19] toast 显示口径对齐表格列 (真机复测发现 137
+    //   未命名通道行 toast 裸显「abandoned — 13120000001370000001」):
+    //   类型走 zh() canonical 中文名; 位置走 SSOT alarmDevLabel/alarmChLabel,
+    //   双 '-' 时回落 location 文本, 全空则不拼「 — 」段。
+    const devLb = alarmDevLabel(normalized)
+    const chLb = alarmChLabel(normalized)
+    const where = [devLb, chLb].filter((v) => v && v !== '-').join(' / ')
+      || String(normalized.location || '')
     ElMessage({
       type: (normalized.level || normalized.severity) === 'critical' ? 'error' : 'warning',
-      message: `🚨 新告警: ${normalized.type || normalized.alarm_type} — ${normalized.deviceName || normalized.location || ''}`,
+      message: `🚨 新告警: ${zh(normalized.type || normalized.alarm_type)}${where ? ' — ' + where : ''}`,
       duration: 5000,
     })
   }
@@ -1636,9 +1654,14 @@ const { alarmStatCards, filteredAlarms } = (() => {
       // [P3 2026-09-10] 设备树筛选 (右侧面板勾选集合命中判定; 空集不筛)
       if (!alarmHitTree(a)) continue
       if (q) {
+        // [FIX dev-col-leak 2026-09-19] 搜索补显示层标签 (normalize deviceName 移除通道名
+        //   兜底后 raw 字段不再含通道名) — 搜「摄像头1」/「192.168」/「监控点 3」均命中
+        //   当前展示值, 设备/监控点两列所见即所搜。
         if (!((a.description || '').toLowerCase().includes(q) ||
               (a.title || '').toLowerCase().includes(q) ||
-              (a.deviceName || '').toLowerCase().includes(q))) continue
+              (a.deviceName || '').toLowerCase().includes(q) ||
+              alarmDevLabel(a).toLowerCase().includes(q) ||
+              alarmChLabel(a).toLowerCase().includes(q))) continue
       }
       if (hasDate) {
         const t = new Date(a.createdAt).getTime()

@@ -183,7 +183,9 @@
                   </div>
                   <div class="snap-meta">
                     <el-tag size="small" type="danger" effect="dark" class="snap-type">{{ zh(a.type) }}</el-tag>
-                    <span class="snap-dev" :title="a.channelName || a.channelId">{{ a.channelName || a.channelId }}</span>
+                    <!-- [FIX dev-col-leak 2026-09-19] 监控点标签走 alarmChLabel SSOT
+                         (原 a.channelName || a.channelId 裸显编码/合成占位) -->
+                    <span class="snap-dev" :title="alarmChLabel(a)">{{ alarmChLabel(a) }}</span>
                     <span class="snap-time">{{ fmtTime(a.createdAt) }}</span>
                   </div>
                 </div>
@@ -335,6 +337,8 @@ import {
   type FusionStatus,
 } from '@/api/videoPerimeter'
 import { normalizeAlarmCore, type AlarmEvent } from '@/types/alarm'
+// [FIX dev-col-leak 2026-09-19] 快照条监控点标签走显示口径 SSOT (原裸显 raw channelName/channelId)
+import { alarmChLabel } from '@/composables/useAlarmTableHelpers'
 import type { ScenePack } from '@/types/largeEvent'
 import { channelApi } from '@/api/channel'
 import { getInferenceChannels } from '@/api/inference'

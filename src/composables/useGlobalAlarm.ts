@@ -17,6 +17,8 @@ import { useUserStore } from '@/stores/user'
 import { usePassTipStore, PASS_TIP_TYPES } from '@/stores/passTip'
 import { http } from '@/api/http'
 import type { AlarmEvent } from '@/types/alarm'
+// [FIX dev-col-leak 2026-09-19] 通行提示条通道名走显示口径 SSOT
+import { alarmChLabel } from './useAlarmTableHelpers'
 
 // ── 单例状态（模块级，不随组件销毁） ──
 
@@ -416,10 +418,13 @@ async function handleAlarm(alarm: any) {
     //   历史补拉帧不在分流点之前早退, 但去重窗口内会被 store 丢弃; 静音开关见 PassTipBar。
     if (PASS_TIP_TYPES.has(normalized.type)) {
       const meta = normalized.metadata || {}
+      // [FIX dev-col-leak 2026-09-19] 通道名走显示口径 SSOT (原裸显 raw channelName:
+      //   未命名通道可达 20 位国标编码 / 合成「监控点<id>」占位, PassTipBar 滚动条可见)
+      const tipChLb = alarmChLabel(normalized)
       const enqueued = usePassTipStore().push({
         type: normalized.type,
         personName: String((meta as any).enroll_name || (meta as any).enrollName || ''),
-        channelName: normalized.channelName || '',
+        channelName: tipChLb === '-' ? '' : tipChLb,
         createdAt: Date.parse(normalized.createdAt) || Date.now(),
       })
       if (enqueued) console.log('[useGlobalAlarm] face pass -> PassTipBar:', normalized.type)

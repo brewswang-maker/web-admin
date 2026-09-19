@@ -937,7 +937,13 @@ export function normalizeAlarmCore(raw: any): AlarmEvent {
     //   可读形态 ("华盾互联办公室摄像头 通道01"), 作为 deviceName 兜底源,
     //   AlarmPopup 详情 + useAlarm 搜索同时受益; 不剥「 通道NN」后缀 (自定义名
     //   可能含"通道"字样, 误伤风险 > 收益)。
-    deviceName: raw.device_name || raw.deviceName || raw.zone || raw.channel_name || raw.channelName || '',
+    // [FIX dev-col-leak 2026-09-19] 移除 channel_name/channelName 兜底 (用户「越改越差」
+    //   投诉核心): 通道级名当设备名 → 「设备」列=「监控点」列完全重复 (真机 100 实测
+    //   1653 条告警六族形态全命中)。deviceName 保持设备级语义 (device_name → zone),
+    //   可读兜底由显示层 resolveAlarmDeviceName 目录链 (设备名/IP/父设备链) 承担 —
+    //   弹窗「设备名称」经同解析器自动获得 IP 兜底, 不再裸显通道名;
+    //   列表搜索已同步补显示层标签 (AlarmsView q 过滤), 所见即所搜。
+    deviceName: raw.device_name || raw.deviceName || raw.zone || '',
     snapshotUrl: toAbsoluteUrl(raw.snapshot_url || raw.snapshotUrl || raw.snapshot_path),
     videoClipUrl: toAbsoluteUrl(raw.video_clip_url || raw.videoClipUrl),
     // [AI 复核恢复 2026-09-10 P4] 兜底链补 metadata.ai_review 结论 (顶层
