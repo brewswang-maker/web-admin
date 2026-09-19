@@ -479,7 +479,7 @@
              悬停 tooltip 透出复核详情 (结论/置信度/时间/理由), 操作区另有「AI复核」一级入口 -->
         <el-table-column label="AI复核" width="110" align="center">
           <template #default="{ row }">
-            <el-tooltip :content="aiReviewTooltip(row.aiReview)" placement="top" :show-after="500" effect="dark">
+            <el-tooltip :content="aiReviewTooltip(row.aiReview)" placement="top" :show-after="500" effect="dark" popper-class="ai-review-tip">
               <el-tag :type="aiReviewTagType(row.aiReview)" size="small" effect="plain">
                 {{ aiReviewVerdictLabel(row.aiReview) }}
               </el-tag>
@@ -2096,6 +2096,19 @@ async function runAiReview(row: any) {
     const res: any = await alarmApi.analyzeAlarm(row.id)
     const payload = res?.data?.data ?? {}
     const analysis = typeof payload === 'string' ? payload : (payload.analysis ?? '')
+    // [UX ai-review-trigger 2026-09-19] 手动复核结果回填行内: analyze 端点为自由文本
+    // 看图分析, 无结构化真/误报判定, 不冒标 confirmed/retracted — verdict 落 'reviewed'
+    // (aiReviewVerdictLabel 兑底「已复核」, tag 灰色 info), 分析全文进 reason 供 tooltip
+    // 与对话框展示。注意: 该回填是前端本地态, 服务端 metadata.ai_review 仍由异步 VLM
+    // 自动复核链独占写入, 刷新/翻页重新拉取后回落为后端真实口径
+    row.aiReview = {
+      verdict: 'reviewed',
+      confidence: 0,
+      verifier: String(payload.backend || 'analyze'),
+      reviewedAt: new Date().toISOString(),
+      latencyMs: 0,
+      reason: String(analysis || ''),
+    }
     aiReviewDlg.row = row
     aiReviewDlg.analysis = String(analysis || '')
     aiReviewDlg.backend = String(payload.backend ?? '')
@@ -2833,6 +2846,11 @@ onUnmounted(() => {
 }
 .ai-review-pop__value--wrap {
   word-break: break-all;
+  /* [UX ai-review-trigger 2026-09-19] 手动复核回填后 reason = 本次 AI 分析全文,
+     限高滚动防长文本撑爆对话框 (ai_review 原生 reason 为短句不受影响) */
+  display: block;
+  max-height: 140px;
+  overflow-y: auto;
 }
 .ai-review-pop__empty {
   font-size: 12px;
@@ -2969,3 +2987,14 @@ onUnmounted(() => {
 <!-- [chan-col 2026-09-11 完成锚点] 同构列升级+状态列移位+pageTotal 收敛批次 · 部署产物 entry=index-wS8-Hc--kp.js tgz md5=57e4f6f0d728c29eeca8f2a8f6dd629b -->
 
 <!-- [t3-tree-channel 2026-09-11 完成锚点] 三级树通道级服务端下钻(单值直传+多值 fan-out)批次 · 部署产物 entry=index-CvT0U9Nv4f.js tgz md5=07a2e26224ed93a40c47f987c04b7bb5 -->
+
+<!-- [UX ai-review-trigger 2026-09-19] 列内复核 tag tooltip 的 popper 挂 body (teleport),
+     scoped 样式无 data-v 属性不生效 (AlarmPopup occ-overlay 同款教训) — 详情含长文本
+     分析, 限宽+预换行防单行溢出屏幕 -->
+<style>
+.ai-review-tip {
+  max-width: 440px;
+  white-space: pre-wrap;
+  line-height: 1.6;
+}
+</style>
