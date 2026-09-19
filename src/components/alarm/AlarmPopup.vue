@@ -1133,11 +1133,13 @@ async function confirmAppend() {
 //   「找到 N 段录像, 点击播放」人工选片列表。设备 ZLM 录像为 60s 切片
 //   (mp4_max_second=60) → 3 分钟 = 3~4 片连播: 首片 seek 到 T-90s 片内偏移,
 //   片间由 MiniPlayer @ended 推进, 末片播到 T+90s 截止 (0.5s 容差内视为播全片)。
-// [FIX clip-window 2026-09-16] 3.1 时间窗延长: 事件前后各 90s → 各 3 分钟 (共 6 分钟),
-//   localStorage `shield.clipHalfMinutes` 可配 (1~30, 默认 3); 查询窗口 = 半窗 + 60s 边距
+// [FIX clip-window 2026-09-16] 3.1 时间窗延长: 事件前后各 90s → 各 3 分钟 (共 6 分钟)
+// [FIX clip-90s 2026-09-19] 用户令恢复"事件前后各 90 秒": 默认 3 → 1.5 分钟 (共 3 分钟),
+//   与 09-11 原规格一致; localStorage `shield.clipHalfMinutes` 仍可配 (1~30 分钟);
+//   查询窗口 = 半窗 + 60s 边距
 const CLIP_HALF_MS = (() => {
   const v = Number(localStorage.getItem('shield.clipHalfMinutes'))
-  const minutes = Number.isFinite(v) && v >= 1 && v <= 30 ? v : 3
+  const minutes = Number.isFinite(v) && v >= 1 && v <= 30 ? v : 1.5
   return Math.round(minutes * 60_000)
 })()
 const CLIP_QUERY_PAD_MS = CLIP_HALF_MS + 60_000  // 查询窗口前后各 (半窗 + 1min), 含片边界余量
