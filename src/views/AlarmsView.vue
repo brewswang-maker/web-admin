@@ -546,9 +546,9 @@
              ② 处警统一文案 — 行为沿用 openDisposeDialog (未完结=可编辑处置 /
                 已完结=只读回显+追加处警), 原 [P0-13 2026-09-04] 二元文案 (处警/详情)
                 废弃 — 已完结点「处警」进只读回显, 语义仍是处警流程;
-             ③ AI复核一级入口 — el-popover 透出 metadata.ai_review 字段组
-                (结论 tag/复核置信度/时间/引擎/耗时/理由), 与 AlarmPopup AI 复核卡片
-                同口径; 无复核数据时明示占位不空白;
+             ③ AI复核一级入口 — 点击即调用 POST /alarms/:id/analyze (多模态
+                VLM 看图分析, 与证据链弹窗 doAnalyze 同端点), 完成后弹「AI 复核」
+                对话框透出 metadata.ai_review 字段组 + 本次 AI 分析文本;
              ④ 其余生命周期操作 (关闭/升级/转派/标记误报/复核标注/忽略/详情) 全部
                 保留在「更多」下拉, 零功能删除 — 证据链已提升故从下拉移除 -->
         <el-table-column label="操作" width="245" fixed="right">
@@ -556,41 +556,10 @@
             <div class="action-btns">
               <el-button type="info" link @click="showEvidence(row)">证据链</el-button>
               <el-button type="primary" link @click="openDisposeDialog(row)">处警</el-button>
-              <el-popover placement="left" :width="330" trigger="click">
-                <template #reference>
-                  <el-button type="warning" link>AI复核</el-button>
-                </template>
-                <!-- AI 复核详情 (字段口径 = AlarmPopup AI 复核卡片, 见组件内同名注释) -->
-                <div class="ai-review-pop">
-                  <div class="ai-review-pop__head">
-                    <span class="ai-review-pop__title">AI 复核</span>
-                    <el-tag :type="aiReviewTagType(row.aiReview)" size="small" effect="plain">
-                      {{ aiReviewVerdictLabel(row.aiReview) }}
-                    </el-tag>
-                  </div>
-                  <div class="ai-review-pop__row">
-                    <span class="ai-review-pop__label">复核置信度</span>
-                    <span class="ai-review-pop__value">{{ aiReviewConfidenceText(row.aiReview) }}</span>
-                    <span class="ai-review-pop__label">复核时间</span>
-                    <span class="ai-review-pop__value">{{ row.aiReview?.reviewedAt ? formatTime(row.aiReview.reviewedAt) : '—' }}</span>
-                  </div>
-                  <div class="ai-review-pop__row" v-if="row.aiReview?.verifier && row.aiReview.verifier !== 'none'">
-                    <span class="ai-review-pop__label">复核引擎</span>
-                    <span class="ai-review-pop__value">{{ row.aiReview.verifier }}</span>
-                    <template v-if="row.aiReview?.latencyMs">
-                      <span class="ai-review-pop__label">耗时</span>
-                      <span class="ai-review-pop__value">{{ row.aiReview.latencyMs }}ms</span>
-                    </template>
-                  </div>
-                  <div class="ai-review-pop__row" v-if="row.aiReview?.reason">
-                    <span class="ai-review-pop__label">复核结论</span>
-                    <span class="ai-review-pop__value ai-review-pop__value--wrap">{{ row.aiReview.reason }}</span>
-                  </div>
-                  <div v-if="!row.aiReview" class="ai-review-pop__empty">
-                    该告警暂无 AI 复核结论 (VLM 二次复核排队中或未产出)
-                  </div>
-                </div>
-              </el-popover>
+              <!-- [UX ai-review-trigger 2026-09-19] 点击即调用 AI 复核: 按钮 loading 期间
+                   禁点, 结果进「AI 复核」对话框 (模板尾部); 列内「AI复核」tag 仍透出异步
+                   VLM 自动复核结论 — 手动看图分析与自动撤警链互不覆盖 -->
+              <el-button type="warning" link :loading="!!aiAnalyzeLoading[row.id]" @click="runAiReview(row)">AI复核</el-button>
               <el-dropdown @command="(cmd: string) => handleLifecycleCommand(cmd, row)" trigger="click">
                 <el-button  type="info" link>更多<el-icon class="el-icon--right"><ArrowDown /></el-icon></el-button>
                 <template #dropdown>
@@ -632,6 +601,50 @@
     <!-- ===== 告警详情弹窗 [UX 2026-08-31 已拆除]: 详情统一走全局 AlarmPopup
          (components/alarm/AlarmPopup.vue, 含快照/实时流/回放/AI研判/确认/误报),
          由 handleDetail → showAlarmPopup 触发 -->
+
+    <!-- ===== AI 复核对话框 [UX ai-review-trigger 2026-09-19] =====
+         操作区「AI复核」点击 POST /alarms/:id/analyze 的结果展示: 上半 = metadata.ai_review
+         字段组 (异步 VLM 自动复核结论, 无则「未复核」占位不隐藏, 字段口径 = AlarmPopup
+         AI 复核卡片); 下半 = 本次多模态 AI 分析文本 (backend 标注实际推理后端) -->
+    <el-dialog v-model="aiReviewDlg.visible" title="AI 复核" width="560px" append-to-body>
+      <div class="ai-review-pop">
+        <div class="ai-review-pop__head">
+          <span class="ai-review-pop__title">复核结论</span>
+          <el-tag :type="aiReviewTagType(aiReviewDlg.row?.aiReview)" size="small" effect="plain">
+            {{ aiReviewVerdictLabel(aiReviewDlg.row?.aiReview) }}
+          </el-tag>
+        </div>
+        <div class="ai-review-pop__row">
+          <span class="ai-review-pop__label">复核置信度</span>
+          <span class="ai-review-pop__value">{{ aiReviewConfidenceText(aiReviewDlg.row?.aiReview) }}</span>
+          <span class="ai-review-pop__label">复核时间</span>
+          <span class="ai-review-pop__value">{{ aiReviewDlg.row?.aiReview?.reviewedAt ? formatTime(aiReviewDlg.row.aiReview.reviewedAt) : '—' }}</span>
+        </div>
+        <div class="ai-review-pop__row" v-if="aiReviewDlg.row?.aiReview?.verifier && aiReviewDlg.row.aiReview.verifier !== 'none'">
+          <span class="ai-review-pop__label">复核引擎</span>
+          <span class="ai-review-pop__value">{{ aiReviewDlg.row.aiReview.verifier }}</span>
+          <template v-if="aiReviewDlg.row?.aiReview?.latencyMs">
+            <span class="ai-review-pop__label">耗时</span>
+            <span class="ai-review-pop__value">{{ aiReviewDlg.row.aiReview.latencyMs }}ms</span>
+          </template>
+        </div>
+        <div class="ai-review-pop__row" v-if="aiReviewDlg.row?.aiReview?.reason">
+          <span class="ai-review-pop__label">复核结论</span>
+          <span class="ai-review-pop__value ai-review-pop__value--wrap">{{ aiReviewDlg.row.aiReview.reason }}</span>
+        </div>
+        <div v-if="!aiReviewDlg.row?.aiReview" class="ai-review-pop__empty">
+          该告警暂无 AI 复核结论 (VLM 二次复核排队中或未产出)
+        </div>
+      </div>
+      <div class="ai-review-pop__head" style="margin-top: 12px">
+        <span class="ai-review-pop__title">本次 AI 分析</span>
+        <span v-if="aiReviewDlg.backend" class="ai-review-pop__backend">{{ aiReviewDlg.backend }}</span>
+      </div>
+      <div class="ai-review-pop__analysis">{{ aiReviewDlg.analysis || '（无分析输出）' }}</div>
+      <template #footer>
+        <el-button @click="aiReviewDlg.visible = false">关闭</el-button>
+      </template>
+    </el-dialog>
 
     <!-- ===== 证据链弹窗 ===== -->
     <el-dialog v-model="showEvidenceDialog" title="告警证据链" width="720px" destroy-on-close
@@ -862,7 +875,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, shallowRef, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, reactive, shallowRef, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   Bell, Warning, CircleCheck, Clock,
@@ -2065,6 +2078,36 @@ function aiReviewConfidenceText(v: AiReviewInfo | undefined): string {
   return v && v.confidence > 0 ? `${Math.round(v.confidence * 100)}%` : '—'
 }
 
+// ── [UX ai-review-trigger 2026-09-19] 「AI复核」点击即调用 ──
+// 端点 = POST /alarms/:id/analyze (告警快照+详情 → 云端多模态 VLM 看图分析),
+// 响应解析口径同证据链弹窗 doAnalyze (res.data.data.analysis); 与异步 VLM
+// 自动复核链 (metadata.ai_review) 互不覆盖 — 前者即时看图研判, 后者自动撤警判定
+const aiAnalyzeLoading = ref<Record<string, boolean>>({})
+const aiReviewDlg = reactive<{ visible: boolean; row: any; analysis: string; backend: string }>({
+  visible: false,
+  row: null,
+  analysis: '',
+  backend: '',
+})
+async function runAiReview(row: any) {
+  if (aiAnalyzeLoading.value[row.id]) return
+  aiAnalyzeLoading.value[row.id] = true
+  try {
+    const res: any = await alarmApi.analyzeAlarm(row.id)
+    const payload = res?.data?.data ?? {}
+    const analysis = typeof payload === 'string' ? payload : (payload.analysis ?? '')
+    aiReviewDlg.row = row
+    aiReviewDlg.analysis = String(analysis || '')
+    aiReviewDlg.backend = String(payload.backend ?? '')
+    aiReviewDlg.visible = true
+    ElMessage.success('AI 复核完成')
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.message || e?.message || 'AI 复核失败, 请稍后重试')
+  } finally {
+    delete aiAnalyzeLoading.value[row.id]
+  }
+}
+
 async function handleLifecycleCommand(cmd: string, row: any) {
   switch (cmd) {
     case 'review':
@@ -2795,6 +2838,27 @@ onUnmounted(() => {
   font-size: 12px;
   color: var(--app-text-secondary, #909399);
   padding: 4px 0;
+}
+/* [UX ai-review-trigger 2026-09-19] 本次 AI 分析文本块: 左侧紫色描边对齐
+   .xai-detail 的 AI 产出视觉语言, 限高滚动防长文本撑爆对话框 */
+.ai-review-pop__analysis {
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--app-text-primary, #303133);
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: rgba(124, 58, 237, 0.05);
+  border-left: 3px solid var(--color-ai-400, #7c3aed);
+  padding: 8px 12px;
+  border-radius: 6px;
+  max-height: 320px;
+  overflow-y: auto;
+  margin: 8px 0 0;
+}
+.ai-review-pop__backend {
+  font-size: 12px;
+  color: var(--app-text-secondary, #909399);
+  font-family: var(--font-mono);
 }
 
 /* ── 时间文本 ── */
