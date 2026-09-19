@@ -102,16 +102,20 @@ export function resolveAlarmDeviceName(
   if (dn && !isNumericId(dn)) return dn
   const dv = baseChannelId(deviceId)
   const cv = String(channelId ?? '').trim()
+  // [FIX dev-name-enc 2026-09-19] 目录命中须过 isNumericId 二次校验: 设备注册未命名时
+  //   device_name 落库=国标编码 (真机 192.168.0.100 三台设备全如此), 命中即返回会让
+  //   告警「设备」列裸显编码 (用户投诉)。编码形态视为无效, 继续下沉通道名/父设备链;
+  //   全链不中回 '' 走显示层占位 — 与入参 dn 校验同口径 (宁显占位不裸显编号)。
   if (dv) {
     const hit = devNameById.value.get(dv)
-    if (hit) return hit
+    if (hit && !isNumericId(hit)) return hit
   }
   if (cv) {
     const chHit = chNameById.value.get(cv) ?? chNameById.value.get(baseChannelId(cv))
-    if (chHit) return chHit
+    if (chHit && !isNumericId(chHit)) return chHit
     const pid = chDevById.value.get(baseChannelId(cv))
     const devHit = pid ? devNameById.value.get(pid) : undefined
-    if (devHit) return devHit
+    if (devHit && !isNumericId(devHit)) return devHit
   }
   return ''
 }

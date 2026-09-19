@@ -180,3 +180,32 @@ describe('aiReviewText / aiReviewVerdictLabel 锚点词契约', () => {
     expect(aiReviewText({ verdict: 'retracted', reason: '' })).toBe('误报')
   })
 })
+
+describe('createdAt/updatedAt — 数字毫秒归一 (FIX ws-time-sort 2026-09-19)', () => {
+  /** WS alarm.new 推送帧 created_at 为数字毫秒 (BoxService 直取 timestamp_ms),
+   *  与 REST 行 ISO 字符串混合进 el-table createdAt 排序 → 比较紊乱, 新告警沉底
+   *  (真机 192.168.0.100 实测新行排列表末尾, 用户感知「新报警不出现」)。 */
+  const TS = 1789793864399
+
+  it('WS 帧形态: created_at 数字 → ISO 字符串 (排序键恢复同型)', () => {
+    const a = normalizeAlarmCore({ ...BASE_RAW, created_at: TS })
+    expect(a.createdAt).toBe(new Date(TS).toISOString())
+  })
+
+  it('ISO 字符串原样保留 (REST 行回归)', () => {
+    const iso = '2026-09-19T04:57:44.000Z'
+    const a = normalizeAlarmCore({ ...BASE_RAW, created_at: iso })
+    expect(a.createdAt).toBe(iso)
+  })
+
+  it('timestamp_ms 数字兜底同样归一 (updatedAt 跟随 createdAt 链)', () => {
+    const a = normalizeAlarmCore({ ...BASE_RAW, timestamp_ms: TS })
+    expect(a.createdAt).toBe(new Date(TS).toISOString())
+    expect(a.updatedAt).toBe(new Date(TS).toISOString())
+  })
+
+  it('updated_at 数字毫秒 → ISO (处置回写帧)', () => {
+    const a = normalizeAlarmCore({ ...BASE_RAW, updated_at: TS })
+    expect(a.updatedAt).toBe(new Date(TS).toISOString())
+  })
+})

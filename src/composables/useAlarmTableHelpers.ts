@@ -212,14 +212,18 @@ export function alarmDevLabel(a: Pick<AlarmEvent, 'deviceName' | 'deviceId' | 'c
 //   → ③ 可读 channelName 直用 (目录未收录/未就绪兜底) → ④ 反查/占位。
 export function alarmChLabel(a: Pick<AlarmEvent, 'channelId'> & { channelName?: string; metadata?: Record<string, unknown> }): string {
   // ① 通道码 (metadata 首元素) 目录反查: 用户配置的监控点级名优先
+  // [FIX mon-name-enc 2026-09-19] 目录名过 isNumericId 二次校验: 通道注册未命名时
+  //   目录 name=国标编码 (真机 192.168.0.100 AudioOut 通道 1312…137…001), 直用致
+  //   监控点列裸显编码 (用户投诉「有的通道名称不对」残项)。编码形态视为无效继续
+  //   下沉, 全不中回落「监控点{id}」占位 — 与 ③ 可读名校验同口径 (不裸显数字)。
   const mch = String(a.metadata?.channel_id_str ?? '').trim()
   if (mch) {
     const hit = chNameOf(mch)
-    if (hit) return hit
+    if (hit && !isNumericId(hit)) return hit
   }
   // ② 顶层 channelId 目录反查 (channelId 自身即通道码形态的告警)
   const topHit = chNameOf(a.channelId)
-  if (topHit) return topHit
+  if (topHit && !isNumericId(topHit)) return topHit
   // ③ 可读 channelName 直用 (目录未收录/未就绪 — 兼容插件 meta 通道级名)
   const cn = String(a.channelName ?? '').trim()
   if (cn && !isNumericId(cn)) return cn

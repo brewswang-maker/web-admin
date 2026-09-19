@@ -802,6 +802,16 @@ export function aiReviewStage(
   return 'pending'
 }
 
+/** [FIX ws-time-sort 2026-09-19] 时间字段 ISO 归一 (数字毫秒 → ISO 字符串, 字符串原样,
+ *  其余空串): WS 推送帧 created_at 是数字毫秒 (BoxService 推送体直取 alarm.timestamp_ms),
+ *  REST 行为 ISO 字符串 — 混合类型透传致 el-table default-sort (createdAt desc) 本地
+ *  比较恒假/紊乱, 新告警被排到列表底部 (可视区外), 用户感知「新报警不刷新/不出现」。
+ *  统一归一后列表插入 + 排序全链恢复; 其他消费方 (formatTime) 本就接受 ISO。 */
+function toIsoTime(v: unknown): string {
+  if (typeof v === 'number' && Number.isFinite(v) && v > 0) return new Date(v).toISOString()
+  return typeof v === 'string' ? v : ''
+}
+
 /**
  * 统一归一化: 后端 snake_case (或部分 camelCase) → 前端 AlarmEvent
  * 所有模块 (WS / REST / 缓存) 必须走这一个函数, 避免字段漂移.
@@ -990,12 +1000,16 @@ export function normalizeAlarmCore(raw: any): AlarmEvent {
     },
     // [Fix 2026-06-24] 支持 raw.timestamp 字段（后端实际返回的时间戳字段名）
     //   优先级: created_at > createdAt > timestamp > timestamp_ms > 当前时间
-    createdAt: raw.created_at || raw.createdAt
-      || (typeof raw.timestamp === 'number' ? new Date(raw.timestamp).toISOString() : '')
-      || (typeof raw.timestamp_ms === 'number' ? new Date(raw.timestamp_ms).toISOString() : '')
+    // [FIX ws-time-sort 2026-09-19] 候选全部经 toIsoTime 归一 (WS 帧 created_at
+    //   为数字毫秒; 原样透传破坏 el-table createdAt 排序, 新告警沉底不可见)
+    createdAt: toIsoTime(raw.created_at) || toIsoTime(raw.createdAt)
+      || toIsoTime(raw.timestamp)
+      || toIsoTime(raw.timestamp_ms)
       || new Date().toISOString(),
-    updatedAt: raw.updated_at || raw.updatedAt || raw.created_at || raw.createdAt
-      || (typeof raw.timestamp === 'number' ? new Date(raw.timestamp).toISOString() : new Date().toISOString()),
+    updatedAt: toIsoTime(raw.updated_at) || toIsoTime(raw.updatedAt)
+      || toIsoTime(raw.created_at) || toIsoTime(raw.createdAt)
+      || toIsoTime(raw.timestamp) || toIsoTime(raw.timestamp_ms)
+      || new Date().toISOString(),
     // [FIX 2026-09-03 处理备注闭环] 双源: 顶层字段优先, 兜底治理回填 gov
     //   (后端 handleAlarm 写 handled_by/disposition 列, 列表/详情 SELECT 回填
     //   metadata 治理字段 — 与 status 双源同模式); 否则确认后重开备注/处理人永远为空。
