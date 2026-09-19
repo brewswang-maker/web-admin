@@ -97,6 +97,9 @@ interface EditDevice {
   id: string
   name: string
   businessId?: string
+  /** [CH-BIND 2026-09-19] 通道级节点的通道 id（placement 保存/清除键
+   *  优先用它；设备级节点无此字段则回落 businessId） */
+  channelId?: string
   x: number
   y: number
   z: number
@@ -143,13 +146,16 @@ watch(() => props.selectedDevice, (dev) => {
 }, { immediate: true })
 
 async function savePlacement() {
-  if (!props.selectedDevice?.businessId) {
+  // [CH-BIND 2026-09-19] placement 键: 通道级节点用通道 id（华盾展厅 ch1/ch2
+  //   分绑 CAM_09/CAM_01）; 设备级节点维持 businessId（后端 KV 表任意键可写）
+  const key = props.selectedDevice?.channelId || props.selectedDevice?.businessId
+  if (!key) {
     ElMessage.warning('演示设备无法保存位置')
     return
   }
   saving.value = true
   try {
-    await sceneApi.updatePlacement(props.selectedDevice.businessId, {
+    await sceneApi.updatePlacement(key, {
       sceneX: editData.x,
       sceneY: editData.y,
       sceneZ: editData.z,
@@ -173,10 +179,12 @@ async function savePlacement() {
 }
 
 async function clearPlacement() {
-  if (!props.selectedDevice?.businessId) return
+  // [CH-BIND 2026-09-19] 与 savePlacement 同键: 通道级节点清通道级 placement
+  const key = props.selectedDevice?.channelId || props.selectedDevice?.businessId
+  if (!key) return
   saving.value = true
   try {
-    await sceneApi.clearPlacement(props.selectedDevice.businessId)
+    await sceneApi.clearPlacement(key)
     ElMessage.success('已恢复自动映射')
     isManual.value = false
     emit('device-cleared', props.selectedDevice.id)

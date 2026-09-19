@@ -179,6 +179,9 @@ interface Device3D {
   businessId?: string
   /** 设备类型 */
   deviceType?: string
+  /** [CH-BIND 2026-09-19] 通道级节点的通道 id（多通道设备分绑多点位时的
+   *  播放源；设备级节点无此字段） */
+  channelId?: string
 }
 const props = defineProps<{
   devices?: Device3D[]
@@ -225,10 +228,10 @@ const emit = defineEmits<{
   /** P2-6: 2D小地图设备点击 */
   'minimap-select': [deviceId: string]
   /** T4: 设备视频操作 — 实时预览请求 */
-  'device-video': [device: { id: string; name: string; businessId?: string; deviceType?: string }]
+  'device-video': [device: { id: string; name: string; businessId?: string; deviceType?: string; channelId?: string }]
   /** [WEB-GLB v1.9.8] 设备视频投放至 3D LED 大屏（仅 VideoTexture, 不弹窗; 
    *  同设备再次触发 = 停止投放, 异设备触发 = 切换投放源） */
-  'device-cast': [device: { id: string; name: string; businessId?: string; deviceType?: string }]
+  'device-cast': [device: { id: string; name: string; businessId?: string; deviceType?: string; channelId?: string }]
 }>()
 
 const router = useRouter()
@@ -2133,7 +2136,7 @@ function closeContextMenu() {
 function onDeviceLivePreview() {
   const dev = contextMenu.device
   if (!dev) return
-  emit('device-video', { id: dev.id, name: dev.name, businessId: dev.businessId, deviceType: dev.deviceType })
+  emit('device-video', { id: dev.id, name: dev.name, businessId: dev.businessId, deviceType: dev.deviceType, channelId: dev.channelId })
   closeContextMenu()
 }
 
@@ -2152,7 +2155,7 @@ function onDevicePlayback() {
 function onDeviceCastToBoard() {
   const dev = contextMenu.device
   if (!dev) return
-  emit('device-cast', { id: dev.id, name: dev.name, businessId: dev.businessId, deviceType: dev.deviceType })
+  emit('device-cast', { id: dev.id, name: dev.name, businessId: dev.businessId, deviceType: dev.deviceType, channelId: dev.channelId })
   closeContextMenu()
 }
 

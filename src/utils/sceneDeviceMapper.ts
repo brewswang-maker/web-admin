@@ -42,6 +42,9 @@ export interface SceneDevice3D {
   businessId?: string
   /** 设备类型 */
   deviceType?: string
+  /** [CH-BIND 2026-09-19] 通道级节点绑定的通道 id（多通道设备分绑多点位时
+   *  的播放源与 placement 编辑键；设备级节点无此字段） */
+  channelId?: string
 }
 
 /**
@@ -383,6 +386,57 @@ export function mergePlacements(
         : node.location,
     }
   })
+}
+
+/**
+ * [CH-BIND 2026-09-19] 通道级绑定展开：当设备的部分/全部通道携带独立 placement
+ * （placement.deviceId = 通道 id 而非设备 id）时，将设备级节点展开为通道级节点
+ * （每通道一节点），支撑"多通道设备把不同通道分别绑到不同 3D 点位"
+ * （如华盾展厅 ch1→CAM_09 内场、ch2→CAM_01 主入口）。
+ *
+ * 触发条件（保守，向后兼容）：设备存在**任一**通道级 placement 才展开；
+ * 展开后未绑定通道回落设备级位置（南侧兜底 / 设备级 placement），
+ * 避免"部分绑定"造成设备级与通道级节点同场景并存两套标牌。
+ * 通道列表由调用方异步拉取后传入（保持本函数纯同步，便于单测）。
+ */
+export function expandChannelNodes(
+  nodes: SceneDevice3D[],
+  channelsByDevice: Map<string, Array<{ id: string; name?: string }>>,
+  placements: Map<string, DevicePlacement>,
+): SceneDevice3D[] {
+  const out: SceneDevice3D[] = []
+  for (const node of nodes) {
+    const deviceId = node.businessId ?? node.id
+    const channels = channelsByDevice.get(deviceId)
+    if (!channels?.length) {
+      out.push(node)
+      continue
+    }
+    const hasChPlacement = channels.some(ch => ch.id && placements.has(ch.id))
+    if (!hasChPlacement) {
+      out.push(node)
+      continue
+    }
+    for (const ch of channels) {
+      if (!ch.id) continue
+      const p = placements.get(ch.id)
+      const sx = p ? parseCoord(p.sceneX) : null
+      const sy = p ? parseCoord(p.sceneY) : null
+      const sz = p ? parseCoord(p.sceneZ) : null
+      out.push({
+        ...node,
+        id: ch.id,
+        channelId: ch.id,
+        name: ch.name || node.name,
+        x: sx ?? node.x,
+        y: sy ?? node.y,
+        z: sz ?? node.z,
+        rotation: (p ? parseCoord(p.rotation) : null) ?? node.rotation,
+        fov: (p ? parseCoord(p.fov) : null) ?? node.fov,
+      })
+    }
+  }
+  return out
 }
 
 // ════════════════════════════════════════════════════

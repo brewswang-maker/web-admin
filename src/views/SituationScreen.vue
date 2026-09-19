@@ -893,6 +893,7 @@ import {
   mapDevicesToScene,
   normalizePlacement,
   mergePlacements,
+  expandChannelNodes,
   DEMO_SCENE_DEVICES,
   type SceneDevice3D,
   type RawMapDevicePoint,
@@ -1176,6 +1177,9 @@ const selectedEditDevice = ref<{
   id: string
   name: string
   businessId?: string
+  /** [CH-BIND 2026-09-19] 通道级节点的通道 id（SceneEditPanel 以此为
+   *  placement 保存/清除键；设备级节点无此字段） */
+  channelId?: string
   x: number; y: number; z: number
   rotation: number; fov: number
   buildingId?: string
@@ -2311,7 +2315,10 @@ let castVideoEl: HTMLVideoElement | null = null
 let previewChannelId = ''
 
 /** 解析设备首通道 id (真机经 getDeviceChannels 换取通道, 演示点位直接用点位 id) */
-async function resolveChannelId(device: { id: string; businessId?: string }): Promise<string> {
+async function resolveChannelId(device: { id: string; businessId?: string; channelId?: string }): Promise<string> {
+  // [CH-BIND 2026-09-19] 通道级节点自带通道 id, 直接作为播放源——
+  //   优先于 getDeviceChannels 首通道推断 (华盾展厅 ch1→CAM_09 / ch2→CAM_01)
+  if (device.channelId) return device.channelId
   let channelId = device.id
   if (device.businessId) {
     try {
@@ -2325,7 +2332,7 @@ async function resolveChannelId(device: { id: string; businessId?: string }): Pr
   return channelId
 }
 
-async function onDeviceVideo(device: { id: string; name: string; businessId?: string }) {
+async function onDeviceVideo(device: { id: string; name: string; businessId?: string; channelId?: string }) {
   videoPreviewDevice.value = device
   videoPreviewVisible.value = true
   videoPreviewLoading.value = true
@@ -2408,7 +2415,7 @@ async function onDeviceVideo(device: { id: string; name: string; businessId?: st
  *  隐藏 video 独立拉流后作为 VideoTexture 投到当前活跃实例的 4 块大屏
  *  (Scene3D.castVideoToBoards, rVFC 逐帧刷新纹理)。同设备再次触发 = 停止
  *  投放 (toggle), 异设备触发 = 切换投放源; 全屏切换经 watch 迁移不中断 */
-async function onDeviceCast(device: { id: string; name: string; businessId?: string }) {
+async function onDeviceCast(device: { id: string; name: string; businessId?: string; channelId?: string }) {
   if (castDeviceId.value === device.id) { stopCastToBoard(); ElMessage.info('已停止 LED 大屏投放'); return }
   // [PERF 2026-09-14] 播放器库与拉流并行加载 (建播放器前才 await)
   const libsPromise = ensurePlayerLibs()
@@ -2632,6 +2639,27 @@ async function loadSceneDevices() {
     sceneNodes = mergePlacements(sceneNodes, placements)
   }
 
+  // [CH-BIND 2026-09-19] 通道级绑定展开: placements 中存在不属于任何设备 id 的
+  //   键 = 通道级绑定(如华盾展厅 ch1/ch2 分绑 CAM_09/CAM_01) → 拉取全部设备
+  //   通道列表, 将命中设备展开为通道级节点(各通道独立占位; 未绑定通道回落
+  //   设备级位置)。全部键命中设备 id 时零额外请求(向后兼容)。
+  const deviceIdSet = new Set(sceneNodes.map(n => n.businessId ?? n.id))
+  const unmatched = [...placements.keys()].filter(k => !deviceIdSet.has(k))
+  if (unmatched.length) {
+    const channelsByDevice = new Map<string, Array<{ id: string; name?: string }>>()
+    await Promise.all([...deviceIdSet].map(async (devId) => {
+      try {
+        const chRes = await channelApi.getDeviceChannels(devId)
+        const chs = ((chRes.data?.data as unknown as Array<Record<string, unknown>>) ?? [])
+        const list = chs
+          .map(c => ({ id: String(c.id ?? '').trim(), name: String(c.name ?? '') }))
+          .filter(c => c.id)
+        if (list.length) channelsByDevice.set(devId, list)
+      } catch { /* 单设备失败不影响其余 */ }
+    }))
+    sceneNodes = expandChannelNodes(sceneNodes, channelsByDevice, placements)
+  }
+
   // [v1.9.4] 合并模式：演示点位 + 真实设备同场景显示（用户反馈
   // "没有和现有的摄像头结合"）。v1.9.3 二选一策略在真机全部无坐标时
   // 把真机整体排除在场景外；现在真机始终进场——无坐标真机走馆内南侧
@@ -2693,6 +2721,7 @@ function onDeviceDrag(payload: { deviceId: string; x: number; y: number; z: numb
     selectedDeviceId.value = payload.deviceId
     selectedEditDevice.value = {
       id: dev.id, name: dev.name, businessId: dev.businessId,
+      channelId: dev.channelId,
       x: dev.x, y: dev.y, z: dev.z,
       rotation: dev.rotation || 0, fov: dev.fov || 65,
       buildingId: payload.buildingId, isManual: true,
@@ -2725,6 +2754,7 @@ function onDeviceSelect(deviceId: string) {
   selectedDeviceId.value = deviceId
   selectedEditDevice.value = {
     id: dev.id, name: dev.name, businessId: dev.businessId,
+    channelId: dev.channelId,
     x: dev.x, y: dev.y, z: dev.z,
     rotation: dev.rotation || 0, fov: dev.fov || 65, isManual: false,
   }

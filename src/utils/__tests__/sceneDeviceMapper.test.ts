@@ -8,8 +8,11 @@ import {
   mergeDeviceLocations,
   perimeterPoint,
   mapDevicesToScene,
+  expandChannelNodes,
   DEMO_SCENE_DEVICES,
   type NormalizedDevice,
+  type SceneDevice3D,
+  type DevicePlacement,
 } from '@/utils/sceneDeviceMapper'
 
 describe('parseCoord', () => {
@@ -229,5 +232,83 @@ describe('DEMO_SCENE_DEVICES', () => {
   it('演示数据不含 businessId（点击不跳转）', () => {
     expect(DEMO_SCENE_DEVICES.length).toBeGreaterThan(0)
     expect(DEMO_SCENE_DEVICES.every(d => !d.businessId)).toBe(true)
+  })
+})
+
+// [CH-BIND 2026-09-19] 通道级绑定展开（华盾展厅 ch1→CAM_09 内场 / ch2→CAM_01 主入口）
+describe('expandChannelNodes', () => {
+  const mkDevice = (over: Partial<SceneDevice3D> = {}): SceneDevice3D => ({
+    id: 'dev1', name: '华盾展厅', x: 0, y: 4, z: 20, status: 'online',
+    location: '展厅', fov: 65, rotation: 0, businessId: 'dev1', ...over,
+  })
+  const mkChan = (id: string, name?: string) => ({ id, name })
+  // 后端 placement 值均为字符串（KV 表），顺带验证 parseCoord 类型兼容
+  const pCh1: DevicePlacement = { deviceId: 'ch1', sceneX: '0', sceneY: '4', sceneZ: '-8', rotation: '3.142', fov: '80' }
+  const pCh2: DevicePlacement = { deviceId: 'ch2', sceneX: '0', sceneY: '5', sceneZ: '24', rotation: '0', fov: '70' }
+
+  it('无通道级 placement 时原样返回（向后兼容：不展开、不改字段）', () => {
+    const out = expandChannelNodes(
+      [mkDevice()],
+      new Map([['dev1', [mkChan('ch1'), mkChan('ch2')]]]),
+      new Map(),
+    )
+    expect(out).toHaveLength(1)
+    expect(out[0].id).toBe('dev1')
+    expect(out[0].channelId).toBeUndefined()
+  })
+
+  it('设备无通道列表时原样返回', () => {
+    const out = expandChannelNodes([mkDevice()], new Map(), new Map([['ch1', pCh1]]))
+    expect(out).toHaveLength(1)
+    expect(out[0].id).toBe('dev1')
+  })
+
+  it('任一通道有通道级 placement 即整设备展开：各通道独立占位', () => {
+    const out = expandChannelNodes(
+      [mkDevice()],
+      new Map([['dev1', [mkChan('ch1', '周界测试摄像头 照楼下'), mkChan('ch2', '华盾展厅-通道2')]]]),
+      new Map([['ch1', pCh1], ['ch2', pCh2]]),
+    )
+    expect(out).toHaveLength(2)
+    const [n1, n2] = out
+    // ch1 → CAM_09 内场 (0,4,-8) rot3.142 fov80
+    expect(n1.id).toBe('ch1')
+    expect(n1.channelId).toBe('ch1')
+    expect(n1.businessId).toBe('dev1') // 保留父设备 id（详情跳转）
+    expect(n1.name).toBe('周界测试摄像头 照楼下')
+    expect(n1.x).toBe(0); expect(n1.y).toBe(4); expect(n1.z).toBe(-8)
+    expect(n1.rotation).toBeCloseTo(3.142); expect(n1.fov).toBe(80)
+    // ch2 → CAM_01 主入口 (0,5,24) rot0 fov70
+    expect(n2.id).toBe('ch2')
+    expect(n2.channelId).toBe('ch2')
+    expect(n2.businessId).toBe('dev1')
+    expect(n2.name).toBe('华盾展厅-通道2')
+    expect(n2.x).toBe(0); expect(n2.y).toBe(5); expect(n2.z).toBe(24)
+    expect(n2.rotation).toBe(0); expect(n2.fov).toBe(70)
+  })
+
+  it('部分绑定：未绑定通道回落设备级位置与姿态', () => {
+    const out = expandChannelNodes(
+      [mkDevice()],
+      new Map([['dev1', [mkChan('ch1'), mkChan('ch2')]]]),
+      new Map([['ch1', pCh1]]),
+    )
+    expect(out).toHaveLength(2)
+    expect(out[0].z).toBe(-8) // ch1 有绑定
+    expect(out[1].id).toBe('ch2')
+    expect(out[1].x).toBe(0); expect(out[1].y).toBe(4); expect(out[1].z).toBe(20) // 设备级兜底
+    expect(out[1].fov).toBe(65)
+  })
+
+  it('多设备：仅命中通道级绑定的设备被展开，其余保持设备级节点', () => {
+    const other = mkDevice({ id: 'dev2', name: '别处摄像头', businessId: 'dev2' })
+    const out = expandChannelNodes(
+      [mkDevice(), other],
+      new Map([['dev1', [mkChan('ch1'), mkChan('ch2')]], ['dev2', [mkChan('ch9')]]]),
+      new Map([['ch1', pCh1], ['ch2', pCh2]]),
+    )
+    expect(out).toHaveLength(3) // dev1 展开成 2 + dev2 原样 1
+    expect(out[2].id).toBe('dev2')
+    expect(out[2].channelId).toBeUndefined()
   })
 })
