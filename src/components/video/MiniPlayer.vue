@@ -35,17 +35,21 @@
     <div v-if="showControls && playing" class="mini-player__controls">
       <!-- [FIX mp4-playpause 2026-09-16] 3.2 播放/暂停 (仅 mp4 回放; 直播流无暂停语义):
            暂停中显示「▶ 播放」点击恢复; 播完 (ended) 后再点 = 从头重播 -->
-      <el-button v-if="srcIsMp4" size="small" text style="cursor: pointer" @click="togglePlay">
+      <el-button v-if="srcIsMp4 || isWindowPlayback" size="small" text style="cursor: pointer" @click="togglePlay">
         {{ paused ? '▶ 播放' : '⏸ 暂停' }}
       </el-button>
       <!-- [FIX mp4-seek-ctl 2026-09-16] 3.3 快退/快进 (仅 mp4 直链回放; 直播流无文件时间轴):
            ±seekStepSec 秒段内 seek (默认 10s, 可配), 越界自动 clamp 到 [0, duration] -->
-      <template v-if="srcIsMp4">
-        <el-button size="small" text style="cursor: pointer" @click="seekByMp4(-seekStep)">⏪{{ seekStep }}s</el-button>
-        <el-button size="small" text style="cursor: pointer" @click="seekByMp4(seekStep)">{{ seekStep }}s⏩</el-button>
+      <template v-if="srcIsMp4 || isWindowPlayback">
+        <el-button size="small" text style="cursor: pointer" @click="seekStepBy(-seekStep)">⏪{{ seekStep }}s</el-button>
+        <el-button size="small" text style="cursor: pointer" @click="seekStepBy(seekStep)">{{ seekStep }}s⏩</el-button>
       </template>
+      <!-- [VCR-WIN 2026-09-18] 停止 (仅窗口回放): 暂停画面 + 请求父组件回窗口起点重开 -->
+      <el-button v-if="isWindowPlayback" size="small" text style="cursor: pointer" @click="stopWinPlayback">⏹ 停止</el-button>
       <el-button size="small" text style="cursor: pointer" @click="takeSnapshot">📸 截图</el-button>
       <el-button size="small" text style="cursor: pointer" @click="toggleMute">{{ muted ? '🔊 开声' : '🔇 静音' }}</el-button>
+      <!-- [FIX seek-feedback 2026-09-19] 跳转受理指示 (重开信令 5~17s 期画面零变化, 见 armSeekPending 头注) -->
+      <span v-if="seekPending" class="mini-player__seek-hint">⟳ 跳转中…</span>
     </div>
     <!-- [FIX mp4-playpause 2026-09-16] 3.2 暂停覆盖层: 画面中央大播放按钮 (点击恢复;
          z-index 1 低于控件条/进度条 — 暂停时仍可操作快退/快进/截图/开声) -->
@@ -56,12 +60,37 @@
          拖动中仅 UI 跟手 (@input), 松手才真正 seek (@change) — 避免 Range 拖动中连续 seek 卡顿 -->
     <div v-if="srcIsMp4 && playing && srcDur > 0" class="mini-player__progress" @mousedown.stop>
       <span class="mini-player__time">{{ fmtSec(srcCur) }}</span>
-      <input
-        class="mini-player__range"
-        type="range" min="0" :max="srcDur" step="0.1" :value="srcCur"
-        @input="onProgressInput" @change="onProgressChange"
+      <!-- [FIX seek-ux 2026-09-19] 指针拖拽统一由 track 承担 (原仅 4px 高 input 可拖, 极易脱靶) -->
+      <div
+        ref="trackRef" class="mini-player__track"
+        @pointerdown="onTrackPointerDown" @pointermove="onTrackPointerMove"
+        @pointerup="onTrackPointerUp" @pointercancel="onTrackPointerCancel"
       >
+        <input
+          class="mini-player__range"
+          type="range" min="0" :max="srcDur" step="0.1" :value="mp4ThumbSec"
+          @input="onProgressInput" @change="onProgressChange"
+        >
+      </div>
       <span class="mini-player__time">{{ fmtSec(srcDur) }}</span>
+    </div>
+    <!-- [VCR-WIN 2026-09-18] 窗口回放进度条 (NVR/GB28181 回放流无文件时间轴): 两端显示
+         绝对时刻, 轨道叠加事件时刻红标; 拖动中仅 UI 跟手, 松手 emit seekTo 由父组件重开流 -->
+    <div v-if="isWindowPlayback && playing && windowDurSec > 0" class="mini-player__progress" @mousedown.stop>
+      <span class="mini-player__time">{{ fmtClock(windowStart) }}</span>
+      <div
+        ref="trackRef" class="mini-player__track"
+        @pointerdown="onTrackPointerDown" @pointermove="onTrackPointerMove"
+        @pointerup="onTrackPointerUp" @pointercancel="onTrackPointerCancel"
+      >
+        <input
+          class="mini-player__range"
+          type="range" min="0" :max="windowDurSec" step="0.1" :value="thumbSec"
+          @input="onWinProgressInput" @change="onWinProgressChange"
+        >
+        <span v-if="eventMarkerPct != null" class="mini-player__evmark" :style="{ left: eventMarkerPct + '%' }" title="事件时刻" />
+      </div>
+      <span class="mini-player__time">{{ fmtClock(windowEnd) }}</span>
     </div>
   </div>
 </template>
@@ -74,6 +103,7 @@
  * 自管理 flv.js / HLS 实例的创建与销毁。
  */
 import { Loading } from '@element-plus/icons-vue'
+import { ElMessage } from 'element-plus'  // [FIX seek-accum 2026-09-19] 贴边点击轻提示
 // [PERF 2026-09-14] 播放器库改按需加载: hls.js + flv.js ≈1.1MB, 原静态导入经
 //   App.vue→AlarmPopup→MiniPlayer 静态链拖进首屏 vendor-misc (首页被迫下载)。
 //   类型仅编译期引用 (擦除), 运行时首次播放才 import() — 见 ensurePlayerLibs。
@@ -119,6 +149,17 @@ const props = withDefaults(defineProps<{
   /** [FIX nvr-playback 2026-09-13] 是否直播语义. 默认 true (直播预览行为不变);
    *   回放流传 false 启用 flv.js 的 seek/duration/不循环 (对齐 RecordingView 回放配置). */
   srcIsLive?: boolean
+  /** [VCR-WIN 2026-09-18] 窗口回放模式: 回放窗口绝对起止 (ms)。NVR/GB28181 回放流为
+   *   flv 直播语义 (duration=NaN), 进度条以「流内相对秒 → 绝对时刻」映射显示, 拖动/
+   *   快退快进经 seekTo 由父组件重开流定位; 仅非 mp4 源且二者有限时启用 (mp4 零回归) */
+  windowStart?: number
+  windowEnd?: number
+  /** [FIX seek-ux 2026-09-19] 当前回放流 rel-0 的绝对时刻 (ms): 窗口进度条以「固定窗口
+   *   [windowStart, windowEnd]」显示, 滑块位置 = streamStart + 流内秒 - windowStart。
+   *   缺省回落 windowStart (旧语义: windowStart 即流起点, 向后兼容) */
+  streamStart?: number
+  /** [VCR-WIN] 事件发生绝对时刻 (ms): 进度条红色标记 (可选) */
+  eventTs?: number
   /** 码流类型: 'main' (高清) 或 'sub' (子码流, 低分辨率) */
   streamType?: 'main' | 'sub'
   /** [FIX mp4-seek-ctl 2026-09-16] 3.3 mp4 回放快退/快进步长 (秒), 默认 10 */
@@ -138,6 +179,10 @@ const props = withDefaults(defineProps<{
   seekStepSec: 10,
   srcFormat: '',
   srcIsLive: true,
+  windowStart: undefined,
+  windowEnd: undefined,
+  streamStart: undefined,
+  eventTs: undefined,
   visible: true,
   srcFallbacks: () => [],
   seekStart: undefined,
@@ -151,6 +196,12 @@ const emit = defineEmits<{
   snapshot: [blob: Blob]
   /** [POPUP-3MIN 2026-09-11] mp4 播放结束 (自然结束或到达 stopAt): 父组件据此推进连播队列 */
   ended: []
+  /** [VCR-WIN 2026-09-18] 窗口回放跳转请求 (绝对 ms): 拖动进度条/快退快进/停止时发射,
+   *   父组件断流并重开回放流从该时刻起播 (流式回放无段内 seek 语义) */
+  seekTo: [ms: number]
+  /** [VCR-WIN] 流内相对秒上报 (timeupdate): 父组件以 windowStart + relSec 估算已播绝对
+   *   时刻 (断流续播定位 + 进度行显示) */
+  progress: [relSec: number]
 }>()
 
 // ── [P0-4 2026-08-20] 流失败自动兜底: 指数退避重试 1s/3s/10s × 3 次 ──
@@ -219,17 +270,200 @@ function seekByMp4(deltaSec: number) {
   video.currentTime = Math.min(Math.max(0, video.currentTime + deltaSec), Math.max(0, video.duration - 0.1))
   srcCur.value = video.currentTime
 }
-/** 3.4 拖动中: 仅更新进度条显示 (timeupdate 暂停回写), 松手 @change 才 seek */
+/** [FIX seek-ux 2026-09-19] mp4 进度条键盘路径: input 仅更新待提交值 (指针路径由 track 承担) */
 function onProgressInput(e: Event) {
   isSeekingDrag.value = true
-  srcCur.value = Number((e.target as HTMLInputElement).value)
+  dragThumbSec.value = Number((e.target as HTMLInputElement).value)
 }
-/** 3.4 松手: 写入 video.currentTime 真正 seek */
-function onProgressChange(e: Event) {
-  const v = Number((e.target as HTMLInputElement).value)
+/** 3.4 提交段内 seek: 写入 video.currentTime (mp4 无重开, 即时生效) */
+function commitMp4Seek(v: number) {
   const video = videoRef.value
   if (video && isFinite(v)) video.currentTime = v
+  srcCur.value = v
+}
+/** 3.4 键盘 change: 提交 seek */
+function onProgressChange(e: Event) {
   isSeekingDrag.value = false
+  const v = Number((e.target as HTMLInputElement).value)
+  dragThumbSec.value = null
+  commitMp4Seek(v)
+}
+
+// ── [VCR-WIN 2026-09-18] 窗口回放模式 (NVR/GB28181 回放流) ──
+//   NVR 回放流走 flv.js (srcIsLive=false 但不含文件时长) — video.currentTime 为「流内
+//   相对秒」(attach 起从 0 单调推进), 进度条以 windowStart + relSec 映射为绝对时刻;
+//   段内 seek 无法完成 → emit seekTo 由父组件重开流定位 (对齐 AlarmPopup 联动回放)
+const winCur = ref(0)
+/** 窗口时长 (秒); <=0 视为窗口参数缺失, 窗口模式关闭 */
+const windowDurSec = computed(() => {
+  const a = props.windowStart, b = props.windowEnd
+  if (a == null || b == null || !isFinite(a) || !isFinite(b) || b <= a) return 0
+  return (b - a) / 1000
+})
+/** 窗口回放模式: 非 mp4 源且窗口有效 (mp4 路径控件行为保持零回归) */
+const isWindowPlayback = computed(() => !srcIsMp4.value && windowDurSec.value > 0)
+/** 事件时刻在进度条上的位置 (%) */
+const eventMarkerPct = computed(() => {
+  const a = props.windowStart, b = props.windowEnd, e = props.eventTs
+  if (a == null || b == null || e == null || !isFinite(a) || !isFinite(b) || b <= a) return null
+  return Math.min(100, Math.max(0, (e - a) / (b - a) * 100))
+})
+/** 绝对 ms → HH:mm:ss (窗口进度条两端显示绝对时刻) */
+function fmtClock(ms?: number): string {
+  if (ms == null || !isFinite(ms)) return '--:--:--'
+  const d = new Date(ms), p = (n: number) => String(n).padStart(2, '0')
+  return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
+}
+/** 窗口模式提交跳转 (track 拖动松手/键盘 change 共用): v = 窗口内相对秒 → seekTo(绝对 ms) */
+function commitWinSeek(v: number) {
+  const a = props.windowStart
+  if (a == null || !isFinite(a) || !isFinite(v)) return
+  seekBaseMs.value = a + v * 1000  // [FIX seek-accum] 目标记基准供挂起期连点叠加 + 乐观滑块
+  armSeekPending()  // [FIX seek-feedback] 受理指示
+  emit('seekTo', a + v * 1000)
+}
+/** [FIX seek-ux] 窗口进度条键盘路径: input 仅更新待提交值 (指针路径由 track 承担) */
+function onWinProgressInput(e: Event) {
+  isSeekingDrag.value = true
+  dragThumbSec.value = Number((e.target as HTMLInputElement).value)
+}
+/** [FIX seek-ux] 窗口进度条键盘 change: 提交跳转 */
+function onWinProgressChange(e: Event) {
+  isSeekingDrag.value = false
+  const v = Number((e.target as HTMLInputElement).value)
+  dragThumbSec.value = null
+  commitWinSeek(v)
+}
+/** [FIX seek-accum/seek-feedback 2026-09-19] 快退快进「不起作用」三根因治理 ──
+ *  实锚 (真机 2026-09-19 复现): NVR 重开流信令实测 5~17s 期间 winCur 不推进,
+ *  连点 ⏪/⏩ 每次基于同一停滞位置计算 → 目标被覆盖不累计 (点 3 次只前进 1 次);
+ *  贴边 (本流起点/窗口尾) 点击被 `|target-cur|<500` 静默丢弃 (用户主观"没反应");
+ *  点击后画面零变化无受理反馈 → 三态叠加被感知为「前进/后退10秒不起作用」。
+ *  ① 挂起期连点叠加: 以最后目标为基准 (实例随 queueEpoch++ 重建时天然归零);
+ *  ② 贴边不再静默: 轻提示 (1s 节流); ③ 点击即挂「跳转中…」到新流首帧/卸载/30s 超时。 */
+/** [FIX seek-ux 2026-09-19] 进度条「拖不动/跳转弹回」治理 (真机 Firefox 真实事件实测):
+ *  实锚 ① 拖拽命中带仅 4px (range input 本体高) — 用户抓可视滑块偏移数像素 mousedown
+ *  落在 track 上=零响应; ② 父组件每轮重开把窗口头覆盖为跳转目标 → 窗口收缩、滑块弹
+ *  回最左 (视觉上"跳转没生效"); ③ seek 链路无界等待 + 无乐观反馈。
+ *  现: ① 指针拖拽统一由 track 承担 (16px 命中带 + pointer capture), input 仅可视化/键盘;
+ *  ② 新增 streamStart (流 rel-0 绝对时刻): 滑块 = streamStart+winCur-windowStart,
+ *  窗口固定后跳转完成滑块停在目标处继续前进; ③ 点击/拖动即置 seekBaseMs 乐观移动滑块。 */
+/** 用户最后跳转目标 (ms): 重开流生效前连点 ⏪/⏩ 的叠加基准 + 乐观滑块位置
+ *  (重建完成 queueEpoch++ 使本实例销毁, 基准随新流起点自然迁移); ref 化供滑块响应 */
+const seekBaseMs = ref<number | null>(null)
+/** 当前流 rel-0 绝对时刻: streamStart 缺省 = 窗口头 (旧语义向后兼容) */
+const streamAbs0 = computed(() => {
+  const s = props.streamStart
+  return s != null && isFinite(s) ? s : (props.windowStart ?? 0)
+})
+/** 拖动中/键盘待提交的进度秒 (两进度条互斥挂载, 共用此拖拽值) */
+const dragThumbSec = ref<number | null>(null)
+/** [FIX seek-ux] 指针拖拽统一由 track 承担: 原仅 range input 本体可拖 (命中带 4px,
+ *  抓可视滑块偏移数像素即零响应) → 指针事件挂 16px 轨道容器, pointer capture
+ *  保证移出轨道仍跟手; track 内 input pointer-events:none 仅可视化/键盘 */
+const trackRef = ref<HTMLElement>()
+let trackDragId = -1
+function trackPctToSec(clientX: number): number | null {
+  const el = trackRef.value
+  if (!el) return null
+  const r = el.getBoundingClientRect()
+  if (r.width <= 0) return null
+  const dur = isWindowPlayback.value ? windowDurSec.value : srcDur.value
+  if (dur <= 0) return null
+  return Math.min(1, Math.max(0, (clientX - r.left) / r.width)) * dur
+}
+function onTrackPointerDown(e: PointerEvent) {
+  if (e.pointerType === 'mouse' && e.button !== 0) return
+  const v = trackPctToSec(e.clientX)
+  if (v == null) return
+  trackDragId = e.pointerId
+  isSeekingDrag.value = true  // 拖动中暂停 timeupdate 回写 (滑块=手指位置)
+  dragThumbSec.value = v
+  ;(e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId)
+  e.preventDefault()
+}
+function onTrackPointerMove(e: PointerEvent) {
+  if (e.pointerId !== trackDragId) return
+  const v = trackPctToSec(e.clientX)
+  if (v != null) dragThumbSec.value = v
+}
+function onTrackPointerUp(e: PointerEvent) {
+  if (e.pointerId !== trackDragId) return
+  trackDragId = -1
+  isSeekingDrag.value = false
+  const v = dragThumbSec.value
+  dragThumbSec.value = null
+  if (v == null) return
+  if (isWindowPlayback.value) commitWinSeek(v)
+  else commitMp4Seek(v)
+}
+function onTrackPointerCancel(e: PointerEvent) {
+  if (e.pointerId !== trackDragId) return
+  trackDragId = -1
+  isSeekingDrag.value = false
+  dragThumbSec.value = null  // 取消不提交: 滑块回落真实位置
+}
+/** 滑块位置 (窗口内相对秒): 拖动值 > 跳转目标(乐观) > 流真实位置 */
+const thumbSec = computed(() => {
+  const dur = windowDurSec.value
+  if (dur <= 0) return 0
+  const clamp = (v: number) => Math.min(dur, Math.max(0, v))
+  if (dragThumbSec.value != null) return clamp(dragThumbSec.value)
+  const base = props.windowStart ?? 0
+  if (seekBaseMs.value != null) return clamp((seekBaseMs.value - base) / 1000)
+  return clamp((streamAbs0.value + winCur.value - base) / 1000)
+})
+/** mp4 进度条滑块值 */
+const mp4ThumbSec = computed(() => dragThumbSec.value ?? srcCur.value)
+/** 贴边提示节流时间戳 (1s 内不重复弹) */
+let seekEdgeHintTs = 0
+/** 跳转受理指示 (重开信令期画面零变化, 无反馈即「按钮失灵」观感) */
+const seekPending = ref(false)
+let seekPendingTimer: ReturnType<typeof setTimeout> | null = null
+function armSeekPending() {
+  seekPending.value = true
+  if (seekPendingTimer) clearTimeout(seekPendingTimer)
+  seekPendingTimer = setTimeout(() => {
+    seekPending.value = false
+    seekPendingTimer = null
+    seekBaseMs.value = null  // [FIX seek-ux] 超时未达成: 撤乐观滑块, 回落流真实位置
+  }, 30000)
+}
+function clearSeekPending() {
+  seekPending.value = false
+  if (seekPendingTimer) { clearTimeout(seekPendingTimer); seekPendingTimer = null }
+  seekBaseMs.value = null  // [FIX seek-ux] 跳转达成 (新流首帧): 乐观基准交还流真实位置
+}
+/** 窗口模式快退/快进: ±delta 秒 → seekTo(绝对 ms), clamp 到窗口范围 [start, end-1s] */
+function seekWindowBy(deltaSec: number) {
+  const a = props.windowStart, b = props.windowEnd
+  if (a == null || b == null || windowDurSec.value <= 0) return
+  const actual = streamAbs0.value + Math.max(0, winCur.value) * 1000  // [FIX seek-ux] 流锚定
+  const cur = seekBaseMs.value ?? actual  // ① 挂起期优先最后目标 (重开在途时用户心理位置=上次目标)
+  const target = Math.min(Math.max(cur + deltaSec * 1000, a), b - 1000)
+  if (Math.abs(target - cur) < 500) {
+    // ② 贴边/无位移: 原静默 return 改为轻提示 (用户不知为何无反应)
+    const now = Date.now()
+    if (now - seekEdgeHintTs > 1000) {
+      seekEdgeHintTs = now
+      ElMessage.info(deltaSec < 0 ? '已到回放窗口起点' : '已到回放窗口终点')
+    }
+    return
+  }
+  seekBaseMs.value = target  // ③ 乐观滑块: 点击即移到目标位 (重开信令期可见跳转已受理)
+  armSeekPending()
+  emit('seekTo', target)
+}
+/** 统一快退/快进入口: 窗口模式走 seekTo (父组件重开流), mp4 保持段内 seek */
+function seekStepBy(deltaSec: number) {
+  if (isWindowPlayback.value) seekWindowBy(deltaSec)
+  else seekByMp4(deltaSec)
+}
+/** [VCR-WIN] 停止: 暂停画面 + 请求父组件回窗口起点重开 (流式回放无真停机语义) */
+function stopWinPlayback() {
+  videoRef.value?.pause()
+  const a = props.windowStart
+  if (a != null && isFinite(a)) { seekBaseMs.value = a; armSeekPending(); emit('seekTo', a) }
 }
 
 /** [FIX mp4-playpause 2026-09-16] 3.2 播放/暂停切换 (mp4 回放):
@@ -270,6 +504,14 @@ function markPlaying() {
   clearFirstFrameTimer()
   loading.value = false
   autoRetryCount = 0  // 确有画面才重置退避计数 (原在 attach 后重置, 现延后到真实首帧)
+  // [FIX seek-ux2 2026-09-19] 撤「跳转中…」以「跳转达成」为判据: 本回调也由旧流缓冲恢复
+  //   (waiting→playing) 触发 — 原无条件 clearSeekPending 把点击后刚置上的乐观滑块/受理
+  //   指示一并撤掉。真机取证 (vcr-seek5): 点击 +15ms 乐观态就位 → +949ms waiting →
+  //   +1487ms playing (旧流恢复) → +1521ms 滑块弹回/指示消失。现仅当流位置已达跳转
+  //   目标 (±2s) 或本就无跳转在途才撤; 未达成则留待新流接管 (实例重建) / 30s 超时。
+  const target = seekBaseMs.value
+  const pos = streamAbs0.value + (videoRef.value?.currentTime || 0) * 1000
+  if (target == null || Math.abs(pos - target) < 2000) clearSeekPending()
   if (!playing.value) {
     playing.value = true
     emit('playing')
@@ -316,6 +558,8 @@ function destroyPlayer() {
     if (srcLoadedMetaHandler) { video.removeEventListener('loadedmetadata', srcLoadedMetaHandler); srcLoadedMetaHandler = null }
     if (srcTimeUpdateHandler) { video.removeEventListener('timeupdate', srcTimeUpdateHandler); srcTimeUpdateHandler = null }
     if (srcEndedHandler) { video.removeEventListener('ended', srcEndedHandler); srcEndedHandler = null }
+    if (srcWinEndedHandler) { video.removeEventListener('ended', srcWinEndedHandler); srcWinEndedHandler = null }
+    if (srcWinTimeUpdateHandler) { video.removeEventListener('timeupdate', srcWinTimeUpdateHandler); srcWinTimeUpdateHandler = null }
   }
   if (playerInstance) {
     try {
@@ -334,6 +578,8 @@ function destroyPlayer() {
   srcIsMp4.value = false
   srcCur.value = 0
   srcDur.value = 0
+  winCur.value = 0  // [VCR-WIN 2026-09-18] 窗口回放进度随销毁复位 (候选切换/通道切换/卸载)
+  winStallSince = 0  // [VCR-WIN] 看门狗随销毁复位
   isSeekingDrag.value = false
   paused.value = false  // [FIX mp4-playpause 2026-09-16] 暂停态随销毁复位 (旧 video 事件跨实例不残留)
 }
@@ -678,6 +924,12 @@ let srcLoadedMetaHandler: (() => void) | null = null
 let srcTimeUpdateHandler: (() => void) | null = null
 let srcEndedHandler: (() => void) | null = null
 let srcEndedFired = false
+// [VCR-WIN-FIX 2026-09-18] 窗口回放 ended 转发监听引用 (NVR 有限段流结束后 video
+//   播完 buffer 触发 ended → 转发父组件走断点续播; 原仅 mp4 分支挂 ended → NVR 流
+//   结束静默停在事件时刻之前, 实测缺陷根因)
+let srcWinEndedHandler: (() => void) | null = null
+// [VCR-WIN 2026-09-18] 窗口回放 (非 mp4 源) timeupdate: 回写流内相对秒 + 上报父组件
+let srcWinTimeUpdateHandler: (() => void) | null = null
 
 function playSrc(url: string) {
   srcMode = true
@@ -850,9 +1102,50 @@ async function attachSrcPlayer(video: HTMLVideoElement, raw: string) {
     video.addEventListener('loadedmetadata', srcLoadedMetaHandler)
     video.addEventListener('timeupdate', srcTimeUpdateHandler)
     video.addEventListener('ended', srcEndedHandler)
+  } else {
+    // [VCR-WIN 2026-09-18] 窗口回放 (非 mp4 源, NVR 回放流): timeupdate 回写流内相对
+    //   秒 (winCur) 并上报父组件 — 父组件以 streamStart + relSec 估算已播绝对时刻
+    //   (断流续播定位 + 进度行显示); flv 直播语义下 duration=NaN 不可依赖
+    srcWinTimeUpdateHandler = () => {
+      // [FIX seek-ux] 跳转挂起期冻结 winCur: 旧流续推不让乐观滑块/基准回退
+      if (!isSeekingDrag.value && seekBaseMs.value == null) winCur.value = video.currentTime
+      winStallSince = 0  // [VCR-WIN] 有推进 → 看门狗复位
+      emit('progress', video.currentTime)
+    }
+    // [VCR-WIN-FIX 2026-09-18] 窗口模式流结束转发: NVR 回放为有限段推流, 服务端
+    //   endOfStream 后 video 播完 buffer → ended + 自动暂停 (无 error、看门狗因
+    //   paused 复位不触发) — 原实现该事件无人监听 → 父组件续播链永远收不到信号
+    //   → 回放静默停在事件时刻之前。现同 mp4 语义转发 emit('ended'), 由父组件
+    //   maybeResumeNvr 决定「续播 / 已播完终态」
+    srcWinEndedHandler = () => {
+      if (srcEndedFired) return
+      srcEndedFired = true
+      emit('ended')
+    }
+    video.addEventListener('timeupdate', srcWinTimeUpdateHandler)
+    video.addEventListener('ended', srcWinEndedHandler)
   }
   watchFirstFrame()
 }
+
+// [VCR-WIN 2026-09-18] 窗口回放静默断流看门狗: flv.js 对流被服务端静默关闭可能既不报错
+//   也不推进 (画面冻结且无任何事件) — 8s 无 timeupdate 推进且非暂停 → emit error 触发
+//   父组件断点续播链 (暂停态不误报; 普通 mp4/直播路径不启用)
+let winStallSince = 0
+let winStallTimer: ReturnType<typeof setInterval> | null = null
+function winStallCheck() {
+  if (!isWindowPlayback.value) { winStallSince = 0; return }
+  const video = videoRef.value
+  if (!video || video.paused || video.ended) { winStallSince = 0; return }
+  const now = Date.now()
+  if (!winStallSince) { winStallSince = now; return }
+  if (now - winStallSince >= 8000) {
+    winStallSince = 0
+    console.warn('[MiniPlayer] 窗口回放流 8s 无推进, 视为断流 (交父组件续播)')
+    emit('error', '回放流中断')
+  }
+}
+winStallTimer = setInterval(winStallCheck, 2000)
 
 // ── 监听 src prop ──
 watch(() => props.src, (url) => {
@@ -980,8 +1273,9 @@ defineExpose({ takeSnapshot, toggleMute, togglePlay })
 
 onBeforeUnmount(() => {
   clearAutoRetry()  // [P0-4] 清理退避定时器, 防止卸载后仍触发 startPlay
-  destroyPlayer()
-  // [Fix 2026-06-23] 防抖记录已移至 Pinia store，无需在此清理
+  if (winStallTimer) { clearInterval(winStallTimer); winStallTimer = null }  // [VCR-WIN] 看门狗清理
+  clearSeekPending()  // [FIX seek-feedback] 跳转指示随卸载清理 (重建接替新实例)
+  destroyPlayer()  // [Fix 2026-06-23] 防抖记录已移至 Pinia store，无需在此清理
 })
 </script>
 
@@ -1055,6 +1349,15 @@ onBeforeUnmount(() => {
   padding: 4px;
   background: linear-gradient(transparent, rgba(0,0,0,0.6));
 }
+/* [FIX seek-feedback 2026-09-19] 跳转受理指示: 重开信令期唯一可见反馈 (呼吸动画区分静态文案) */
+.mini-player__seek-hint {
+  align-self: center;
+  font-size: 12px;
+  color: #E6A23C;
+  white-space: nowrap;
+  animation: mini-seek-blink 1.2s ease-in-out infinite;
+}
+@keyframes mini-seek-blink { 0%, 100% { opacity: 1 } 50% { opacity: 0.4 } }
 /* [FIX mp4-playpause 2026-09-16] 3.2 暂停覆盖层: 中央大播放按钮 (点击恢复) */
 .mini-player__pause-overlay {
   position: absolute;
@@ -1108,5 +1411,29 @@ onBeforeUnmount(() => {
   height: 4px;
   accent-color: #409eff;
   cursor: pointer;
+}
+/* [VCR-WIN 2026-09-18] 窗口进度条轨道容器: range + 事件时刻红标叠层锚点 */
+.mini-player__track {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  /* [FIX seek-ux 2026-09-19] 指针拖拽命中带 (原仅 range input 本体 4px, 用户极易脱靶) */
+  height: 16px;
+  cursor: pointer;
+  touch-action: none;  /* 触屏拖动不被页面滚动劫持 */
+  user-select: none;
+}
+/* [FIX seek-ux] 指针交互统一由 track 承担 (mp4/窗口两条进度条共用) */
+.mini-player__track .mini-player__range { width: 100%; pointer-events: none; }
+.mini-player__evmark {
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  width: 2px;
+  background: #f56c6c;
+  border-radius: 1px;
+  pointer-events: none;
 }
 </style>

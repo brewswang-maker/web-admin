@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
   buildEvidenceFrames,
+  buildEvidenceSlots,
+  hasEvidenceChain,
   evidenceAlgoHint,
   extractEvidenceTs,
   fmtEvidenceAbs,
@@ -125,5 +127,67 @@ describe('isEvidencePostPending (post 采集中占位)', () => {
 
   it('锚点退化 alarmTsMs (evidence_ts 缺失)', () => {
     expect(isEvidencePostPending({ pre_snapshot_url: URL_PRE }, 1, now - 3000)).toBe(true)
+  })
+})
+
+// [EV-STABLE3 2026-09-19] 三格固定槽位 (画廊数量稳定化根治) — 每格必有产出,
+// 缺失格携后端 missing_frames 原因码中文映射。
+describe('buildEvidenceSlots (三格固定槽位)', () => {
+  it('三帧全写: 三格 missing=false + 标签/相对角标', () => {
+    const slots = buildEvidenceSlots({
+      pre_snapshot_url: URL_PRE,
+      mid_snapshot_url: URL_MID,
+      post_snapshot_url: URL_POST,
+      evidence_ts: { pre: T_PRE, mid: T_MID, post: T_POST },
+    }, 'intrusion')
+    expect(slots.map(s => s.key)).toEqual(['pre', 'mid', 'post'])
+    expect(slots.every(s => !s.missing)).toBe(true)
+    expect(slots[0].label).toBe('入侵前')
+    expect(slots[1].rel).toBe('T+0')
+  })
+
+  it('缺失格占位 + missing_frames 原因码中文映射', () => {
+    const slots = buildEvidenceSlots({
+      mid_snapshot_url: URL_MID,
+      missing_frames: { pre: 'same_as_mid', post: 'no_cache' },
+    }, 'intrusion')
+    expect(slots).toHaveLength(3)
+    expect(slots[0].missing).toBe(true)
+    expect(slots[0].missingReason).toBe('与触发帧相同')
+    expect(slots[1].missing).toBe(false)
+    expect(slots[2].missingReason).toBe('缓存未就绪')
+  })
+
+  it('无 missing_frames 字段 → 缺失格退通用「未采集」', () => {
+    const slots = buildEvidenceSlots({ pre_snapshot_url: URL_PRE }, '')
+    expect(slots).toHaveLength(3)
+    expect(slots[1].missing).toBe(true)
+    expect(slots[1].missingReason).toBe('未采集')
+    expect(slots[2].missing).toBe(true)
+  })
+
+  it('未知原因码 → 「未采集」(前向兼容)', () => {
+    const slots = buildEvidenceSlots({ missing_frames: { post: 'xx_future_code' } })
+    expect(slots[2].missingReason).toBe('未采集')
+  })
+})
+
+describe('hasEvidenceChain (取证链痕迹判定)', () => {
+  it('任一帧字段 → true', () => {
+    expect(hasEvidenceChain({ pre_snapshot_url: URL_PRE })).toBe(true)
+  })
+
+  it('仅 missing_frames → true (全缺但有链痕迹)', () => {
+    expect(hasEvidenceChain({ missing_frames: { pre: 'no_cache' } })).toBe(true)
+  })
+
+  it('仅 evidence_ts → true', () => {
+    expect(hasEvidenceChain({ evidence_ts: { mid: T_MID } })).toBe(true)
+  })
+
+  it('空 metadata / 纯主快照 → false (历史告警不标)', () => {
+    expect(hasEvidenceChain({})).toBe(false)
+    expect(hasEvidenceChain({ snapshot_url: '/x.jpg', missing_frames: {} })).toBe(false)
+    expect(hasEvidenceChain(null)).toBe(false)
   })
 })

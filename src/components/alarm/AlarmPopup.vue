@@ -123,11 +123,17 @@
                     :src-format="playerSrcFormat"
                     :src-is-live="playerSrcIsLive"
                     :show-live-badge="false"
+                    :window-start="nvrDirectActive ? nvrWindowStart : undefined"
+                    :window-end="nvrDirectActive ? nvrWindowEnd : undefined"
+                    :stream-start="nvrDirectActive ? nvrStreamStart : undefined"
+                    :event-ts="nvrEventTs"
                     :seek-start="queueActive ? queueSeekStart : undefined"
                     :stop-at="queueActive ? queueStopAt : undefined"
                     autoplay :show-controls="true"
                     @ended="onPlaybackEnded"
                     @error="onPlaybackError"
+                    @seek-to="onNvrSeek"
+                    @progress="onNvrProgress"
                     @snapshot="(b) => onPlayerSnapshot(b, 'playback')"
                   />
                   <div v-else-if="isRecordingInProgress" class="alarm-popup__recording-state">
@@ -151,6 +157,12 @@
                   <div v-if="queueActive" class="alarm-popup__queue-tip">
                     <span>{{ queueRangeLabel }} · 第 {{ Math.min(queueIndex + 1, playbackQueue.length) }}/{{ playbackQueue.length }} 段{{ queueFinished ? ' · 已播完' : '' }}{{ skippedSegments ? ' · 已跳过 ' + skippedSegments + ' 段' : '' }}</span>
                     <span v-if="queueFinished" class="alarm-popup__queue-replay" @click="replayQueue">↻ 重播</span>
+                  </div>
+                  <!-- [VCR-WIN 2026-09-18] NVR 窗口回放进度行: 窗口绝对时刻 + 已播至 + 距事件
+                       秒数; 断流自动续播到事件时刻后置终态, 挂「重播」入口 -->
+                  <div v-if="nvrDirectActive && Number.isFinite(nvrWindowStart)" class="alarm-popup__queue-tip">
+                    <span>回放窗口 {{ fmtClockMs(nvrWindowStart) }} ~ {{ fmtClockMs(nvrWindowEnd) }} · 已播至 {{ fmtClockMs(nvrDisplayedTs) }}（距事件 {{ nvrToEventSec }}s）{{ nvrFinished ? ' · 已播完' : '' }}</span>
+                    <span v-if="nvrFinished" class="alarm-popup__queue-replay" @click="replayNvr">↻ 重播</span>
                   </div>
                   <!-- [FIX pb-ui 2026-09-16] 3. 原「24 小时时间轴」单条就地废除 (冗余占位):
                        时间导航由 MiniPlayer 进度条 (HH:mm:ss 双端 + 可拖 seek) 承担 -->
@@ -181,20 +193,24 @@
                        带语义角标, 左右翻页/点击查看) — 原 EvidenceFrames compact
                        独立区块随之移除避免重复; 组件保留供 AlarmsView 详情使用 -->
                   <div class="alarm-popup__thumbs">
-                    <button class="alarm-popup__thumbs-nav" :disabled="imageIndex <= 0" @click="prevImage" aria-label="上一张">‹</button>
+                    <button class="alarm-popup__thumbs-nav" :disabled="imageIndex <= firstSelectableIdx" @click="prevImage" aria-label="上一张">‹</button>
                     <div class="alarm-popup__thumbs-track">
+                      <!-- [EV-STABLE3 2026-09-19] 三格固定槽位: 缺失格为虚框占位
+                           (不可点击/不参与翻页, hover 显缺失原因) -->
                       <div
                         v-for="(img, idx) in alarmImageList" :key="idx"
                         class="alarm-popup__thumb"
                         :class="{
-                          'alarm-popup__thumb--active': idx === imageIndex,
-                          'alarm-popup__thumb--evidence': !!img.tag,
+                          'alarm-popup__thumb--active': idx === imageIndex && !img.missing,
+                          'alarm-popup__thumb--evidence': !!img.tag && !img.missing,
+                          'alarm-popup__thumb--missing': !!img.missing,
                         }"
-                        :style="{ backgroundImage: `url(${img.url})` }"
+                        :style="img.missing ? undefined : { backgroundImage: `url(${img.url})` }"
                         :title="thumbTitle(img)"
-                        @click="imageIndex = idx"
+                        @click="!img.missing && (imageIndex = idx)"
                       >
-                        <span v-if="img.tag" class="alarm-popup__thumb-tag">{{ img.tag }}<span v-if="img.rel" class="alarm-popup__thumb-rel"> {{ img.rel }}</span></span>
+                        <span v-if="img.missing" class="alarm-popup__thumb-tag alarm-popup__thumb-tag--missing">{{ img.tag }} · 缺</span>
+                        <span v-else-if="img.tag" class="alarm-popup__thumb-tag">{{ img.tag }}<span v-if="img.rel" class="alarm-popup__thumb-rel"> {{ img.rel }}</span></span>
                       </div>
                     </div>
                     <!-- [EV-TS 2026-09-14] post 采集中提示: 补位链延时回写窗口内
@@ -205,7 +221,7 @@
                                         <span v-else-if="evidenceIncomplete" class="alarm-popup__ev-incomplete"
                                           :title="`三帧规范 (事前/触发/事后) 仅到 ${evidenceIncomplete.present} 帧, 后端补帧未成功`"
                                         >快照不全 ({{ evidenceIncomplete.present }}/3)</span>
-                    <button class="alarm-popup__thumbs-nav" :disabled="imageIndex >= totalImageCount - 1" @click="nextImage" aria-label="下一张">›</button>
+                    <button class="alarm-popup__thumbs-nav" :disabled="imageIndex >= lastSelectableIdx" @click="nextImage" aria-label="下一张">›</button>
                   </div>
                 </div>
               </div>
@@ -633,7 +649,7 @@ import MiniPlayer from '@/components/video/MiniPlayer.vue'
 import AlarmSnapshot from '@/components/alarm/AlarmSnapshot.vue'
 import defaultFacePhoto from '@/assets/photo.jpg'
 import EvidenceFrames from '@/components/EvidenceFrames.vue' // [POPUP-EV-MERGE 2026-09-07] 弹窗内已并入画廊, import 保留给未来复用 (无副作用)
-import { buildEvidenceFrames, evidenceCompleteness, isEvidencePostPending } from '@/utils/evidenceFrames' // [EV-TRIPLE 2026-09-14] 取证帧语义/时间戳共享模块
+import { buildEvidenceSlots, hasEvidenceChain, evidenceCompleteness, isEvidencePostPending } from '@/utils/evidenceFrames' // [EV-TRIPLE 2026-09-14] 取证帧语义/时间戳共享模块; [EV-STABLE3 2026-09-19] 三格固定槽位
 import { alarmLevelColor, alarmLevelRgb, alarmLevelText } from '@/utils/alarmLevel' // [FIX level-color-ssot 2026-09-16] 等级色板全站统一
 import {
   popupVisible, currentAlarm, matchedRule, linkageLogs,
@@ -703,7 +719,7 @@ watch(priorityMode, (v) => localStorage.setItem(PRIORITY_KEY, v))
 //   (src/utils/evidenceFrames.ts — 与详情抽屉 EvidenceFrames 同源; 弹窗
 //   角标不再硬编码「事前/事中/事后」, 按算法展开为「入侵前/触发时刻/事后」
 //   等 + T-12s/T+0/T+6s 相对时间角标, 视频时间轴范式)
-interface GalleryImage { url: string; tag: string; rel?: string; abs?: string; key?: string }
+interface GalleryImage { url: string; tag: string; rel?: string; abs?: string; key?: string; missing?: boolean; missingReason?: string }
 const imageIndex = ref(0)
 /** [EV-TS] 告警时刻 (ms): evidence_ts 相对角标退化锚点 + post 采集中窗口基准 */
 const alarmTsMs = computed(() => {
@@ -773,16 +789,34 @@ const alarmImageList = computed<GalleryImage[]>(() => {
   //   跳过; 主图候选之间的同 hash 去重 (aligned/primary) 已在上方另行
   //   处理, 各司其职。
   const algoKey = String(metaSrc.algo_id ?? '') || String(alarm.type || '')
+  // [EV-STABLE3 2026-09-19] 证据帧区改「三格固定槽位」渲染根治数量波动:
+  //   原实现只把真实存在的帧入列 → pre 缺失/去重/无候选时画廊帧数
+  //   1/2/3/4 无规律波动 (用户实锚顽固问题)。现固定 pre/mid/post 三格:
+  //   · 真实帧且未被主图精确代表 → 正常入列;
+  //   · 帧被主图代表 (URL 相等, 主图即该帧) → 跳过避免重复;
+  //   · 缺失帧 → 占位格 (missing=true + missingReason 虚框渲染,
+  //     不参与翻页/大图序列; 后端 fillMeta 新增 missing_frames 的
+  //     原因码直达 UI hover);
+  //   仅 hasEvidenceChain 告警渲染三格 (历史纯主快照告警不标避免噪音)。
   const evidence: GalleryImage[] = []
-  for (const f of buildEvidenceFrames(metaSrc, algoKey, alarmTsMs.value)) {
-    if (!mainUrls.includes(f.url) && !evidence.some(e => e.url === f.url)) {
-      evidence.push({ url: f.url, tag: f.label, rel: f.rel, abs: f.abs, key: f.key })
+  if (hasEvidenceChain(metaSrc)) {
+    for (const s of buildEvidenceSlots(metaSrc, algoKey, alarmTsMs.value)) {
+      if (s.missing) {
+        evidence.push({
+          url: '', tag: s.label, key: s.key,
+          missing: true, missingReason: s.missingReason,
+        })
+        continue
+      }
+      if (!mainUrls.includes(s.url) && !evidence.some(e => e.url === s.url)) {
+        evidence.push({ url: s.url, tag: s.label, rel: s.rel, abs: s.abs, key: s.key })
+      }
     }
   }
   // [FIX ev-triple-dup 2026-09-18] 主图与证据帧精确同 URL 时只留证据帧
   //   (带语义角标 + pre→mid→post 固定序); 其余主图 (对齐帧/落库帧/场景图)
   //   保持队首。修复前主图 (mid) 霸占首位且证据帧被折叠 → 1/1。
-  const mainOnly = mainUrls.filter(u => !evidence.some(e => e.url === u))
+  const mainOnly = mainUrls.filter(u => !evidence.some(e => e.url && e.url === u))
   return [...mainOnly.map(u => ({ url: u, tag: '' })), ...evidence]
 })
 const totalImageCount = computed(() => Math.max(1, alarmImageList.value.length))
@@ -790,11 +824,17 @@ const totalImageCount = computed(() => Math.max(1, alarmImageList.value.length))
  *   (linkage_alarm 双写帧, LinkageEvent 无 metadata 成员) 可能缺顶层
  *   confidence → 「检测置信度 0%」。metadata.detections[0].confidence
  *   与 REST 详情同源 (AlarmDispatcher detections 透传链, 真机 DB 12/12
- *   置信度非零实锚), 逐级兜底。 */
+ *   置信度非零实锚), 逐级兜底。
+ *   [FIX det-conf-raw 2026-09-19] 原始检测置信度最高优先: intrusion 链
+ *   触发判定后 related_box/detections 被钳制到 ≥0.7 以过联动门 — 100 设备
+ *   #6422 实锚顶层 0.699999988 而实际检测 0.15~0.25; metadata.det_confidence
+ *   为钳制前留痕, 有它时优先展示让低质误报可见, 防钳制值误导操作员。 */
 const detConfidence = computed<number>(() => {
+  const meta: any = popupMetaSrc()
+  const raw = Number(meta?.det_confidence ?? 0)
+  if (raw > 0) return raw
   const top = Number(currentAlarm.value?.confidence ?? 0)
   if (top > 0) return top
-  const meta: any = currentAlarm.value?.metadata
   const d0 = Number(meta?.detections?.[0]?.confidence ?? 0)
   if (d0 > 0) return d0
   const mc = Number(meta?.confidence ?? 0)
@@ -803,7 +843,7 @@ const detConfidence = computed<number>(() => {
 /** [EV-TS] post 采集中 (补位链延时回写窗口): 已有取证帧且 post 未到、告警新鲜
  *   — evidence_update 帧回写后 post 入列, 提示自动消失 */
 const evidencePending = computed(() =>
-  isEvidencePostPending(popupMetaSrc(), alarmImageList.value.filter(i => i.tag).length, alarmTsMs.value))
+  isEvidencePostPending(popupMetaSrc(), alarmImageList.value.filter(i => i.tag && !i.missing).length, alarmTsMs.value))
 /** [FIX snap3 2026-09-16 4.1] 快照不全 (三帧规范): 有取证帧但 <3 且非 post
  *   采集中 (20s 窗口过、补位链未回写 = 补帧失败) — UI 显式标注 (用户规范);
  *   present=0 (老告警无取证链) 不标避免噪音 */
@@ -811,8 +851,10 @@ const evidenceIncomplete = computed(() => {
   const c = evidenceCompleteness(popupMetaSrc(), alarmTsMs.value)
   return (!c.complete && !c.pendingPost && c.present > 0) ? c : null
 })
-/** 缩略图 hover title: 主快照 / 「标签 · T-12s (14:32:08)」 */
+/** 缩略图 hover title: 主快照 / 「标签 · T-12s (14:32:08)」/ 缺失格原因 */
 function thumbTitle(img: GalleryImage): string {
+  // [EV-STABLE3 2026-09-19] 缺失占位格: 语义标签 + 缺失原因 (后端 missing_frames)
+  if (img.missing) return `${img.tag} · 缺失 (${img.missingReason || '未采集'})`
   if (!img.tag) return '主快照'
   return [img.tag, img.rel, img.abs ? `(${img.abs})` : ''].filter(Boolean).join(' · ')
 }
@@ -851,8 +893,20 @@ const faceCompare = computed(() => {
 const currentSnapshotUrl = computed(() => alarmImageList.value[imageIndex.value]?.url || snapshotImageUrl.value)
 watch(totalImageCount, (n) => { if (imageIndex.value >= n) imageIndex.value = Math.max(0, n - 1) })
 watch(currentAlarm, () => { imageIndex.value = 0 })
-function prevImage() { if (imageIndex.value > 0) imageIndex.value-- }
-function nextImage() { if (imageIndex.value < totalImageCount.value - 1) imageIndex.value++ }
+// [EV-STABLE3 2026-09-19] 占位格不可选中: 翻页/大图序列跳过 missing 项
+//   (selectableIndexes = 真实帧索引表; nav 按钮禁用态也按它判定)
+const selectableIndexes = computed<number[]>(() =>
+  alarmImageList.value.reduce<number[]>((acc, img, i) => { if (!img.missing) acc.push(i); return acc }, []))
+const firstSelectableIdx = computed(() => selectableIndexes.value[0] ?? 0)
+const lastSelectableIdx = computed(() => selectableIndexes.value[selectableIndexes.value.length - 1] ?? 0)
+function stepImage(dir: 1 | -1) {
+  const list = alarmImageList.value
+  let i = imageIndex.value + dir
+  while (i >= 0 && i < list.length && list[i]?.missing) i += dir
+  if (i >= 0 && i < list.length) imageIndex.value = i
+}
+function prevImage() { stepImage(-1) }
+function nextImage() { stepImage(1) }
 
 // ── 联动地图位置（GPS + 扇形 FOV + 平面/3D 切换） ──
 const mapMode = ref<'plan' | '3d'>('3d')
@@ -1096,6 +1150,38 @@ const playbackFallbackUrls = ref<string[]>([])
 //   NVR 流失败/切告警复位。evidence 异步晚到以此为守卫 (否则会把 NVR 连续流
 //   切回本地片直链, 属 NVR 优先时序下新引入的竞态)。
 const nvrDirectActive = ref(false)
+// [VCR-WIN 2026-09-18 用户令] NVR 窗口回放状态: 窗口绝对起止 + 已播相对秒 + 终态标记;
+//   MiniPlayer 据此自绘进度条 (流内相对秒 → 绝对时刻) + 断流续播定位; nvrFinished=
+//   回放已推进到事件时刻后的终态 (挂「重播」入口, 复用 queue-tip 样式)
+const nvrWindowStart = ref(NaN)
+const nvrWindowEnd = ref(NaN)
+// [FIX seek-ux 2026-09-19] 当前回放流 rel-0 的绝对时刻 (= 本轮 /play 起点)。进度条以
+//   固定窗口 [nvrWindowStart, nvrWindowEnd] 显示 — 原实现每轮重开把 nvrWindowStart
+//   覆盖为跳转目标 → 窗口随 seek 收缩、滑块弹回最左 (真机 Firefox 实测体感
+//   「进度条拖不动 / 前进后退不起作用」的视觉主因)。窗口头固定后滑块停在目标处续进。
+const nvrStreamStart = ref(NaN)
+const nvrShownRelSec = ref(0)
+const nvrFinished = ref(false)
+let nvrResumeCount = 0
+// [VCR-WIN-FIX 2026-09-18] 续播进展基准: 记录上次续播时的 displayedTs — 相对基准有
+//   ≥2s 实质推进则计健康循环 (nvrResumeCount 清零); 连续 5 次零推进 (流立断/无首帧)
+//   判真不可用; nvrResumeTotal = 总轮次 (仅日志展示, 健康循环可持续多轮)
+let nvrLastResumeTs = 0
+let nvrResumeTotal = 0
+let nvrRec: DeviceRecording | null = null
+// [VCR-WIN] NVR 窗口回放状态复位 (队列接管/本地直链/切告警共用)
+function nvrReset() {
+  nvrWindowStart.value = NaN
+  nvrWindowEnd.value = NaN
+  nvrStreamStart.value = NaN
+  nvrShownRelSec.value = 0
+  nvrFinished.value = false
+  nvrResumeCount = 0
+  nvrLastResumeTs = 0
+  nvrResumeTotal = 0
+  nvrPendingSeek = null  // [VCR-WIN-FIX2] 切告警时丢弃上一条告警的挂起跳转目标
+  nvrRec = null
+}
 // [POPUP-3MIN] 连播状态机: queueSrc=当前段播放源, queueSeekStart/queueStopAt=当前段裁剪点;
 //   queueEpoch 在重播时自增, 强制 MiniPlayer 重建 (同 URL 重播也重新触发).
 const playbackQueue = ref<PlaybackQueueItem[]>([])
@@ -1142,6 +1228,30 @@ const queueRangeLabel = computed(() => {
   }
   return `${f(t - CLIP_HALF_MS)} ~ ${f(t + CLIP_HALF_MS)}`
 })
+
+// [VCR-WIN 2026-09-18] NVR 窗口回放派生值: 事件时刻 / 已播绝对时刻 / 距事件秒数
+const nvrEventTs = computed(() => {
+  const a = currentAlarm.value
+  if (!a) return undefined
+  const t = new Date(a.createdAt).getTime()
+  return Number.isFinite(t) ? t : undefined
+})
+const nvrDisplayedTs = computed(() => {
+  // [FIX seek-ux 2026-09-19] 流锚定: 已播绝对时刻 = 本轮流起点 + 流内相对秒 (窗口头固定后二者分离)
+  const s = nvrStreamStart.value
+  return Number.isFinite(s) ? s + Math.max(0, nvrShownRelSec.value) * 1000 : NaN
+})
+const nvrToEventSec = computed(() => {
+  const t = nvrEventTs.value
+  if (t == null || !Number.isFinite(nvrDisplayedTs.value)) return 0
+  return Math.max(0, Math.round((t - nvrDisplayedTs.value) / 1000))
+})
+/** 绝对 ms → HH:mm:ss (NVR 窗口提示行) */
+function fmtClockMs(ms: number): string {
+  if (!Number.isFinite(ms)) return '--:--:--'
+  const d = new Date(ms), p = (n: number) => String(n).padStart(2, '0')
+  return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
+}
 
 function parseRecTime(s: string): number {
   if (!s) return NaN
@@ -1244,6 +1354,7 @@ function startQueuePlayback(items: PlaybackQueueItem[]) {
   tailRefreshes = 0
   void stopGbPlayback()  // [FIX p1-session 2026-09-12] 队列接管 → 释放可能残留的 GB 会话
   nvrDirectActive.value = false  // [NVR-PRIO 2026-09-18] 队列接管 → NVR 直控标记复位
+  nvrReset()  // [VCR-WIN 2026-09-18] 队列接管 → NVR 窗口状态复位
   playQueueItem(0)
   stopRecordingPoll()  // 连播接管后无需再等 clip 回填
 }
@@ -1257,6 +1368,8 @@ function replayQueue() {
   playQueueItem(0)
 }
 function onPlaybackEnded() {
+  // [VCR-WIN 2026-09-18] NVR 窗口回放断流 → 断点续播链 (未到事件时刻自动重开到断点)
+  if (nvrDirectActive.value) { maybeResumeNvr(); return }
   if (!queueActive.value) return
   const next = queueIndex.value + 1
   if (next < playbackQueue.value.length) { playQueueItem(next); return }
@@ -1269,6 +1382,9 @@ function onPlaybackEnded() {
 //   入口, 用户只能关闭弹窗重开。现失败段自动跳过继续连播 (末段失败 → 同「已播
 //   完」态挂「重播」入口); 跳过计数在进度行提示, 失败段 URL 打 console 供取证。
 function onPlaybackError() {
+  // [VCR-WIN 2026-09-18] NVR 窗口回放: 流中断先走断点续播 (未到事件时刻自动重开),
+  //   到达/耗尽后落入既有语义 (终态重播 / heal 链)
+  if (nvrDirectActive.value) { maybeResumeNvr(); return }
   if (!queueActive.value) {
     // [FIX p1-heal 2026-09-12] 非队列路径 (GB28181 单段回放 / 证据 clip) 原直接 return:
     //   候选链全败后无任何自愈 → 「持续 playerError」死局。现每次告警最多自愈一次:
@@ -1340,6 +1456,7 @@ function resetQueue() {
   skippedSegments.value = 0
   queueSrc.value = ''
   nvrDirectActive.value = false  // [NVR-PRIO 2026-09-18] 切告警 (经 watch→resetQueue) 复位
+  nvrReset()  // [VCR-WIN 2026-09-18] 切告警 → NVR 窗口状态复位
   // [FIX rec-tc 2026-09-15] 复位转码等待态 + 作废在途转码回调 (切告警时防旧源覆盖)
   queuePreparing.value = false
   pbAttempt++
@@ -1511,73 +1628,188 @@ async function playSelectedRecording(rec: DeviceRecording, opts?: { silent?: boo
     playbackFallbackUrls.value = cands.slice(1)
     currentAlarm.value!.videoClipUrl = cands[0]
     nvrDirectActive.value = false  // [NVR-PRIO 2026-09-18] 本地直链分支 → NVR 标记复位
+    nvrReset()  // [VCR-WIN 2026-09-18] 本地直链分支 → NVR 窗口状态复位
     if (!silent) ElMessage.success(h264 ? '录像已就绪，开始播放' : '已尝试直接播放原始录像')
     return
   }
   try {
+    // [VCR-WIN 2026-09-18] NVR 回放启动抽取为 startNvrPlayback: 首次播放与窗口跳转/
+    //   断点续播 (onNvrSeek) 共用同一窗口裁剪 + /play + 源接线流程
     // [FIX p1-device 2026-09-12] 回归修复: /recordings/query 的 GB28181 条目 device_id
     //   存的是「通道号」(如 34020000001320002002), 原样透传 → GB28181Adapter::startPlayback
     //   registry_.find(通道号) 失败 "device not found" → HTTP 200 + body code=5002 →
     //   弹窗联动回放恒失败 (playerError)。设备号/通道号以告警上下文为准 (真机实测 code=0)。
-    const alarm = currentAlarm.value
-    await stopGbPlayback()  // [FIX p1-session] 释放上一回放会话 (NVR 并发会话数有限)
-    // [NVR-PB 2026-09-13] /play 窗口裁剪: 原样传整段 start_time 会从段头开播 (NVR 段
-    //   可达 30 分钟, 用户看到的是事件前很久的画面); GB28181 Playback 原生支持任意起点,
-    //   裁到 [T-90s, T+90s] ∩ 段范围 = 精确 3 分钟联动回放窗口
-    const tMs = alarm ? new Date(alarm.createdAt).getTime() : NaN
-    const rs = parseRecTime(rec.start_time), re = parseRecTime(rec.end_time)
-    const winStart = Number.isFinite(tMs) && Number.isFinite(rs) ? Math.max(rs, tMs - CLIP_HALF_MS) : rs
-    const winEnd = Number.isFinite(tMs) && Number.isFinite(re) ? Math.min(re, tMs + CLIP_HALF_MS) : re
-    const fmtLocal = (ms: number) => {
-      const d = new Date(ms), p = (n: number) => String(n).padStart(2, '0')
-      return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
-        + `T${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
-    }
-    const { data } = await recordingHttp.post(`/${rec.id}/play`, {
-      device_id: alarm?.deviceId || rec.device_id,
-      channel_id: alarm?.channelId || rec.channel_id,
-      start_time: Number.isFinite(winStart) ? fmtLocal(winStart) : rec.start_time,
-      end_time: Number.isFinite(winEnd) ? fmtLocal(winEnd) : rec.end_time,
-    }, { timeout: 15000 })  // [FIX p1-timeout] NVR 对「仍在归档的新段」回放会挂起, 不再无限等待
-    const result = data?.data || data
-    // [FIX p1-session] 记录会话 id 供 /stop 生命周期治理 (关弹窗/切告警/新播放/卸载)
-    const cid = String(result?.call_id || '')
-    if (cid) gbPlaybackCallId.value = cid
-    if (result?.urls) {
-      // [NVR-PB 2026-09-13] 显式格式重构 (原依赖 MiniPlayer URL 后缀推断, NVR 流
-      //   /rtp/... 形态常被误判 mp4 → 原生 video 拉流解析失败 → 「已尝试全部格式」):
-      //   flv 优先 (延迟最低) → wsFlv 同家族 fallback (同走 flv.js); hls 编解码栈不同
-      //   且 srcFormat 全局唯一不随候选切换, 不入 fallback; 显式 'flv' + isLive=false
-      //   对齐录像管理页回放配置 (isLive:false + hasAudio:true, 真机可播路径)
-      const flv = String(result.urls.flv || '')
-      const wsFlv = String(result.urls.wsFlv || '')
-      const main = flv || wsFlv
-      if (main) {
-        playerSrcFormat.value = flv ? 'flv' : 'ws-flv'
-        playerSrcIsLive.value = false
-        playbackFallbackUrls.value = [...new Set([wsFlv, flv].filter((u) => !!u && u !== main))]
-        currentAlarm.value!.videoClipUrl = main
-        nvrDirectActive.value = true  // [NVR-PRIO 2026-09-18] NVR 流已接管 (见声明处)
-      } else ElMessage.warning('无可用播放地址')
-    } else if (!silent) ElMessage.warning('设备不支持回放')
+    await startNvrPlayback(rec, undefined, silent)
   } catch (e: any) {
     const body = e?.response?.data
     const msg: string = body?.message || body?.error || e?.message || ''
-    if (mp4Direct) {
-      // 设备离线 / 回放流启动失败 → 磁盘录像直链兜底 (不再黑屏)
-      // [FIX rec-layer 2026-09-11] 直链经候选链展开: 同源双层首选 + 8088 双层兜底
-      const cands = recordUrlCandidates(mp4Direct)
-      playbackFallbackUrls.value = cands.slice(1)
-      currentAlarm.value!.videoClipUrl = cands[0]
-      if (!silent) ElMessage.info('设备回放流不可用，已切换录像文件直链播放')
-      console.warn('[AlarmPopup] /play 失败落直链:', msg)
-    } else if (!silent) {
+    if (!silent) {
       ElMessage.error('回放失败: ' + (msg || '设备可能离线'))
     }
     // [FIX p1-heal] /play 失败/超时 (流未建立 → MiniPlayer 不挂载, @error 无从触发) 同样
     //   触发一次自愈; healedAlarmId 守卫防循环 (每告警一次)
-    if (!mp4Direct) void healPlaybackFailure()
+    void healPlaybackFailure()
   }
+}
+
+// [VCR-WIN 2026-09-18] NVR 回放启动/跳转共用 (playSelectedRecording 初始入口与 onNvrSeek
+//   拖动/快进退/停止/断点续播共用): 窗口裁剪 + /play + 源接线。
+//   - 窗口 = [max(段起点, T-半窗), min(段终点, T+半窗)]; startMs 指定起播时刻 (缺省=窗口左端)
+//   - queueEpoch 自增强制 MiniPlayer 重建 (同 URL 重开也重启流)
+async function startNvrPlayback(rec: DeviceRecording, startMs?: number, silent?: boolean) {
+  const alarm = currentAlarm.value
+  await stopGbPlayback()  // [FIX p1-session] 释放上一回放会话 (NVR 并发会话数有限)
+  // [NVR-PB 2026-09-13] /play 窗口裁剪: 原样传整段 start_time 会从段头开播 (NVR 段
+  //   可达 30 分钟, 用户看到的是事件前很久的画面); GB28181 Playback 原生支持任意起点,
+  //   裁到 [T-半窗, T+半窗] ∩ 段范围 = 精确联动回放窗口
+  const tMs = alarm ? new Date(alarm.createdAt).getTime() : NaN
+  const rs = parseRecTime(rec.start_time), re = parseRecTime(rec.end_time)
+  const baseStart = Number.isFinite(tMs) && Number.isFinite(rs) ? Math.max(rs, tMs - CLIP_HALF_MS) : rs
+  let winStart = baseStart
+  if (Number.isFinite(startMs as number)) winStart = Math.max(baseStart, startMs as number)
+  const winEnd = Number.isFinite(tMs) && Number.isFinite(re) ? Math.min(re, tMs + CLIP_HALF_MS) : re
+  if (Number.isFinite(winStart) && Number.isFinite(winEnd)) winStart = Math.min(winStart, winEnd - 1000)
+  const fmtLocal = (ms: number) => {
+    const d = new Date(ms), p = (n: number) => String(n).padStart(2, '0')
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
+      + `T${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
+  }
+  const { data } = await recordingHttp.post(`/${rec.id}/play`, {
+    device_id: alarm?.deviceId || rec.device_id,
+    channel_id: alarm?.channelId || rec.channel_id,
+    start_time: Number.isFinite(winStart) ? fmtLocal(winStart) : rec.start_time,
+    end_time: Number.isFinite(winEnd) ? fmtLocal(winEnd) : rec.end_time,
+  }, { timeout: 15000 })  // [FIX p1-timeout] NVR 对「仍在归档的新段」回放会挂起, 不再无限等待
+  const result = data?.data || data
+  // [FIX p1-session] 记录会话 id 供 /stop 生命周期治理 (关弹窗/切告警/新播放/卸载)
+  const cid = String(result?.call_id || '')
+  if (cid) gbPlaybackCallId.value = cid
+  // [NVR-PB 2026-09-13] 显式格式重构 (原依赖 MiniPlayer URL 后缀推断, NVR 流
+  //   /rtp/... 形态常被误判 mp4 → 原生 video 拉流解析失败 → 「已尝试全部格式」):
+  //   flv 优先 (延迟最低) → wsFlv 同家族 fallback (同走 flv.js); 显式 'flv' +
+  //   isLive=false 对齐录像管理页回放配置 (isLive:false + hasAudio:true, 真机可播路径)
+  const flv = String(result?.urls?.flv || '')
+  const wsFlv = String(result?.urls?.wsFlv || '')
+  const main = flv || wsFlv
+  if (!result?.urls) { if (!silent) ElMessage.warning('设备不支持回放'); return }
+  if (!main) { ElMessage.warning('无可用播放地址'); return }
+  // [VCR-WIN 2026-09-18] 窗口状态落位: MiniPlayer 进度条/断点续播据此工作 (每次重开同步)
+  nvrRec = rec
+  // [FIX seek-ux 2026-09-19] 窗口头固定 = baseStart (不随跳转目标收缩); 本轮流起点单独记录
+  nvrWindowStart.value = Number.isFinite(baseStart) ? baseStart : winStart
+  nvrWindowEnd.value = winEnd
+  nvrStreamStart.value = winStart
+  nvrShownRelSec.value = 0
+  // [VCR-WIN-FIX2 2026-09-18] 新流接管即清终态: 防「已播完」在拖动跳转/重播后残留
+  nvrFinished.value = false
+  playerSrcFormat.value = flv ? 'flv' : 'ws-flv'
+  playerSrcIsLive.value = false
+  playbackFallbackUrls.value = [...new Set([wsFlv, flv].filter((u) => !!u && u !== main))]
+  queueEpoch.value++  // 强制 MiniPlayer 重建 (拖动跳转/断点续播重开流必须重新 attach)
+  currentAlarm.value!.videoClipUrl = main
+  nvrDirectActive.value = true  // [NVR-PRIO 2026-09-18] NVR 流已接管 (见声明处)
+}
+
+// [VCR-WIN 2026-09-18] 窗口跳转 (MiniPlayer @seekTo: 拖动进度条/快退快进/停止/续播):
+//   释放当前会话并从目标时刻重开流; nvrSeeking 并发守卫防拖动连发堆积 /play
+//   [VCR-WIN-FIX 2026-09-18] auto=true = 断流续播链内部调用 (保留续播计数);
+//   用户手动跳转 (auto=false) 重置计数/基准 — 用户选定新锚点后重新起算
+let nvrSeeking = false
+// [VCR-WIN-FIX2 2026-09-18] 挂起期跳转合并: /play 信令实测 11~17s (NVR INVITE+转码起流),
+//   期间用户再次拖动/快进退原被守卫直接丢弃 (实测拖到窗口尾被吃掉);
+//   现只记住最新目标 (拖动「松手生效」语义), 当前重开完成后接力执行
+let nvrPendingSeek: number | null = null
+async function onNvrSeek(ms: number, auto = false) {
+  const rec = nvrRec
+  if (!nvrDirectActive.value || !rec || !Number.isFinite(ms)) return
+  if (nvrSeeking) {
+    nvrPendingSeek = ms
+    if (!auto) { nvrResumeCount = 0; nvrLastResumeTs = 0 }
+    return
+  }
+  nvrSeeking = true
+  if (!auto) { nvrResumeCount = 0; nvrLastResumeTs = 0 }  // 用户手动跳转 → 续播链重新起算
+  let failed = false
+  try {
+    await startNvrPlayback(rec, ms)
+  } catch (e: any) {
+    failed = true
+    console.warn('[AlarmPopup] NVR 回放跳转重开失败:', e?.message)
+  } finally {
+    nvrSeeking = false
+    const pend = nvrPendingSeek
+    nvrPendingSeek = null
+    if (pend != null && nvrDirectActive.value) {
+      void onNvrSeek(pend)  // 挂起期间的最新目标接力 (其失败仍会走下方兜底)
+    } else if (failed) {
+      // [VCR-WIN-FIX2] 重开失败且无后续目标 → 续播/自愈链兜底 (原实现失败后播放器挂死无恢复)
+      void maybeResumeNvr()
+    }
+  }
+}
+// [VCR-WIN] MiniPlayer @progress: 流内相对秒回写 (续播定位 + 进度行显示)
+function onNvrProgress(relSec: number) {
+  if (nvrDirectActive.value && Number.isFinite(relSec)) nvrShownRelSec.value = relSec
+}
+// [VCR-WIN 2026-09-18 核心修复] 断流续播: NVR 回放流中断时原实现 onPlaybackEnded
+//   因 queueActive=false 直接 return / onPlaybackError 落 heal 链 —「回放结束还没
+//   到事件时刻」的根因。现以已播绝对时刻判断: 未到事件时刻 → 自动从断点重开流续播
+//   (≤5 次); 到达事件时刻 (或近窗口尾) → 终态挂「重播」; 续播耗尽 → 回落既有自愈链
+function maybeResumeNvr() {
+  // [VCR-WIN-FIX2 2026-09-18] 主动跳转/停止在途: 流结束属预期 (stopGbPlayback 杀旧会话),
+  //   由在途重开 (或挂起目标接力 / 失败兜底) 接管 — 原实现此处发出虚假续播, 与手动
+  //   重开竞争且消耗续播计数 (实测 +10s 后紧跟一次多余 STOP/PLAY)
+  if (nvrSeeking) return
+  const alarm = currentAlarm.value
+  const rec = nvrRec
+  const tMs = alarm ? new Date(alarm.createdAt).getTime() : NaN
+  if (!rec || !Number.isFinite(tMs)) {
+    nvrDirectActive.value = false
+    void healPlaybackFailure()
+    return
+  }
+  const s0 = Number.isFinite(nvrStreamStart.value) ? nvrStreamStart.value : nvrWindowStart.value
+  // [FIX seek-ux 2026-09-19] 流锚定: 已播绝对时刻 = 本轮流起点 + 流内相对秒
+  const displayedTs = s0 + Math.max(0, nvrShownRelSec.value) * 1000
+  const reachedEvent = displayedTs >= tMs - 2000
+    || (Number.isFinite(nvrWindowEnd.value) && displayedTs >= nvrWindowEnd.value - 2000)
+  if (reachedEvent) {
+    nvrFinished.value = true  // 回放目标达成: 保持在当前画面, 挂「重播」入口
+    return
+  }
+  // [VCR-WIN-FIX 2026-09-18] 进展感知计数: 实测 NVR 回放单会话仅推 ~10s 有限段
+  //   (endOfStream → video ended → 本轮续播), 从窗口头推进到事件时刻需 18+ 轮;
+  //   原固定 5 次上限会中途耗尽 (达到「推进到事件时刻」验收点前回落)。现仅当
+  //   相对上次续播无可计推进 (≥2s) 时累计, 连续 5 次零推进 → 判真不可用回落自愈链
+  if (displayedTs > nvrLastResumeTs + 2000) nvrResumeCount = 0
+  if (nvrResumeCount >= 5) {
+    console.warn('[AlarmPopup] NVR 续播 5 次无实质推进, 回落本地片自愈链')
+    nvrDirectActive.value = false
+    void healPlaybackFailure()
+    return
+  }
+  nvrResumeCount++
+  nvrResumeTotal++
+  nvrLastResumeTs = displayedTs
+  console.log('[AlarmPopup] NVR 回放断流, 从', fmtClockMs(displayedTs),
+    '续播 (第 ' + nvrResumeTotal + ' 轮, 连续无推进 ' + nvrResumeCount + '/5)')
+  void onNvrSeek(displayedTs + 1000, true)
+}
+// [VCR-WIN] 终态「重播」: 清计数从原始窗口头重开
+//   [VCR-WIN-FIX2 2026-09-18] nvrWindowStart 被拖动/断点续播逐次收敛覆盖, 直接用它
+//   重播会从尾段重开而非窗口起点 — 现按「段起点∩T-半窗」重算原始窗口头
+function replayNvr() {
+  const rec = nvrRec
+  const alarm = currentAlarm.value
+  if (!rec) return
+  nvrFinished.value = false
+  nvrResumeCount = 0
+  nvrLastResumeTs = 0
+  nvrResumeTotal = 0
+  const rs = parseRecTime(rec.start_time)
+  const tMs = alarm ? new Date(alarm.createdAt).getTime() : NaN
+  const baseStart = Number.isFinite(tMs) && Number.isFinite(rs) ? Math.max(rs, tMs - CLIP_HALF_MS) : rs
+  void onNvrSeek(baseStart)
 }
 // [FIX p1-session 2026-09-12] GB28181 回放会话生命周期治理: 原实现全程零 /stop 调用
 //   (grep 0 匹配) — 每次 /play 在 NVR 侧建一个回放会话 (call_id), 弹窗关闭/切告警后
@@ -1590,7 +1822,9 @@ async function stopGbPlayback() {
   if (!cid) return
   gbPlaybackCallId.value = ''
   try {
-    await recordingHttp.post(`/${encodeURIComponent(cid)}/stop`)
+    // [FIX seek-ux 2026-09-19] 5s 超时护栏: 默认 30s+重试的无界等待会把 seek 链路
+    //   (stop→play) 整体拖死 (用户体感「点了没反应」); /stop 属 best-effort, 超时即让位新 /play
+    await recordingHttp.post(`/${encodeURIComponent(cid)}/stop`, undefined, { timeout: 5000 })
   } catch { /* best-effort: 会话可能已被设备侧回收 */ }
 }
 const isRecordingInProgress = computed(() => {
@@ -2472,6 +2706,17 @@ void jumpToPlayback; void openImageTab
 .alarm-popup__thumb--evidence {
   border-color: #1C6E8C;
 }
+/* [EV-STABLE3 2026-09-19] 缺失占位格: 虚线框 + 斜纹底 (不可点击/不参与
+   翻页, hover 无反馈) — 三格固定可观测 (后端 missing_frames 原因入 title) */
+.alarm-popup__thumb--missing {
+  border-style: dashed;
+  border-color: #4A5568;
+  cursor: default;
+  background-image: repeating-linear-gradient(45deg, #141927 0 6px, #1A1F2C 6px 12px);
+  opacity: 0.85;
+}
+.alarm-popup__thumb--missing:hover { border-color: #4A5568; transform: none; }
+.alarm-popup__thumb-tag--missing { color: #8A93A6; background: rgba(30, 36, 52, 0.9); }
 .alarm-popup__thumb-tag {
   position: absolute; left: 0; right: 0; bottom: 0;
   font-size: 9px; line-height: 12px;

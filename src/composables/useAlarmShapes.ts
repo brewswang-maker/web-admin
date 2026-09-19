@@ -432,7 +432,11 @@ export function parseDetections(
     if (x2 - x1 <= 0.002 || y2 - y1 <= 0.002) continue
     out.push({
       x: x1, y: y1, w: x2 - x1, h: y2 - y1,
-      label: d?.label || d?.class_name || d?.targetLabel || fallbackLabel,
+      // [FIX det-label-class 2026-09-19] d?.class 兑底: 后端 InferenceScheduler
+      //   det_array 历史只写 {"class"} (与插件链 label/class_name 字段分裂 —
+      //   标签退化 fallback 'target' 的根源); 后端已双写修复, 前端同步
+      //   兑底旧数据/旧固件源。
+      label: d?.label || d?.class_name || d?.class || d?.targetLabel || fallbackLabel,
       confidence: typeof d?.confidence === 'number' ? d.confidence : (typeof d?.score === 'number' ? d.score : 1),
       danger: false,
     })

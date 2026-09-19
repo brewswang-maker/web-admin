@@ -173,6 +173,85 @@ export function buildEvidenceFrames(
 }
 
 /**
+ * [EV-STABLE3 2026-09-19] 三格固定槽位构建 (取证帧数量稳定化根治):
+ *   弹窗画廊原为「主图候选(0~2) + 证据帧(0~3) 精确去重合并」→ 数量随
+ *   缺失情况 1/2/3/4 无规律波动 (用户实锚顽固问题)。本函数固定输出
+ *   pre/mid/post 三格: 真实帧 → url 非空; 缺失帧 → missing=true +
+ *   missingReason (后端 fillMeta 新增 missing_frames 字段的中文映射,
+ *   旧告警无该字段时退通用「未采集」)。
+ *   调用方自行决定是否把「被主图代表」(URL 相等) 的格去重渲染。
+ */
+export interface EvidenceSlotMeta extends EvidenceFrameMeta {
+  /** true = 该格无有效帧 (占位渲染) */
+  missing: boolean
+  /** 缺失原因中文文案 (仅 missing=true 时存在) */
+  missingReason?: string
+}
+
+/** 后端 missing_frames 原因码 → 中文 (fillMeta 写入: no_cache/...; 见 EvidenceFrames.h) */
+const MISSING_REASON_ZH: Record<string, string> = {
+  no_cache: '缓存未就绪',
+  same_as_mid: '与触发帧相同',
+  no_earlier_frame: '无更早缓存帧',
+}
+
+/**
+ * 固定三格构建 (pre→mid→post): 每格必有产出 — 有帧取帧, 无帧给缺失
+ * 占位 + 原因。旧告警 (无任何帧字段) 用 hasEvidenceChain 先过滤,
+ * 避免对无取证链的历史数据渲染三格空占位 (噪音)。
+ */
+export function buildEvidenceSlots(
+  metadata?: Record<string, unknown> | null,
+  algoId?: unknown,
+  alarmTsMs?: number,
+): EvidenceSlotMeta[] {
+  const m = metadata || {}
+  const labels = resolveEvidenceLabels(algoId, m)
+  const ts = extractEvidenceTs(m)
+  const anchor = ts.mid || alarmTsMs || 0
+  const rawMissing = (m.missing_frames && typeof m.missing_frames === 'object')
+    ? m.missing_frames as Record<string, unknown>
+    : {}
+  const out: EvidenceSlotMeta[] = []
+  for (const key of EVIDENCE_FRAME_KEYS) {
+    const url = frameUrl(m, key)
+    if (url) {
+      const f: EvidenceSlotMeta = { key, label: labels[key], url, missing: false }
+      const t = ts[key]
+      if (t) {
+        f.rel = fmtEvidenceRel(t, anchor)
+        f.abs = fmtEvidenceAbs(t)
+      }
+      out.push(f)
+    } else {
+      const code = typeof rawMissing[key] === 'string' ? String(rawMissing[key]) : ''
+      out.push({
+        key, label: labels[key], url: '', missing: true,
+        missingReason: MISSING_REASON_ZH[code] || '未采集',
+      })
+    }
+  }
+  return out
+}
+
+/**
+ * 是否存在取证链痕迹 (任一帧字段 / missing_frames / evidence_ts)。
+ * 弹窗画廊仅对 true 的告警渲染三格占位, 历史老告警 (纯主快照) 不标。
+ */
+export function hasEvidenceChain(
+  metadata?: Record<string, unknown> | null,
+): boolean {
+  const m = metadata || {}
+  if (m.missing_frames && typeof m.missing_frames === 'object') {
+    if (Object.keys(m.missing_frames as object).length > 0) return true
+  }
+  if (m.evidence_ts && typeof m.evidence_ts === 'object') {
+    if (Object.keys(m.evidence_ts as object).length > 0) return true
+  }
+  return EVIDENCE_FRAME_KEYS.some((k) => Boolean(frameUrl(m, k)))
+}
+
+/**
  * [EV-TS] post 采集中占位: 有证据帧但 post 未到 (补位链 delay+抓帧途中),
  * 且告警新鲜 (<20s 窗口, 防历史告警/已失败场景常驻假占位)。
  * evidence_update 帧到达后 post 写入 → 本占位自然消失。
