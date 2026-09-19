@@ -14,6 +14,7 @@ import { alarmApi } from '@/api/alarm'
 import { showAlarmPopup, pushLinkageLog, normalizeAlarmPayload, playAlarmSound, findMatchingRule, ensureRulesLoaded, invalidateRuleCache, popupVisible, currentAlarm } from './useAlarmPopup'
 import { useChannelStore } from '@/stores/channel'
 import { useUserStore } from '@/stores/user'
+import { usePassTipStore, PASS_TIP_TYPES } from '@/stores/passTip'
 import { http } from '@/api/http'
 import type { AlarmEvent } from '@/types/alarm'
 
@@ -406,6 +407,22 @@ async function handleAlarm(alarm: any) {
     if ((normalized as any).eventEnded) {
       console.log('[useGlobalAlarm] event end frame (no popup/tts), type:',
         normalized.type, 'ch:', normalized.channelId)
+      return
+    }
+
+    // [v2.2 2026-09-19] 人脸分组通行分流: face_pass_whitelist/vip/staff/custom 四类
+    //   为记录型事件 (非告警), 走 PassTipBar 顶部滚动提示+speechSynthesis 播报 —
+    //   不进告警列表、不弹告警窗 (后端通行模板 WEB_POPUP 帧经此分流)。backfill
+    //   历史补拉帧不在分流点之前早退, 但去重窗口内会被 store 丢弃; 静音开关见 PassTipBar。
+    if (PASS_TIP_TYPES.has(normalized.type)) {
+      const meta = normalized.metadata || {}
+      const enqueued = usePassTipStore().push({
+        type: normalized.type,
+        personName: String((meta as any).enroll_name || (meta as any).enrollName || ''),
+        channelName: normalized.channelName || '',
+        createdAt: Date.parse(normalized.createdAt) || Date.now(),
+      })
+      if (enqueued) console.log('[useGlobalAlarm] face pass -> PassTipBar:', normalized.type)
       return
     }
 

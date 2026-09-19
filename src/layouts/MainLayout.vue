@@ -115,6 +115,9 @@
       </div>
     </el-header>
 
+    <!-- [v2.2 2026-09-19] 人脸分组通行顶部滚动提示条 (全局, header 正下方) -->
+    <PassTipBar />
+
     <el-container class="workspace">
     <!-- ===== 侧边栏 ===== -->
     <el-aside
@@ -570,6 +573,7 @@ import { useAlarmStore } from '@/stores/alarm'
 import { usePreferenceStore } from '@/stores/preference'
 import { SUPPORTED_LOCALES, LOCALE_LABELS, type AppLocale } from '@/i18n'
 import NotificationBell from '@/components/NotificationBell.vue'
+import PassTipBar from '@/components/pass/PassTipBar.vue'
 import { http } from '@/api/http'
 
 const router = useRouter()
