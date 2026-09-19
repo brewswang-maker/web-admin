@@ -66,6 +66,7 @@
             <el-option label="已确认" value="confirmed" />
             <el-option label="已撤" value="retracted" />
             <el-option label="误报" value="false_alarm" />
+            <el-option label="疑似误报" value="false_alarm_suggested" />
             <el-option label="VLM 未决" value="unverified" />
           </el-select>
 
@@ -470,17 +471,25 @@
           </template>
         </el-table-column>
 
-        <!-- AI解释 -->
-        <el-table-column prop="aiAnalysis" label="AI解释" width="180" show-overflow-tooltip>
+        <!-- [UX ai-review-col 2026-09-19] 「AI解释」改名「AI复核」并与项目 AI 复核体系口径统一:
+             原列展示 aiAnalysis (检测端 AI 解释文本), 但复核 SSOT 是 metadata.ai_review
+             字段组 (后端 AlarmRetractionService 回写, normalizeAlarmCore 归一化为 row.aiReview,
+             与 AlarmPopup AI 复核卡片同源); 列改展示 aiReviewVerdictLabel 短标
+             (未复核/误报/自动误报/疑似误报/真事件), 无复核数据时「未复核」占位不隐藏;
+             悬停 tooltip 透出复核详情 (结论/置信度/时间/理由), 操作区另有「AI复核」一级入口 -->
+        <el-table-column label="AI复核" width="110" align="center">
           <template #default="{ row }">
-            <el-tooltip :content="row.aiAnalysis || '无AI解释'" placement="top" :show-after="1500" effect="dark">
-              <span class="xai-text">{{ row.aiAnalysis || '-' }}</span>
+            <el-tooltip :content="aiReviewTooltip(row.aiReview)" placement="top" :show-after="500" effect="dark">
+              <el-tag :type="aiReviewTagType(row.aiReview)" size="small" effect="plain">
+                {{ aiReviewVerdictLabel(row.aiReview) }}
+              </el-tag>
             </el-tooltip>
           </template>
         </el-table-column>
 
-        <!-- 时间 [chan-col 2026-09-11] 移位至 AI解释后 (与 AlarmEventsPanel 列序同构:
-             级别/快照/类型/所属区域/设备/通道/描述/置信度/AI解释/时间/状态/复核/SLA/操作) -->
+        <!-- 时间 [chan-col 2026-09-11] 移位至 AI复核后 (与 AlarmEventsPanel 列序同构:
+             级别/快照/类型/所属区域/设备/通道/描述/置信度/AI复核/时间/状态/复核/SLA/操作;
+             [UX ai-review-col 2026-09-19] 列名 AI解释→AI复核, 列序位置不变) -->
         <el-table-column prop="createdAt" label="时间" width="170" sortable>
           <template #default="{ row }">
             <span class="time-text">{{ formatTime(row.createdAt) }}</span>
@@ -488,7 +497,7 @@
         </el-table-column>
 
         <!-- 状态 [chan-col 2026-09-11] 移位至时间后 (任务书列序:
-             .../描述/置信度/AI解释/时间/状态/复核/SLA/操作, 与 AlarmEventsPanel 同构) -->
+             .../描述/置信度/AI复核/时间/状态/复核/SLA/操作, 与 AlarmEventsPanel 同构) -->
         <el-table-column prop="status" label="状态" width="90" align="center">
           <template #default="{ row }">
             <el-tag
@@ -532,28 +541,56 @@
         </el-table-column>
 
         <!-- 操作 -->
-        <!-- [P0-13 2026-09-04] 操作简化 (大华式): 未完结=「处警」, 已完结=「详情」, 其余收进「更多」 -->
-        <el-table-column label="操作" width="190" fixed="right">
+        <!-- [UX alarm-actions 2026-09-19] 操作区精简为固定四项「证据链/处警/AI复核/更多」:
+             ① 证据链从「更多」提升为一级入口 (排证高频操作, 原在下拉第二屏层级深);
+             ② 处警统一文案 — 行为沿用 openDisposeDialog (未完结=可编辑处置 /
+                已完结=只读回显+追加处警), 原 [P0-13 2026-09-04] 二元文案 (处警/详情)
+                废弃 — 已完结点「处警」进只读回显, 语义仍是处警流程;
+             ③ AI复核一级入口 — el-popover 透出 metadata.ai_review 字段组
+                (结论 tag/复核置信度/时间/引擎/耗时/理由), 与 AlarmPopup AI 复核卡片
+                同口径; 无复核数据时明示占位不空白;
+             ④ 其余生命周期操作 (关闭/升级/转派/标记误报/复核标注/忽略/详情) 全部
+                保留在「更多」下拉, 零功能删除 — 证据链已提升故从下拉移除 -->
+        <el-table-column label="操作" width="245" fixed="right">
           <template #default="{ row }">
             <div class="action-btns">
-               <el-button
-                type="primary"
-                link
-                @click="openDisposeDialog(row)"
-                v-if="isDisposeEditable(row)"
-              >
-                处警
-              </el-button>
-              <!-- [FIX 2026-09-05 docx#10/13] 详情打开处置记录对话框 (只读回显当时处置 + 追加入口);
-                   告警全景 (快照/视频/位置) 保留在「更多 → 详情」的 AlarmPopup -->
-               <el-button
-                type="info"
-                link
-                @click="openDisposeDialog(row)"
-                v-else
-              >
-                详情
-              </el-button>
+              <el-button type="info" link @click="showEvidence(row)">证据链</el-button>
+              <el-button type="primary" link @click="openDisposeDialog(row)">处警</el-button>
+              <el-popover placement="left" :width="330" trigger="click">
+                <template #reference>
+                  <el-button type="warning" link>AI复核</el-button>
+                </template>
+                <!-- AI 复核详情 (字段口径 = AlarmPopup AI 复核卡片, 见组件内同名注释) -->
+                <div class="ai-review-pop">
+                  <div class="ai-review-pop__head">
+                    <span class="ai-review-pop__title">AI 复核</span>
+                    <el-tag :type="aiReviewTagType(row.aiReview)" size="small" effect="plain">
+                      {{ aiReviewVerdictLabel(row.aiReview) }}
+                    </el-tag>
+                  </div>
+                  <div class="ai-review-pop__row">
+                    <span class="ai-review-pop__label">复核置信度</span>
+                    <span class="ai-review-pop__value">{{ aiReviewConfidenceText(row.aiReview) }}</span>
+                    <span class="ai-review-pop__label">复核时间</span>
+                    <span class="ai-review-pop__value">{{ row.aiReview?.reviewedAt ? formatTime(row.aiReview.reviewedAt) : '—' }}</span>
+                  </div>
+                  <div class="ai-review-pop__row" v-if="row.aiReview?.verifier && row.aiReview.verifier !== 'none'">
+                    <span class="ai-review-pop__label">复核引擎</span>
+                    <span class="ai-review-pop__value">{{ row.aiReview.verifier }}</span>
+                    <template v-if="row.aiReview?.latencyMs">
+                      <span class="ai-review-pop__label">耗时</span>
+                      <span class="ai-review-pop__value">{{ row.aiReview.latencyMs }}ms</span>
+                    </template>
+                  </div>
+                  <div class="ai-review-pop__row" v-if="row.aiReview?.reason">
+                    <span class="ai-review-pop__label">复核结论</span>
+                    <span class="ai-review-pop__value ai-review-pop__value--wrap">{{ row.aiReview.reason }}</span>
+                  </div>
+                  <div v-if="!row.aiReview" class="ai-review-pop__empty">
+                    该告警暂无 AI 复核结论 (VLM 二次复核排队中或未产出)
+                  </div>
+                </div>
+              </el-popover>
               <el-dropdown @command="(cmd: string) => handleLifecycleCommand(cmd, row)" trigger="click">
                 <el-button  type="info" link>更多<el-icon class="el-icon--right"><ArrowDown /></el-icon></el-button>
                 <template #dropdown>
@@ -567,8 +604,9 @@
                       {{ verdictMap.has(row.id) ? `已复核: ${verdictText(verdictMap.get(row.id))}` : '复核标注' }}
                     </el-dropdown-item>
                     <el-dropdown-item command="ignore" :disabled="row.status === 'closed'">忽略</el-dropdown-item>
-                    <el-dropdown-item command="evidence" divided>证据链</el-dropdown-item>
-                    <el-dropdown-item command="detail">详情</el-dropdown-item>
+                    <!-- [UX alarm-actions 2026-09-19] 证据链已提升为一级入口, 此处不再重复;
+                         详情 (AlarmPopup 全景) 补 divided 分隔保持菜单分组节奏 -->
+                    <el-dropdown-item command="detail" divided>详情</el-dropdown-item>
                   </el-dropdown-menu>
                 </template>
               </el-dropdown>
@@ -842,7 +880,7 @@ import { recordingHttp, streamHttp } from '@/api/http'
 import { normalizeStreamUrl } from '@/utils/streamUrl'
 import { alarmLevelTagType, alarmLevelTagEffect } from '@/utils/alarmLevel' // [FIX level-color-ssot 2026-09-16] 等级色板全站统一
 import type { AlarmHandleForm, AlarmEvidence, AlarmEvent } from '@/types/alarm'
-import { normalizeAlarmCore } from '@/types/alarm'
+import { normalizeAlarmCore, aiReviewVerdictLabel, type AiReviewInfo } from '@/types/alarm'
 import { useAuthStore } from '@/stores/auth'
 import { useWebSocket } from '@/composables/useWebSocket'
 // [P0-9/6/10 2026-09-04] canonical zh SSOT + 规范处警对话框
@@ -1761,6 +1799,8 @@ function reviewLabel(rs: string | undefined): string {
     confirmed: '已确认',
     retracted: '已撤',
     false_alarm: '误报',
+    // [FIX vlm-verdict-direction 2026-09-19] VLM 判误报但未自动撤警 (仅标注)
+    false_alarm_suggested: '疑似误报',
     unverified: 'VLM未决',
   }
   return map[rs || 'none'] || (rs || '未复核')
@@ -1771,6 +1811,7 @@ function reviewTagType(rs: string | undefined): 'primary' | 'success' | 'warning
     confirmed: 'success',
     retracted: 'warning',
     false_alarm: 'warning',
+    false_alarm_suggested: 'warning',
     unverified: 'primary',
   }
   return map[rs || 'none'] || 'info'
@@ -1914,10 +1955,8 @@ function openDisposeDialog(row: any) {
   disposeTarget.value = row
   disposeDialogVisible.value = true
 }
-/** 未完结生命周期 = 可处警态 (与 DisposeDialog.EDITABLE_STATUSES 对齐) */
-function isDisposeEditable(row: any): boolean {
-  return ['unhandled', 'acknowledged', 'escalated', 'reassigned', 'handling'].includes(String(row.status))
-}
+// [UX alarm-actions 2026-09-19] 原 isDisposeEditable 判定函数移除: 操作区统一「处警」后
+// 模板不再按状态切换文案, 可编辑性由 DisposeDialog 组件内部 EDITABLE_STATUSES 自判
 
 async function handleCloseAlarm(row: any) {
   ElMessageBox.confirm(`确认关闭告警：「${row.description || row.title}」?`, '关闭告警', {
@@ -2001,6 +2040,29 @@ async function submitReview() {
   } finally {
     reviewSubmitting.value = false
   }
+}
+
+// ── [UX ai-review-col 2026-09-19] AI 复核列/操作区展示辅助 (与 AlarmPopup AI 复核卡片同口径) ──
+// verdict → el-tag 语义色: 真事件=绿 / 误报+自动误报=红 / 疑似误报=橙 / 未复核等=灰
+function aiReviewTagType(v: AiReviewInfo | undefined): 'success' | 'danger' | 'warning' | 'info' {
+  if (!v) return 'info'
+  if (v.verdict === 'confirmed') return 'success'
+  if (v.verdict === 'retracted' || v.verdict === 'false_alarm_automated') return 'danger'
+  if (v.verdict === 'false_alarm_suggested') return 'warning'
+  return 'info'
+}
+// 列悬停 tooltip 详情文本 (无数据时明示占位而非空白 — 与「未复核」占位策略一致)
+function aiReviewTooltip(v: AiReviewInfo | undefined): string {
+  if (!v) return '暂无 AI 复核结论 (VLM 二次复核排队中或未产出)'
+  const parts: string[] = [`结论: ${aiReviewVerdictLabel(v)}`]
+  if (v.confidence > 0) parts.push(`置信度: ${Math.round(v.confidence * 100)}%`)
+  if (v.reviewedAt) parts.push(`时间: ${formatTime(v.reviewedAt)}`)
+  if (v.reason) parts.push(`理由: ${v.reason}`)
+  return parts.join('\n')
+}
+// 复核置信度文案 (0 视为后端未透出, 显示 — 占位)
+function aiReviewConfidenceText(v: AiReviewInfo | undefined): string {
+  return v && v.confidence > 0 ? `${Math.round(v.confidence * 100)}%` : '—'
 }
 
 async function handleLifecycleCommand(cmd: string, row: any) {
@@ -2700,12 +2762,39 @@ onUnmounted(() => {
   font-size: var(--text-sm, 13px);
 }
 
-/* ── AI解释文本 ── */
-.xai-text {
-  /*font-size: var(--text-xs, 12px);*/
-  color: var(--color-ai-500);
-  cursor: default;
-  font-style: italic;
+/* ── AI 复核 popover (操作区「AI复核」一级入口) ──
+   [UX alarm-actions 2026-09-19] 内容与 AlarmPopup AI 复核卡片同口径
+   (结论 tag/置信度/时间/引擎/耗时/理由); 无复核数据时明示占位不空白 */
+.ai-review-pop__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.ai-review-pop__title {
+  font-weight: 600;
+  font-size: 13px;
+}
+.ai-review-pop__row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  font-size: 12px;
+  margin-bottom: 6px;
+}
+.ai-review-pop__label {
+  color: var(--app-text-secondary, #909399);
+}
+.ai-review-pop__value {
+  color: var(--app-text-primary, #303133);
+}
+.ai-review-pop__value--wrap {
+  word-break: break-all;
+}
+.ai-review-pop__empty {
+  font-size: 12px;
+  color: var(--app-text-secondary, #909399);
+  padding: 4px 0;
 }
 
 /* ── 时间文本 ── */
@@ -2722,10 +2811,19 @@ onUnmounted(() => {
   box-shadow: 0 0 0 2px rgba(220, 38, 38, 0.25);
 }
 
-/* ── 操作按钮组 ── */
+/* ── 操作按钮组 ──
+   [UX alarm-actions 2026-09-19] 固定四项 (证据链/处警/AI复核/更多) 单行不换行:
+   收敛 link 按钮默认 padding (EP 默认 8px 15px 会把四项挤到折行), 改用统一 gap 对齐;
+   列宽 245 + fixed=right, 窄屏 (移动端断点) 随表格横向滚动时操作列仍固定可见 */
 .action-btns {
   display: flex;
-  gap: 2px;
+  align-items: center;
+  gap: 10px;
+  white-space: nowrap;
+}
+.action-btns :deep(.el-button.is-link) {
+  padding: 0;
+  margin-left: 0;
 }
 
 /* ── 分页 ── */
