@@ -151,6 +151,7 @@ const enUS: MessageSchema = {
     face: 'Face Database',
     faceRealtime: 'Face Realtime',
     retrieval: 'Smart Retrieval', // [P0-B 2026-08-30]
+    recordAnalysis: 'Record Analysis', // [FEAT offline-analysis 2026-09-21] offline video recognition
     gb28181: 'GB28181',
     onvif: 'ONVIF Discovery',
     openPlatform: 'Open Platform',

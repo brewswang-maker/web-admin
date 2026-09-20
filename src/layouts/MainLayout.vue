@@ -772,6 +772,8 @@ const primaryMenus = computed<PrimaryMenu[]>(() => {
       { path: '/face-realtime', label: t('menu.faceRealtime'), icon: Aim },
       // [P0-B 2026-08-30] 智能检索三合一 (P4-E 混合/以文搜图/以图搜图)
       { path: '/retrieval', label: t('menu.retrieval'), icon: Search },
+      // [FEAT offline-analysis 2026-09-21] 录像上传离线识别 (设计稿: docs/plans/录像上传离线识别_v1.0.md)
+      { path: '/record-analysis', label: t('menu.recordAnalysis'), icon: Film },
     ].filter(item => item.path !== '/algo-config' || auth.hasRole('admin')),
   },
   {

@@ -112,6 +112,8 @@ const GasDashboardView = () => import('@/views/gas-station/GasDashboard.vue')
 const Gas3DView = () => import('@/views/gas-station/Gas3D.vue')
 // 智能检索 (P0-B: P4-E 混合检索 / 以文搜图 / 以图搜图 三合一)
 const RetrievalView = () => import('@/views/RetrievalView.vue')
+// [FEAT offline-analysis 2026-09-21] 录像上传离线识别 (设计稿: docs/plans/录像上传离线识别_v1.0.md)
+const RecordAnalysisView = () => import('@/views/record-analysis/RecordAnalysisView.vue')
 
 // 基础路由（无需权限）
 export const constantRoutes: RouteRecordRaw[] = [
@@ -351,6 +353,13 @@ export const asyncRoutes: RouteRecordRaw[] = [
         name: 'Recording',
         component: RecordingView,
         meta: { title: '录像回放', icon: 'Film', roles: ['admin', 'user', 'viewer'] }
+      },
+      {
+        // [FEAT offline-analysis 2026-09-21] 录像上传离线识别 (虚拟通道回灌同管线, 菜单挂 AI 智能组)
+        path: 'record-analysis',
+        name: 'RecordAnalysis',
+        component: RecordAnalysisView,
+        meta: { title: '录像分析', icon: 'Film', roles: ['admin', 'user'] }
       },
       {
         path: 'pipelines',
