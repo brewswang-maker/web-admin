@@ -22,6 +22,82 @@
       </el-col>
     </el-row>
 
+    <!-- ===== [P1-1 2026-09-20] 告警漏斗 (可折叠) ===== -->
+    <!-- 产生→闸门→规则匹配→推送→弹窗 五环节转化率 + 去重比 + 无规则缺口 TopN;
+         数据源 GET /api/v1/stats/alarm-funnel (服务端五环节计数器快照);
+         排障辅助卡片: 展开时懒加载, 失败静默不阻塞告警主链路 -->
+    <el-card shadow="never" class="funnel-card" :body-style="{ padding: '0' }">
+      <div class="funnel-head" @click="toggleFunnel">
+        <el-icon class="funnel-title-icon" :size="16"><TrendCharts /></el-icon>
+        <span class="funnel-title">告警漏斗</span>
+        <span class="funnel-hint">五环节转化率 / 去重比 / 无规则缺口 (排障口径, 独立于列表统计)</span>
+        <span class="funnel-head-right">
+          <el-button
+            v-if="funnelExpanded"
+            text
+            size="small"
+            :loading="funnelLoading"
+            @click.stop="fetchAlarmFunnel"
+          >
+            <el-icon><Refresh /></el-icon>刷新
+          </el-button>
+          <el-icon class="funnel-toggle-icon" :class="{ 'is-expanded': funnelExpanded }">
+            <ArrowDown />
+          </el-icon>
+        </span>
+      </div>
+      <div v-if="funnelExpanded" class="funnel-body">
+        <div v-if="funnelLoading && !funnelData" class="funnel-empty">加载中...</div>
+        <div v-else-if="!funnelData" class="funnel-empty">暂无漏斗数据 (端点未就绪或暂无计数)</div>
+        <template v-else>
+          <div class="funnel-flow">
+            <template v-for="(st, i) in funnelStages" :key="st.label">
+              <div class="funnel-stage">
+                <div class="funnel-stage-label">{{ st.label }}</div>
+                <div class="funnel-stage-value">{{ st.value }}</div>
+                <div class="funnel-stage-sub">{{ st.sub }}</div>
+              </div>
+              <div v-if="i < funnelStages.length - 1" class="funnel-arrow">
+                <span class="funnel-rate">{{ st.rate }}</span>
+                <span class="funnel-arrow-glyph">→</span>
+              </div>
+            </template>
+          </div>
+          <div class="funnel-foot">
+            <el-tag size="small" type="info" effect="plain">
+              今日去重比 {{ funnelPct(funnelData?.alarm_dup_total?.today?.dup_ratio) }}
+              ({{ funnelData?.alarm_dup_total?.today?.duplicated ?? 0 }}/{{ funnelData?.alarm_dup_total?.today?.produced ?? 0 }})
+            </el-tag>
+            <el-tag size="small" type="info" effect="plain">
+              累计去重比 {{ funnelPct(funnelData?.alarm_dup_total?.total?.dup_ratio) }}
+              ({{ funnelData?.alarm_dup_total?.total?.duplicated ?? 0 }}/{{ funnelData?.alarm_dup_total?.total?.produced ?? 0 }})
+            </el-tag>
+            <el-tag
+              size="small"
+              :type="funnelDiffTotal === 0 ? 'success' : 'danger'"
+              effect="plain"
+            >
+              双写分歧 前{{ funnelData?.verdict_frontend_diff_total?.kind?.frontend_only ?? 0 }}
+              / 后{{ funnelData?.verdict_frontend_diff_total?.kind?.backend_only ?? 0 }}
+            </el-tag>
+            <span
+              v-if="(funnelData?.alarm_verdict_total?.unmatched_top_types?.length ?? 0) > 0"
+              class="funnel-gap"
+            >
+              <span class="funnel-gap-label">无规则缺口 TopN:</span>
+              <el-tag
+                v-for="t in (funnelData?.alarm_verdict_total?.unmatched_top_types ?? [])"
+                :key="t.type"
+                size="small"
+                type="warning"
+                effect="light"
+              >{{ zh(t.type) }} ×{{ t.count }}</el-tag>
+            </span>
+          </div>
+        </template>
+      </div>
+    </el-card>
+
     <!-- ===== 工具栏 ===== -->
     <el-card shadow="never" class="toolbar-card">
       <div class="toolbar">
@@ -880,9 +956,11 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   Bell, Warning, CircleCheck, Clock,
   Search, Refresh, Download, WarningFilled,
-  Picture, VideoPlay, Position, ArrowDown,
+  Picture, VideoPlay, Position, ArrowDown, TrendCharts,
 } from '@element-plus/icons-vue'
 import { alarmApi } from '@/api/alarm'
+// [P1-1 2026-09-20] 告警漏斗五环节快照 (GET /stats/alarm-funnel)
+import { statisticsApi, type AlarmFunnelResponse } from '@/api/statistics'
 // [AGG-DETAIL 2026-09-12] ×N 展开明细行类型 (后端原始 snake_case 形态)
 import type { AlarmOccurrence } from '@/api/alarm'
 import { screeningApi, type AlarmFeedbackItem } from '@/api/screening'
@@ -1745,6 +1823,71 @@ const { alarmStatCards, filteredAlarms } = (() => {
   }
 })()
 
+// ── [P1-1 2026-09-20] 告警漏斗 (可折叠): 产生→闸门→规则匹配→推送→弹窗 ──
+//   数据源 GET /api/v1/stats/alarm-funnel (服务端 AlarmFunnelCounters 五环节计数器
+//   快照, 含双写期 verdict 分歧对账 / 去重比 / 无规则缺口 TopN)。低频排障端点,
+//   展开时懒加载; 失败静默置空 (不阻塞告警主列表)。
+const funnelExpanded = ref(false)
+const funnelLoading = ref(false)
+const funnelData = ref<AlarmFunnelResponse | null>(null)
+
+async function fetchAlarmFunnel() {
+  funnelLoading.value = true
+  try {
+    const r = await statisticsApi.getAlarmFunnel()
+    const d: any = r.data?.data ?? r.data
+    funnelData.value = (d && typeof d === 'object' && !Array.isArray(d))
+      ? (d as AlarmFunnelResponse)
+      : null
+  } catch {
+    funnelData.value = null // 排障卡片失败静默 (端点未就绪时不干扰告警主链路)
+  } finally {
+    funnelLoading.value = false
+  }
+}
+
+/** 头部点击: 展开时首次拉取 (懒加载); 收起不发请求 */
+function toggleFunnel() {
+  funnelExpanded.value = !funnelExpanded.value
+  if (funnelExpanded.value && !funnelData.value && !funnelLoading.value) fetchAlarmFunnel()
+}
+
+/** 百分比口径 (0-1 → 1 位小数); 分母缺失/非法显示 '—' */
+function funnelPct(v?: number | null): string {
+  return typeof v === 'number' && Number.isFinite(v) ? `${(v * 100).toFixed(1)}%` : '—'
+}
+
+/** 双写期前后端判定分歧合计 (>0 标红; P0 验收「7 天零分歧」) */
+const funnelDiffTotal = computed(() => {
+  const k = funnelData.value?.verdict_frontend_diff_total?.kind
+  return (k?.frontend_only ?? 0) + (k?.backend_only ?? 0)
+})
+
+/** 五环节阶段行: 值为「流向下一环节」口径 (闸门=pass / 匹配=matched / 推送=pushed /
+ *  弹窗=total); rate=本环节→下环节转化率 (分母 0 显示 '—') */
+const funnelStages = computed(() => {
+  const d = funnelData.value
+  if (!d) return [] as Array<{ label: string; value: number; sub: string; rate: string }>
+  const n = (v?: number) => (typeof v === 'number' ? v : 0)
+  const produced = n(d.alarm_produced_total?.total)
+  const origin = d.alarm_produced_total?.origin
+  const pass = n(d.alarm_gated_total?.result?.pass)
+  const suppressed = n(d.alarm_gated_total?.result?.suppressed)
+  const matched = n(d.alarm_verdict_total?.result?.matched)
+  const unmatched = n(d.alarm_verdict_total?.result?.unmatched)
+  const pushed = n(d.alarm_pushed_total?.result?.pushed)
+  const drop = n(d.alarm_pushed_total?.result?.drop)
+  const popup = d.alarm_popup_total
+  const rate = (num: number, den: number) => (den > 0 ? `${((num / den) * 100).toFixed(1)}%` : '—')
+  return [
+    { label: '① 产生', value: produced, sub: `算法 ${n(origin?.algo)} / 设备 ${n(origin?.device_native)} / 注入 ${n(origin?.injected)}`, rate: '' },
+    { label: '② 闸门', value: pass, sub: `压制 ${suppressed}`, rate: rate(pass, produced) },
+    { label: '③ 规则匹配', value: matched, sub: `未匹配 ${unmatched}`, rate: rate(matched, pass) },
+    { label: '④ 推送', value: pushed, sub: `丢弃 ${drop}`, rate: rate(pushed, matched) },
+    { label: '⑤ 弹窗', value: n(popup?.total), sub: `展示 ${n(popup?.result?.shown)} / 去抖 ${n(popup?.result?.debounced)} / 离线 ${n(popup?.result?.offline_fallback)}`, rate: rate(n(popup?.total), pushed) },
+  ]
+})
+
 // ── 当前页告警 ──
 // [FIX 2026-07-24] 双重分页修复:
 //   原: filteredAlarms.value.slice((page-1)*pageSize, page*pageSize)
@@ -2563,6 +2706,136 @@ onUnmounted(() => {
   font-size: var(--text-xs, 12px);
   color: var(--app-text-secondary);
   margin-top: 2px;
+}
+
+/* ── [P1-1 2026-09-20] 告警漏斗卡片 (可折叠) ── */
+.funnel-card {
+  margin-bottom: 16px;
+  border-radius: var(--radius-lg, 8px);
+  border: 1px solid var(--app-border);
+}
+
+.funnel-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.funnel-title-icon { color: var(--el-color-primary, #6366F1); }
+
+.funnel-title {
+  font-size: var(--text-sm, 14px);
+  font-weight: 600;
+  color: var(--app-text-primary);
+}
+
+.funnel-hint {
+  font-size: var(--text-xs, 12px);
+  color: var(--app-text-secondary);
+}
+
+.funnel-head-right {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.funnel-toggle-icon {
+  transition: transform 0.2s ease;
+  color: var(--app-text-secondary);
+}
+
+.funnel-toggle-icon.is-expanded { transform: rotate(180deg); }
+
+.funnel-body {
+  padding: 12px 16px 14px;
+  border-top: 1px dashed var(--app-border-light, #E5E7EB);
+}
+
+.funnel-empty {
+  padding: 12px 0;
+  text-align: center;
+  font-size: var(--text-xs, 12px);
+  color: var(--app-text-secondary);
+}
+
+.funnel-flow {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.funnel-stage {
+  flex: 1;
+  min-width: 132px;
+  background: var(--app-surface-hover, #F9FAFB);
+  border: 1px solid var(--app-border-light, #E5E7EB);
+  border-radius: var(--radius-md, 8px);
+  padding: 10px 12px;
+  text-align: center;
+}
+
+.funnel-stage-label {
+  font-size: var(--text-xs, 12px);
+  color: var(--app-text-secondary);
+}
+
+.funnel-stage-value {
+  font-size: 20px;
+  font-weight: var(--font-bold, 700);
+  font-family: var(--font-number);
+  color: var(--app-text-primary);
+  line-height: 1.35;
+}
+
+.funnel-stage-sub {
+  font-size: 11px;
+  color: var(--app-text-secondary);
+}
+
+.funnel-arrow {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.funnel-rate {
+  font-size: 11px;
+  color: var(--el-color-primary, #6366F1);
+  font-family: var(--font-number);
+}
+
+.funnel-arrow-glyph {
+  color: var(--app-text-secondary);
+  font-size: 13px;
+}
+
+.funnel-foot {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.funnel-gap {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.funnel-gap-label {
+  font-size: var(--text-xs, 12px);
+  color: var(--app-text-secondary);
 }
 
 /* ── 工具栏 ── */

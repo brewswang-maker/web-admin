@@ -111,10 +111,59 @@ export interface FalseAlarmBaselineResponse {
   by_day: FalseAlarmBucket[]
 }
 
+/** [P1-1 2026-09-20] 去重比口径 (当日窗口 / 累计; 分子 duplicated 来自 AlarmService 去重,
+ *  分母 produced 为全量产生口径 — 含被闸门压制帧, 在去重之前埋点) */
+export interface AlarmDupRatio {
+  duplicated: number
+  produced: number
+  dup_ratio: number
+}
+
+/** [P1-1 2026-09-20] 告警漏斗五环节计数器快照 (GET /api/v1/stats/alarm-funnel,
+ *  服务端 AlarmFunnelCounters; 漂移检测/排障口径, 与列表统计独立) */
+export interface AlarmFunnelResponse {
+  /** ① 产生: AlarmDispatcher 三入口埋点 (去重之前) */
+  alarm_produced_total: {
+    total: number
+    origin: { algo: number; device_native: number; injected: number }
+  }
+  /** ② 闸门: 通过/压制 (订阅闸门+去重等, suppressed_by 为压制原因分布) */
+  alarm_gated_total: {
+    result: { pass: number; suppressed: number }
+    suppressed_by: Record<string, number>
+  }
+  /** ③ 规则匹配: 命中/未命中 + 未命中类型 TopN (有告警无规则缺口) */
+  alarm_verdict_total: {
+    result: { matched: number; unmatched: number }
+    unmatched_top_types: Array<{ type: string; count: number }>
+  }
+  /** ④ 推送: WS 推送成功/丢弃 (drop_by 为丢弃原因分布) */
+  alarm_pushed_total: {
+    result: { pushed: number; drop: number }
+    drop_by: Record<string, number>
+  }
+  /** ⑤ 弹窗: 前端打点 (shown/debounced/offline_fallback) */
+  alarm_popup_total: {
+    total: number
+    result: { shown: number; debounced: number; offline_fallback: number }
+  }
+  /** 双写期前后端判定分歧 (P0 验收「7 天零分歧」数据源) */
+  verdict_frontend_diff_total: {
+    kind: { frontend_only: number; backend_only: number }
+  }
+  /** 去重比: 当日窗口 (每日对账) + 累计口径 (与 g1~g7 闸门计数交叉对账) */
+  alarm_dup_total: { today: AlarmDupRatio; total: AlarmDupRatio }
+}
+
 export const statisticsApi = {
   /** [P1-1] 误报基线 (含每相机日误报 false_alarms_per_camera_day) */
   getFalseAlarmBaseline(params?: { days?: number; include_feedback?: boolean }) {
     return statsHttp.get<ApiResponse<FalseAlarmBaselineResponse>>('/false_alarm_baseline', { params })
+  },
+
+  /** [P1-1 2026-09-20] 告警漏斗五环节快照 (低频排障端点, 展开告警页漏斗卡片时懒加载) */
+  getAlarmFunnel() {
+    return statsHttp.get<ApiResponse<AlarmFunnelResponse>>('/alarm-funnel')
   },
 
   /** 获取安全评分 */
