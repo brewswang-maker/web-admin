@@ -47,6 +47,8 @@ const RoleManagementView = () => import('@/views/rbac/RoleManagementView.vue')
 const UserManagementView = () => import('@/views/rbac/UserManagementView.vue')
 // [UI-5 2026-09-10] 组织架构管理页 (OrgStore 前端落地, 平台管理必备子页)
 const OrgManagementView = () => import('@/views/platform/OrgManagementView.vue')
+// [FIX storage-gc 2026-09-20 P1] 存储管理 (推理图片生命周期/留存期/预算/满策略)
+const StorageSettingsView = () => import('@/views/platform/StorageSettingsView.vue')
 const LocationTrackView = () => import('@/views/LocationTrackView.vue')
 const TopologyView = () => import('@/views/TopologyView.vue')
 const AlgorithmStoreView = () => import('@/views/AlgorithmStoreView.vue')
@@ -405,6 +407,13 @@ export const asyncRoutes: RouteRecordRaw[] = [
         name: 'OrgManagement',
         component: OrgManagementView,
         meta: { title: '组织架构', icon: 'OfficeBuilding', roles: ['admin'] }
+      },
+      {
+        // [FIX storage-gc 2026-09-20 P1] 存储管理 (留存期/预算/满策略/证据分级/faces)
+        path: 'storage-settings',
+        name: 'StorageSettings',
+        component: StorageSettingsView,
+        meta: { title: '存储管理', icon: 'Cpu', roles: ['admin'] }
       },
       {
         path: 'algo-config',

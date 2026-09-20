@@ -786,6 +786,8 @@ const primaryMenus = computed<PrimaryMenu[]>(() => {
       { path: '/security-areas', label: t('menu.securityAreas'), icon: Files },
       // [UI-5 2026-09-10] 组织架构管理 (OrgStore 后端已建, 本轮前端 UI 落地)
       { path: '/org-management', label: '组织架构', icon: OfficeBuilding, roles: ['admin'] },
+      // [FIX storage-gc 2026-09-20 P1] 存储管理 (推理图片生命周期治理)
+      { path: '/storage-settings', label: '存储管理', icon: Cpu, roles: ['admin'] },
       { path: '/scene-management', label: '3D场景管理', icon: MapLocation, roles: ['admin'] },
       { path: '/topology', label: t('menu.topology'), icon: Share },
       { path: '/linkage', label: t('menu.linkage'), icon: Connection },
