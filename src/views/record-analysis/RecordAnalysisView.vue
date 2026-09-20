@@ -19,7 +19,7 @@ import {
 } from '@/api/recordAnalysis'
 import eventTypesApi, { type CanonicalEventType } from '@/api/eventTypes'
 import { alarmApi } from '@/api/alarm'
-import type { AlarmEvent } from '@/types/alarm'
+import { normalizeAlarmCore, type AlarmEvent } from '@/types/alarm'
 
 // ============================================================
 // 工具
@@ -268,7 +268,12 @@ async function openDetail(t: OfflineTask): Promise<void> {
     //   后端 302 (已修) — 双保险取数
     const resp = await alarmApi.getList({ channel_id: String(t.channel_id), page: 1, pageSize: 50 })
     const respData: any = resp.data?.data ?? resp.data
-    detailAlarms.value = (respData?.alarms || respData?.items || []) as AlarmEvent[]
+    const rawList: any[] = respData?.alarms || respData?.items || []
+    // [FIX offline-analysis 2026-09-21] REST 行为 snake_case 原始态
+    //   (alarm_type/created_at/snapshot_*), 模板按 AlarmEvent 归一字段消费 —
+    //   必须经项目标准 normalizeAlarmCore (AlarmsView 同源), 否则事件列
+    //   恒 undefined / 时间串错位 (真机验收实证)
+    detailAlarms.value = rawList.map((r) => normalizeAlarmCore(r))
   } catch (err) {
     console.error('[RecordAnalysis] 关联告警拉取失败:', err)
   } finally {
