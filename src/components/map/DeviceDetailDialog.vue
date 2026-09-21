@@ -494,8 +494,17 @@ function typeNameOf(a: any) { return getAlarmTypeName(String(a?.type || '')) || 
 function levelLabel(l: string) {
   return ({ critical: '严重', high: '高危', medium: '中危', low: '低危', info: '提示' } as Record<string, string>)[l] || l
 }
+// [FIX status-cn-complete 2026-09-21] 补全状态映射 (对齐 useAlarmTableHelpers 列表
+//   SSOT): 原小表仅 6 键 → 设备详情告警 tab 处置态/存疑/已知事件/handling 等
+//   一律原样裸显英文 (true_positive/unsure/known/pending...)
 function statusLabel(s: string) {
-  return ({ unhandled: '未处理', confirmed: '已确认', handled: '已处理', false_alarm: '误报', ignored: '已忽略', forwarded: '已转发' } as Record<string, string>)[s] || s
+  return ({
+    unhandled: '未处理', new: '待处理', pending: '待处理', handling: '处理中',
+    handled: '已处理', acknowledged: '已确认收到', disposed: '处置中',
+    confirmed: '已确认', false_alarm: '误报', ignored: '已忽略', forwarded: '已转发',
+    escalated: '已升级', reassigned: '已转派', resolved: '已解决', closed: '已关闭',
+    true_positive: '真实告警', unsure: '存疑', known: '已知事件',
+  } as Record<string, string>)[s] || s
 }
 function openAlarmDetail(a: any) {
   // 复用全局告警详情 (AlarmPopup) — 不重复建设不一致的详情页

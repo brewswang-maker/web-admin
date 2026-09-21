@@ -133,6 +133,7 @@ declare module 'vue' {
     MoreFilled: typeof import('@element-plus/icons-vue')['MoreFilled']
     NotificationBell: typeof import('./components/NotificationBell.vue')['default']
     NotificationPopup: typeof import('./components/NotificationPopup.vue')['default']
+    ParameterFormRenderer: typeof import('./components/ParameterFormRenderer.vue')['default']
     PassagewayEditor: typeof import('./components/PassagewayEditor.vue')['default']
     PassTipBar: typeof import('./components/pass/PassTipBar.vue')['default']
     Picture: typeof import('@element-plus/icons-vue')['Picture']

@@ -141,6 +141,13 @@
               <span :class="{ 'stat-warn': row.cooldown_hits > 0 }">{{ row.cooldown_hits }}</span>
             </template>
           </el-table-column>
+          <!-- [M2-2 2026-09-21] 告警次数上限观测 (0=不限; 当日计数/上限) -->
+          <el-table-column label="当日/上限" width="100" align="center">
+            <template #default="{ row }">
+              <span v-if="(row.max_triggers ?? 0) > 0" :class="{ 'stat-warn': (row.today_trigger_count ?? 0) >= (row.max_triggers ?? 0) }">{{ row.today_trigger_count ?? 0 }}/{{ row.max_triggers }}</span>
+              <span v-else class="text-secondary">不限</span>
+            </template>
+          </el-table-column>
           <el-table-column label="成功率" width="120" align="center">
             <template #default="{ row }">
               <span v-if="row.action_success + row.action_failed > 0" :class="{ 'stat-good': row.action_failed === 0, 'stat-bad': row.action_failed > 0 }">
@@ -234,6 +241,12 @@
             <span class="text-secondary">{{ formatCooldown(row.cooldown_ms) }}</span>
           </template>
         </el-table-column>
+        <!-- [M2-2 2026-09-21] 告警次数上限 (0=不限) -->
+        <el-table-column prop="max_triggers" label="次数上限" width="90" align="center">
+          <template #default="{ row }">
+            <span class="text-secondary">{{ (row.max_triggers ?? 0) > 0 ? `≤${row.max_triggers}` : '不限' }}</span>
+          </template>
+        </el-table-column>
         <el-table-column prop="updated_at" label="更新时间" width="170" sortable="custom">
           <template #default="{ row }">
             <span class="time-text">{{ formatTime(row.updated_at) }}</span>
@@ -294,6 +307,19 @@
               <el-form-item label="冷却时间(ms)" prop="cooldownMs">
                 <el-input-number v-model="form.cooldownMs" :min="1000" :max="60000" :step="1000" style="width: 100%" />
               </el-form-item>
+            </el-col>
+          </el-row>
+          <!-- [M2-2 2026-09-21] 告警次数上限 (对标 CosmoEdge targetAlarmCount 0~100):
+               0=不限; 达到上限当日停报, 次日零点自动恢复; 与冷却语义正交
+               (冷却期内被抑制的事件不消耗额度 — 额度只按真实触发扣除) -->
+          <el-row :gutter="16">
+            <el-col :span="12">
+              <el-form-item label="告警次数上限(次/日)" prop="maxTriggers">
+                <el-input-number v-model="form.maxTriggers" :min="0" :max="100" :step="1" style="width: 100%" />
+              </el-form-item>
+            </el-col>
+            <el-col :span="12">
+              <p class="cond-hint" style="margin: 6px 0 0">0 = 不限；达到上限后当日停报，次日自动恢复（冷却期内被抑制的事件不消耗额度）</p>
             </el-col>
           </el-row>
 
@@ -919,6 +945,27 @@
                     <p class="cond-hint" style="margin: 34px 0 0">目标在检测区域内持续停留超过该时长后判定为徘徊；不同场景可分别设置（默认 30 秒）</p>
                   </el-col>
                 </el-row>
+                <!-- [M2-1 2026-09-21] 算法参数 (param_meta 元数据驱动, 双轨共存):
+                     选中事件有参数元数据时自动渲染表单 (字段/校验/显隐/档位全由 YAML
+                     param_meta 定义驱动 — 改 YAML 表单跟随变化, 前端零代码改动);
+                     无 meta 算法不出卡, 上方存量控件 (最低置信度/徘徊时长) 原样保留 -->
+                <div v-if="algoParamCards.length" class="algo-param-section">
+                  <el-divider content-position="left">算法参数（元数据驱动）</el-divider>
+                  <div v-for="card in algoParamCards" :key="card.eventType" class="algo-param-card">
+                    <div class="algo-param-card__head">
+                      <span class="algo-param-card__name">{{ card.name }}</span>
+                      <span class="algo-param-card__id">{{ card.algoId }}</span>
+                    </div>
+                    <el-skeleton v-if="card.loading" :rows="3" animated />
+                    <ParameterFormRenderer v-else
+                      v-model="card.values"
+                      :params="card.params"
+                      :tier="card.tier"
+                      :submitting="card.submitting"
+                      @submit="(vals) => saveAlgoParams(card, vals)"
+                      @tier-change="(t) => changeAlgoTier(card, t)" />
+                  </div>
+                </div>
               </template>
 
               <!-- [UI-CONVERGE 2026-09-12 P1] 事件源卡下线 (通道网格 + 「适用平面图」多选):
@@ -1047,6 +1094,31 @@
           <el-form-item label="重复次数">
             <el-input-number v-model="paramForm.tts_repeat" :min="1" :max="10" style="width: 100%" />
           </el-form-item>
+          <!-- [M2-3 2026-09-21] 播报参数化: 语速/音量/音柱时长/音色 (默认=现网行为) -->
+          <el-row :gutter="12">
+            <el-col :span="12">
+              <el-form-item label="语速 (%)">
+                <el-input-number v-model="paramForm.tts_speech_rate" :min="50" :max="200" :step="10" style="width: 100%" />
+              </el-form-item>
+            </el-col>
+            <el-col :span="12">
+              <el-form-item label="音量 (%)">
+                <el-input-number v-model="paramForm.tts_volume" :min="1" :max="100" style="width: 100%" />
+              </el-form-item>
+            </el-col>
+          </el-row>
+          <el-row :gutter="12">
+            <el-col :span="12">
+              <el-form-item label="音柱时长 (秒)">
+                <el-input-number v-model="paramForm.tts_duration_s" :min="1" :max="30" style="width: 100%" />
+              </el-form-item>
+            </el-col>
+            <el-col :span="12">
+              <el-form-item label="音色">
+                <el-input v-model="paramForm.tts_voice" placeholder="留空=默认音色" />
+              </el-form-item>
+            </el-col>
+          </el-row>
         </template>
 
         <!-- === PTZ 云台专用 === -->
@@ -1268,7 +1340,7 @@
           <el-table-column prop="channel_id" label="监控点" width="70" />
           <el-table-column label="状态" width="90" align="center">
             <template #default="{ row }">
-              <el-tag :type="actionStatusTagType(row.status)" size="small" effect="dark">{{ row.status }}</el-tag>
+              <el-tag :type="actionStatusTagType(row.status)" size="small" effect="dark">{{ actionStatusLabel(row.status) }}</el-tag>
             </template>
           </el-table-column>
           <el-table-column label="耗时" width="80" align="center">
@@ -1680,6 +1752,10 @@ import CEPPatternEditor from '@/components/CEPPatternEditor.vue'
 // [UI-CONVERGE 2026-09-12 P6] ConditionTreeEditor 入口下线 (condition_tree 0/89), 组件文件保留
 // [vp7 向导 2026-09-01] 新建事件规则向导子组件 (设备通道多选/NLG/模板库/AI 增强/确认预览)
 import DeviceChannelPicker from '@/components/linkage/DeviceChannelPicker.vue'
+// [M2-1 2026-09-21] 参数元数据驱动表单 (param_meta; 规格 docs/plans/算法参数元数据模型_规格_v1.0.md §5)
+import ParameterFormRenderer from '@/components/ParameterFormRenderer.vue'
+import algorithmsApi from '@/api/algorithms'
+import type { ParamMeta, ParamMetaData } from '@/api/algorithms'
 // [REVERT 2026-09-02] TemplateGallery 不再在本视图使用: 工具栏/卡片已有"从模板库创建"语义,
 //   编辑场景下浏览模板参考是画蛇添足。组件本体保留给 SimpleRuleDrawer 的 tune 微调视图复用。
 // [r25 2026-09-02] 删除 RuleNlgInput/AiEnhancePanel/RulePreviewPanel 三个 import:
@@ -3210,6 +3286,8 @@ const form = reactive({
   description: '',
   priority: 50,
   cooldownMs: 5000,
+  // [M2-2 2026-09-21] 告警次数上限 (次/日): 0=不限; 1-100=达上限当日停报, 次日自动恢复
+  maxTriggers: 0,
   enabled: true,
   tags: [] as string[],
   timeTemplateId: '',
@@ -3488,6 +3566,123 @@ function onEventTypesChanged() {
   collapsedConditions.region = false
   spatialAutoExpandNotice.value = true
 }
+
+// ═══ [M2-1 2026-09-21] 算法参数 (param_meta 元数据驱动表单, 双轨共存) ═══
+//   选中事件类型 → GET :id/param-meta (后端别名链解析); 有 param_meta 的算法
+//   渲染 ParameterFormRenderer 卡 (字段/校验/显隐/档位全由 YAML 驱动); 值加载走
+//   GET :id/config (box_config 优先 + plugin_default 兜底), 保存走 PUT :id/config
+//   (校验+持久化, 重启生效); 无 meta 算法不出卡 — 存量 56 算法回归零变化。
+interface AlgoParamCard {
+  eventType: string
+  algoId: string
+  name: string
+  params: ParamMeta[]
+  values: Record<string, any>
+  tier: { current: string; presets: Record<string, Record<string, any>> } | null
+  loading: boolean
+  submitting: boolean
+}
+const algoParamCards = ref<AlgoParamCard[]>([])
+/** 事件类型 → param-meta 响应缓存 (同会话不重复请求) */
+const algoMetaCache = new Map<string, ParamMetaData | null>()
+/** 刷新竞态序号 (仅最后一次刷新可与卡片数据互写) */
+let algoParamSeq = 0
+
+/** 事件类型 → 展示名 (选项 label 去 (key) 后缀; 缺省回落事件类型串) */
+function algoCardName(t: string): string {
+  const o = eventTypeOptions.value.find((x) => x.value === t)
+  return o ? String(o.label).replace(/\s*\([^)]*\)\s*$/, '') : t
+}
+
+async function refreshAlgoParamCards() {
+  const seq = ++algoParamSeq
+  const types = ((form.conditions.eventType.config.types || []) as string[])
+    .map((t) => String(t).trim()).filter(Boolean)
+  const cards: AlgoParamCard[] = []
+  for (const t of types) {
+    let meta = algoMetaCache.get(t)
+    if (meta === undefined) {
+      try {
+        const res = await algorithmsApi.getParamMeta(t)
+        meta = ((res.data as any)?.data ?? null) as ParamMetaData | null
+      } catch (e: any) {
+        console.warn('[LinkageRuleView] param-meta 加载失败', t, e?.message ?? e)
+        meta = null
+      }
+      algoMetaCache.set(t, meta)
+    }
+    if (!meta || !Array.isArray(meta.params) || meta.params.length === 0) continue
+    cards.push({
+      eventType: t,
+      algoId: String(meta.algo_id || t),
+      // [M4-4 2026-09-21] 卡片名优先用算法中文名 (object_detected 映射到开放
+      //   词汇检测时显示「开放词汇检测」而非事件显示名「物体检测」)
+      name: meta.algo_name || algoCardName(t),
+      params: meta.params,
+      values: {},
+      tier: meta.tier ?? null,
+      loading: true,
+      submitting: false,
+    })
+  }
+  if (seq !== algoParamSeq) return  // 竞态: 已发起更新一轮刷新
+  algoParamCards.value = cards
+  // [M6-FIX 2026-09-21] 迭代代理数组 (而非 raw cards): Vue3 响应式仅追踪经
+  //   proxy 的属性写入 — raw 对象上置 loading=false 不触发渲染, 卡片永远停
+  //   在 skeleton (设备端浏览器实录, Vue2 链式习惯误用); 经 proxy 修改
+  //   loading/values 才能刷新视图
+  for (const c of algoParamCards.value) void loadAlgoParamValues(c, seq)
+}
+
+async function loadAlgoParamValues(card: AlgoParamCard, seq: number) {
+  try {
+    const res = await algorithmsApi.getConfig(card.eventType)
+    if (seq !== algoParamSeq) return
+    const data = ((res.data as any)?.data ?? {}) as Record<string, any>
+    if (data.values && typeof data.values === 'object') card.values = { ...data.values }
+    if (data.sensitivity_tier && card.tier) card.tier = { ...card.tier, current: String(data.sensitivity_tier) }
+  } catch (e: any) {
+    console.warn('[LinkageRuleView] 算法参数值加载失败', card.eventType, e?.message ?? e)
+  } finally {
+    card.loading = false
+  }
+}
+
+/** 结构化错误展示文案 (M1-4 协议信封 message/messageKey 优先) */
+function algoParamErrText(e: any): string {
+  const d = e?.response?.data
+  return String(d?.message || d?.messageKey || e?.message || e)
+}
+
+async function saveAlgoParams(card: AlgoParamCard, values: Record<string, any>) {
+  card.submitting = true
+  try {
+    const res = await algorithmsApi.updateAlgoParams(card.eventType, values)
+    const d = (res.data as any)?.data ?? {}
+    ElMessage.success(`已保存 ${Array.isArray(d.applied) ? d.applied.length : Object.keys(values).length} 项参数 — 重启服务后生效`)
+    await loadAlgoParamValues(card, algoParamSeq)
+  } catch (e: any) {
+    ElMessage.error(`保存失败: ${algoParamErrText(e)}`)
+  } finally {
+    card.submitting = false
+  }
+}
+
+async function changeAlgoTier(card: AlgoParamCard, tier: string) {
+  const algoKey = card.algoId.split('.').pop() || ''
+  try {
+    await algorithmsApi.setAlgoTier(algoKey, tier)
+    ElMessage.success(`灵敏度档位已切换为 ${tier} (整组覆盖) — 重启服务后生效`)
+    await loadAlgoParamValues(card, algoParamSeq)
+  } catch (e: any) {
+    ElMessage.error(`档位切换失败: ${algoParamErrText(e)}`)
+  }
+}
+
+/** 事件类型勾选/回显变化 → 刷新算法参数卡 (回显赋值不触发 @change, 故 watch 兜底) */
+watch(() => (form.conditions.eventType.config.types || []).join(','), () => {
+  void refreshAlgoParamCards()
+})
 /** 条件卡开关变更 (用户交互): 开卡自动展开卡体; 空间卡标记用户意图并收起说明条 */
 function onCondSwitchChange(type: string, v: boolean) {
   if (v) collapsedConditions[type] = false
@@ -3841,6 +4036,11 @@ const paramForm = reactive({
   // TTS
   tts_text: '',
   tts_repeat: 1,
+  // [M2-3 2026-09-21] 播报参数化 (默认=现网行为)
+  tts_speech_rate: 100,
+  tts_volume: 100,
+  tts_duration_s: 1,
+  tts_voice: '',
   // PTZ
   preset_id_start: '',
   preset_id_end: '',
@@ -3978,6 +4178,8 @@ function resetEditorState(rule: LinkageRule | null) {
   form.description = rule?.description || ''
   form.priority = rule?.priority ?? 50
   form.cooldownMs = rule?.cooldown_ms ?? 5000
+  // [M2-2 2026-09-21] 次数上限回显 (0=不限)
+  form.maxTriggers = rule?.max_triggers ?? 0
   form.enabled = rule?.enabled ?? true
   form.tags = rule?.tags ? [...rule.tags] : []
   // [FIX P1-1] 恢复冲突处理字段
@@ -4410,6 +4612,8 @@ async function handleSave(): Promise<boolean> {
   if (!form.name.trim()) { ElMessage.warning('请输入规则名称'); return false }
   if (form.priority < 1 || form.priority > 100) { ElMessage.warning('优先级范围 1-100'); return false }
   if (form.cooldownMs < 1000) { ElMessage.warning('冷却时间最小 1000ms'); return false }
+  // [M2-2 2026-09-21] 次数上限范围校验 (0=不限; 与后端 clamp 同口径)
+  if (form.maxTriggers < 0 || form.maxTriggers > 100) { ElMessage.warning('告警次数上限范围 0-100 (0=不限)'); return false }
 
   const enabledActions = Object.entries(actionState).filter(([, v]) => v)
   if (enabledActions.length === 0) { ElMessage.warning('请至少选择一个联动动作'); return false }
@@ -5032,6 +5236,11 @@ async function handleSave(): Promise<boolean> {
         // 按类别保留专用字段
         ...(params.tts_text !== undefined ? { tts_text: params.tts_text } : {}),
         ...(params.tts_repeat !== undefined ? { tts_repeat: params.tts_repeat } : {}),
+        // [M2-3 2026-09-21] 播报参数化四字段
+        ...(params.tts_speech_rate !== undefined ? { tts_speech_rate: params.tts_speech_rate } : {}),
+        ...(params.tts_volume !== undefined ? { tts_volume: params.tts_volume } : {}),
+        ...(params.tts_duration_s !== undefined ? { tts_duration_s: params.tts_duration_s } : {}),
+        ...(params.tts_voice !== undefined ? { tts_voice: params.tts_voice } : {}),
         ...(params.preset_id_start !== undefined ? { preset_id_start: params.preset_id_start } : {}),
         ...(params.preset_id_end !== undefined ? { preset_id_end: params.preset_id_end } : {}),
         ...(params.cruise_path_id !== undefined ? { cruise_path_id: params.cruise_path_id } : {}),
@@ -5056,6 +5265,8 @@ async function handleSave(): Promise<boolean> {
       description: form.description.trim(),
       priority: form.priority,
       cooldown_ms: form.cooldownMs,
+      // [M2-2 2026-09-21] 告警次数上限 (0=不限)
+      max_triggers: form.maxTriggers,
       enabled: form.enabled,
       tags: form.tags,
       // [FIX P1-1] 冲突处理字段提交
@@ -5208,6 +5419,11 @@ function openActionParams(act: any) {
   paramForm.repeat_interval_ms = p.repeat_interval_ms || 0
   paramForm.tts_text = p.tts_text || ''
   paramForm.tts_repeat = p.tts_repeat || 1
+  // [M2-3 2026-09-21] 播报参数化回显 (旧规则缺字段→默认值)
+  paramForm.tts_speech_rate = p.tts_speech_rate || 100
+  paramForm.tts_volume = p.tts_volume || 100
+  paramForm.tts_duration_s = p.tts_duration_s || 1
+  paramForm.tts_voice = p.tts_voice || ''
   paramForm.preset_id_start = p.preset_id_start || ''
   paramForm.preset_id_end = p.preset_id_end || ''
   paramForm.cruise_path_id = p.cruise_path_id || ''
@@ -5262,6 +5478,11 @@ function saveActionParams() {
   if (category === 'tts') {
     params.tts_text = paramForm.tts_text
     params.tts_repeat = paramForm.tts_repeat
+    // [M2-3 2026-09-21] 播报参数化四字段提交
+    params.tts_speech_rate = paramForm.tts_speech_rate
+    params.tts_volume = paramForm.tts_volume
+    params.tts_duration_s = paramForm.tts_duration_s
+    params.tts_voice = paramForm.tts_voice
   } else if (category === 'ptz') {
     params.preset_id_start = paramForm.preset_id_start
     params.preset_id_end = paramForm.preset_id_end
@@ -5499,6 +5720,14 @@ function actionStatusTagType(status: string) {
     case 'pending': return 'info' as const
     default: return 'info' as const
   }
+}
+// [FIX status-cn-complete 2026-09-21] 动作日志状态中文化: 原模板直渲染 row.status
+//   (success/failed/timeout/executing/pending) 英文裸显; 未知值保留原样可排查
+function actionStatusLabel(status: string) {
+  return ({
+    success: '成功', failed: '失败', timeout: '超时',
+    executing: '执行中', pending: '待执行',
+  } as Record<string, string>)[status] || status
 }
 
 async function retryAction(id: number) {
@@ -6231,5 +6460,13 @@ watch(mainTab, (tab) => {
 .pw-list__item { display: flex; align-items: center; justify-content: space-between; padding: 6px 10px; background: var(--el-fill-color-light, #f5f7fa); border-radius: 4px; }
 .pw-toolbar-row { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
 .pw-mig-hint { font-size: 12px; color: #909399; }
+
+/* ── [M2-1 2026-09-21] 算法参数卡 (param_meta 元数据驱动) ── */
+.algo-param-section { margin-top: 4px; }
+.algo-param-section :deep(.el-divider__text) { font-size: 12px; color: #909399; background: var(--el-bg-color); }
+.algo-param-card { border: 1px solid #e8ecf1; border-radius: 6px; padding: 10px 12px; margin-bottom: 10px; background: #fafbfc; }
+.algo-param-card__head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.algo-param-card__name { font-size: 13px; font-weight: 600; color: #1d2129; }
+.algo-param-card__id { font-size: 11px; color: #909399; word-break: break-all; }
 
 </style>

@@ -68,6 +68,9 @@ export function statusLabel(status: string) {
     resolved: '已解决', closed: '已关闭',
     // [接警单号 2026-09-09] 弹窗研判判定历史值 (true_positive 新提交已改 confirmed)
     true_positive: '真实告警', unsure: '存疑', known: '已知事件',
+    // [FIX status-cn-complete 2026-09-21] 场景页/态势屏共用本表, 补 new/pending
+    //   (落库初始态/详情 fallback, 场景事件列表原样裸显英文) + forwarded
+    new: '待处理', pending: '待处理', forwarded: '已转发',
   }
   return map[status] || status
 }
@@ -81,6 +84,8 @@ export function statusTagType(status: string): 'primary' | 'success' | 'warning'
     escalated: 'danger', reassigned: 'info',
     resolved: 'success', closed: 'success',
     true_positive: 'success', unsure: 'warning', known: 'info',
+    // [FIX status-cn-complete 2026-09-21] 补 new/pending/forwarded (同 statusLabel)
+    new: 'danger', pending: 'danger', forwarded: 'primary',
   }
   return map[status] || 'info'
 }
@@ -92,6 +97,8 @@ export function reviewLabel(rs: string | undefined): string {
     confirmed: '已确认',
     retracted: '已撤',
     false_alarm: '误报',
+    // [FIX status-cn-complete 2026-09-21] VLM 误报建议 (未自动撤警) — 场景页原样裸显
+    false_alarm_suggested: '疑似误报',
     unverified: 'VLM未决',
   }
   return map[rs || 'none'] || (rs || '未复核')
@@ -103,6 +110,8 @@ export function reviewTagType(rs: string | undefined): 'primary' | 'success' | '
     confirmed: 'success',
     retracted: 'warning',
     false_alarm: 'warning',
+    // [FIX status-cn-complete 2026-09-21] 同 reviewLabel 补 false_alarm_suggested
+    false_alarm_suggested: 'warning',
     unverified: 'primary',
   }
   return map[rs || 'none'] || 'info'

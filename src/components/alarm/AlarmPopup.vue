@@ -459,7 +459,7 @@
                           <span class="alarm-popup__ai-review-value">{{ currentAlarm?.aiReview?.reviewedAt ? formatTime(currentAlarm.aiReview.reviewedAt) : '—' }}</span>
                           <template v-if="currentAlarm?.aiReview?.verifier && currentAlarm.aiReview.verifier !== 'none'">
                             <span class="alarm-popup__ai-review-label">复核引擎</span>
-                            <span class="alarm-popup__ai-review-value">{{ currentAlarm.aiReview.verifier }}</span>
+                            <span class="alarm-popup__ai-review-value">{{ aiReviewVerifierLabel(currentAlarm.aiReview.verifier) }}</span>
                           </template>
                           <template v-if="currentAlarm?.aiReview?.latencyMs">
                             <span class="alarm-popup__ai-review-label">耗时</span>
@@ -468,7 +468,7 @@
                         </div>
                         <div v-if="currentAlarm?.aiReview?.reason" class="alarm-popup__ai-review-row">
                           <span class="alarm-popup__ai-review-label">复核结论</span>
-                          <span class="alarm-popup__ai-review-value alarm-popup__ai-review-value--wrap">{{ currentAlarm.aiReview.reason }}</span>
+                          <span class="alarm-popup__ai-review-value alarm-popup__ai-review-value--wrap">{{ aiReviewReasonText(currentAlarm.aiReview.reason) }}</span>
                         </div>
                       </div>
                     </div>
@@ -676,7 +676,7 @@ import { useEventTypeZh } from '@/composables/useEventTypeZh'
 import { useChannelStore } from '@/stores/channel'
 // [AI 复核恢复 2026-09-10 P4] verdict 短标 (真事件/误报/未复核)
 // [P1-2 2026-09-15] 三态透出 (reviewed/pending/disabled) 归类
-import { aiReviewVerdictLabel, aiReviewStage } from '@/types/alarm'
+import { aiReviewVerdictLabel, aiReviewStage, aiReviewVerifierLabel, aiReviewReasonText } from '@/types/alarm'
 import { useRouter } from 'vue-router'
 // [FLOOR-MAP 2026-09-03] 地图 Tab 真实渲染: 只读画布 + 通道反查 (复用共享缓存)
 import FloorMapCanvas from '@/components/map/FloorMapCanvas.vue'
@@ -1098,13 +1098,20 @@ watch(() => currentAlarm.value?.id, () => {
  *  成功提示统一由 store 弹 (statusLabels), 此处仅收起追加编辑态 */
 async function confirmDispose() {
   if (!disposeType.value || !currentAlarm.value) return
+  // [FIX e2e-telemetry 2026-09-21] 埋点入参快照: handleAlarmAction 成功时内部
+  //   已跳下一条 (currentAlarm 换为下一条 + id 门控 watch 同步清零
+  //   disposeType) — 原实现 await 后才取 currentAlarm/disposeType, 打点恒记
+  //   录「下一条」的 id + 空类型 (真机验收 dispose-confirm id=567ba879
+  //   dispose_type= 即为本因, 业务侧处置对象正确无误)。
+  const targetAlarm = currentAlarm.value
+  const typeSnapshot = String(disposeType.value)
   const ok = await handleAlarmAction(
     disposeType.value as any,
     handleNote.value || undefined,
     auth.username || undefined,
   )
   // [P3 轮 2026-09-14 §6.2 W-7] 处置确认埋点 (含后端提交结果)
-  trackPopupDispose(currentAlarm.value, String(disposeType.value), !!ok)
+  trackPopupDispose(targetAlarm, typeSnapshot, !!ok)
   if (ok) appendEditing.value = false
 }
 
@@ -2432,16 +2439,25 @@ function formatTime(isoStr?: string): string {
   if (!isoStr) return '-'
   try { return new Date(isoStr).toLocaleString('zh-CN', { hour12: false }) } catch { return isoStr }
 }
+// [FIX status-cn-complete 2026-09-21] 补全处置主状态键: confirmed/handled/resolved
+//   此前缺 confirmed (弹窗处警「真实告警」提交的主状态) → 弹窗「状态:」裸显
+//   英文 "confirmed" (真机 22:22 用户实测); handled/resolved 同理补齐。
+//   acknowledged/disposed 文案对齐列表 SSOT (useAlarmTableHelpers.statusLabel) —
+//   原'已确认'与 confirmed 撞车、'已处置'与列表'处置中'同 key 双文案, 收敛为同一表。
 const STATUS_CN: Record<string, string> = {
-  unhandled: '未处理', acknowledged: '已确认', disposed: '已处置',
+  unhandled: '未处理', acknowledged: '已确认收到', disposed: '处置中',
   closed: '已关闭', ignored: '已忽略', forwarded: '已转发',
   escalated: '已升级', reassigned: '已转派', false_alarm: '误报',
   true_positive: '真实告警', unsure: '存疑', known: '已知事件',
+  confirmed: '已确认', handled: '已处理', resolved: '已解决',
   // [STATUS-CN 2026-09-13] 未处置初始态中文化: new = 落库 status 列默认值;
   //   pending = 详情端点 metadata.status 缺失 fallback — 此前无映射原样显英文
   new: '待处理', pending: '待处理', handling: '处理中',
 }
 function statusLabel(s?: string): string { return STATUS_CN[s || ''] || s || '-' }
+// [FIX status-cn-complete 2026-09-21] AI 复核引擎/结论映射迁至 SSOT
+//   (types/alarm.ts aiReviewVerifierLabel / aiReviewReasonText) —
+//   与 AlarmsView 复核弹层共用同表, 消除双处漂移。
 
 const handleNote = ref('')
 // [FIX dispose-edit-guard 2026-09-14] 同上门控: 仅换告警时回填备注 (原 watch(currentAlarm)

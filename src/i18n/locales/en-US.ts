@@ -133,6 +133,7 @@ const enUS: MessageSchema = {
     annotation: 'Annotation',
     aiChat: 'AI Assistant',
     settings: 'Settings',
+    diagnostics: 'Diagnostics',
     projects: 'Projects',
     team: 'Team',
     teamList: 'Team List',

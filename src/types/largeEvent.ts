@@ -81,9 +81,93 @@ export interface ScenePackApplyResult {
   deployed?: boolean
   rules_created?: number
   rules_skipped?: number
+  rules_legacy_purged?: number
   rules_failed?: string[]
   instantiate_detail?: ScenePackApplyDetail[]
   [key: string]: unknown
+}
+
+// ── 场景包导出/导入 [M3-1 2026-09-21] ────────────────────────
+//   导出: shield-scene-pack-v1 JSON (算法参数+区域+联动模板+部署实例快照)
+//   导入: 分块协议 init → chunks/:index → status → complete (断点续传/幂等)
+
+export interface ScenePackCapabilities {
+  required_algos: string[]
+  algo_availability: ScenePackAlgoCheck[]
+  missing_algos: string[]
+  ready: boolean
+  /** init 预检未携带 required_algos 时为 false (报告字段缺失) */
+  checked?: boolean
+}
+
+/** 导出文档 (GET .../scene-packs/:id/export → shield-scene-pack-v1) */
+export interface ScenePackExportDoc {
+  format: string
+  catalog_version: string
+  exported_at_ms: number
+  exported_from: { boot_id: string; software_version: string }
+  suggested_filename: string
+  scene_pack: ScenePack
+  /** 本机已部署的同场景包联动规则快照 (tags 含 pack id; 空 = 未部署) */
+  deployed_state: Array<{
+    rule_id: string
+    rule_name: string
+    enabled: boolean
+    channel_ids: string[]
+  }>
+  capabilities: ScenePackCapabilities
+}
+
+/** 导入 init 响应 (resumed=true = client_request_id 命中, 已收分片即续传起点) */
+export interface ScenePackImportInitResult {
+  upload_id: string
+  chunk_size: number
+  total_chunks: number
+  received_chunks: number[]
+  resumed: boolean
+  completed: boolean
+  capabilities: ScenePackCapabilities
+}
+
+/** 导入 chunk 响应 (分片覆盖写 = 重传幂等) */
+export interface ScenePackImportChunkResult {
+  upload_id: string
+  received_chunks: number[]
+  done: boolean
+}
+
+/** 导入 status 响应 (断点续传查询) */
+export interface ScenePackImportStatus {
+  upload_id: string
+  filename: string
+  filesize: number
+  total_chunks: number
+  chunk_size: number
+  received_chunks: number[]
+  done: boolean
+  completed: boolean
+  created_at_ms: number
+}
+
+/** 导入 complete 响应 (合并+校验+实例化; deploy=false 仅校验 dry-run) */
+export interface ScenePackImportResult {
+  upload_id: string
+  scene_pack_id: string
+  imported: boolean
+  file: string
+  catalog_compat: {
+    export_catalog_version: string
+    local_catalog_version: string
+    compatible: boolean
+  }
+  capabilities: ScenePackCapabilities
+  deployed: boolean
+  rules_created: number
+  rules_skipped: number
+  rules_legacy_purged: number
+  rules_failed: string[]
+  instantiate_detail: ScenePackApplyDetail[]
+  note: string
 }
 
 // ── 流速矢量场 (§4.3.2) ───────────────────────────────────

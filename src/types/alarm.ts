@@ -786,6 +786,32 @@ export function aiReviewVerdictLabel(v: AiReviewInfo | undefined): string {
   return '已复核'
 }
 
+/** [FIX status-cn-complete 2026-09-21] AI 复核引擎标识中文化 (AlarmPopup 弹窗
+ *  与 AlarmsView 复核弹层共用 SSOT): 后端 metadata.ai_review.verifier 原样值
+ *  = vlm_source (cloud_vlm/edge_tinyllm/rule_based) 或队列异常通道
+ *  (dropped/exception/no_snapshot), 此前前端直渲染 → 「复核引擎: cloud_vlm」
+ *  英文裸显; 未知值 (如手动 analyze 回填的后端标识) 保留原样可排查。 */
+export const AI_REVIEW_VERIFIER_CN: Record<string, string> = {
+  cloud_vlm: '云端 VLM', edge_tinyllm: '边缘小模型', rule_based: '规则判定',
+  dropped: '队列丢弃', exception: '复核异常', no_snapshot: '无快照',
+}
+export function aiReviewVerifierLabel(v?: string): string {
+  return AI_REVIEW_VERIFIER_CN[v || ''] || v || '-'
+}
+
+/** [FIX status-cn-complete 2026-09-21] 复核结论 reason 前缀原因码中文化:
+ *  后端 no_snapshot 分支 reason 格式 "{code}: {中文描述}"
+ *  (AsyncVlmVerifierWorker L740), 裸透出时前缀英文与整体中文口径分裂;
+ *  仅映射已知 verifier 原因码前缀, 运维英文文本/ VLM 自由描述原样保留 —
+ *  不翻译诊断信息主体 (队列满/异常等英文文本属排障原文)。 */
+export function aiReviewReasonText(reason?: string): string {
+  const r = reason || ''
+  if (!r) return ''
+  const m = r.match(/^([a-z][a-z0-9_]+):\s*(.+)$/s)
+  if (m && AI_REVIEW_VERIFIER_CN[m[1]]) return `${AI_REVIEW_VERIFIER_CN[m[1]]}: ${m[2]}`
+  return r
+}
+
 /** [P1-2 2026-09-15] AI 复核三态 (G4/R2 诚实透出):
  *  reviewed = 已有明确复核结论 (confirmed/retracted/false_alarm_automated,
  *             弹窗透出 verifier/置信度/结论);

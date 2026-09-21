@@ -56,6 +56,8 @@ const BillingView = () => import('@/views/BillingView.vue')
 const FaceDatabaseView = () => import('@/views/FaceDatabaseView.vue')
 const FaceRealtimeView = () => import('@/views/FaceRealtimeView.vue')
 const SystemLogsView = () => import('@/views/SystemLogsView.vue')
+// [M6-2 2026-09-21] 设备自检页 (P2-15: 显存/推理路由/日志诊断)
+const SystemDiagnosticsView = () => import('@/views/SystemDiagnosticsView.vue')
 const AlgoConfigView = () => import('@/views/AlgoConfigView.vue')
 const AlgoQualityView = () => import('@/views/AlgoQualityView.vue')
 const PipelineHealthView = () => import('@/views/PipelineHealthView.vue')
@@ -341,6 +343,13 @@ export const asyncRoutes: RouteRecordRaw[] = [
         name: 'SystemLogs',
         component: SystemLogsView,
         meta: { title: '系统日志', icon: 'Document', roles: ['admin'] }
+      },
+      {
+        // [M6-2 2026-09-21] 设备自检页 (P2-15; 对标 ViewRoutes/GraphicsMemory/QueryLogs)
+        path: 'diagnostics',
+        name: 'SystemDiagnostics',
+        component: SystemDiagnosticsView,
+        meta: { title: '设备自检', icon: 'Monitor', roles: ['admin'] }
       },
       {
         path: 'location',

@@ -4,6 +4,30 @@
       <h2>🔄 OTA 升级管理</h2>
     </div>
 
+    <!-- [M2-4 2026-09-21] 升级完成校验: 以 bootId (Linux 启动标识) 变化判定升级完成,
+         不得仅凭 HTTP 200 / 任务状态判定 (假成功拦截) -->
+    <el-card shadow="never" class="boot-verify-card">
+      <div class="boot-verify-row">
+        <div>
+          <span style="font-weight:600">升级完成校验</span>
+          <el-tag size="small" style="margin-left:8px" :type="bootBaseline ? 'success' : 'info'">
+            {{ bootBaseline ? '已记录升级基线' : '未记录基线' }}
+          </el-tag>
+          <div class="boot-verify-meta">
+            当前 bootId: <code>{{ currentBootId ? currentBootId.slice(0, 8) + '…' : '读取中…' }}</code>
+            <span v-if="currentVersion"> · 版本: {{ currentVersion }}</span>
+            <span v-if="bootBaseline"> · 基线: <code>{{ bootBaseline.slice(0, 8) }}…</code></span>
+          </div>
+        </div>
+        <div>
+          <el-button size="small" @click="recordBootBaseline">记录升级基线</el-button>
+          <el-button size="small" type="primary" :disabled="!bootBaseline" @click="verifyUpgradeComplete">验证升级完成</el-button>
+        </div>
+      </div>
+      <el-alert v-if="verifyResult" :type="verifyResult.type" :title="verifyResult.title"
+        :description="verifyResult.message" :closable="false" style="margin-top:10px" />
+    </el-card>
+
     <el-tabs v-model="activeTab" type="border-card">
       <!-- 固件管理 -->
       <el-tab-pane label="固件管理" name="firmware">
@@ -304,6 +328,7 @@ import { ref, reactive, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { otaApi, type FirmwareItem, type OTATask } from '@/api/ota'
 import { deviceApi } from '@/api/device'
+import { settingsApi } from '@/api/settings'
 import { UploadFilled } from '@element-plus/icons-vue'
 
 const activeTab = ref('firmware')
@@ -597,8 +622,55 @@ async function executeBatchConfig() {
   )
 }
 
+// ── [M2-4 2026-09-21] 升级完成校验 (bootId 变化判定) ──
+//   校准锚点: 固件升级必然重启, 重启后 Linux boot_id 必变; 未变 = 假成功
+const currentBootId = ref('')
+const currentVersion = ref('')
+const bootBaseline = ref(localStorage.getItem('ota_boot_baseline') || '')
+const verifyResult = ref<{ type: 'success' | 'error' | 'warning'; title: string; message: string } | null>(null)
+
+async function loadDeviceStatus() {
+  try {
+    const { data: res } = await settingsApi.getSystemInfo()
+    const d = (res as unknown as Record<string, unknown>).data as Record<string, unknown> | undefined
+    const payload = d ?? (res as unknown as Record<string, unknown>)
+    currentBootId.value = String(payload.bootId || '')
+    currentVersion.value = String(payload.softwareVersion || payload.version || '')
+  } catch {
+    currentBootId.value = ''
+  }
+}
+
+function recordBootBaseline() {
+  if (!currentBootId.value) { ElMessage.warning('未能读取当前 bootId, 无法记录基线'); return }
+  bootBaseline.value = currentBootId.value
+  verifyResult.value = null
+  try { localStorage.setItem('ota_boot_baseline', bootBaseline.value) } catch { /* ignore */ }
+  ElMessage.success('已记录升级基线, 完成升级重启后点击「验证升级完成」')
+}
+
+async function verifyUpgradeComplete() {
+  if (!bootBaseline.value) { ElMessage.warning('请先记录升级基线'); return }
+  await loadDeviceStatus()
+  if (!currentBootId.value || currentBootId.value === 'unknown') {
+    verifyResult.value = { type: 'warning', title: '无法判定', message: '设备未返回有效 bootId, 无法校验升级结果。' }
+    return
+  }
+  if (currentBootId.value !== bootBaseline.value) {
+    verifyResult.value = { type: 'success', title: '升级完成', message: `设备已重启 (bootId 已变化), 当前版本 ${currentVersion.value || '-'}。` }
+    bootBaseline.value = ''
+    try { localStorage.removeItem('ota_boot_baseline') } catch { /* ignore */ }
+  } else {
+    verifyResult.value = {
+      type: 'error',
+      title: '升级未生效 (假成功拦截)',
+      message: 'bootId 未变化 — 设备未发生重启, 固件升级可能未真正生效。请核对升级任务是否已将固件写入并重启设备, 勿仅凭任务状态或 HTTP 200 判定成功。',
+    }
+  }
+}
+
 onMounted(async () => {
-  await Promise.all([loadFirmwares(), loadTasks(), loadBatchDevices()])
+  await Promise.all([loadFirmwares(), loadTasks(), loadBatchDevices(), loadDeviceStatus()])
 })
 </script>
 
@@ -611,4 +683,9 @@ onMounted(async () => {
 .task-progress { display: flex; align-items: center; }
 .success-count { color: #52c41a; font-weight: 600; }
 .failure-count { color: #f5222d; font-weight: 600; }
+/* [M2-4 2026-09-21] 升级完成校验卡片 */
+.boot-verify-card { margin-bottom: 16px; }
+.boot-verify-row { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
+.boot-verify-meta { margin-top: 6px; color: #6b7280; font-size: 12px; }
+.boot-verify-meta code { background: #f3f4f6; padding: 1px 6px; border-radius: 4px; }
 </style>

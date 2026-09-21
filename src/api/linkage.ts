@@ -209,6 +209,11 @@ export interface LinkageAction {
   // TTS
   tts_text?: string
   tts_repeat?: number
+  // [M2-3 2026-09-21] 播报参数化 (默认 100/100/1/'' = 现网行为)
+  tts_speech_rate?: number
+  tts_volume?: number
+  tts_duration_s?: number
+  tts_voice?: string
   // 提示音
   tone_file?: string
   // 电视墙
@@ -263,6 +268,9 @@ export interface LinkageRule {
   enabled: boolean
   priority: number
   cooldown_ms: number
+  // [M2-2 2026-09-21] 告警次数上限: 0=不限; 1-100=每规则当日报警次数上限
+  //   (达上限当日停报, 次日自动恢复; 与 cooldown_ms 正交 — 冷却不消耗额度)
+  max_triggers?: number
   time_cond: TimeCondition
   spatial_cond: SpatialCondition
   source_cond: SourceCondition
@@ -386,6 +394,10 @@ export interface RuleTriggerStat {
   enabled?: boolean
   /** [P1-1] 动作成功率 = action_success / (success + failed) */
   success_rate?: number
+  /** [M2-2 2026-09-21] 告警次数上限 (0=不限) */
+  max_triggers?: number
+  /** [M2-2 2026-09-21] 当日已触发数 (日键非当日按 0 呈现) */
+  today_trigger_count?: number
 }
 
 /** 规则模板 */
@@ -401,6 +413,8 @@ export interface RuleTemplate {
   is_builtin: boolean
   /** [P0-1 二期补充] 合并抑制间隔毫秒 (LinkageEngine merge_cond 跨规则联动用) */
   cooldown_ms?: number
+  /** [M2-2 2026-09-21] 告警次数上限: 0=不限 (模板派生的规则继承此值) */
+  max_triggers?: number
   actions: Partial<LinkageAction>[]
   time_cond?: TimeCondition
   spatial_cond?: SpatialCondition
@@ -797,6 +811,8 @@ export const linkageApi = {
     icon?: string
     priority?: number
     cooldown_ms?: number
+    /** [M2-2 2026-09-21] 告警次数上限 (0=不限; 1-100) */
+    max_triggers?: number
     tags?: string[]
   }) {
     return http.post<ApiResponse<{ template_id: string; message: string }>>('/linkage/rule-templates', data)

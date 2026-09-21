@@ -100,6 +100,7 @@ import { useEventTypeZh } from '@/composables/useEventTypeZh'
 // [FIX dev-name-num 2026-09-11] 设备名数字形态治理 (共享目录反查)
 import { resolveAlarmDeviceName } from '@/composables/useAlarmDeviceLabel'
 import { useAuthStore } from '@/stores/auth'
+import { useAlarmStore } from '@/stores/alarm'
 import { showAlarmPopup } from '@/composables/useAlarmPopup'
 
 const props = defineProps<{
@@ -201,6 +202,20 @@ async function submit() {
         : `[追加 ${stamp}] 【${typeZh}】${form.value.note}`
     }
     await alarmApi.dispose(String(props.alarm.id), disposition, form.value.handler || undefined)
+    // [FIX dispose-sync 2026-09-21] 处警成功回写 store 双列表 (alarms + realtimeAlarms
+    //   同 id 条目) 并广播 — 与 AlarmPopup 处置路径统一: 原仅 emit submitted 依赖
+    //   父页重拉, 弹窗队列 (realtimeAlarms) 条目停留处置前快照, 重开/翻页显示旧态
+    //   (真机验收问题2/3同源; store 未激活等场景静默降级为仅广播)。
+    try {
+      useAlarmStore().applyHandleResult(String(props.alarm.id), {
+        status: 'disposed',
+        note: disposition,
+        handler: form.value.handler || undefined,
+      })
+    } catch { /* pinia 未激活等异常场景降级为仅广播 */ }
+    window.dispatchEvent(new CustomEvent('alarm-handled', {
+      detail: { alarmId: String(props.alarm.id), status: 'disposed' },
+    }))
     ElMessage.success(appending.value ? '已追加处警' : '已提交处警')
     emit('update:modelValue', false)
     emit('submitted')

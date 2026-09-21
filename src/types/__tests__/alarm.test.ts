@@ -10,7 +10,7 @@
  *       EventsView 短标/筛选分类消费)。
  */
 import { describe, it, expect } from 'vitest'
-import { normalizeAlarmCore, aiReviewText, aiReviewVerdictLabel } from '@/types/alarm'
+import { normalizeAlarmCore, aiReviewText, aiReviewVerdictLabel, aiReviewVerifierLabel, aiReviewReasonText } from '@/types/alarm'
 
 const BASE_RAW = { id: 'al-1', type: 'person_intrusion', description: '测试告警' }
 
@@ -178,6 +178,34 @@ describe('aiReviewText / aiReviewVerdictLabel 锚点词契约', () => {
 
   it('无 reason 时文案不带冒号', () => {
     expect(aiReviewText({ verdict: 'retracted', reason: '' })).toBe('误报')
+  })
+})
+
+describe('aiReviewVerifierLabel / aiReviewReasonText — 英文裸显中文化 (FIX status-cn-complete 2026-09-21)', () => {
+  it('已知 verifier 值 (vlm_source/队列异常通道) → 中文标签', () => {
+    expect(aiReviewVerifierLabel('cloud_vlm')).toBe('云端 VLM')
+    expect(aiReviewVerifierLabel('edge_tinyllm')).toBe('边缘小模型')
+    expect(aiReviewVerifierLabel('rule_based')).toBe('规则判定')
+    expect(aiReviewVerifierLabel('no_snapshot')).toBe('无快照')
+  })
+
+  it('未知 verifier (手动 analyze 回填后端标识) → 原样保留可排查', () => {
+    expect(aiReviewVerifierLabel('analyze')).toBe('analyze')
+    expect(aiReviewVerifierLabel('')).toBe('-')
+    expect(aiReviewVerifierLabel(undefined)).toBe('-')
+  })
+
+  it('reason 前缀原因码中文化 (后端 "{code}: {中文}" 格式)', () => {
+    expect(aiReviewReasonText('no_snapshot: 主快照与预录帧均缺失, 拒绝无视觉证据的空推理'))
+      .toBe('无快照: 主快照与预录帧均缺失, 拒绝无视觉证据的空推理')
+  })
+
+  it('运维英文文本 / VLM 自由描述原样保留 (不翻译诊断主体)', () => {
+    expect(aiReviewReasonText('async vlm queue full (cap=64)'))
+      .toBe('async vlm queue full (cap=64)')
+    expect(aiReviewReasonText('画面无人员活动')).toBe('画面无人员活动')
+    expect(aiReviewReasonText('')).toBe('')
+    expect(aiReviewReasonText(undefined)).toBe('')
   })
 })
 

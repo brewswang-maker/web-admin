@@ -66,6 +66,10 @@ export interface SystemInfo {
   algorithmPlugins: number
   maxChannels: number
   inferencePrecision: string
+  /** [M2-4 2026-09-21] Linux 启动标识 (升级完成校验: 变化=设备已重启=升级生效) */
+  bootId?: string
+  /** [M2-4 2026-09-21] 软件版本 (与服务 health.version 同源) */
+  softwareVersion?: string
 }
 
 /** [REC-ARCH 2026-09-17] 录像存储策略 (全局): 连续录像默认关 + 事件录像不本地落盘 */

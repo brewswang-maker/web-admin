@@ -524,6 +524,8 @@
           <el-descriptions-item :label="$t('settings.algorithmPlugins')">{{ systemInfo.algorithmPlugins }} {{ $t('settings.algorithmPluginsUnit') }}</el-descriptions-item>
           <el-descriptions-item :label="$t('settings.maxChannels')">{{ systemInfo.maxChannels }} {{ $t('settings.maxChannelsUnit') }}</el-descriptions-item>
           <el-descriptions-item :label="$t('settings.inferencePrecision')">{{ systemInfo.inferencePrecision }}</el-descriptions-item>
+          <!-- [M2-4 2026-09-21] 启动标识: 升级完成校验锚点 (bootId 变化=设备已重启) -->
+          <el-descriptions-item label="启动标识 (bootId)">{{ systemInfo.bootId ? systemInfo.bootId.slice(0, 8) + '…' : '-' }}</el-descriptions-item>
         </el-descriptions>
         <el-empty v-else :description="$t('settings.loadSystemInfoFail')" />
         <el-divider />

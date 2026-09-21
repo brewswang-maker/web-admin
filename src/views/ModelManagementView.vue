@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { getModels, uploadModel as apiUploadModel, activateModel as apiActivateModel, deactivateModel as apiDeactivateModel, deleteModel as apiDeleteModel } from '@/api/model'
+import { getModels, uploadModel as apiUploadModel, activateModel as apiActivateModel, deactivateModel as apiDeactivateModel, deleteModel as apiDeleteModel, exportModel as apiExportModel } from '@/api/model'
 
 interface ModelInfo {
   id: string
@@ -18,6 +18,8 @@ interface ModelInfo {
   created_at: string
   memory_mb?: number
   priority?: string
+  /** [M3-3 2026-09-21] 资产保护策略 (open/preset/encrypted/device_bound; SSOT = bmodel/manifest.json) */
+  protection?: string
 }
 
 const models = ref<ModelInfo[]>([])
@@ -136,6 +138,42 @@ function statusLabel(status: string) {
   return map[status] || status
 }
 
+// ── [M3-3 2026-09-21] 资产保护展示 + 导出 (受保护策略由后端结构化 1423 拒绝) ──
+function protectionLabel(p?: string) {
+  const map: Record<string, string> = {
+    open: '可导出', preset: '预置保护', encrypted: '加密保护', device_bound: '设备绑定',
+  }
+  return map[p ?? 'open'] ?? (p || 'open')
+}
+function protectionTag(p?: string) {
+  const map: Record<string, string> = {
+    open: 'success', preset: 'warning', encrypted: 'danger', device_bound: 'danger',
+  }
+  return map[p ?? 'open'] ?? 'info'
+}
+
+async function exportModelFile(model: ModelInfo) {
+  try {
+    const { data } = await apiExportModel(model.id)
+    const manifest = (data as any)?.data
+    if (!manifest) {
+      ElMessage.error('导出响应异常 (无 data)')
+      return
+    }
+    const blob = new Blob([JSON.stringify(manifest, null, 2)], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${model.id}.export-manifest.json`
+    a.click()
+    URL.revokeObjectURL(url)
+    ElMessage.success(`已导出 ${getModelDisplayName(model)} 清单 (策略=${manifest.protection})`)
+  } catch (e: any) {
+    // 受保护模型 (preset/encrypted/device_bound) → 后端 1423 ERR_MODEL_EXPORT_DENIED
+    ElMessage.error('导出被拒: ' + (e?.message || '未知错误'))
+  }
+}
+
 onMounted(fetchModels)
 </script>
 
@@ -164,6 +202,13 @@ onMounted(fetchModels)
         </el-table-column>
         <el-table-column prop="type" label="类型" width="120" />
         <el-table-column prop="precision" label="精度" width="80" />
+        <el-table-column label="保护" width="110">
+          <template #default="{ row }">
+            <el-tag :type="protectionTag(row.protection) as any" size="small">
+              {{ protectionLabel(row.protection) }}
+            </el-tag>
+          </template>
+        </el-table-column>
         <el-table-column label="状态" width="100">
           <template #default="{ row }">
             <el-tag :type="statusTag(row.status) as any" size="small">{{ statusLabel(row.status) }}</el-tag>
@@ -175,11 +220,12 @@ onMounted(fetchModels)
           </template>
         </el-table-column>
         <el-table-column prop="inference_latency_ms" label="推理延迟(ms)" width="120" />
-        <el-table-column label="操作" width="260" fixed="right">
+        <el-table-column label="操作" width="330" fixed="right">
           <template #default="{ row }">
             <el-button v-if="row.status !== 'active'" type="success" size="small" @click="activateModel(row)">激活</el-button>
             <el-button v-if="row.status === 'active'" type="warning" size="small" @click="deactivateModel(row)">卸载</el-button>
             <el-button size="small" @click="showDetail(row)">详情</el-button>
+            <el-button size="small" @click="exportModelFile(row)">导出</el-button>
             <el-button type="danger" size="small" @click="deleteModel(row)">删除</el-button>
           </template>
         </el-table-column>
@@ -224,6 +270,11 @@ onMounted(fetchModels)
           <el-descriptions-item label="精度">{{ selectedModel.precision }}</el-descriptions-item>
           <el-descriptions-item label="状态">
             <el-tag :type="statusTag(selectedModel.status) as any">{{ statusLabel(selectedModel.status) }}</el-tag>
+          </el-descriptions-item>
+          <el-descriptions-item label="资产保护">
+            <el-tag :type="protectionTag(selectedModel.protection) as any" size="small">
+              {{ protectionLabel(selectedModel.protection) }}
+            </el-tag>
           </el-descriptions-item>
           <el-descriptions-item label="TPU占用">{{ selectedModel.tpu_usage }}%</el-descriptions-item>
           <el-descriptions-item label="推理延迟">{{ selectedModel.inference_latency_ms }}ms</el-descriptions-item>

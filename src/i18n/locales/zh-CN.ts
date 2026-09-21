@@ -131,6 +131,7 @@ const zhCN = {
     annotation: '标注平台',
     aiChat: 'AI 助手',
     settings: '系统设置',
+    diagnostics: '设备自检',
     projects: '项目管理',
     team: '团队协作',
     teamList: '团队列表',

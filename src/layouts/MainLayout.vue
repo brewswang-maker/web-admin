@@ -360,6 +360,11 @@
             <el-icon><Setting /></el-icon>
             <template #title>{{ $t('menu.settings') }}</template>
           </el-menu-item>
+          <!-- [M6-2 2026-09-21] 设备自检 (P2-15: 显存/推理路由/日志诊断) -->
+          <el-menu-item index="/diagnostics" v-if="auth.can('settings', 'read')">
+            <el-icon><Monitor /></el-icon>
+            <template #title>{{ $t('menu.diagnostics') }}</template>
+          </el-menu-item>
         </el-menu-item-group>
 
         <!-- ===== 安全与集成 ===== -->

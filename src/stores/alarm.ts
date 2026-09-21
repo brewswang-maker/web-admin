@@ -126,15 +126,49 @@ export const useAlarmStore = defineStore('alarm', () => {
     }
   }
 
+  /** [FIX dispose-sync 2026-09-21 处警回写] 就地回写单个告警的处置结果
+   *  (realtimeAlarms + alarms 双列表同 id 命中即改):
+   *  弹窗处置/追加处警/行内处置三路径共用 — 原实现只刷 store.alarms (整页重拉),
+   *  realtimeAlarms (弹窗队列数据源) 条目永久停留处置前快照 (status='unhandled'/
+   *  无备注/无处理人/无单号) → 弹窗处置后「上一条」回退或翻页返回显示旧态
+   *  (真机验收问题2/3根因)。 */
+  function applyHandleResult(
+    id: string,
+    patch: { status?: string; note?: string; handler?: string; ticketId?: string },
+  ) {
+    for (const list of [realtimeAlarms.value, alarms.value]) {
+      const target = list.find((a) => String(a.id) === String(id)) as any
+      if (!target) continue
+      if (patch.status) target.status = patch.status
+      if (patch.note) target.handleNote = patch.note
+      if (patch.handler) target.handledBy = patch.handler
+      if (patch.ticketId) target.ticketId = patch.ticketId
+    }
+  }
+
   /** 处理告警 */
   async function handleAlarm(id: string, form: AlarmHandleForm) {
     try {
-      await alarmApi.handle(id, form)
+      const res = await alarmApi.handle(id, form)
+      // [FIX dispose-sync 2026-09-21] 解析 PUT 响应就地回写本地双列表
+      //  (原实现丢弃响应): handle 端点响应含 {ticket_id, handler, remark} —
+      //  接警单号即时回填弹窗 (不等重拉); http 拦截器全局 snake→camel 转换已
+      //  移除 (2026-06-23), 双形态兼容解包 (响应拦截器不转换, 此处以 snake 优先)。
+      const resp: any = (res as any)?.data ?? {}
+      const d: any = resp?.data ?? resp
+      applyHandleResult(id, {
+        // status='append' 后端分流不动主状态 (仅追加内容), 前端同步不回写
+        status: form.status === 'append' ? undefined : form.status,
+        note: String(form.note ?? form.disposition ?? ''),
+        handler: String(d?.handler ?? form.handler ?? ''),
+        ticketId: String(d?.ticket_id ?? d?.ticketId ?? ''),
+      })
       // [接警单号 2026-09-09] 补 unsure/known/true_positive 文案 (弹窗研判判定提交路径)
       const statusLabels: Record<string, string> = {
         confirmed: '已确认', true_positive: '已确认为真实告警',
         false_alarm: '已标记误报', forwarded: '已转发',
         unsure: '已标记存疑', known: '已标记已知事件',
+        disposed: '已提交处警',
       }
       ElMessage.success(statusLabels[form.status] || '处理成功')
       // [FIX handle-latency 2026-09-14] PUT 成功即刻返回: 列表/计数刷新转后台 —
@@ -253,6 +287,9 @@ export const useAlarmStore = defineStore('alarm', () => {
       cur.videoClipUrl = norm.videoClipUrl || cur.videoClipUrl
       cur.channelName = norm.channelName || cur.channelName
       cur.deviceName = norm.deviceName || cur.deviceName
+      // [FIX ticket-backfill 2026-09-21] 接警单号后到帧回填 (先到帧无号时 —
+      //   WS 帧本身不带 ticket_id, 靠富化/处置响应回写; 此处兜底后到帧携带值)
+      cur.ticketId = norm.ticketId || cur.ticketId
       // [P0-4 2026-09-14] 进行中帧的生命周期富化 (start/last_seen 刷新;
       //   end 在 end 帧分支写入, 此处不覆盖已有结束态)
       if (!cur.eventEnded) {
@@ -322,7 +359,7 @@ export const useAlarmStore = defineStore('alarm', () => {
     criticalCount, highCount, hasUnhandled,
     // actions
     fetchAlarms, fetchStats, fetchUnhandledCount,
-    handleAlarm, batchConfirm, batchFalseAlarm, forwardAlarm,
+    handleAlarm, applyHandleResult, batchConfirm, batchFalseAlarm, forwardAlarm,
     pushRealtimeAlarm, exportAlarms,
     setPage, setPageSize, resetQuery, $reset
   }

@@ -375,17 +375,47 @@ export const dynamicButtons = computed(() => {
 })
 
 // ── 告警队列管理 ──
+// [FIX dispose-sync 2026-09-21] 本次弹窗会话内已处置条目白名单:
+//   处置成功后条目若按 status==='unhandled' 过滤立即出队 → 队列下标左移,
+//   「下一条」跳号/「上一条」无法回退到刚处置的那条 (真机验收问题2/3根因)。
+//   白名单使已处置条目原位保留至本次弹窗关闭 (可回看刚提交的处置结果),
+//   closePopup 时清空 (下个会话回到默认未处置过滤)。
+const sessionDisposedIds = ref<Set<string>>(new Set())
+function markSessionDisposed(id: string) {
+  const next = new Set(sessionDisposedIds.value)
+  next.add(String(id))
+  sessionDisposedIds.value = next
+}
+
 const alarmQueue = computed(() => {
   try {
     const store = useAlarmStore()
-    return store.realtimeAlarms.filter(a => a.status === 'unhandled')
+    const disposed = sessionDisposedIds.value
+    return store.realtimeAlarms.filter(
+      (a) => a.status === 'unhandled' || disposed.has(String(a.id)),
+    )
   } catch {
     return []
   }
 })
 
+// [FIX queue-anchor 2026-09-21] 导航锚定当前告警在队列中的实时下标:
+//   弹窗打开期间新告警持续 unshift 入 store.realtimeAlarms → 队列整体右移,
+//   打开时定位的静态 queueIndex 漂移 (真机验收: 弹窗显示 45aed2fe 队列却显示
+//   1/5, 处置后「上一条」无法回到刚处置条 / 「下一条」跳错条目 — 活跃场景
+//   新告警高频到达, 漂移是常态而非边缘)。以 currentAlarm.id 实时查找为锚;
+//   找不到 (列表入口历史告警不在实时队列) 回退 queueIndex, 与原语义兼容。
+function anchoredIndex(): number {
+  const curId = String(currentAlarm.value?.id ?? '')
+  if (curId) {
+    const idx = alarmQueue.value.findIndex((a) => String(a.id) === curId)
+    if (idx >= 0) return idx
+  }
+  return queueIndex.value
+}
+
 export const queueInfo = computed(() => ({
-  current: queueIndex.value + 1,
+  current: anchoredIndex() + 1,
   total: alarmQueue.value.length,
 }))
 
@@ -407,16 +437,20 @@ function loadQueueAlarm(idx: number) {
 }
 
 export function nextAlarm() {
-  if (queueIndex.value < alarmQueue.value.length - 1) {
-    queueIndex.value++
+  // [FIX queue-anchor 2026-09-21] 锚定下标步进 (静态 queueIndex 漂移后跳错条目)
+  const base = anchoredIndex()
+  if (base < alarmQueue.value.length - 1) {
+    queueIndex.value = base + 1
     loadQueueAlarm(queueIndex.value)
     // 不重新查询规则（同一批告警通常匹配同一规则）
   }
 }
 
 export function prevAlarm() {
-  if (queueIndex.value > 0) {
-    queueIndex.value--
+  // [FIX queue-anchor 2026-09-21] 同上: 「上一条」定位到当前条目的实时前一条
+  const base = anchoredIndex()
+  if (base > 0) {
+    queueIndex.value = base - 1
     loadQueueAlarm(queueIndex.value)
   }
 }
@@ -443,13 +477,22 @@ export async function handleAlarm(
     //      AlarmsView 等自维护本地列表的视图行对象停留在处置前快照
     //      (status='unhandled'/handleNote 空), 重开弹窗走编辑态空输入框,
     //      看似"没保存"; 视图监听后重拉当前页即拿到回填治理字段。
+    // [FIX dispose-sync 2026-09-21] ③ 白名单先记账: 本条原位保留在队列中
+    //   (store.handleAlarm 已回写条目 status='处置态' → 不记账则出队下标漂移)。
+    markSessionDisposed(alarmId)
     const cur = currentAlarm.value as any
     cur.status = action
     if (note) cur.handleNote = note
     if (handler) cur.handledBy = handler
-    window.dispatchEvent(new CustomEvent('alarm-handled', { detail: { alarmId } }))
+    // [FIX dispose-sync 2026-09-21] 接警单号从 store 条目抄回 (store.handleAlarm
+    //   已解析 PUT 响应回写; currentAlarm 常为弹窗本地副本, 不回写则单号不即显)
+    const storeEntry = store.realtimeAlarms.find((a) => String(a.id) === String(alarmId))
+    if (storeEntry?.ticketId) cur.ticketId = String(storeEntry.ticketId)
+    window.dispatchEvent(new CustomEvent('alarm-handled', { detail: { alarmId, status: action } }))
     // 跳到下一条或关闭
-    if (queueIndex.value < alarmQueue.value.length - 1) {
+    // [FIX queue-anchor 2026-09-21] 判定走锚定下标: 漂移下静态 queueIndex 可能
+    //   误判"还有下一条"/"已是最后一条" (错走 closePopup 丢队列回看)
+    if (anchoredIndex() < alarmQueue.value.length - 1) {
       nextAlarm()
     } else {
       closePopup()
@@ -676,6 +719,9 @@ export async function showAlarmPopup(
       videoClipUrl: alarm.videoClipUrl || cur.videoClipUrl,
       deviceName: alarm.deviceName || cur.deviceName,
       channelName: alarm.channelName || cur.channelName,
+      // [FIX ticket-backfill 2026-09-21] 接警单号不因后到精简帧丢失
+      //   (先富化/处置后有帧 — 已有值优先)
+      ticketId: cur.ticketId || alarm.ticketId,
       metadata: mergedMeta,
       // [A3 2026-09-14 时间语义治理 P0-C] 时间锚不可回退: 同 id 后到帧
       //   (富化/精简/补推) 不刷新显示时间 — 保留首帧 createdAt
@@ -727,7 +773,11 @@ export async function showAlarmPopup(
     !(Number(alarm.confidence) > 0) ||
     !alarm.metadata ||
     !Array.isArray((alarm.metadata as any)?.detections) ||
-    (alarm.metadata as any)?.detections.length === 0
+    (alarm.metadata as any)?.detections.length === 0 ||
+    // [FIX ticket-backfill 2026-09-21] 接警单号缺失同触发富化: WS 帧不带
+    //   ticket_id (后端 insertAlarm 生成仅落库) — 原门槛 (置信度+metadata)
+    //   满足时富化不触发 → 主动弹窗「接警单号」恒 '-' (真机验收问题1根因)。
+    !String(alarm.ticketId || '').trim()
   const enrichId = alarm.id ? String(alarm.id) : ''
   if (needsEnrich && enrichId && !enrichId.startsWith('linkage_')) {
     alarmApi.getDetail(enrichId).then((res: any) => {
@@ -741,6 +791,9 @@ export async function showAlarmPopup(
         confidence: Number(cur.confidence) > 0 ? cur.confidence : rich.confidence,
         snapshotUrl: cur.snapshotUrl || rich.snapshotUrl,
         videoClipUrl: cur.videoClipUrl || rich.videoClipUrl,
+        // [FIX ticket-backfill 2026-09-21] 单号回填 (后端详情端点已修:
+        //   未处置行也回填 metadata.gov.ticket_id → rich.ticketId)
+        ticketId: cur.ticketId || rich.ticketId,
         metadata: { ...(rich.metadata || {}), ...(cur.metadata || {}) },
       } as typeof alarm
       console.log('[useAlarmPopup] popup enrich merged from REST, id:', enrichId)
@@ -767,6 +820,8 @@ export async function showAlarmPopup(
 let closeTimer: ReturnType<typeof setTimeout> | null = null
 export function closePopup() {
   popupVisible.value = false
+  // [FIX dispose-sync 2026-09-21] 会话白名单清空 (下个弹窗会话回到默认未处置过滤)
+  sessionDisposedIds.value = new Set()
   // [FIX dispose-edit-guard 2026-09-14] 关闭即解除编辑保护 (防 closeTimer 300ms
   //   窗口内 disposeEditing 残留误拦新告警)
   disposeEditing.value = false

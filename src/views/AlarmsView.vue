@@ -714,7 +714,8 @@
         </div>
         <div class="ai-review-pop__row" v-if="aiReviewDlg.row?.aiReview?.verifier && aiReviewDlg.row.aiReview.verifier !== 'none'">
           <span class="ai-review-pop__label">复核引擎</span>
-          <span class="ai-review-pop__value">{{ aiReviewDlg.row.aiReview.verifier }}</span>
+          <!-- [FIX status-cn-complete 2026-09-21] 原直渲染 verifier 英文裸显 (cloud_vlm 等), 改走 SSOT 中文映射 -->
+          <span class="ai-review-pop__value">{{ aiReviewVerifierLabel(aiReviewDlg.row.aiReview.verifier) }}</span>
           <template v-if="aiReviewDlg.row?.aiReview?.latencyMs">
             <span class="ai-review-pop__label">耗时</span>
             <span class="ai-review-pop__value">{{ aiReviewDlg.row.aiReview.latencyMs }}ms</span>
@@ -722,7 +723,7 @@
         </div>
         <div class="ai-review-pop__row" v-if="aiReviewDlg.row?.aiReview?.reason">
           <span class="ai-review-pop__label">复核结论</span>
-          <span class="ai-review-pop__value ai-review-pop__value--wrap">{{ aiReviewDlg.row.aiReview.reason }}</span>
+          <span class="ai-review-pop__value ai-review-pop__value--wrap">{{ aiReviewReasonText(aiReviewDlg.row.aiReview.reason) }}</span>
         </div>
         <div v-if="!aiReviewDlg.row?.aiReview" class="ai-review-pop__empty">
           该告警暂无 AI 复核结论 (VLM 二次复核排队中或未产出)
@@ -987,7 +988,7 @@ import { recordingHttp, streamHttp } from '@/api/http'
 import { normalizeStreamUrl } from '@/utils/streamUrl'
 import { alarmLevelTagType, alarmLevelTagEffect } from '@/utils/alarmLevel' // [FIX level-color-ssot 2026-09-16] 等级色板全站统一
 import type { AlarmHandleForm, AlarmEvidence, AlarmEvent } from '@/types/alarm'
-import { normalizeAlarmCore, aiReviewVerdictLabel, type AiReviewInfo } from '@/types/alarm'
+import { normalizeAlarmCore, aiReviewVerdictLabel, aiReviewVerifierLabel, aiReviewReasonText, type AiReviewInfo } from '@/types/alarm'
 import { useAuthStore } from '@/stores/auth'
 import { useWebSocket } from '@/composables/useWebSocket'
 // [P0-9/6/10 2026-09-04] canonical zh SSOT + 规范处警对话框
@@ -2018,7 +2019,9 @@ function statusLabel(status: string) {
     new: '待处理', pending: '待处理',
     resolved: '已解决', closed: '已关闭',
     // [接警单号 2026-09-09] 弹窗研判判定历史值 (true_positive 新提交已改 confirmed)
-    true_positive: '真实告警', unsure: '存疑', known: '已知事件'
+    true_positive: '真实告警', unsure: '存疑', known: '已知事件',
+    // [FIX status-cn-complete 2026-09-21] 补 forwarded (原样裸显英文)
+    forwarded: '已转发'
   }
   return map[status] || status
 }
@@ -2087,7 +2090,9 @@ function statusTagType(status: string): 'primary' | 'success' | 'warning' | 'inf
     acknowledged: 'primary', disposed: 'warning',
     escalated: 'danger', reassigned: 'info',
     resolved: 'success', closed: 'success',
-    true_positive: 'success', unsure: 'warning', known: 'info'
+    true_positive: 'success', unsure: 'warning', known: 'info',
+    // [FIX status-cn-complete 2026-09-21] 补 new/pending/forwarded (同 statusLabel)
+    new: 'danger', pending: 'danger', forwarded: 'primary'
   }
   return map[status] || 'info'
 }
@@ -2288,7 +2293,7 @@ function aiReviewTooltip(v: AiReviewInfo | undefined): string {
   const parts: string[] = [`结论: ${aiReviewVerdictLabel(v)}`]
   if (v.confidence > 0) parts.push(`置信度: ${Math.round(v.confidence * 100)}%`)
   if (v.reviewedAt) parts.push(`时间: ${formatTime(v.reviewedAt)}`)
-  if (v.reason) parts.push(`理由: ${v.reason}`)
+  if (v.reason) parts.push(`理由: ${aiReviewReasonText(v.reason)}`)
   return parts.join('\n')
 }
 // 复核置信度文案 (0 视为后端未透出, 显示 — 占位)

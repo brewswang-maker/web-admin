@@ -62,3 +62,12 @@ verify_bind_rules.mjs
 .pw-browsers/
 *.tgz
 box-sdk_path_placeholder
+
+# ─── 部署/验证临时产物 (不入版本库 2026-09-22) ───
+#   dist.deploy_snapshot = 部署快照 (AGENTS.md 明确不提交);
+#   video_*.mp4 = 通道联调临时素材; Testing/ = cmake 探测产物;
+#   vite.config.local.ts = 本地临时副本 (无引用, 与 vite.config.ts 同源)
+dist.deploy_snapshot/
+video_*.mp4
+Testing/
+vite.config.local.ts

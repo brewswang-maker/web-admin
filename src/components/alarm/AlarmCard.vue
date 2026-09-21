@@ -125,6 +125,11 @@ const STATUS_CN: Record<string, { label: string; tone: string }> = {
   closed: { label: '已关闭', tone: 'info' },
   resolved: { label: '已解决', tone: 'success' },
   new: { label: '新告警', tone: 'danger' },
+  // [FIX status-cn-complete 2026-09-21] 卡视图补 handling/pending/forwarded
+  //   (告警中心卡片原样裸显英文 pending/handling/forwarded)
+  handling: { label: '处理中', tone: 'warning' },
+  pending: { label: '待处理', tone: 'danger' },
+  forwarded: { label: '已转发', tone: 'info' },
 }
 const statusInfo = computed(() =>
   STATUS_CN[String(props.alarm.status || '')] || { label: String(props.alarm.status || '-'), tone: 'info' })

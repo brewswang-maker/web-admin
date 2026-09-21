@@ -31,6 +31,8 @@ export interface ModelInfo {
   uploadedAt?: string
   created_at?: string
   activatedAt?: string
+  /** [M3-3 2026-09-21] 资产保护策略 (open/preset/encrypted/device_bound; SSOT = bmodel/manifest.json) */
+  protection?: string
 }
 
 /** 获取模型列表 */
@@ -65,4 +67,22 @@ export function deleteModel(id: string) {
 /** 获取TPU使用率 */
 export function getTpuUsage() {
   return modelHttp.get<ApiResponse<{ usage: number; total: number }>>('/tpu-usage')
+}
+
+// ── [M3-3 2026-09-21] 模型资产保护 (Model Guard 对标) ─────────
+
+/** 导出清单 (open 策略时返回元数据+路径+摘要) */
+export interface ModelExportManifest {
+  model_id: string
+  protection: string
+  allowed: boolean
+  name_zh?: string
+  type?: string
+  bmodels?: Record<string, unknown>
+  note?: string
+}
+
+/** 导出模型清单; 受保护策略 (preset/encrypted/device_bound) → 后端结构化 1423 ERR_MODEL_EXPORT_DENIED 拒绝 */
+export function exportModel(id: string) {
+  return modelHttp.get<ApiResponse<ModelExportManifest>>(`/${id}/export`)
 }

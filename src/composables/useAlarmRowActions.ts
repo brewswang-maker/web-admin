@@ -10,6 +10,7 @@
  */
 import { showAlarmPopup } from './useAlarmPopup'
 import { alarmApi } from '@/api/alarm'
+import { useAlarmStore } from '@/stores/alarm'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
 export type AlarmRowHandleStatus = 'confirmed' | 'false_alarm' | 'ignored'
@@ -42,6 +43,12 @@ export function useAlarmRowActions() {
     }
     try {
       await alarmApi.handle(row.id, { status, note: '' })
+      // [FIX dispose-sync 2026-09-21] store 双列表同 id 条目就地回写 (与弹窗处置
+      //   路径统一 — 原仅广播: 慢链上去抖重拉前弹窗队列 (realtimeAlarms) 条目
+      //   仍显示处置前旧态; store 未激活等场景静默降级为仅广播)
+      try {
+        useAlarmStore().applyHandleResult(String(row.id), { status })
+      } catch { /* pinia 未激活等异常场景降级 */ }
       // [FIX handle-refresh 2026-09-10] 行内处置成功后广播 — 与弹窗路径
       //   (useAlarmPopup.handleAlarm) 统一: 各场景事件列表/KPI 经
       //   useRealtimeAlarmEvents 或自有监听去抖重拉, 状态即时同步;

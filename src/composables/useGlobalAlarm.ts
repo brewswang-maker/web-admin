@@ -291,9 +291,16 @@ function doConnect() {
 
               const utterance = new SpeechSynthesisUtterance(text)
               utterance.lang = 'zh-CN'  // 中文
-              utterance.rate = 1.0
-              utterance.volume = 1.0
+              // [M2-3 2026-09-21] 播报参数化: 后端 tts_speech_rate(50-200)→rate(0.5-2.0),
+              //   tts_volume(1-100)→volume(0.01-1.0); 缺省 100/100 = 原硬编码 1.0 行为
+              utterance.rate = Math.min(2, Math.max(0.5, (Number(payload.tts_speech_rate) || 100) / 100))
+              utterance.volume = Math.min(1, Math.max(0.01, (Number(payload.tts_volume) || 100) / 100))
               utterance.pitch = 1.0
+              // 音色选择 (tts_voice=voice name; 留空=浏览器默认)
+              if (payload.tts_voice) {
+                const voice = window.speechSynthesis.getVoices().find(v => v.name === payload.tts_voice)
+                if (voice) utterance.voice = voice
+              }
 
               // 错误处理
               utterance.onerror = (e) => {
