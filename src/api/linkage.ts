@@ -135,6 +135,16 @@ export interface SpatialCondition {
    *   走 ui_state_json 暂存往返; 此处仅前端类型扩展, 保存侧仍直写以便后端后续
    *   白名单收录后零改造升级 */
   area_device_ids?: string[]
+  /** [AXIS-TEMPORAL 2026-09-20] 事件时序语义 (P2-3, 对标海康 AXIS 事件时序):
+   *  sequence_json = 顺序穿越链 (嵌套 JSON 字符串 [{region_id, max_gap_ms}],
+   *    间隔钳位 [1s,24h] 默认 60s, 链走完当刻触发);
+   *  conditional_json = 时序条件 (嵌套 JSON 字符串 {target_region_id,
+   *    prior_region_id, lookback_ms}, 回看默认 5min, 进入目标未先经前置则通过);
+   *  exclusion_pause = 排除区暂停计时 (仅时序路径生效); 两字段均非空时 sequence 优先。
+   *  契约见后端 LinkageEngine.h [AXIS 2026-09-13]。 */
+  sequence_json?: string
+  conditional_json?: string
+  exclusion_pause?: boolean
 }
 
 /** 属性条件 (后端 AttributeCondition, [AttrDec β] + [P4-D 2026-08-29])
@@ -155,6 +165,11 @@ export interface SourceCondition {
   event_types: string[]
   min_severity: number
   min_confidence: number
+  /** [FEAT loiter-dwell-cfg 2026-09-20] 徘徊判定时长 (秒): 目标在检测区域内
+   *   持续停留 ≥ loiter_sec 才判定徘徊, 供场景差异化配置 (门口 10s/周界 60s)。
+   *   0/缺省 = 未配置 → 引擎回退内置 30s 默认; 仅 loitering 类型规则在 UI 暴露,
+   *   引擎侧按 USER 规则+通道匹配多规则取最长 (保守) */
+  loiter_sec?: number
   algorithm_ids: string[]
   /** [P4-D] 属性条件集合 (AND 语义); LEAF:SOURCE 与 rule 级 source_cond 共用 */
   attribute_conditions?: AttributeCondition[]

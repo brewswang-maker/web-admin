@@ -221,6 +221,12 @@
                                         <span v-else-if="evidenceIncomplete" class="alarm-popup__ev-incomplete"
                                           :title="`三帧规范 (事前/触发/事后) 仅到 ${evidenceIncomplete.present} 帧, 后端补帧未成功`"
                                         >快照不全 ({{ evidenceIncomplete.present }}/3)</span>
+                    <!-- [FIX ev-frame-lag 2026-09-20] P1-5 帧滞后标注: 取证帧时刻与
+                         告警时刻偏差 >2s (快照链异步抓帧固有相位差, 实测 5.8s/6.3s)
+                         — 防用户把滞后帧当作告警时刻画面误读 -->
+                    <span v-if="evidenceLag?.lagging" class="alarm-popup__ev-lag"
+                      :title="`取证帧时刻与告警时刻相差 ${(Math.abs(evidenceLag.deltaMs) / 1000).toFixed(1)}s (快照链异步抓帧相位差); 帧角标 T± 以触发帧为锚自洽`"
+                    >{{ fmtEvidenceLag(evidenceLag.deltaMs) }}</span>
                     <button class="alarm-popup__thumbs-nav" :disabled="imageIndex >= lastSelectableIdx" @click="nextImage" aria-label="下一张">›</button>
                   </div>
                 </div>
@@ -649,7 +655,7 @@ import MiniPlayer from '@/components/video/MiniPlayer.vue'
 import AlarmSnapshot from '@/components/alarm/AlarmSnapshot.vue'
 import defaultFacePhoto from '@/assets/photo.jpg'
 import EvidenceFrames from '@/components/EvidenceFrames.vue' // [POPUP-EV-MERGE 2026-09-07] 弹窗内已并入画廊, import 保留给未来复用 (无副作用)
-import { buildEvidenceSlots, hasEvidenceChain, evidenceCompleteness, isEvidencePostPending } from '@/utils/evidenceFrames' // [EV-TRIPLE 2026-09-14] 取证帧语义/时间戳共享模块; [EV-STABLE3 2026-09-19] 三格固定槽位
+import { buildEvidenceSlots, hasEvidenceChain, evidenceCompleteness, isEvidencePostPending, evidenceFrameLag, fmtEvidenceLag } from '@/utils/evidenceFrames' // [EV-TRIPLE 2026-09-14] 取证帧语义/时间戳共享模块; [EV-STABLE3 2026-09-19] 三格固定槽位; [FIX ev-frame-lag 2026-09-20] P1-5 帧滞后判定/文案
 import { alarmLevelColor, alarmLevelRgb, alarmLevelText } from '@/utils/alarmLevel' // [FIX level-color-ssot 2026-09-16] 等级色板全站统一
 import {
   popupVisible, currentAlarm, matchedRule, linkageLogs,
@@ -659,7 +665,7 @@ import {
   appendAlarmNote, closePopup, disposeEditing,
 } from '@/composables/useAlarmPopup'
 import { ACTION_TYPE_REVERSE_MAP } from '@/api/linkage'
-import { alarmApi, type AlarmOccurrence } from '@/api/alarm'
+import { alarmApi, fetchVlmQueueSnapshot, type AlarmOccurrence } from '@/api/alarm'
 import { useAuthStore } from '@/stores/auth'  // [接警单号 2026-09-09] 处置提交带当前登录用户 (handled_by)
 import { queryRecordings, toLocalISOString, recordUrlCandidates, ensureRecordTranscoded, type DeviceRecording } from '@/api/recording'
 import { recordingHttp, http } from '@/api/http'
@@ -679,7 +685,7 @@ import { useFloorMap } from '@/composables/useFloorMap'
 import { resolveAlarmDeviceName, unpackAlarmMeta, alarmChannelIdOf } from '@/composables/useAlarmDeviceLabel'
 // [FEAT mon-point-popup 2026-09-18] 弹窗详情监控点行: 复用列表 SSOT alarmChLabel
 //   (与实时报警列表「监控点」列完全同口径, 防双实现漂移)
-import { alarmChLabel } from '@/composables/useAlarmTableHelpers'
+import { alarmChLabel, carriedItemLabel } from '@/composables/useAlarmTableHelpers' // [FIX carry-display 2026-09-21] 携带类细分显示名 (背包/斜挎包/手提包...)
 import type { MapChannelPair, CameraMapBinding } from '@/types/floorMap'
 // [P3 轮 2026-09-14 §6.2 W-7] 弹窗 E2E 埋点 (渲染/处置确认/关闭; 纯日志不改业务语义)
 import { trackPopupShow, trackPopupDispose, trackPopupClose } from '@/utils/alarmPopupTelemetry'
@@ -851,6 +857,10 @@ const evidenceIncomplete = computed(() => {
   const c = evidenceCompleteness(popupMetaSrc(), alarmTsMs.value)
   return (!c.complete && !c.pendingPost && c.present > 0) ? c : null
 })
+/** [FIX ev-frame-lag 2026-09-20] P1-5 帧滞后提示: 取证帧 (mid 优先) 时刻与
+ *   告警时刻偏差 >2s 时标注「帧滞后 N.Ns」(实测快照链相位差 5.8s/6.3s,
+ *   19 图复查报告) — 防用户把滞后帧当告警时刻画面误读; null = 无帧/无时刻 */
+const evidenceLag = computed(() => evidenceFrameLag(popupMetaSrc(), alarmTsMs.value))
 /** 缩略图 hover title: 主快照 / 「标签 · T-12s (14:32:08)」/ 缺失格原因 */
 function thumbTitle(img: GalleryImage): string {
   // [EV-STABLE3 2026-09-19] 缺失占位格: 语义标签 + 缺失原因 (后端 missing_frames)
@@ -967,13 +977,28 @@ function camDeviceLabel(b: CameraMapBinding): string {
 function camLabelOf(b: CameraMapBinding): string {
   return b.label || ''
 }
-watch(currentAlarm, (a) => {
+watch(currentAlarm, (a, prev) => {
   resetQueue()  // [POPUP-3MIN] 切告警重置连播队列 (播放源/进度清零, 由新告警 loadPlayback 重建)
   clearPreviewOverride()
   playbackFallbackUrls.value = []
   // [NVR-PB] 切告警复位播放源格式/直播语义 (新告警由 playQueueItem/playSelectedRecording 重设)
   playerSrcFormat.value = ''
   playerSrcIsLive.value = true
+  // [FIX rec-switch 2026-09-21 测试 D4/D6] 真切告警 (id 变化) 重建回放加载链:
+  //   ①deviceRecordings 残留使 watch(activePrimaryTab) 自动加载条件 (!length) 永久短路 —
+  //     弹窗常开切告警后再切回放 tab 零加载请求 (「回放地址不可用」根因链)
+  //   ②录像轮询仅在弹窗 关→开 时启动 (watch popupVisible) — 弹窗常开期切告警后
+  //     「录像中」态无轮询无加载, 卡到 age>120s 落降级 (实测 10:49:14 告警覆盖后
+  //     HttpServer.log 零 recordings 请求 3+ 分钟)。现重走与弹窗打开一致的链:
+  //     loadPlayback (NVR 优先) + 无 clip 时重启轮询 (30~40s 录像就绪自动接管)
+  //   注: 同 id 富化 (useAlarmPopup enrich 换引用触发本 watch) 不重载, 防打断在播回放
+  if (prev && a?.id && prev.id !== a.id) {
+    deviceRecordings.value = []
+    if (popupVisible.value) {
+      loadPlayback()
+      if (!a.videoClipUrl) startRecordingPoll()
+    }
+  }
   // [FIX rec-direct-layer 2026-09-11] 直显路径立即补层: 告警自带 video_clip_url 常为
   //   单层 /record/rtp/... (nginx 实测恒 404); 原逻辑要等 loadPlayback 证据接口返回
   //   才修成双层 → MiniPlayer 先用死链播 3~4s (404 请求 + :key 变化重建闪烁,
@@ -1296,7 +1321,14 @@ function isNvrRecording(rec: DeviceRecording): boolean {
 // [POPUP-3MIN] GB28181 (NVR) 兜底: 无法多片连播时自动播覆盖事件时刻的那片
 // [NVR-PRIO 2026-09-18] onlyNvr=true → 仅从 NVR 条目中挑 (弹窗默认源选择用);
 //   自愈回退链保持全量池 (本地片优先)。
-function pickCoveringRecording(recs: DeviceRecording[], tMs: number, onlyNvr = false): DeviceRecording | null {
+// [FIX nvr-gap 2026-09-21 测试用例 09:13:25 告警] requireCover=true → 仅接受
+//   「段覆盖事件时刻」的条目; 原「最近段兜底」在 NVR 断档时 (实测段尾 09:11:22 vs
+//   T=09:13:25) 仍选中不含事件画面的段: 全窗 [T-90s,T+90s] 与段零交集, GB 侧对
+//   无录像时段不推流, 而后端 /play 探测不到 codec 仍乐观返回原始流 URL (原流直出)
+//   → 前端 8s 首帧超时 ×4 轮白等 (~76s) 才落「回放地址不可用」。调用方按需开启
+//   (弹窗 NVR 优选开启; 自愈链/无本地片兜底保持原语义 — 那些场景本地片不可用,
+//   最近段仍是最优尝试)。
+function pickCoveringRecording(recs: DeviceRecording[], tMs: number, onlyNvr = false, requireCover = false): DeviceRecording | null {
   const pool = onlyNvr ? recs.filter(isNvrRecording) : recs
   if (!pool.length || !Number.isFinite(tMs)) return null
   const scored = pool.map((r) => {
@@ -1306,7 +1338,10 @@ function pickCoveringRecording(recs: DeviceRecording[], tMs: number, onlyNvr = f
     const dist = tMs < rs ? rs - tMs : (tMs >= re ? tMs - re : 0)
     return { r, covers, dist }
   }).sort((a, b) => (b.covers - a.covers) || (a.dist - b.dist))
-  return scored[0]?.r ?? null
+  const top = scored[0]
+  if (!top) return null
+  if (requireCover && !top.covers) return null
+  return top.r
 }
 // [FIX rec-tc 2026-09-15 排查 R1] 段播放前先转码为浏览器兼容 H264 (原片 HEVC/PCMA
 //   直链在 Chrome/Linux 恒黑屏 — 连播黑屏主根因); 等待期 queuePreparing 占位;
@@ -1533,10 +1568,30 @@ watch(activePrimaryTab, (t, prev) => {
 })
 
 function loadPlayback() {
-  if (!currentAlarm.value?.id) return
+  // [DBG lp-trace 2026-09-21 测试] loadPlayback 全链诊断: 定位 recordings/query 恒缺失根因
+  //   数据落 window.__lbDiag (数组), browser-use 直读; 诊断完移除
+  const _rec = (stage: string, extra?: Record<string, unknown>) => {
+    try {
+      const arr = ((window as any).__lbDiag = (window as any).__lbDiag || [])
+      arr.push({ t: Date.now(), stage: 'lp-' + stage, ...(extra || {}) })
+      if (arr.length > 150) arr.shift()
+    } catch { /* noop */ }
+  }
+  _rec('enter', {
+    hasAlarm: !!currentAlarm.value,
+    id: currentAlarm.value?.id ?? null,
+    devId: (currentAlarm.value as any)?.deviceId ?? null,
+    devType: typeof (currentAlarm.value as any)?.deviceId,
+    visible: popupVisible.value,
+  })
+  if (!currentAlarm.value?.id) { _rec('early-return'); return }
   recordingsLoading.value = true
   deviceRecordings.value = []
-  alarmApi.getEvidence(currentAlarm.value.id).then((ev: any) => {
+  const loadAlarmId = currentAlarm.value.id
+  alarmApi.getEvidence(loadAlarmId).then((ev: any) => {
+    // [FIX rec-switch 2026-09-21 测试 D4] 切告警后晚到证据守卫 (原实现无 id 判断:
+    //   旧告警 evidence 晚到会把其直链写进新告警 → 错播/挂死源)
+    if (currentAlarm.value?.id !== loadAlarmId) return
     // [NVR-PRIO 2026-09-18] 守卫扩展到 NVR 回放流: NVR 已接管 (nvrDirectActive) 或
     //   队列在播时, 证据晚到跳过覆盖 — 否则本地片直链会把 NVR 连续流切走。
     if (ev?.videoClipUrl && !nvrDirectActive.value && !queueActive.value) {
@@ -1549,8 +1604,10 @@ function loadPlayback() {
       currentAlarm.value!.videoClipUrl = cands[0]
     }
     if (ev?.snapshotUrl && !currentAlarm.value!.snapshotUrl) currentAlarm.value!.snapshotUrl = ev.snapshotUrl
-  }).catch(() => {}).finally(() => { recordingsLoading.value = false })
+  }).catch((e: any) => { _rec('evidence-err', { msg: String(e?.message || e) }) }).finally(() => { recordingsLoading.value = false })
+  _rec('before-if', { dev: (currentAlarm.value as any)?.deviceId ?? null, devType: typeof (currentAlarm.value as any)?.deviceId })
   if (currentAlarm.value.deviceId) {
+    _rec('if-pass')
     const alarmId = currentAlarm.value.id
     const t = new Date(currentAlarm.value.createdAt)
     // [POPUP-3MIN] 查询窗口收紧为前后各 2.5 分钟 (原 ±1h): 只需覆盖 3 分钟回放区间
@@ -1569,7 +1626,10 @@ function loadPlayback() {
       //   playSelectedRecording 裁剪 (NVR-PB 2026-09-13, GB28181 Playback 原生
       //   支持任意起点)。失败回退反向链: /play 失败 (catch) 或流挂
       //   (onPlaybackError) → healPlaybackFailure → 本地片连播。
-      const nvr = pickCoveringRecording(recs, tMs, /*onlyNvr=*/true)
+      // [FIX nvr-gap 2026-09-21] NVR 优选要求段覆盖 T (requireCover): T 在段外
+      //   (NVR 断档/归档延迟) 时「最近段」全窗请求必然空转 ~76s (细节见函数注释),
+      //   直接落入下方本地片连播 (该场景事件时刻画面只存在于本地片)。
+      const nvr = pickCoveringRecording(recs, tMs, /*onlyNvr=*/true, /*requireCover=*/true)
       if (nvr && !queueActive.value) {
         void playSelectedRecording(nvr, { silent: true })
         return
@@ -1585,7 +1645,9 @@ function loadPlayback() {
       if (covering && !currentAlarm.value!.videoClipUrl && !queueActive.value) {
         void playSelectedRecording(covering, { silent: true })
       }
-    }).catch(() => {})
+    }).catch((e: any) => { _rec('query-err', { msg: String(e?.message || e) }) })
+  } else {
+    _rec('if-fail', { alarmId: currentAlarm.value?.id ?? null })
   }
 }
 // [POPUP-PLAYBACK 2026-09-11] GB28181 设备录像 id 即磁盘绝对路径
@@ -1703,6 +1765,14 @@ async function startNvrPlayback(rec: DeviceRecording, startMs?: number, silent?:
   }
   // [FIX p1-session] 记录会话 id 供 /stop 生命周期治理 (关弹窗/切告警/新播放/卸载)
   const cid = String(result?.call_id || '')
+  // [FIX rec-switch 2026-09-21 测试 D4-3] 切告警/关弹窗竞态守卫: /play 信令在途
+  //   (NVR INVITE 实测 2~17s) 期间切告警或关弹窗时本响应晚到 — 原实现照写
+  //   gbPlaybackCallId, 但新告警侧 stopGbPlayback 已先执行 (callId 尚空 → no-op)
+  //   → 旧会话悬挂到下一轮。现晚到响应直接释放该会话并弃用 (不接线不写 callId)。
+  if (cid && String(alarm?.id || '') !== String(currentAlarm.value?.id || '')) {
+    void recordingHttp.post(`/${encodeURIComponent(cid)}/stop`, undefined, { timeout: 5000 }).catch(() => {})
+    return
+  }
   if (cid) gbPlaybackCallId.value = cid
   // [NVR-PB 2026-09-13] 显式格式重构 (原依赖 MiniPlayer URL 后缀推断, NVR 流
   //   /rtp/... 形态常被误判 mp4 → 原生 video 拉流解析失败 → 「已尝试全部格式」):
@@ -2171,6 +2241,11 @@ const currentTrackId = computed(() => {
 const alarmTypeLabel = computed(() => {
   const t = currentAlarm.value?.type || ''
   if (!t) return '告警'
+  // [FIX carry-display 2026-09-21] 携带类细分显示 (9803 实锚: 真包类别 handbag
+  //   被 canonical 统一显示为「人员携带背包」→ 用户视"非背包"为误报);
+  //   meta.class_name_zh 优先, 缺失回落 canonical zh 名 (语义零变化)
+  const fine = carriedItemLabel(currentAlarm.value)
+  if (fine) return fine
   // [P0-14] canonical SSOT 优先 (113 事件类型 zh 名), 本地映射兜底
   const viaCanonical = eventTypeZh(t)
   if (viaCanonical && viaCanonical !== t) return viaCanonical
@@ -2193,11 +2268,37 @@ const aiReviewTagKind = computed(() => {
   const v = currentAlarm.value?.aiReview?.verdict
   if (v === 'confirmed') return 'success'
   if (v === 'retracted') return 'danger'
+  // [FIX vlm-verdict-direction 2026-09-19] 误报建议 (未自动撤警) — 黄色提醒
+  if (v === 'false_alarm_suggested') return 'warn'
   return 'info'
 })
 // [P1-2 2026-09-15] AI 复核三态 (G4/R2 诚实透出): VLM 功能启用态拉取。
 //   模块级缓存会话内只拉一次; 失败静默 → null → 三态归 pending, 不误报"未启用"。
 //   注: 拦截器可能 snake→camel, 字段双键兼容; 字段缺失时保持 null 不猜。
+// [AI-RQ 2026-09-20] 审核队列位次文案: 弹窗告警在 VLM 队列中的实时排位。
+//   弹窗告警变化时拉一次快照匹配 pending 位次; 命中 current 显示已复核耗时;
+//   端点不可用/不在队列 → null → 回退通用「复核中 / 待复核」。
+const rqPositionText = ref<string | null>(null)
+watch(currentAlarm, async (a) => {
+  rqPositionText.value = null
+  if (!a) return
+  const st = await fetchVlmQueueSnapshot()
+  if (!st?.queue || String(currentAlarm.value?.id || '') !== String(a.id)) return  // 已切到别条
+  const q = st.queue
+  if (q.current && q.current.alarm_id === a.id) {
+    rqPositionText.value = `AI 复核中 (已 ${Math.round(q.current.elapsed_ms / 1000)}s)`
+    return
+  }
+  const idx = q.pending.findIndex((p) => p.alarm_id === a.id)
+  if (idx >= 0) {
+    const total = Math.max(q.depth, idx + 1)
+    let text = `AI 复核排队第 ${idx + 1}/${total} 位`
+    if (typeof q.eta_ms_estimate === 'number' && q.depth > 0)
+      text += ` · 预计 ~${Math.max(1, Math.round((q.eta_ms_estimate * (idx + 1)) / q.depth / 1000))}s`
+    rqPositionText.value = text
+  }
+})
+
 let vlmEnabledCache: boolean | null = null
 let vlmEnabledFetched = false
 async function fetchVlmEnabled(): Promise<boolean | null> {
@@ -2219,7 +2320,8 @@ const aiReviewStageText = computed(() => {
   const stage = aiReviewStage(currentAlarm.value?.aiReview, vlmEnabled.value)
   if (stage === 'reviewed') return aiReviewVerdictLabel(currentAlarm.value?.aiReview)
   if (stage === 'disabled') return 'AI 复核未启用'
-  return '复核中 / 待复核'
+  // [AI-RQ 2026-09-20] 队列快照可匹配时透出位次/耗时, 否则回退通用文案
+  return rqPositionText.value ?? '复核中 / 待复核'
 })
 const aiReviewStageKind = computed(() => {
   const stage = aiReviewStage(currentAlarm.value?.aiReview, vlmEnabled.value)
@@ -2765,6 +2867,13 @@ void jumpToPlayback; void openImageTab
 .alarm-popup__ev-incomplete {
   font-size: 11px;
   color: #E6A23C;
+  white-space: nowrap;
+}
+/* [FIX ev-frame-lag 2026-09-20] P1-5 帧滞后标注 (取证帧与告警时刻相位差
+   >2s; 紫罗兰色与青色采集中/黄色快照不全三态可辨, 静态事实不闪烁) */
+.alarm-popup__ev-lag {
+  font-size: 11px;
+  color: #B48CD9;
   white-space: nowrap;
 }
 @keyframes alarm-popup-ev-blink {

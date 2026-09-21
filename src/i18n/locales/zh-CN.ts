@@ -1483,7 +1483,10 @@ const zhCN = {
     levelMedium: '中',
     levelLow: '低',
     // [FIX level-ssot 2026-09-14] SSOT 5 档补全 (info 档; 原缺失 → 英文原文直出)
-    levelInfo: '信息',
+    // [FIX ss-merged-parity 2026-09-20] info 档文案对齐告警中心卡片
+    //   (AlarmCard/useAlarmLabels levelLabel = '提示'; 原'信息'两屏同警异文,
+    //   用户对比实锚)
+    levelInfo: '提示',
     // 告警类型
     criticalAlarm: '严重告警',
     highAlarm: '高级告警',

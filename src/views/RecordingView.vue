@@ -4,7 +4,7 @@ import { useRouter, useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { deviceHttp, recordingHttp } from '@/api/http'
 import { alarmApi } from '@/api/alarm'  // [P3-VP1] 时间轴告警标记
-import { getRecordings, playRecording, stopPlayback as stopRecordingPlayback, controlPlayback, downloadRecording, recordUrlCandidates, toLocalISOString, exportRangeRecordingAsync, fetchAndDownload, ensureRecordTranscoded, type RecordingSegment as ApiRecordingSeg } from '@/api/recording'
+import { getRecordings, playRecording, stopPlayback as stopRecordingPlayback, controlPlayback, downloadRecording, recordUrlCandidates, toLocalISOString, exportRangeRecordingAsync, fetchAndDownload, ensureRecordTranscoded, markRecordStart, markRecordStop, type RecordingSegment as ApiRecordingSeg } from '@/api/recording'
 import {
   getWatermark, updateWatermark,
   type WatermarkConfig,
@@ -657,6 +657,11 @@ const tlExporting = ref(false)
 //   播放位置为终点 → 复用区间导出链 (export-range: ZLM MP4 切片 ffmpeg -c copy 裁剪
 //   拼接 → blob 落盘)。与时间轴拖选导出同后端, 交互所见即所得; 上限 30 分钟 (后端限制)。
 const markActive = ref(false)
+// [REC-MARK-STREAM 2026-09-20] 双模式: 'stream' = 录当前 ZLM 回放流 (设备存储 NVR
+//   回放, 现实唯一场景 — [2026-09-12 存储治理] 关连录后中心存储切片不再产生);
+//   'range' = 结束时 export-range 裁中心存储切片 (原链路, zlm 直链段预留)。
+const markMode = ref<'stream' | 'range'>('stream')
+const markStarting = ref(false)
 const markStartMs = ref(0)
 const markElapsed = ref('')
 const markExporting = ref(false)
@@ -672,38 +677,54 @@ function stopMarkTimer() {
 async function finishMarkRecording() {
   stopMarkTimer()
   const startMs = markStartMs.value
+  const mode = markMode.value
   markActive.value = false
   markStartMs.value = 0
   markElapsed.value = ''
   if (!startMs) return
   const endMs = markClockMs()
-  if (endMs - startMs < 1000) {
+  const durMs = endMs - startMs
+  if (durMs < 1000) {
+    // [REC-MARK-STREAM] stream 模式取消也必须 stop (终止 ZLM 录制并丢弃产物)
+    if (mode === 'stream' && selectedChannelId.value) {
+      markRecordStop(String(selectedChannelId.value)).catch(() => { /* 丢弃产物, 失败静默 */ })
+    }
     ElMessage.warning('录制过短 (至少 1 秒), 已取消')
     return
   }
-  if (endMs - startMs > MARK_MAX_MS) {
-    ElMessage.error('录制跨度超过 30 分钟上限, 请缩小范围后重试')
-    return
+  if (durMs > MARK_MAX_MS) {
+    // 超限仍继续交付 (timer 自动收尾会走到这里; range 模式后端另有 30min 硬校验)
+    ElMessage.warning('已达 30 分钟上限, 按已录范围交付')
   }
   if (!selectedChannelId.value) {
     ElMessage.warning('未选择监控点, 无法导出')
     return
   }
   markExporting.value = true
-  ElMessage.success('已提交导出任务，大区间可能需要 1-2 分钟，完成后自动下载')
   try {
-    const out = await exportRangeRecordingAsync({
-      device_id: selectedDeviceId.value || undefined,
-      channel_id: String(selectedChannelId.value),
-      start_time: toLocalISOString(new Date(startMs)),
-      end_time: toLocalISOString(new Date(endMs)),
-    })
-    await fetchAndDownload(out.download_url, out.filename || `clip_${Date.now()}.mp4`)
-    ElMessage.success(`录像已下载${out.segments_used ? ` (拼接 ${out.segments_used} 个切片)` : ''}`)
+    if (mode === 'stream') {
+      // [REC-MARK-STREAM] 停录 → 后端回扫 mark 目录产物 → 下载 (回放 BYE/切段时
+      //   流已注销, ZLM 已自动 finalize 文件, stop 端点照常返回产物直链)
+      const out = await markRecordStop(String(selectedChannelId.value))
+      await fetchAndDownload(out.download_url, out.filename || `mark_${Date.now()}.mp4`)
+      ElMessage.success('录像已下载 (回放流录制)')
+    } else {
+      ElMessage.success('已提交导出任务，大区间可能需要 1-2 分钟，完成后自动下载')
+      const out = await exportRangeRecordingAsync({
+        device_id: selectedDeviceId.value || undefined,
+        channel_id: String(selectedChannelId.value),
+        start_time: toLocalISOString(new Date(startMs)),
+        end_time: toLocalISOString(new Date(endMs)),
+      })
+      await fetchAndDownload(out.download_url, out.filename || `clip_${Date.now()}.mp4`)
+      ElMessage.success(`录像已下载${out.segments_used ? ` (拼接 ${out.segments_used} 个切片)` : ''}`)
+    }
   } catch (e: any) {
     const raw = e?.response?.data?.message || e?.message || ''
     // [REC-MARK FIX 2026-09-15] 无覆盖切片 → 可行动指引 (回放源可能选在设备存储段)
-    if (/no recordings cover/i.test(raw)) {
+    if (mode === 'stream') {
+      ElMessage.error('录像导出失败: ' + (raw || '未捕获到录像 (回放可能已结束)'))
+    } else if (/no recordings cover/i.test(raw)) {
       ElMessage.error('该时段无中心存储录像切片, 无法导出; 请回放时间轴绿色中心存储段后再试')
     } else {
       ElMessage.error('录像导出失败: ' + raw)
@@ -712,26 +733,8 @@ async function finishMarkRecording() {
     markExporting.value = false
   }
 }
-function toggleMarkRecording() {
-  if (markExporting.value) return
-  if (markActive.value) { finishMarkRecording(); return }
-  if (!isPlaying.value || !currentSegmentStartMs.value) {
-    ElMessage.warning('请先开始回放再录像')
-    return
-  }
-  // [REC-MARK FIX 2026-09-15] 起点必须是中心存储 (zlm) 覆盖段: export-range 仅能裁
-  //   ZLM 中心切片, 设备存储 (gb28181) 回放位置提交导出必 failed (no recordings cover)。
-  //   zlm 覆盖段优先匹配: gb 长段与 zlm 段重叠时 (start 更靠前) 不得误拦 zlm 回放。
-  const nowMs = markClockMs()
-  const covNow = (x: TlSeg) => x.s <= nowMs && nowMs <= x.e + 5000
-  const startHit = buildSegs().find((x) => covNow(x) && x.r.source === 'zlm') || buildSegs().find(covNow)
-  if (!startHit || startHit.r.source !== 'zlm') {
-    ElMessage.warning('当前回放位置无中心存储录像 (可能为设备存储录像段), 标记录像仅支持中心存储, 请点击时间轴绿色录像块回放后再录')
-    return
-  }
-  markStartMs.value = markClockMs()
-  markActive.value = true
-  markElapsed.value = '00:00'
+function startMarkTimer() {
+  stopMarkTimer()
   markTimer = setInterval(() => {
     const dur = markClockMs() - markStartMs.value
     if (dur > MARK_MAX_MS) {
@@ -742,6 +745,49 @@ function toggleMarkRecording() {
     const s = Math.max(0, Math.round(dur / 1000))
     markElapsed.value = `${p2(Math.floor(s / 60))}:${p2(s % 60)}`
   }, 1000)
+}
+async function toggleMarkRecording() {
+  // [FIX mark-ui 2026-09-21] 原静默 return = 用户感知「点了没反应」; 导出/启动中给明确提示
+  if (markExporting.value) { ElMessage.warning('上一段导出仍在进行, 请稍候'); return }
+  if (markStarting.value) { ElMessage.warning('录像启动中, 请稍候'); return }
+  if (markActive.value) { finishMarkRecording(); return }
+  if (!isPlaying.value || !currentSegmentStartMs.value) {
+    ElMessage.warning('请先开始回放再录像')
+    return
+  }
+  // [REC-MARK-STREAM 2026-09-20] 模式分流: 当前位置有中心存储 (zlm) 覆盖段 →
+  //   range (结束时 export-range 裁剪, 原链路预留); 其余 (设备存储 NVR 回放 /
+  //   无覆盖段 — 连录已关后的现实唯一场景) → stream (录 ZLM 回放流)。
+  //   替换原 zlm 独占拦截 (L719-728 旧注释): 那是连录时代的可达路径, 现已死路。
+  const nowMs = markClockMs()
+  const covNow = (x: TlSeg) => x.s <= nowMs && nowMs <= x.e + 5000
+  const startHit = buildSegs().find((x) => covNow(x) && x.r.source === 'zlm') || buildSegs().find(covNow)
+  markMode.value = startHit && startHit.r.source === 'zlm' ? 'range' : 'stream'
+  if (!selectedChannelId.value) {
+    ElMessage.warning('未选择监控点, 无法录像')
+    return
+  }
+  if (markMode.value === 'stream') {
+    markStarting.value = true
+    try {
+      await markRecordStart(String(selectedChannelId.value))
+      markStartMs.value = markClockMs()
+      markActive.value = true
+      markElapsed.value = '00:00'
+      startMarkTimer()
+      ElMessage.success('录像中: 范围跟随播放位置, 再次点击红点结束并下载')
+    } catch (e: any) {
+      // 后端失败常见形态: 回放流不在线 (回放未起/已 BYE) 或已在录制中
+      ElMessage.error('录像启动失败: ' + (e?.response?.data?.message || e?.message || ''))
+    } finally {
+      markStarting.value = false
+    }
+    return
+  }
+  markStartMs.value = markClockMs()
+  markActive.value = true
+  markElapsed.value = '00:00'
+  startMarkTimer()
   ElMessage.success('录像中: 范围跟随播放位置, 再次点击红点结束并下载')
 }
 // 回放停止 (段起点钟清零) 时自动收尾导出; 切段换起点不中断 (范围按日历时间跨段有效)
@@ -1084,7 +1130,26 @@ async function stopGbSession() {
   try { await recordingHttp.post(`/${encodeURIComponent(sid)}/stop`) } catch { /* best-effort: 会话可能已自释放 */ }
 }
 
+// [FIX pb-lock 2026-09-21 真机现场 12:13] 播放单飞锁与整链重试状态:
+//   ① playInFlight — 真机实录 11:51:25 双 /play 并发 (两次触发间隔 148ms) → 双
+//      INVITE/双开 RTP 互踩 (openRtpServer "already exists" auto-cleanup 打断首个
+//      会话); 在途时忽略新的用户触发, 链内 _retry 递归放行。
+//   ② chainAutoRetried — 流层失败 (URL 已拿到但 flv/hls 播放器双 fatal) 整链自动
+//      重试一次的额度, 用户每次主动播放重置。
+let playInFlight = false
+let chainAutoRetried = false
+let currentPlayRec: RecordingSegment | null = null
+
 async function playSegment(rec: RecordingSegment, opts?: { startAtMs?: number; _retry?: boolean }): Promise<boolean> {
+  // [FIX pb-lock 2026-09-21] 播放单飞: 在途时忽略并发用户触发 (防双会话互踩)
+  if (playInFlight && !opts?._retry) {
+    console.warn('[RecordingView] playSegment 在途, 忽略并发触发')
+    return false
+  }
+  if (!opts?._retry) {
+    playInFlight = true
+    chainAutoRetried = false
+  }
   const attempt = ++playerAttempt  // [FIX rec-tc] 本次播放尝试序号 (作废在途转码回调)
   try {
     await stopGbSession()  // [FIX p2-session] 切源前释放旧 GB 回放会话
@@ -1154,14 +1219,17 @@ async function playSegment(rec: RecordingSegment, opts?: { startAtMs?: number; _
       channel_id: selectedChannelId.value,
       start_time: startIso,
       end_time: rec.endTime,
-    }, { timeout: 15000 })  // [FIX p2-timeout] NVR 对「仍在归档的新段」回放会挂起, 不再无限等待
+    }, { timeout: 25000 })  // [FIX p2-timeout] NVR 对「仍在归档的新段」回放会挂起, 不再无限等待
+    // [FIX pb-ready 2026-09-21] 15s→25s: 后端 /play 最长耗时 = codec 探测 10s +
+    //   转码 waitForStreamReady 8s + SIP 余量; 15s 必在「转码慢」场景超时 → 前端
+    //   重试与后端首请求竞态双起转码, 「查询的录像有时看不了」根因之一。
     const result = data?.data || data
     if (!result?.urls) {
       // [FIX p2-retry 2026-09-12] NVR 回放建立竞态 (旧会话刚释放/INVITE 忙):
       //   首次失败延迟 2.5s 自动重试一次 (真机实证 stop 后重播即成功)
       if (!opts?._retry) {
         await new Promise((r) => setTimeout(r, 2500))
-        return playSegment(rec, { ...opts, _retry: true })
+        return await playSegment(rec, { ...opts, _retry: true })
       }
       ElMessage.warning('未获取到播放地址，设备可能不支持回放')
       return false
@@ -1202,6 +1270,8 @@ async function playSegment(rec: RecordingSegment, opts?: { startAtMs?: number; _
 
     // [FIX rec-play 2026-09-11] 原缺: 不写 playingUrl 则 jumpToTime 守卫恒警告返回
     playingUrl.value = playUrl
+    // [FIX pb-autoretry 2026-09-21] 记录本段, 供流层失败整链重试 (flv/hls 双 fatal)
+    currentPlayRec = rec
     if (!currentSegmentStartMs.value) {
       currentSegmentStartMs.value = Date.parse(rec.startTime) || 0
     }
@@ -1231,6 +1301,8 @@ async function playSegment(rec: RecordingSegment, opts?: { startAtMs?: number; _
         player.destroy()
         playerInstance = null
         if (urls.hls) void attachHls(urls.hls)
+        // [FIX pb-autoretry 2026-09-21] 无 hls 兜底 → 流层失败整链重试 (一次)
+        else maybeAutoRetryChain()
       })
       playerInstance = player
     } else if (playUrl.includes('.m3u8') || playUrl.includes('hls')) {
@@ -1241,12 +1313,17 @@ async function playSegment(rec: RecordingSegment, opts?: { startAtMs?: number; _
     }
   } catch (e: any) {
     // [FIX p2-retry 2026-09-12] /play 超时 (15s 挂起) /网络异常: 同 5002 竞态重试一次
+    //   [FIX pb-fastfail 2026-09-21] 后端探测失败现已快死 5002 (不再返回原流 URL) →
+    //   本重试链是「设备未推流」场景的自动恢复路径 (实测 stop+重播一次即成功)。
     if (!opts?._retry) {
       await new Promise((r) => setTimeout(r, 2000))
-      return playSegment(rec, { ...opts, _retry: true })
+      return await playSegment(rec, { ...opts, _retry: true })
     }
     ElMessage.error('回放失败: ' + (e.message || ''))
     return false
+  } finally {
+    // [FIX pb-lock 2026-09-21] 最外层调用完结后释放单飞锁 (链内 _retry 不释放)
+    if (!opts?._retry) playInFlight = false
   }
   // [P2-1] GB28181 会话链路 (未提前 return) 同样同步从窗
   void syncTo(opts?.startAtMs || Date.parse(rec.startTime) || 0)
@@ -1276,6 +1353,8 @@ async function attachHls(hlsUrl: string) {
       else {
         hls.destroy()
         if (playerInstance === hls) playerInstance = null
+        // [FIX pb-autoretry 2026-09-21] net/media 双类 fatal 超限 → 整链自动重试 (一次)
+        maybeAutoRetryChain()
       }
     })
     playerInstance = hls
@@ -1283,6 +1362,19 @@ async function attachHls(hlsUrl: string) {
     video.src = hlsUrl
     video.addEventListener('loadedmetadata', () => video.play().catch(() => {}))
   }
+}
+
+// [FIX pb-autoretry 2026-09-21 用户现场 12:13] 流层失败整链自动重试:
+//   场景 — /play 已成功拿到 URL 但拉流失败 (ZLM 流瞬时 404 / 流被停后残留播放器),
+//   原实现 destroy 后死状态 (黑屏无恢复, 需手动重选段)。现 2s 后以 _retry 重开
+//   一次 (stopGbSession → 新 /play → 新 INVITE, 与真机人工恢复路径同构); 额度
+//   一次 (chainAutoRetried), 用户主动播放重置。
+function maybeAutoRetryChain() {
+  const rec = currentPlayRec
+  if (chainAutoRetried || !rec) return
+  chainAutoRetried = true
+  console.warn('[RecordingView] 回放流层失败, 2s 后自动整链重试一次')
+  window.setTimeout(() => { void playSegment(rec, { _retry: true }) }, 2000)
 }
 
 // [FIX rec-dl-full 2026-09-16] 区间拼接导出公共体 (3.2 下载完整录像): export-range-async
@@ -2854,9 +2946,9 @@ onUnmounted(() => {
                 <button class="pc-icon-btn" title="录像片段列表" @click="clipDrawerVisible = true"><span class="pc-list-glyph">☰</span></button>
                 <button class="pc-icon-btn" :title="muted ? '打开声音' : '静音'" @click="toggleMute"><i class="iconfont1" :class="muted ? 'icon1-a-shengyinguan' : 'icon1-a-shengyinkai'" /></button>
                 <button class="pc-icon-btn" title="截图" @click="takeSnapshot"><i class="iconfont1 icon1-zhuapai" /></button>
-                <!-- [REC-MARK 2026-09-15] 标记录像: 开始/结束以播放位置圈定范围 → 裁剪导出下载 -->
-                <button class="pc-icon-btn" :class="{ 'pc-rec-active': markActive }" :disabled="markExporting"
-                  :title="markExporting ? '导出中…' : markActive ? `结束录像并下载 (已录 ${markElapsed})` : '开始录像: 从当前播放位置圈定范围'"
+                <!-- [REC-MARK 2026-09-15] 标记录像: 开始/结束以播放位置圈定范围; [REC-MARK-STREAM 2026-09-20] 设备存储回放改录 ZLM 回放流 (连录已关, export-range 无切片可裁) -->
+                <button class="pc-icon-btn" :class="{ 'pc-rec-active': markActive }" :disabled="markExporting || markStarting"
+                  :title="markExporting ? '导出中…' : markStarting ? '启动录像中…' : markActive ? `结束录像并下载 (已录 ${markElapsed})` : '开始录像: 从当前播放位置圈定范围'"
                   @click="toggleMarkRecording">
                   <span class="pc-rec-dot" />
                 </button>

@@ -780,6 +780,8 @@ export function aiReviewVerdictLabel(v: AiReviewInfo | undefined): string {
   if (!v || v.verdict === 'unverified') return '未复核'
   if (v.verdict === 'retracted') return '误报'
   if (v.verdict === 'false_alarm_automated') return '自动误报'
+  // [FIX vlm-verdict-direction 2026-09-19] 误报建议 (未自动撤警, 告警保持活跃)
+  if (v.verdict === 'false_alarm_suggested') return '疑似误报'
   if (v.verdict === 'confirmed') return '真事件'
   return '已复核'
 }
@@ -797,7 +799,8 @@ export function aiReviewStage(
   vlmEnabled?: boolean | null,
 ): AiReviewStage {
   if (v && (v.verdict === 'confirmed' || v.verdict === 'retracted' ||
-            v.verdict === 'false_alarm_automated')) return 'reviewed'
+            v.verdict === 'false_alarm_automated' ||
+            v.verdict === 'false_alarm_suggested')) return 'reviewed'
   if (vlmEnabled === false) return 'disabled'
   return 'pending'
 }

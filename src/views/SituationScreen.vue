@@ -476,7 +476,11 @@
                   <span class="alarm-location" :title="`${groupOfAlarm(alarm)} · ${alarm.location}`">{{ groupOfAlarm(alarm) }}</span>
                   <!-- [FIX type-zh 2026-09-07] 告警类型英文 key → 中文 (canonical SSOT
                        优先 + ALARM_TYPE_CN 本地兜底, 与 AlarmPopup alarmTypeLabel 同口径) -->
-                  <span class="alarm-type" :title="alarmTypeText(alarm)">{{ alarmTypeText(alarm) }}</span>
+                  <span class="alarm-type" :title="alarmTypeText(alarm)">{{ alarmTypeText(alarm) }}<i
+                      v-if="mergedCountOf(alarm) > 1"
+                      class="merged-count-badge"
+                      :title="`同窗合并 ${mergedCountOf(alarm)} 次事件`"
+                    >×{{ mergedCountOf(alarm) }}</i></span>
                   <!-- [DEV-NAME-COL 2026-09-07] 设备名称列: 后端 deviceName 已经三级兜底
                        (设备列表页口径), location 即设备名; 空时 '-' -->
                   <span class="alarm-device" :title="alarmDeviceText(alarm)">{{ alarmDeviceText(alarm) }}</span>
@@ -487,7 +491,7 @@
                   <span class="alarm-time">{{ alarm.time }}</span>
                   <span class="alarm-status">
                     <el-tag :type="alarm.status === '已处置' ? 'success' : 'warning'" size="small" effect="dark">
-                      {{ alarmStatusText(alarm.status) }}
+                      {{ alarmStatusText(alarm) }}
                     </el-tag>
                   </span>
                   <!-- [FIX alarm-ops-col 2026-09-17] 双钮收进操作单元格容器: 原 9 个
@@ -871,7 +875,9 @@ import { useEventTypeZh } from '@/composables/useEventTypeZh'
 //   与场景 RulesView 预热同款; 失败静默 → 列走占位兜底不阻塞)
 // [FIX ws-frame-classify 2026-09-18 三方对齐] 帧分类判定换共用 helper (isAlarmStateSyncFrame):
 //   与弹窗 useGlobalAlarm / 列表 AlarmsView / store 四处单一实现, 防口径漂移
-import { alarmChLabel, isAlarmStateSyncFrame } from '@/composables/useAlarmTableHelpers'
+// [FIX ss-merged-parity 2026-09-20] statusLabel 并入: 状态列文案对齐告警中心
+//   (useAlarmTableHelpers = 列表展示口径 SSOT, 中心列表同表; 未处理/误报/…)
+import { alarmChLabel, isAlarmStateSyncFrame, mergedCountOf, statusLabel, carriedItemLabel } from '@/composables/useAlarmTableHelpers'
 // [FIX ind-floormap-parity 2026-09-18] unpackAlarmMeta/alarmChannelIdOf 迁至共享
 //   (定位追踪页室内面板同口径复用, 防双实现漂移); findChannelByHash 不再直接使用
 import { loadAlarmNameDirectory, devNameOf, parentDevOfChannel, unpackAlarmMeta, alarmChannelIdOf } from '@/composables/useAlarmDeviceLabel'
@@ -1011,6 +1017,13 @@ interface Alarm {
   type: string
   level: string
   status: string
+  /** [FIX ss-merged-parity 2026-09-20] 原始状态 key (中心口径, 如 false_alarm/
+   *  confirmed): 状态列精确文案展示用; 两态 status 仍供按钮/行样式判据 */
+  statusKey?: string
+  /** [FIX ss-merged-parity 2026-09-20] 长窗聚合合并计数 (后端 aggregated_count —
+   *  首行=窗口累计 N): N>1 时类型列尾渲染 ×N 角标, 与告警中心 (mergedCountOf
+   *  SSOT / AlarmCard ×N) 同口径同数据源 */
+  aggregatedCount?: number
   snapshotUrl?: string
   /** 后端 metadata 透传: 含 snapshot_base64/snapshot_format, 用于 base64 兜底 */
   metadata?: Record<string, unknown>
@@ -1037,6 +1050,10 @@ const { ensure: ensureEventTypes, zh: eventTypeZh } = useEventTypeZh()
 function alarmTypeText(a: Alarm): string {
   const key = String(a.type || '')
   if (!key) return '未知告警'
+  // [FIX carry-display 2026-09-21] 携带类细分显示 (与 AlarmsView/AlarmPopup 同口径):
+  //   meta.class_name_zh (背包/斜挎包/手提包...) 优先, 缺失回落 canonical zh 名
+  const fine = carriedItemLabel(a)
+  if (fine) return fine
   const viaCanonical = eventTypeZh(key)
   if (viaCanonical && viaCanonical !== key) return viaCanonical
   return ALARM_TYPE_CN[key] || key
@@ -1080,10 +1097,20 @@ function alarmLevelText(level: string): string {
   } as Record<string, string>)[level] ?? level
 }
 
-function alarmStatusText(status: string): string {
-  if (status === '已处置') return t('situationScreen.handled')
-  if (status === '未处理') return t('situationScreen.unhandled')
-  return status
+/** [FIX ss-merged-parity 2026-09-20] 状态列文案对齐告警中心: 原始状态 key 命中
+ *  SSOT 映射 (useAlarmTableHelpers.statusLabel — 中心列表同表) 时显示精确中文
+ *  标签 (误报/已确认/已解决/…); 基线两态 (unhandled/空) 仍走 i18n 文案。
+ *  根因: 中心显精确状态 (误报) 而首页恒折叠两态 (已处置) — 同一条告警两屏
+ *  文案不同 (用户截图红圈实锚)。unhandled 归基线防「未处理」双源漂移。 */
+function alarmStatusText(alarm: Alarm): string {
+  const key = String(alarm.statusKey || '')
+  if (key && key !== 'unhandled') {
+    const exact = statusLabel(key)
+    if (exact && exact !== key) return exact
+  }
+  if (alarm.status === '已处置') return t('situationScreen.handled')
+  if (alarm.status === '未处理') return t('situationScreen.unhandled')
+  return alarm.status
 }
 
 /** 设备列展示设备名称和设备编号；编号缺失时不显示空括号。
@@ -3294,14 +3321,26 @@ function toAlarm(s: SituationAlarmStream): Alarm {
   const govSrc: Record<string, unknown> = Array.isArray(metaRaw)
     ? (metaRaw[0] && typeof metaRaw[0] === 'object' ? metaRaw[0] as Record<string, unknown> : {})
     : (metaRaw && typeof metaRaw === 'object' ? metaRaw as Record<string, unknown> : {})
-  const rawStatus = String(raw.status || govSrc.status || '').toLowerCase()
+  // [FIX ss-merged-parity 2026-09-20] 状态双源推导对齐中心 normalizeAlarmCore
+  //   (types/alarm.ts L870-875): 顶层为初始态 (空/new/pending/unhandled) 且
+  //   gov 为非初始治理态时让位 gov, 其余保持顶层优先; 'new' 归 'unhandled'。
+  //   (原 top||gov 简写在顶层残留初始态时遮蔽治理态 — 与中心口径的分歧点)
+  const topStatusVal = String(raw.status || '').toLowerCase()
+  const govStatusVal = String(govSrc.status || '').toLowerCase()
+  const INIT_STATUSES = ['', 'new', 'pending', 'unhandled']
+  const rawStatusVal = INIT_STATUSES.includes(topStatusVal)
+    && govStatusVal !== '' && !INIT_STATUSES.includes(govStatusVal)
+    ? govStatusVal
+    : (topStatusVal || govStatusVal)
+  const statusKey = rawStatusVal === 'new' ? 'unhandled' : (rawStatusVal || 'unhandled')
   return {
     id: s.id,
     time: time || s.time || '-',
     location: s.deviceName || raw.device_name || raw.device || '',
     type: s.description,
     level: s.level,
-    status: rawStatus && !OPEN_STATUSES.includes(rawStatus) ? '已处置' : '未处理',
+    status: OPEN_STATUSES.includes(statusKey) ? '未处理' : '已处置',
+    statusKey,
     // [FIX 2026-07-30] 兼容 snake/camel 双形态, 与 AlarmsView.vue 行为一致
     snapshotUrl: s.snapshotUrl || s.snapshot_url,
     metadata: s.metadata,
@@ -3317,6 +3356,10 @@ function toAlarm(s: SituationAlarmStream): Alarm {
     // [DEV-GROUP 2026-09-07] 设备 ID 透传 (分组反查 device_ids 用)
     deviceId: (s as { device_id?: string; deviceId?: string }).device_id
       || (s as { deviceId?: string }).deviceId || '',
+    // [FIX ss-merged-parity 2026-09-20] 聚合合并计数透传 (中心 ×N 角标同口径):
+    //   端点新增 aggregated_count 字段 (主), 兼容 camel; 缺省/非法归一 0 —
+    //   展示判据统一走 mergedCountOf (N>1 才出角标)。WS 聚合帧经同函数归一。
+    aggregatedCount: Number(raw.aggregated_count ?? raw.aggregatedCount) || 0,
   }
 }
 
@@ -3636,7 +3679,13 @@ function resolveAlarmLevel(raw: Record<string, any>): string {
  *    语义): 状态同步帧 (is_duplicate / event_phase=update|end / backfill /
  *    evidence_update) 仅就地更新已有条目 (merged_into 优先命中首行),
  *    找不到则丢弃 — 不新增; 新事件帧同 id 已存在时富化合并 (双帧归一),
- *    否则插入。列表恒与 REST 重拉口径一致 (HEAD-only)。 */
+ *    否则插入。列表恒与 REST 重拉口径一致 (HEAD-only)。
+ *  [FIX ss-merged-parity 2026-09-20] 聚合明细帧口径反转: 后端 realtime-alarms
+ *    已改 include_merged=true (与告警中心 /alarms 同源) — 上文"聚合明细被
+ *    REST merged_into='' 过滤 → 刷新后整行消失"的前提不再成立: 明细帧
+ *    (is_duplicate=true 且 aggregated_count>0) 行已落库且 REST 可见 → 放行
+ *    落入插入路径 (与重拉口径一致); 短窗去重帧 (不落库, count 恒 0) 维持
+ *    仅就地更新 (防幽灵行)。 */
 // [FIX today-total-refresh 2026-09-18] 今日告警总数不刷新根因: fetchSituationData
 //   仅 onMounted 调一次, WS 新告警只插列表行不触达统计卡 (todayStats 来自
 //   overview.alarmStats.todayTotal; 后端口径 = AlarmService::getStats()["today"]
@@ -3670,10 +3719,19 @@ function onAlarmPush(data: unknown) {
   // [FIX ws-frame-classify 2026-09-18 三方对齐] 内联判定换共用 helper — 语义严格等价
   //   (is_duplicate / backfill / evidence_update / event_phase=update|end), 单一实现防漂移
   const isStateSync = isAlarmStateSyncFrame(raw)
-  if (isStateSync) {
-    // 状态同步帧: 聚合明细按 merged_into 命中首行; 其余按自身 id 命中
-    const targetId = String(raw.merged_into || '') || sid
-    const row = latestAlarms.value.find(a => a.id === targetId)
+  // [FIX ss-merged-parity 2026-09-20] 聚合明细帧例外放行: is_duplicate=true 且
+  //   aggregated_count>0 = reportAlarm 长窗聚合帧 (AlarmService.cpp L2414-2425
+  //   保留明细自身 alarm_id), persistAlarmRow L949-985 已 UPDATE 首行计数 +
+  //   INSERT 明细行 (独立 id + merged_into 归属首行) — 行已落库, 且本端
+  //   realtime-alarms 同步改 include_merged 口径 (重拉一致, 无幽灵行风险)。
+  //   原实现按状态同步帧仅就地更新 → 明细 id 不在 20 条窗口恒被丢弃 →
+  //   首页恒停在首行时间, 与告警中心逐条明细不一致 (用户投诉根因)。
+  //   短窗去重/结束帧 count 恒 0 且不落库, backfill/evidence 非聚合分支 —
+  //   均维持仅就地更新。
+  const isMergeDetail = raw.is_duplicate === true && Number(raw.aggregated_count) > 0
+  if (isStateSync && !isMergeDetail) {
+    // 状态同步帧: 按自身 id 命中 (WS 推送体无 merged_into — 该字段仅 REST 响应侧)
+    const row = latestAlarms.value.find(a => a.id === sid)
     if (!row) return  // 不在 20 条窗口 → 丢弃 (REST 不展示此类行, 防刷新消失)
     const lv = resolveAlarmLevel(raw)
     if (lv) row.level = lv
@@ -3681,7 +3739,8 @@ function onAlarmPush(data: unknown) {
     if (!row.snapshotUrl && typeof snap === 'string' && snap) row.snapshotUrl = snap
     return
   }
-  // 新事件帧: 同 id 富化合并 (alarm.new + linkage_alarm 双帧归一, 后者补字段)
+  // 新事件帧 + 聚合明细帧 (已落库): 同 id 富化合并 (alarm.new + linkage_alarm
+  // 双帧归一, 后者补字段), 不命中则插入
   const exist = latestAlarms.value.find(a => a.id === sid)
   if (exist) {
     exist.level = resolveAlarmLevel(raw)
@@ -3695,7 +3754,12 @@ function onAlarmPush(data: unknown) {
   const s: SituationAlarmStream & { channel_id?: string } = {
     id: sid,
     level: resolveAlarmLevel(raw),
-    description: raw.description || raw.alarm_type || '未知告警',
+    // [FIX ss-merged-parity 2026-09-20] 类型列改 canonical 优先 (alarm_type →
+    //   description 兜底): REST 行 description 字段即 alarm_type (端点映射),
+    //   告警中心 type 亦取 alarm_type (normalizeAlarmCore) — 原 description 优先
+    //   使 WS 插入行在类型列显人工描述文本 (「徘徊检测: 人员停留 12s」), 与中心/
+    //   重拉后的同名行 (徘徊检测) 文案漂移。alarm_type 缺失时才回落描述。
+    description: raw.alarm_type || raw.description || '未知告警',
     // [FIX dev-name-fallback 2026-09-17] 末级兜底 raw.channel_id → raw.channel_name:
     //   linkage_alarm 帧 (LinkageExecutor) 的 device_name 曾被后端旧覆盖逻辑
     //   冲空, channel_id 兜底把 20 位国标码当设备名裸显 (设备名称列
@@ -3709,6 +3773,9 @@ function onAlarmPush(data: unknown) {
     snapshotUrl: raw.snapshotUrl || raw.snapshot_url,
     snapshot_url: raw.snapshot_url,
     metadata: raw.metadata,
+    // [FIX ss-merged-parity 2026-09-20] 聚合帧计数透传 (×N 角标数据源; 短窗
+    //   去重/结束帧无此字段 → 0, mergedCountOf 归一为 1 不出角标)
+    aggregated_count: raw.aggregated_count,
     channel_id: raw.channel_id ?? raw.channelId ?? '',
     device_id: raw.device_id ?? raw.deviceId ?? '',
     deviceId: raw.deviceId ?? raw.device_id ?? '',
@@ -4205,6 +4272,23 @@ onUnmounted(() => {
 
 .alarm-row.is-unhandled {
   color: #FF4747;
+}
+
+/* [FIX ss-merged-parity 2026-09-20] 聚合合并计数角标 (×N): 对齐告警中心
+   merged-count-badge 语义 (N>1 才出), 暗色大屏配色适配 (中心为亮色胶囊) —
+   flex:none 防被类型文本挤压, 内联在类型列尾不占 grid 轨 */
+.merged-count-badge {
+  flex: none;
+  margin-left: 4px;
+  padding: 0 5px;
+  border-radius: 8px;
+  background: rgba(99, 102, 241, 0.22);
+  color: #8B9DFF;
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 600;
+  line-height: 16px;
+  cursor: default;
 }
 
 .alarm-level b {

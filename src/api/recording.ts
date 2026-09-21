@@ -75,7 +75,13 @@ export function recordUrlCandidates(url: string): string[] {
   // [P2-2 2026-09-12] export 裁剪产物磁盘在 /data/shield/record/export/ (无 record/
   //   嵌套), 后端 download_url 单层 /record/export/... 即磁盘真实结构 → 不补层
   //   (补层 /record/record/export/ 实测 404); 双层规则仅适用于录像原片 (rtp/live)。
+  //   [FIX mark-dl 2026-09-21] mark 录制产物同构 (磁盘 /data/shield/record/mark/...,
+  //   后端 download_url 单层 /record/mark/...) — 不补层名单漏掉它致候选①恒 404,
+  //   blob 拿不到只能走无反馈 <a> 兑底 (REC-MARK「结束没下载」根因之一)。
+  //   [FIX live-rec 2026-09-21] live 直播录像产物同构 (磁盘 /data/shield/record/live/...),
+  //   同因同治: 漏配则 LiveView 录像下载候选①恒 404。
   const double = path.startsWith('/record/record/') || path.startsWith('/record/export/')
+    || path.startsWith('/record/mark/') || path.startsWith('/record/live/')
     ? path
     : '/record/record/' + path.slice('/record/'.length)
   const cands = [`${window.location.origin}${double}`]
@@ -177,13 +183,22 @@ export async function fetchAndDownload(url: string, filename: string): Promise<v
   let blob: Blob | null = null
   for (const candidate of recordUrlCandidates(url)) {
     try {
-      const dl = await fetch(candidate)
-      if (dl.ok) {
-        blob = await dl.blob()
-        break
+      // [FIX mark-dl 2026-09-21] fetch 原无超时: 公网隧道断流时 promise 挂死,
+      //   上层导出态 (markExporting) 永久 true → REC-MARK「再次点击无反应」
+      //   主根因。每候选 90s AbortController 预算 (4MB 经 vicp 隧道实测 30-60s)。
+      const ac = new AbortController()
+      const timer = setTimeout(() => ac.abort(), 90_000)
+      try {
+        const dl = await fetch(candidate, { signal: ac.signal })
+        if (dl.ok) {
+          blob = await dl.blob()
+          break
+        }
+      } finally {
+        clearTimeout(timer)
       }
     } catch {
-      // 网络/CORS 失败 → 试下一候选
+      // 网络/CORS/超时 → 试下一候选
     }
   }
   const a = document.createElement('a')
@@ -269,9 +284,56 @@ export async function exportRangeRecordingAsync(params: {
   throw new Error('导出超时 (超过 12 分钟), 请缩小时间范围')
 }
 
+/** [REC-MARK-STREAM 2026-09-20] 回放标记录像 (stream 模式): 录制当前 ZLM 回放流
+ *  gb_playback_<chan> — [2026-09-12 存储治理] 关闭 ZLM 连录后中心存储切片不再
+ *  产生, 设备存储 (GB28181 NVR) 回放的标记录像改走此链 (所见即所得, 与回放
+ *  位置天然同相; 回放 BYE/切段时流注销, ZLM 自动 finalize 文件)。 */
+export async function markRecordStart(channelId: string): Promise<void> {
+  const { data } = await recordingHttp.post('/mark-record/start', { channel_id: channelId }, { timeout: 15000 })
+  if (data?.code !== 0) throw new Error(data?.message || '录像启动失败')
+}
+
+/** 结束回放流录制: 后端 stopRecord + 回扫 mark 目录最新 mp4, 返回下载直链
+ *  (回放已结束时 stopRecord 失败被后端宽容处理, 照常返回已 finalize 的产物)。 */
+export async function markRecordStop(
+  channelId: string,
+): Promise<{ download_url: string; filename: string; file_size?: number }> {
+  const { data } = await recordingHttp.post('/mark-record/stop', { channel_id: channelId }, { timeout: 20000 })
+  if (data?.code !== 0) throw new Error(data?.message || '未捕获到录像')
+  return {
+    download_url: data.data?.download_url || '',
+    filename: data.data?.filename || '',
+    file_size: data.data?.file_size,
+  }
+}
+
 /** 删除录像 */
 export function deleteRecording(id: string) {
   return recordingHttp.delete<ApiResponse<void>>(`/${id}`)
+}
+
+// ════════════════════════════════════════════════
+// [FIX live-rec 2026-09-21] 预览界面 (LiveView) 直播录像
+//   语义: 录正在预览的直播流 (区别于 mark-record 录回放流)。
+//   H265 直播流由后端起转码 gb_ltc_* 录 H264 (直录必出纯音频废文件, 同 mark 坑);
+//   start 同步等转码就绪 (最长 ~10s, H264 直录则即时), timeout 放宽到 20s。
+// ════════════════════════════════════════════════
+export async function liveRecordStart(channelId: string): Promise<void> {
+  const { data } = await recordingHttp.post('/live-record/start', { channel_id: channelId }, { timeout: 20000 })
+  if (data?.code !== 0) throw new Error(data?.message || '录像启动失败')
+}
+
+/** 结束直播录像: 后端 stopRecord + 停转码 + 回扫 live 目录最新 mp4, 返回下载直链 */
+export async function liveRecordStop(
+  channelId: string,
+): Promise<{ download_url: string; filename: string; file_size?: number }> {
+  const { data } = await recordingHttp.post('/live-record/stop', { channel_id: channelId }, { timeout: 20000 })
+  if (data?.code !== 0) throw new Error(data?.message || '未捕获到录像')
+  return {
+    download_url: data.data?.download_url || '',
+    filename: data.data?.filename || '',
+    file_size: data.data?.file_size,
+  }
 }
 
 /** 回放控制(暂停/恢复/跳转/倍速) */

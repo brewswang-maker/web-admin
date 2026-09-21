@@ -698,6 +698,14 @@ export async function showAlarmPopup(
   queueIndex.value = qIdx >= 0 ? qIdx : 0
   // [POPUP-AUTOCLOSE 2026-09-03] 写入当前弹窗的自动关闭秒数 (独立 ref, 不污染 AlarmEvent)
   currentPopupAutoCloseS.value = Math.max(0, Number(options?.autoCloseSeconds ?? 0)) || 0
+  // [DBG lp-trace 2026-09-21 测试] closeTimer 竞态诊断: 记录打开时刻是否存在待触发的清理定时器 (缺陷: recordings/query 恒缺失排查)
+  try {
+    ;((window as any).__lbDiag = (window as any).__lbDiag || []).push({
+      t: Date.now(), stage: 'show-' + (popupVisible.value ? 'update' : 'open'),
+      id: alarm.id, pendingCloseTimer: closeTimer !== null,
+      devId: (alarm as any).deviceId ?? null, prevId: currentAlarm.value?.id ?? null,
+    })
+  } catch { /* noop */ }
   if (!popupVisible.value) {
     popupVisible.value = true
     console.log('[useAlarmPopup] popupVisible set to true, alarm:', alarm.id, 'ch:', alarm.channelId,
@@ -767,8 +775,15 @@ export function closePopup() {
   // 清理音频监听器
   audioUnlockCleanup?.()
   // 延迟清理，等 transition 结束
+  // [DBG lp-trace 2026-09-21 测试] 记录 closeTimer 调度/触发与触发时的 currentAlarm (缺陷: 延迟清理与重开竞态排查)
+  try {
+    ;((window as any).__lbDiag = (window as any).__lbDiag || []).push({ t: Date.now(), stage: 'closeTimer-schedule', victimId: currentAlarm.value?.id ?? null })
+  } catch { /* noop */ }
   closeTimer = setTimeout(() => {
     closeTimer = null
+    try {
+      ;((window as any).__lbDiag = (window as any).__lbDiag || []).push({ t: Date.now(), stage: 'closeTimer-fire', victimId: currentAlarm.value?.id ?? null })
+    } catch { /* noop */ }
     currentAlarm.value = null
     matchedRule.value = null
     linkageLogs.value = []

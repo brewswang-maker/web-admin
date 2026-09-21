@@ -289,3 +289,37 @@ export function evidenceCompleteness(
   const pendingPost = isEvidencePostPending(m, present, alarmTsMs)
   return { present, total, complete: present >= total, pendingPost }
 }
+
+/**
+ * [FIX ev-frame-lag 2026-09-20] P1-5 证据帧-检测帧相位差判定:
+ *   快照链为异步抓帧 (告警时刻与取证帧落盘间存在固有延时, 实测 mid 帧滞后
+ *   5.79s/6.26s — 19 图复查报告), 弹窗画廊角标 (T-12s/T+0) 以 mid 为锚
+ *   自洽, 但用户对「触发帧」的预期是告警时刻画面 → 偏差 ≥2s 且 <30s 时
+ *   判滞后并提示 (≥30s 属重建/关联异常, 提示无意义且噪); 无帧/无告警
+ *   时刻返回 null (老告警不标)。
+ */
+export interface EvidenceFrameLag {
+  /** true = 帧与告警时刻偏差超阈 (UI 显示提示) */
+  lagging: boolean
+  /** 帧时刻 - 告警时刻 (ms, 正=帧晚于告警/滞后, 负=帧早于告警) */
+  deltaMs: number
+}
+
+export function evidenceFrameLag(
+  metadata?: Record<string, unknown> | null,
+  alarmTsMs?: number,
+): EvidenceFrameLag | null {
+  if (!alarmTsMs || alarmTsMs <= 0) return null
+  const ts = extractEvidenceTs(metadata)
+  const frameTs = ts.mid || ts.pre || ts.post || 0
+  if (!frameTs) return null
+  const deltaMs = frameTs - alarmTsMs
+  const abs = Math.abs(deltaMs)
+  return { lagging: abs >= 2000 && abs < 30000, deltaMs }
+}
+
+/** 帧滞后文案: 「帧滞后 5.8s」/「帧超前 3.2s」(一位小数) */
+export function fmtEvidenceLag(deltaMs: number): string {
+  const s = (Math.abs(deltaMs) / 1000).toFixed(1)
+  return deltaMs >= 0 ? `帧滞后 ${s}s` : `帧超前 ${s}s`
+}

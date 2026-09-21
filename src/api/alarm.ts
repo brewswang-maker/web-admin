@@ -243,3 +243,76 @@ export const alarmApi = {
     return alarmHttp.post<ApiResponse<{ analysis: string }>>(`/${id}/analyze`)
   }
 }
+
+// ── [AI-RQ 2026-09-20] VLM 审核队列快照 (GET /alarm/vlm/status 扩展的 queue 节) ──
+
+/** 队列中一条待处理任务 (服务端 snake_case 原始形态直读) */
+export interface VlmQueuePendingItem {
+  alarm_id: string
+  /** 入队时刻 (epoch ms) */
+  enqueued_at: number
+  /** 已等待时长 (ms) */
+  age_ms: number
+  /** 排序键 = 告警产生时间戳 (epoch ms) — 出队按此升序 */
+  sort_key: number
+  priority: number
+  attempt: number
+  source: string
+}
+
+/** [AI-RQ D9] 审核队列可观测快照 — /alarm/vlm/status 响应的 queue 节 */
+export interface VlmQueueSnapshot {
+  capacity: number
+  /** 排队中条数 (不含正在处理) */
+  depth: number
+  concurrency: number
+  /** 归序缓冲窗口 (ms) — 吸收多线程入队乱序 */
+  sort_window_ms: number
+  persist: boolean
+  /** 当前正在复核的一条 (无则 null); snapshot_attached = 本次送审是否带快照图
+   *  ([AI-RQ-SNAP 需求5 2026-09-20] 定位丢图事故) */
+  current:
+    | { alarm_id: string; elapsed_ms: number; attempt: number; snapshot_attached?: boolean }
+    | null
+  running_count: number
+  /** 排队明细 (服务端封顶 32 条, 按 sort_key 升序) */
+  pending: VlmQueuePendingItem[]
+  /** 预计清空耗时 (ms) = depth × EMA 单条耗时; 无历史样本时不输出 */
+  eta_ms_estimate?: number
+  throughput?: { completed_last_60s: number; avg_verify_ms: number }
+  /** 重启恢复累计条数 */
+  recovered_count?: number
+  /** [AI-RQ-SNAP 需求5] 排队中快照缺失条数 — 定位丢图事故 */
+  snapshot_missing_count?: number
+  /** [AI-RQ-SNAP 需求5] 最近 100 条送审带图比例 (0~1); 无样本时服务端不输出 */
+  snapshot_attached_rate?: number
+}
+
+export interface VlmQueueStatus {
+  effectiveEnabled: boolean | null
+  queue: VlmQueueSnapshot | null
+  /** [AI-RQ-SNAP 需求4] 拒绝无图送审累计数 (快照全缺失拦截); 端点不可用时 null */
+  noSnapshotCount: number | null
+}
+
+/** [AI-RQ D9] 拉取审核队列快照 (随 /alarm/vlm/status 一起返回)。
+ *  失败静默返回 null — 队列状态卡与弹窗位次文案均须容忍端点不可用,
+ *  字段沿用拦截器 snake→camel 双键兼容读法 */
+export async function fetchVlmQueueSnapshot(): Promise<VlmQueueStatus | null> {
+  try {
+    const r = await http.get<{ data?: Record<string, unknown> }>('/alarm/vlm/status')
+    const d = r.data?.data
+    if (!d) return null
+    const rawEnabled = d.effective_enabled ?? d.effectiveEnabled
+    const rawQueue = d.queue as VlmQueueSnapshot | undefined
+    // [AI-RQ-SNAP 需求4] no_snapshot_count: 拦截计数顶层别名 (worker 未注入时为 null)
+    const rawNoSnap = d.no_snapshot_count ?? d.noSnapshotCount
+    return {
+      effectiveEnabled: typeof rawEnabled === 'boolean' ? rawEnabled : null,
+      queue: rawQueue ?? null,
+      noSnapshotCount: typeof rawNoSnap === 'number' ? rawNoSnap : null,
+    }
+  } catch {
+    return null
+  }
+}

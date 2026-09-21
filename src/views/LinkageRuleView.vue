@@ -736,6 +736,62 @@
                     💡 仅选择绊线后, 方向过滤才生效; 仅选择方向则任意绊线的该方向都会触发。
                   </p>
                 </el-form-item>
+                <!-- [AXIS-TEMPORAL 2026-09-20] 事件时序 (P2-3, 对标海康 AXIS 事件时序):
+                     顺序穿越 = 事件按序命中链上各区域 (每步间隔 ≤ 阈值) 链走完触发;
+                     时序条件 = 进入目标区域时回看窗口内未先经前置区域则通过;
+                     排除区暂停 = 命中排除区期间间隔计时暂停 (仅时序路径生效)。
+                     保存写 spatial_cond 三字段 (后端 LinkageEngine.h [AXIS 2026-09-13] 契约)。 -->
+                <el-form-item label="事件时序 (AXIS)" label-position="top" class="cond-form-item">
+                  <el-radio-group v-model="axisMode">
+                    <el-radio-button value="">无 (普通几何)</el-radio-button>
+                    <el-radio-button value="sequence">顺序穿越</el-radio-button>
+                    <el-radio-button value="conditional">时序条件</el-radio-button>
+                  </el-radio-group>
+                  <p class="cond-hint" style="margin-top:4px">跨事件时序语义 (引擎 matchAxisTemporal): 普通几何为逐事件独立判定; 顺序穿越/时序条件需多事件先后触发 (单事件模拟测试不通过属预期)。</p>
+                </el-form-item>
+                <el-form-item v-if="axisMode === 'sequence'" label="穿越链 (按序命中各区域)" label-position="top" class="cond-form-item">
+                  <div style="width: 100%">
+                    <div v-for="(st, i) in axisSteps" :key="`axis_${i}`" style="display:flex; align-items:center; gap:6px; margin-bottom:6px">
+                      <span class="text-secondary" style="width: 46px">第 {{ i + 1 }} 步</span>
+                      <el-select v-model="st.region_id" allow-create filterable default-first-option placeholder="区域ID" style="flex:1; min-width:0">
+                        <el-option v-for="o in axisRegionOptions" :key="o.value" :label="o.label" :value="o.value" />
+                      </el-select>
+                      <span class="text-secondary">间隔 ≤</span>
+                      <el-input-number v-model="st.gap_s" :min="1" :max="86400" :step="10" size="small" style="width: 130px" />
+                      <span class="text-secondary">秒</span>
+                      <el-button text size="small" type="danger" @click="removeAxisStep(i)">删除</el-button>
+                    </div>
+                    <el-button size="small" @click="addAxisStep">+ 添加步骤</el-button>
+                    <p class="cond-hint" style="margin-top:4px">事件须按序命中各区域且每步间隔 ≤ 阈值 (钳位 1 秒~24 小时, 默认 60 秒), 链走完当刻触发; 步骤为空时本条件不生效。</p>
+                  </div>
+                </el-form-item>
+                <el-form-item v-if="axisMode === 'conditional'" label="时序条件 (先经拦截)" label-position="top" class="cond-form-item">
+                  <div style="width: 100%">
+                    <div style="display:flex; align-items:center; gap:6px; margin-bottom:6px">
+                      <span class="text-secondary" style="width: 66px">目标区域</span>
+                      <el-select v-model="axisTargetRegion" allow-create filterable default-first-option placeholder="进入的区域ID" style="flex:1">
+                        <el-option v-for="o in axisRegionOptions" :key="o.value" :label="o.label" :value="o.value" />
+                      </el-select>
+                    </div>
+                    <div style="display:flex; align-items:center; gap:6px; margin-bottom:6px">
+                      <span class="text-secondary" style="width: 66px">前置区域</span>
+                      <el-select v-model="axisPriorRegion" allow-create filterable clearable default-first-option placeholder="应先经过的区域ID" style="flex:1">
+                        <el-option v-for="o in axisRegionOptions" :key="o.value" :label="o.label" :value="o.value" />
+                      </el-select>
+                    </div>
+                    <div style="display:flex; align-items:center; gap:6px">
+                      <span class="text-secondary" style="width: 66px">回看窗口</span>
+                      <el-input-number v-model="axisLookbackS" :min="1" :max="86400" :step="60" size="small" style="width: 130px" />
+                      <span class="text-secondary">秒 (默认 300)</span>
+                    </div>
+                    <p class="cond-hint" style="margin-top:4px">进入目标区域时检查回看窗口内是否曾进入前置区域: 未先经 → 通过; 已先经 → 拦截 (前置区域事件本身仅记账不触发)。目标区域为空时本条件不生效。</p>
+                  </div>
+                </el-form-item>
+                <el-form-item v-if="axisMode !== ''" label-position="top" class="cond-form-item">
+                  <el-switch v-model="axisExclusionPause" />
+                  <span style="margin-left: 8px">排除区暂停计时</span>
+                  <p class="cond-hint" style="margin-top:4px">命中排除区 (ROI 形状中的排除区) 期间间隔计时暂停且不触发, 离开续计 — 仅对时序路径生效 (AXIS「排除区=暂停计时非丢弃」)。</p>
+                </el-form-item>
                 <!-- [pw-single-canvas 2026-09-16] 尾随通道块已上移至 spatial-split 右栏
                      (通用画板位) — 原画板下方独立画布撤销, 消灭双绘制区域 -->
                 <!-- [UI-CONVERGE 2026-09-12] 空间卡片「安保区域」下拉下线 (与位置条件双入口重复):
@@ -846,6 +902,21 @@
                     <el-form-item label="最低置信度(%)" label-position="top" class="cond-form-item">
                       <el-slider v-model="form.conditions.eventType.config.minConfidence" :min="10" :max="100" :step="5" show-input size="small" />
                     </el-form-item>
+                  </el-col>
+                </el-row>
+                <!-- [FEAT loiter-dwell-cfg 2026-09-20] 徘徊时长: 仅徘徊类事件显示 —
+                     控制「目标在区域内持续停留多久判定徘徊」, 场景差异化
+                     (银行门口 10s / 园区周界 60s); 引擎按规则取最长生效 -->
+                <el-row v-if="isLoiteringRule" :gutter="16" style="margin-top: 4px">
+                  <el-col :span="12">
+                    <el-form-item label="徘徊时长(秒)" label-position="top" class="cond-form-item">
+                      <el-select v-model="form.conditions.eventType.config.loiterSec" style="width: 100%">
+                        <el-option v-for="s in LOITER_SEC_OPTIONS" :key="s" :label="`${s} 秒`" :value="s" />
+                      </el-select>
+                    </el-form-item>
+                  </el-col>
+                  <el-col :span="12">
+                    <p class="cond-hint" style="margin: 34px 0 0">目标在检测区域内持续停留超过该时长后判定为徘徊；不同场景可分别设置（默认 30 秒）</p>
                   </el-col>
                 </el-row>
               </template>
@@ -1834,6 +1905,58 @@ const areaCascadeDeviceIds = ref<Set<string>>(new Set())
 const areaCascadeChannelIds = ref<Set<string>>(new Set())
 const restoringCascade = ref(false)   // 回显窗口: 阻断 watch 副作用 (清勾选/清 point)
 const cascadeTreeRef = ref()   // 保留实例 ref 供未来扩展 (当前勾选链路纯数据驱动)
+
+// ── [AXIS-TEMPORAL 2026-09-20] 事件时序编辑态 (P2-3, 对标海康 AXIS 事件时序) ──
+//   模式 ''=无 / 'sequence'=顺序穿越 / 'conditional'=时序条件; 保存写
+//   spatial_cond 三字段 (sequence_json/conditional_json/exclusion_pause),
+//   契约见后端 LinkageEngine.h [AXIS 2026-09-13] (两字段均非空时 sequence 优先)。
+const axisMode = ref<'' | 'sequence' | 'conditional'>('')
+const axisSteps = ref<Array<{ region_id: string; gap_s: number }>>([])
+const axisTargetRegion = ref('')
+const axisPriorRegion = ref('')
+const axisLookbackS = ref(300)
+const axisExclusionPause = ref(false)
+// 区域候选 (当前画板 ROI 形状 pid/名称): 供步骤/目标/前置区域选择 + allow-create
+//   自由输入 (事件 region_id 须与事件携带值同域, 用户有权威来源)
+const axisRegionOptions = computed(() => (form.conditions.region.config.roiPolygon || [])
+  .filter(r => !!r.roi_id)
+  .map(r => ({ value: String(r.roi_id), label: r.roi_name || String(r.roi_id) })))
+function addAxisStep() { axisSteps.value = [...axisSteps.value, { region_id: '', gap_s: 60 }] }
+function removeAxisStep(idx: number) {
+  const arr = axisSteps.value.slice()
+  if (idx >= 0 && idx < arr.length) arr.splice(idx, 1)
+  axisSteps.value = arr
+}
+// 顺序穿越 → [{region_id, max_gap_ms}]: 间隔钳位 [1s,24h] (与引擎 matchAxisTemporal
+//   同口径); 模式非 sequence = 空串 (切模式即清链); 全空步骤 = 空串 (回普通几何)。
+function serializeAxisSequence(): string {
+  if (axisMode.value !== 'sequence') return ''
+  const arr = axisSteps.value
+    .map(s => ({
+      region_id: String(s.region_id || '').trim(),
+      gap_s: Math.min(86400, Math.max(1, Math.round(Number(s.gap_s) || 60))),
+    }))
+    .filter(s => s.region_id)
+    .map(s => ({ region_id: s.region_id, max_gap_ms: s.gap_s * 1000 }))
+  return arr.length > 0 ? JSON.stringify(arr) : ''
+}
+// 时序条件 → {target_region_id, prior_region_id, lookback_ms}: 回看钳位
+//   [1s,24h] 默认 5min; 目标区域为空 = 不生效 (返回空串)。
+function serializeAxisConditional(): string {
+  if (axisMode.value !== 'conditional') return ''
+  const t = axisTargetRegion.value.trim()
+  if (!t) return ''
+  const lookS = Math.min(86400, Math.max(1, Math.round(Number(axisLookbackS.value) || 300)))
+  return JSON.stringify({ target_region_id: t, prior_region_id: axisPriorRegion.value.trim(), lookback_ms: lookS * 1000 })
+}
+function resetAxisState() {
+  axisMode.value = ''
+  axisSteps.value = []
+  axisTargetRegion.value = ''
+  axisPriorRegion.value = ''
+  axisLookbackS.value = 300
+  axisExclusionPause.value = false
+}
 
 // 树数据: 区域设备→其名下通道 (第三级不放全量, 消灭无关通道误勾保存后匹配不到的静默规则);
 // 区域 channel_ids 直绑且不属于任何已列设备的通道归入「区域直绑通道」虚拟节点 (resolved 语义完整性)
@@ -3060,7 +3183,9 @@ function defaultConditions() {
     time: { enabled: false, config: { startTime: '08:00', endTime: '20:00', weekdays: [1, 2, 3, 4, 5], monthdays: [] as number[] } },
     region: { enabled: false, config: { location: '', roi: '', group: '', roiPolygon: [] as RoiData[], channelId: '', tripwireId: '', direction: '', boundChannelIds: [] as string[], roiCombine: 'union' as 'union' | 'intersection' } },
     location: { enabled: false, config: { point: '' } },
-    eventType: { enabled: true, config: { types: [] as string[], minSeverity: 3, minConfidence: 50 } },
+    // [FEAT loiter-dwell-cfg 2026-09-20] loiterSec: 徘徊判定时长 (秒), 仅徘徊类
+    //   规则在 UI 显示/保存时消费; 30 = 与引擎内置默认一致 (存量行为零变更)
+    eventType: { enabled: true, config: { types: [] as string[], minSeverity: 3, minConfidence: 50, loiterSec: 30 } },
     eventSource: { enabled: false, config: { channels: [] as string[] } },
     autoMerge: { enabled: false, config: { windowMs: 10000, maxCount: 10, dimension: 'channel' } },
   }
@@ -3307,6 +3432,24 @@ function isTailgatingEvent(t: string): boolean {
 }
 const isTailgatingRule = computed(() =>
   (form.conditions.eventType?.config?.types ?? []).some(t => isTailgatingEvent(String(t).trim())))
+
+// [FEAT loiter-dwell-cfg 2026-09-20] 徘徊时长配置块显隐 (同 isTailgatingRule 模式):
+//   控制「目标在检测区域内持续停留多久算徘徊」, 仅徘徊类事件显示时长选择器;
+//   配置存 source_cond.loiter_sec → 引擎内置快照链按规则生效 (多规则取最长)
+const LOITERING_ALGO_ID = 'shield.algo.behavior.loitering'
+const LOITERING_EVENT_KEYS = new Set(['loitering', 'loiter'])
+/** 事件类型 → 是否徘徊消费 (覆盖率矩阵优先; 未就绪短名/别名兑底) */
+function isLoiteringEvent(t: string): boolean {
+  const c = eventCoverageMap.value[t]
+  if (c?.algo_id) return String(c.algo_id) === LOITERING_ALGO_ID
+  const seg = String(t).split('.').pop() || String(t)
+  return LOITERING_EVENT_KEYS.has(seg)
+}
+const isLoiteringRule = computed(() =>
+  (form.conditions.eventType?.config?.types ?? []).some(t => isLoiteringEvent(String(t).trim())))
+// 徘徊时长档位 (秒): 覆盖门口快速判定 (5-10s) 到周界长驻留 (180-300s);
+//   恒定档位集 (非任意输入) — 对齐厂商 UI 惯例, 默认 30 与存量行为一致
+const LOITER_SEC_OPTIONS = [5, 10, 15, 20, 30, 45, 60, 90, 120, 180, 300]
 
 // ═══ [P1-4-EXPAND 2026-09-13] 简易模式按事件类型自动展开 spatial_cond ═══
 //   round3 差距: 简易模式不显示空间条件配置 → 用户须切高级模式才能配 ROI/绊线/分组,
@@ -3897,6 +4040,8 @@ function resetEditorState(rule: LinkageRule | null) {
   }
 
   // 恢复条件: 后端格式 → 内部 6 条件表单
+  // [AXIS-TEMPORAL 2026-09-20] 事件时序状态随编辑会话复位 (下方 rule 命中时回填)
+  resetAxisState()
   const defaults = defaultConditions()
   if (rule) {
     // [COND-PERSIST 2026-09-03] 前端 UI 态快照 (handleSave 全量写入, 此处优先消费;
@@ -3982,10 +4127,35 @@ function resetEditorState(rule: LinkageRule | null) {
     }
     roiByChannel.value = byChPacksEcho
     roiEchoed.value = new Set(Object.keys(byChPacksEcho))
+    // [AXIS-TEMPORAL 2026-09-20] 时序语义回显 (P2-3): sequence 优先 (引擎同序);
+    //   JSON 损坏/字段缺失 → 回落"无"且清状态 (不阻塞其余回显)。
+    if (sc.sequence_json) {
+      try {
+        const arr = JSON.parse(sc.sequence_json)
+        if (Array.isArray(arr)) {
+          const steps = arr.filter((x: any) => x && x.region_id).map((x: any) => ({
+            region_id: String(x.region_id),
+            gap_s: Math.min(86400, Math.max(1, Math.round((Number(x.max_gap_ms) || 60000) / 1000))),
+          }))
+          if (steps.length > 0) { axisSteps.value = steps; axisMode.value = 'sequence' }
+        }
+      } catch { /* 损坏忽略 → 无 */ }
+    } else if (sc.conditional_json) {
+      try {
+        const c = JSON.parse(sc.conditional_json)
+        if (c && (c.target_region_id || c.prior_region_id)) {
+          axisMode.value = 'conditional'
+          axisTargetRegion.value = String(c.target_region_id || '')
+          axisPriorRegion.value = String(c.prior_region_id || '')
+          axisLookbackS.value = Math.min(86400, Math.max(1, Math.round((Number(c.lookback_ms) || 300000) / 1000)))
+        }
+      } catch { /* 损坏忽略 → 无 */ }
+    }
+    axisExclusionPause.value = sc.exclusion_pause === true
     // [FIX 2026-09-04 老规则通道反解] 记录编辑源规则 (深链竞态 watch 补偿用); bound_channel_ids
     //   缺失 (vp9 前存量规则) 时从 source_cond.channel_ids 哈希反解字符串形态 (绑定多选/快照通道回填来源)
     lastEditSource = rule
-    const hasSpatial = !!(sc.region_id || sc.location_id || sc.area_id || (sc as any).device_group_id || sc.roi_polygon?.length || sc.tripwire_id || sc.direction || (sc as any).bound_channel_ids?.length || (sc as any).roi_shapes_json || (sc as any).roi_shapes_by_channel)
+    const hasSpatial = !!(sc.region_id || sc.location_id || sc.area_id || (sc as any).device_group_id || sc.roi_polygon?.length || sc.tripwire_id || sc.direction || (sc as any).bound_channel_ids?.length || (sc as any).roi_shapes_json || (sc as any).roi_shapes_by_channel || (sc as any).sequence_json || (sc as any).conditional_json) // [AXIS-TEMPORAL 2026-09-20] 时序字段计入空间推断
     const boundRaw = (((sc as any).bound_channel_ids as unknown[]) || []).map(String)
     const boundResolved = boundRaw.length > 0
       ? boundRaw
@@ -4041,6 +4211,9 @@ function resetEditorState(rule: LinkageRule | null) {
         minSeverity: src.min_severity ?? 3,
         // 后端 GET 时已将小数乘以 100 转成百分比,这里直接 round 即可,不要重复 * 100
         minConfidence: Math.round(src.min_confidence ?? 50),
+        // [FEAT loiter-dwell-cfg 2026-09-20] 徘徊时长回显 (老规则无字段 → 30 默认;
+        //   round + || 30: 0/缺失/非法值统一回显 30)
+        loiterSec: Math.round(Number(src.loiter_sec ?? 30)) || 30,
       },
     }
     // [COND-PERSIST 2026-09-03] eventSource: enabled 优先 ui 态; 禁用态勾选从 ui 快照
@@ -4719,7 +4892,11 @@ async function handleSave(): Promise<boolean> {
     //   供 location_id 死值清理分支防「唯一维度被清后扩大为全通道触发」。
     const spatialHasOtherScope = !!(mergedBoundChannelIds.length || rc.config.roi || rc.config.group || cascadeAreaId
       || (rc.enabled && rc.config.roiPolygon?.some(r => r.is_active)) || roiStrictMode.value)
-    const spatial_cond = (rc.enabled || lc.enabled) ? {
+    // [AXIS-TEMPORAL 2026-09-20] 事件时序序列化 (P2-3): 模式驱动, 两字段均非空时
+    //   引擎 sequence 优先 (与后端 LinkageEngine.h [AXIS 2026-09-13] 一致)
+    const axisSeqJson = serializeAxisSequence()
+    const axisCondJson = serializeAxisConditional()
+    const spatial_cond = (rc.enabled || lc.enabled || axisMode.value !== '') ? {
       region_id: cleanLocation(rc.config.roi || ''),
       // [UI-CONVERGE 2026-09-12 P2] location_id 唯一管辖 = 位置条件卡 (point):
       // 位置卡关 = 该维度不收窄 (旧「空间卡 location 兑底」链随 UI 下线移除;
@@ -4756,7 +4933,12 @@ async function handleSave(): Promise<boolean> {
       //   否则仅匹配的 tripwire + direction 才触发动作
       tripwire_id: effectiveTripwireId || '',
       direction: dirUpper,
-    } : { region_id: '', location_id: '', area_id: '', roi_polygon: [] as number[], roi_shapes_json: '', roi_shapes_by_channel: '', tripwire_id: '', direction: '', bound_channel_ids: [] as string[], area_device_ids: [] as string[] }
+      // [AXIS-TEMPORAL 2026-09-20] 时序语义三字段 (P2-3): 空串 = 普通几何路径
+      //   (PUT 显式传空串 = 清时序回普通; 后端 sc.value 未传时保留原值)
+      sequence_json: axisSeqJson,
+      conditional_json: axisCondJson,
+      exclusion_pause: axisExclusionPause.value,
+    } : { region_id: '', location_id: '', area_id: '', roi_polygon: [] as number[], roi_shapes_json: '', roi_shapes_by_channel: '', tripwire_id: '', direction: '', bound_channel_ids: [] as string[], area_device_ids: [] as string[], sequence_json: '', conditional_json: '', exclusion_pause: false }
 
     const etc = form.conditions.eventType
     const esc = form.conditions.eventSource
@@ -4767,7 +4949,9 @@ async function handleSave(): Promise<boolean> {
     //   (hasAnyEnabledRuleForChannel 未启用规则通道不启动推理) 与空间收窄同源;
     //   纯事件源规则 (无空间条件) 仍由 picker 圈定, 行为不变。
     //   老规则零迁移: 回显 eventSource 空时双写自动生效, 原纯事件源勾选原样保留
-    const spatialOn = rc.enabled || lc.enabled
+    //   [AXIS-TEMPORAL 2026-09-20] 时序模式计入: 绑定通道 = 时序链适用范围 (引擎
+    //   matchAxisTemporal 先走通道绑定), 与空间收窄同源。
+    const spatialOn = rc.enabled || lc.enabled || axisMode.value !== ''
     const srcActive = esc.enabled || (spatialOn && mergedBoundChannelIds.length > 0)
     const srcChannels = (spatialOn && mergedBoundChannelIds.length > 0)
       ? dedupeChannelForms([...mergedBoundChannelIds, ...esc.config.channels])
@@ -4794,6 +4978,9 @@ async function handleSave(): Promise<boolean> {
       event_types,
       min_severity: etc.config.minSeverity,
       min_confidence: etc.config.minConfidence / 100,
+      // [FEAT loiter-dwell-cfg 2026-09-20] 徘徊时长 (秒): 仅徘徊类规则写配置值
+      //   (默认 30s), 非徘徊类恒 0 (引擎按 loitering 类型查询时才消费)
+      loiter_sec: isLoiteringRule.value ? (Number(etc.config.loiterSec ?? 30) || 30) : 0,
       algorithm_ids: etc.config.types,
       // [FLOOR-MAP 2026-09-03] 适用平面图透传 (纯可视化, 引擎匹配零改动;
       //   后端 PUT contains 守卫 — toggleRule 只传 enabled 不丢绑定)

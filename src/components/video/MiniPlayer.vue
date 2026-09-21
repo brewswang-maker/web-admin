@@ -541,7 +541,13 @@ function watchFirstFrame() {
   //   浏览器需两次 Range (头 1KB + 尾 1KB) 才能解析出音视频参数; 慢网/拥塞下尾包实测
   //   15.8s 才到 (探针) → 原 8s 上限会在数据仍在正常下载时误切候选/误报全败。
   //   流媒体格式 (flv/hls) 保持 8s 快速降级不变。
-  const timeoutMs = currentFormat === 'mp4' ? 20000 : 8000
+  // [FIX nvr-coldstart 2026-09-21 测试 R6] 回放流 (srcIsLive=false) 首帧超时 8s→20s:
+  //   转码回放流 (gb_pbtc_*) 冷启动实测 >8s (ZLM 转码进程预热 + 隧道 RTT 11~15s),
+  //   原 8s 上限在首帧到达前 destroyPlayer → AlarmPopup 续播链重开 → 再次 8s 超时
+  //   (实测事件 10:21:54 通道01 弹窗联动回放: 6 轮 stop/play 白等 3.6 分钟无画面,
+  //   heal 链后大循环重启永不收敛)。回放语义与 mp4 同给 20s 宽限; 直播预览
+  //   (srcIsLive=true) 保持 8s 快速降级不变 (对齐上方 rec-mp4-timeout 取舍)。
+  const timeoutMs = (currentFormat === 'mp4' || !props.srcIsLive) ? 20000 : 8000
   firstFrameTimer = setTimeout(() => {
     if (!playing.value) {
       console.warn(`[MiniPlayer] ${timeoutMs / 1000}s 无真实首帧 (format=` + currentFormat + ')')
@@ -1153,6 +1159,13 @@ function winStallCheck() {
   if (!isWindowPlayback.value) { winStallSince = 0; return }
   const video = videoRef.value
   if (!video || video.paused || video.ended) { winStallSince = 0; return }
+  // [FIX nvr-coldstart 2026-09-21 测试 R6b] 首帧未出豁免: 原条件 play() 调用后即计时,
+  //   冷启动转码流首帧到达前 (无任何 timeupdate) 8s 抢跑 emit error → 父组件续播重开
+  //   → 新一轮又从头冷启动 (实测 10:35:17 告警联动回放: 首轮 ~10s 被杀, 续播#1 又
+  //   拿到转码未就绪的 H265 原始流 URL → CodecUnsupported 白耗 13.7s, 第 3 轮才收敛
+  //   ~27s 出画面)。首帧超时职责归 watchFirstFrame (回放流 20s 宽限, 见其头注);
+  //   本看门狗只抓「出帧后冻结」(原注释场景: flv.js 静默断流画面冻结, 无 error 无 ended)。
+  if (!playing.value) { winStallSince = 0; return }
   const now = Date.now()
   if (!winStallSince) { winStallSince = now; return }
   if (now - winStallSince >= 8000) {

@@ -833,16 +833,23 @@ async function loadIndoorAlarms() {
     latestAlarms.value = [...incoming, ...latestAlarms.value].slice(0, 20)
   } catch { /* 离线/未就绪不阻塞 */ }
 }
-/** WS 增量: 状态同步帧仅就地更新 (找不到丢弃), 新事件帧同 id 富化合并否则插入 (首页同口径) */
+/** WS 增量: 状态同步帧仅就地更新 (找不到丢弃), 新事件帧同 id 富化合并否则插入 (首页同口径)
+ *  [FIX ss-merged-parity 2026-09-20] 聚合明细帧例外: is_duplicate=true 且
+ *  aggregated_count>0 的明细帧已独立落库 (persistAlarmRow 双写) 且后端
+ *  realtime-alarms 改 include_merged 口径 (与告警中心同源) → 放行落入插入
+ *  路径; 与首页 SituationScreen 修复同源 (同帧同判, 防口径漂移)。 */
 function onIndoorAlarmPush(data: unknown) {
   const raw = data as Record<string, any>
   if (!raw || typeof raw !== 'object') return
   const id = raw.id || raw.alarm_id || raw.event_id
   if (!id) return
   const sid = String(id)
-  if (isAlarmStateSyncFrame(raw)) {
-    const targetId = String(raw.merged_into || '') || sid
-    const row = latestAlarms.value.find(a => a.id === targetId)
+  // [FIX ss-merged-parity 2026-09-20] 短窗去重/结束/backfill/evidence 帧
+  //   count 恒 0 且不落库 → 维持仅就地更新 (防幽灵行)
+  const isMergeDetail = raw.is_duplicate === true && Number(raw.aggregated_count) > 0
+  if (isAlarmStateSyncFrame(raw) && !isMergeDetail) {
+    // 按自身 id 命中 (WS 推送体无 merged_into — 该字段仅 REST 响应侧)
+    const row = latestAlarms.value.find(a => a.id === sid)
     if (!row) return  // 不在 20 条窗口 → 丢弃 (防刷新消失)
     const snap = raw.snapshotUrl || raw.snapshot_url
     if (!row.snapshotUrl && typeof snap === 'string' && snap) row.snapshotUrl = snap

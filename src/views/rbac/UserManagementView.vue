@@ -577,6 +577,8 @@ import type { User, Role } from '@/types/rbac'
 import { rbacApi } from '@/api/rbac'
 import { orgUnitApi, type OrgUnit } from '@/api/org'
 import faceApi, { type FaceRecord } from '@/api/face'   // [UI-5] 员工↔人脸底库打通
+// [FIX face-edit-preview 2026-09-20] 人脸图片 URL 解析 SSOT (原拼 '/api/v1' 前缀 404)
+import { resolveFaceImageUrl } from '@/utils/faceImage'
 import { useAuthStore } from '@/stores/auth'
 import dayjs from 'dayjs'
 
@@ -781,7 +783,9 @@ function extraFaceCount(row: any): number {
 }
 
 function faceImgUrl(rec: FaceRecord): string {
-  return rec.image_data || (rec.image_path ? '/api/v1' + rec.image_path : '')
+  // [FIX face-edit-preview 2026-09-20] 原 '/api/v1' + image_path 经 /api/ 反代到 box-sdk(18080),
+  //   该路径无 /face_images 静态路由 → 404; image_path 本身即 nginx 直出路径, 直接使用
+  return resolveFaceImageUrl(rec)
 }
 
 async function fetchAllFaces() {

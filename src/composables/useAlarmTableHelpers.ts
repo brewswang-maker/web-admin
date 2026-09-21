@@ -320,3 +320,34 @@ export function carrySourceOf(row: any): string {
   const v = String((gov as any).carry_source ?? (gov as any).carrySource ?? '')
   return v === 'attr_synth' || v === 'detect' ? v : ''
 }
+
+/** [FIX carry-display 2026-09-21] 携带类显示名细分 (9803 实锚: 真包检出
+ *  类别 handbag 被 canonical 统一显示为「人员携带背包」→ 用户视"非背包"
+ *  为误报, 类别语义丢失)。
+ *  插件 meta.class_name_zh (C++ 端 bagClassZh SSOT) 优先 — 背包/斜挎包/
+ *  手提包/单肩包/行李箱; 无 _zh 时按 class_name (英文 snake_case) 本地
+ *  映射兜底; 均缺 → '' (调用方回退 canonical zh 名, 零副作用)。
+ *  仅 person_with_backpack 生效 (三态中 unattended/abandoned 的物品细分
+ *  由 description/meta 呈现, 不改)。metadata 读取模式同 carrySourceOf。 */
+export function carriedItemLabel(row: any): string {
+  const t = String(row?.type || row?.alarm_type || row?.alarmType || '')
+  if (t !== 'person_with_backpack') return ''
+  let m = row?.metadata
+  if (typeof m === 'string') {
+    try { m = JSON.parse(m) } catch { return '' }
+  }
+  const gov = Array.isArray(m) ? m[0] : m
+  if (!gov || typeof gov !== 'object') return ''
+  const zh = String((gov as any).class_name_zh ?? (gov as any).classNameZh ?? '')
+  if (zh) return `人员携带${zh}`
+  const en = String((gov as any).class_name ?? (gov as any).className ?? '')
+  const map: Record<string, string> = {
+    backpack: '背包',
+    crossbody_bag: '斜挎包',
+    handbag: '手提包',
+    shoulder_bag: '单肩包',
+    suitcase: '行李箱',
+    other_bag: '随身物品',
+  }
+  return map[en] ? `人员携带${map[en]}` : ''
+}

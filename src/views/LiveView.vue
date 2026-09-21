@@ -86,7 +86,9 @@
               </div>
               <div v-else class="video-empty" @dragover.prevent @drop="onDropChannel($event, idx)">
                 <el-icon :size="32"><VideoCamera /></el-icon>
-                <span>拖拽监控点到此处</span>
+                <!-- [FIX flv-h265 2026-09-20] 降级链耗尽后的明确错误提示 (原仅黑屏/静默) -->
+                <span v-if="slot.playError" class="play-error-text">{{ slot.playError }}</span>
+                <span v-else>拖拽监控点到此处</span>
               </div>
               <!-- 安全加密指示器 -->
               <div class="slot-security-badge" v-if="slot.playing">
@@ -459,6 +461,8 @@ import { useStreamHealth } from '@/composables/useStreamHealth'
 import { useAdaptiveBitrate } from '@/composables/useAdaptiveBitrate'
 import StreamStatsPanel from '@/components/StreamStatsPanel.vue'
 import { normalizeStreamUrl, normalizeWsFlvUrl } from '@/utils/streamUrl'
+// [FIX live-rec 2026-09-21] 录像按钮真链路: 直播录像 API + 下载公共体 (同回放页 mark 链)
+import { fetchAndDownload, liveRecordStart, liveRecordStop } from '@/api/recording'
 import { useChannelStore } from '@/stores/channel'
 // [UI-6 2026-09-10] 通道目录树 (安保区域→设备→通道) — 与 ChannelView/LocationTrackView 同源工具
 import { securityAreaApi } from '@/api/securityAreas'
@@ -524,6 +528,8 @@ interface GridSlot {
   recording: boolean
   talking: boolean
   currentFormat: PlayerFormat | ''
+  // [FIX flv-h265 2026-09-20] 播放彻底失败时的明确错误文案 (替代静默黑屏; 重试/换流时清空)
+  playError: string
   webrtcRetryCount: number
   reconnectCount: number
   encrypted: boolean
@@ -544,7 +550,7 @@ const layout = ref(4)
 const activeSlotIdx = ref(0)
 const gridSlots = reactive<GridSlot[]>(
   Array.from({ length: 36 }, () => ({
-    channelId: '', name: '', status: '', urls: {}, codec: '', playing: false, loading: false, muted: true, deviceId: '', playerInstance: null, recording: false, talking: false, currentFormat: '', webrtcRetryCount: 0, reconnectCount: 0, encrypted: false, _lastReconnectTime: 0, _videoEventCleanups: [], _timers: [], _webrtcTimers: []
+    channelId: '', name: '', status: '', urls: {}, codec: '', playing: false, loading: false, muted: true, deviceId: '', playerInstance: null, recording: false, talking: false, currentFormat: '', playError: '', webrtcRetryCount: 0, reconnectCount: 0, encrypted: false, _lastReconnectTime: 0, _videoEventCleanups: [], _timers: [], _webrtcTimers: []
   }))
 )
 // [P0-1 FIX 2026-07-14] 默认首选 FLV 而非 WebRTC
@@ -780,22 +786,115 @@ const FORMAT_COOLDOWN_MS = 15000  // 15 秒内不允许再次降级
 // 统一降级链常量：所有降级逻辑引用此定义，消除三处分散的矛盾
 // [P2-VP2] WebRTC 提升为首选 (超低延迟 <500ms, 对标海康/大华实时预览)
 // H.264: WebRTC → FLV → WS-FLV → HLS
-// H.265: WebRTC → HLS（FLV/WS-FLV 的 MSE 不支持 H.265）
-const DEGRADATION_CHAINS: Record<'h264' | 'h265', PlayerFormat[]> = {
+// H.265: 视浏览器解码能力三态 (见 chainForCodec):
+//   - MSE 支持 hvc1 (+ mpegts.js): WebRTC → FLV → WS-FLV → HLS
+//     [FIX flv-h265 2026-09-20] mpegts.js 已支持 ZLM Enhanced-FLV(hvc1) 封装,
+//     原「H.265 的 MSE 不支持 FLV」前提过时 — 真机取证: FLV 200/video-x-flv 持续出流
+//   - MSE 不支持: WebRTC → HLS (链尾仍可能不可用 → 明确报错, 见 showPlayFailureHint)
+const DEGRADATION_CHAINS: Record<'h264' | 'h265' | 'h265Mse', PlayerFormat[]> = {
   h264: ['webrtc', 'flv', 'ws-flv', 'hls'],
   h265: ['webrtc', 'hls'],
+  h265Mse: ['webrtc', 'flv', 'ws-flv', 'hls'],
+}
+
+/** 是否 H.265/HEVC 编码 (引用点统一, 替代三处重复大写包含判断) */
+function isH265Codec(codec: string): boolean {
+  const up = (codec || '').toUpperCase()
+  return up.includes('H265') || up.includes('HEVC')
+}
+
+// [FIX flv-h265 2026-09-20] 浏览器 HEVC 解码能力探测 (结果缓存; 会话内不变)
+//   MSE 路径: MediaSource.isTypeSupported hvc1 — mpegts.js 1.8.0 getFeatureList().mseH265Playback 同款判定
+let _h265MseCapableCache: boolean | null = null
+function browserH265MseCapable(): boolean {
+  if (_h265MseCapableCache === null) {
+    try {
+      _h265MseCapableCache = typeof MediaSource !== 'undefined'
+        && MediaSource.isTypeSupported('video/mp4; codecs="hvc1.1.6.L93.B0"')
+    } catch { _h265MseCapableCache = false }
+  }
+  return _h265MseCapableCache
+}
+
+// [P1-VP2] H.265 WebRTC 可用性预检 (Safari 支持; Chrome/Firefox 视平台而定)
+let _h265WebRtcCapableCache: boolean | null = null
+function browserH265WebRtcCapable(): boolean {
+  if (_h265WebRtcCapableCache === null) {
+    try {
+      const caps = RTCRtpReceiver.getCapabilities('video')
+      _h265WebRtcCapableCache = !!caps?.codecs?.some(c =>
+        c.mimeType.toLowerCase() === 'video/h265' ||
+        c.mimeType.toLowerCase() === 'video/hvc1' ||
+        c.mimeType.toLowerCase() === 'video/hevc'
+      )
+    } catch { _h265WebRtcCapableCache = false }
+  }
+  return _h265WebRtcCapableCache
+}
+
+/** 按编码 + 浏览器解码能力解析降级链 (H.265 且 WebRTC 不支持时剔除链首 webrtc) */
+function chainForCodec(codec: string): PlayerFormat[] {
+  if (!isH265Codec(codec)) return DEGRADATION_CHAINS.h264
+  const base = browserH265MseCapable() ? DEGRADATION_CHAINS.h265Mse : DEGRADATION_CHAINS.h265
+  return browserH265WebRtcCapable() ? base : base.filter(f => f !== 'webrtc')
 }
 
 /** 获取指定编码的降级链中，当前格式之后第一个可用的格式 */
 function getNextFallbackFormat(currentFmt: PlayerFormat, codec: string, urls: Partial<Record<PlayerFormat, string>>): PlayerFormat | null {
-  const chain = (codec && (codec.toUpperCase().includes('H265') || codec.toUpperCase().includes('HEVC')))
-    ? DEGRADATION_CHAINS.h265 : DEGRADATION_CHAINS.h264
+  const chain = chainForCodec(codec)
   const currentIdx = chain.indexOf(currentFmt)
-  // 从当前格式之后开始找
+  // 从当前格式之后开始找 (当前格式不在链中时从头找 — 兼容用户手动指定链外格式的场景)
   for (let i = currentIdx + 1; i < chain.length; i++) {
     if (urls[chain[i]]) return chain[i]
   }
   return null
+}
+
+/** [FIX flv-h265 2026-09-20] 编码相关的失败文案 (H265 解码能力缺失 vs 通用流故障) */
+function codecErrorText(codec: string): string {
+  if (isH265Codec(codec)) {
+    return '该通道为 H.265 编码，当前浏览器不支持 HEVC 解码。请使用支持 HEVC 的浏览器 (如 Windows 版 Chrome/Edge)，或将该通道切换为 H.264 编码'
+  }
+  return '视频播放失败：视频源不可用或编码不受支持，请检查设备推流状态'
+}
+
+/** [FIX flv-h265 2026-09-20] 降级链耗尽后的统一出口: 明确错误提示 + 单元格常驻文案 (不再静默黑屏) */
+function showPlayFailureHint(slotIdx: number, msg: string) {
+  const slot = gridSlots[slotIdx] as GridSlot
+  if (!slot) return
+  const text = msg || '视频播放失败：当前浏览器不支持该视频编码'
+  slot.loading = false
+  slot.playing = false
+  slot.playError = text
+  console.error(`[LiveView] slot${slotIdx} 播放失败: ${text}`)
+  ElMessage.error(text)
+}
+
+// [FIX flv-h265 2026-09-20] 首帧看门狗: 附加后 N 秒仍无画面 (readyState<2 且无宽度)
+//   → 判定该格式实际不可用, 按编码感知链切下一格式; 链尾则明确报错。
+//   背景: H265 通道在无 HEVC 解码能力的浏览器上, hls.js 无限缓冲且不触发 ERROR
+//   (真机取证: readyState=0, 无任何请求失败), 原实现无超时兜底 → 永久黑屏。
+const FIRST_FRAME_WATCHDOG_MS = 7000
+function startFirstFrameWatchdog(slotIdx: number, fmt: PlayerFormat) {
+  const slot = gridSlots[slotIdx] as GridSlot
+  slot._timers = slot._timers || []
+  const timerId = setTimeout(() => {
+    // 从 _timers 移除自身 (同 firstFrameTimer 模式, 避免 destroyPlayer 重复清理)
+    const ti = slot._timers ? slot._timers.indexOf(timerId) : -1
+    if (ti >= 0) slot._timers!.splice(ti, 1)
+    if (!slot.channelId || !slot.playing) return             // slot 已关闭/已失败
+    if (slot.currentFormat !== fmt) return                   // 已切换其他格式
+    const v = videoRefs.value[slotIdx]
+    if (v && v.readyState >= 2 && v.videoWidth > 0) return   // 已出图
+    console.warn(`[LiveView] slot${slotIdx} ${fmt} ${FIRST_FRAME_WATCHDOG_MS / 1000}s 内未出首帧, 尝试降级`)
+    const next = getNextFallbackFormat(fmt, slot.codec, slot.urls)
+    if (next) {
+      void attachPlayerByFormat(slotIdx, next)
+    } else {
+      showPlayFailureHint(slotIdx, codecErrorText(slot.codec))
+    }
+  }, FIRST_FRAME_WATCHDOG_MS)
+  slot._timers.push(timerId)
 }
 
 // [一次性设计修正 2026-06-23] 自动重连策略：对标海康 iVMS-8700
@@ -1344,6 +1443,8 @@ async function loadData() {
 // 分配通道到视频格
 function assignChannel(slotIdx: number, ch: Channel) {
   const slot = gridSlots[slotIdx]
+  // [FIX flv-h265 2026-09-20] 换流时清空上一轮播放失败文案
+  slot.playError = ''
 
   // [FIX] 设备离线拦截：提前提示，避免无效 SIP INVITE
   const chStatus = (ch as any).status || ''
@@ -1473,7 +1574,7 @@ function closeSlot(idx: number, hard: boolean = true) {
   if (slot._videoEventCleanups?.length) {
     slot._videoEventCleanups.length = 0
   }
-  Object.assign(slot, { channelId: '', name: '', status: '', urls: {}, playing: false, loading: false, muted: true, deviceId: '', playerInstance: null, currentFormat: '', webrtcRetryCount: 0, reconnectCount: 0, encrypted: false, _lastReconnectTime: 0 })
+  Object.assign(slot, { channelId: '', name: '', status: '', urls: {}, playing: false, loading: false, muted: true, deviceId: '', playerInstance: null, currentFormat: '', playError: '', webrtcRetryCount: 0, reconnectCount: 0, encrypted: false, _lastReconnectTime: 0 })
   // destroyPlayer 内部已调 stopMonitoring(deactivate)；双重调用幂等
   streamHealth.stopMonitoring(idx)
   adaptiveBitrate.deactivate(idx)
@@ -1492,6 +1593,9 @@ async function attachPlayerByFormat(slotIdx: number, fmt: PlayerFormat) {
   const video = videoRefs.value[slotIdx]
   if (!video) return
 
+  // [FIX flv-h265 2026-09-20] 新一次附加前清空失败文案 (重试/降级期间不残留旧错误)
+  slot.playError = ''
+
   // 清理旧实例
   destroyPlayer(slot)
   video.pause()
@@ -1504,8 +1608,8 @@ async function attachPlayerByFormat(slotIdx: number, fmt: PlayerFormat) {
   const url = slot.urls[fmt]
   if (!url) {
     // 当前格式不可用，使用统一降级链查找可用格式
-    const isH265 = slot.codec && (slot.codec.toUpperCase().includes('H265') || slot.codec.toUpperCase().includes('HEVC'))
-    const chain = isH265 ? DEGRADATION_CHAINS.h265 : DEGRADATION_CHAINS.h264
+    const isH265 = isH265Codec(slot.codec)
+    const chain = chainForCodec(slot.codec)
     for (const fb of chain) {
       if (slot.urls[fb]) {
         fmt = fb
@@ -1516,7 +1620,8 @@ async function attachPlayerByFormat(slotIdx: number, fmt: PlayerFormat) {
     if (!fbUrl) {
       // 无可用格式：根据编码给出明确提示
       if (isH265) {
-        ElMessage.warning('此设备使用 H.265 编码，当前仅支持 HLS/WebRTC 播放，请检查流媒体配置')
+        // [FIX flv-h265 2026-09-20] 原提示「仅支持 HLS/WebRTC」已过时 (mpegts 支持 H265 FLV)
+        ElMessage.warning('该通道为 H.265 编码，且播放地址未就绪，请检查设备推流与流媒体配置')
       } else {
         ElMessage.warning('视频播放地址不可用，请检查设备推流状态')
       }
@@ -1527,6 +1632,15 @@ async function attachPlayerByFormat(slotIdx: number, fmt: PlayerFormat) {
 
   switch (fmt) {
     case 'flv':
+      // [FIX flv-h265 2026-09-20] H.265 必须走 mpegts.js (flv.js 对 hvc1 直接 CODEC_UNSUPPORTED);
+      //   mpegts 未就绪时跳过 FLV 直接降级, 避免必然失败的加载
+      if (isH265Codec(slot.codec) && !mpegtsLib) {
+        console.warn(`[LiveView] slot${slotIdx} H.265 流但 mpegts.js 未就绪, 跳过 FLV`)
+        const flvSkipNext = getNextFallbackFormat('flv', slot.codec, slot.urls)
+        if (flvSkipNext) return attachPlayerByFormat(slotIdx, flvSkipNext)
+        showPlayFailureHint(slotIdx, codecErrorText(slot.codec))
+        return
+      }
       // [Fix 2026-09-15] 优先 mpegts.js (H.265 Enhanced-FLV 必需); 加载失败回退 flv.js (H264 通道)
       if ((mpegtsLib || flvjsLib) && (mpegtsLib || flvjsLib)!.isSupported()) {
         const flvLib = (mpegtsLib || flvjsLib)!
@@ -1609,7 +1723,8 @@ async function attachPlayerByFormat(slotIdx: number, fmt: PlayerFormat) {
             console.debug(`[LiveView] FLV 失败，降级到 ${nextFmt}`)
             void attachPlayerByFormat(slotIdx, nextFmt)
           } else {
-            ElMessage.warning('视频播放失败（不支持此编码格式），请刷新重试')
+            // [FIX flv-h265 2026-09-20] 降级链耗尽 → 明确错误提示 (替代原模糊文案)
+            showPlayFailureHint(slotIdx, codecErrorText(slot.codec))
           }
         })
 
@@ -1656,6 +1771,14 @@ async function attachPlayerByFormat(slotIdx: number, fmt: PlayerFormat) {
       break
 
     case 'ws-flv':
+      // [FIX flv-h265 2026-09-20] 同 flv: H.265 必须 mpegts.js, 未就绪直接降级
+      if (isH265Codec(slot.codec) && !mpegtsLib) {
+        console.warn(`[LiveView] slot${slotIdx} H.265 流但 mpegts.js 未就绪, 跳过 WS-FLV`)
+        const wsFlvSkipNext = getNextFallbackFormat('ws-flv', slot.codec, slot.urls)
+        if (wsFlvSkipNext) return attachPlayerByFormat(slotIdx, wsFlvSkipNext)
+        showPlayFailureHint(slotIdx, codecErrorText(slot.codec))
+        return
+      }
       // [Fix 2026-09-15] 同 flv: 优先 mpegts.js (H.265), 回退 flv.js
       if ((mpegtsLib || flvjsLib) && (mpegtsLib || flvjsLib)!.isSupported()) {
         const flvLib = (mpegtsLib || flvjsLib)!
@@ -1701,6 +1824,9 @@ async function attachPlayerByFormat(slotIdx: number, fmt: PlayerFormat) {
           const nextFmt = getNextFallbackFormat('ws-flv', slot.codec, slot.urls)
           if (nextFmt) {
             void attachPlayerByFormat(slotIdx, nextFmt)
+          } else {
+            // [FIX flv-h265 2026-09-20] 链尾兜底明确报错 (原静默)
+            showPlayFailureHint(slotIdx, codecErrorText(slot.codec))
           }
         })
 
@@ -1720,6 +1846,13 @@ async function attachPlayerByFormat(slotIdx: number, fmt: PlayerFormat) {
       break
 
     case 'hls':
+      // [FIX flv-h265 2026-09-20] H.265 + MSE 路径且浏览器不支持 hvc1 → 立即明确报错:
+      //   实测 hls.js 对 HEVC 无限缓冲且不发 ERROR (readyState=0 静默黑屏), 等看门狗白耗 7s
+      //   不如直给结论; 仅浏览器走原生 HLS (Safari canPlayType) 时保留尝试
+      if (isH265Codec(slot.codec) && HlsLib && HlsLib.isSupported() && !browserH265MseCapable()) {
+        showPlayFailureHint(slotIdx, codecErrorText(slot.codec))
+        break
+      }
       if (HlsLib && HlsLib.isSupported()) {
         const hlsCls = HlsLib
         const hls = new hlsCls({
@@ -1737,6 +1870,8 @@ async function attachPlayerByFormat(slotIdx: number, fmt: PlayerFormat) {
           liveDurationInfinity: true,
           highBufferWatchdogPeriod: 1,
         })
+        // [FIX flv-h265 2026-09-20] 致命错误恢复限 2 次, 超限走降级链/明确报错 (原无限 startLoad/recover)
+        let hlsFatalRetries = 0
         hls.loadSource(url)
         hls.attachMedia(video)
         hls.on(hlsCls.Events.MANIFEST_PARSED, () => {
@@ -1747,9 +1882,25 @@ async function attachPlayerByFormat(slotIdx: number, fmt: PlayerFormat) {
           console.debug(`[LiveView] slot${slotIdx} HLS 切换到级别 ${data.level}`)
         })
         hls.on(hlsCls.Events.ERROR, (_e, data) => {
-          if (data.fatal) {
-            if (data.type === hlsCls.ErrorTypes.NETWORK_ERROR) hls.startLoad()
-            else if (data.type === hlsCls.ErrorTypes.MEDIA_ERROR) hls.recoverMediaError()
+          if (!data.fatal) return
+          console.warn(`[LiveView] slot${slotIdx} HLS 致命错误: ${data.type}/${data.details}`)
+          if (data.type === hlsCls.ErrorTypes.NETWORK_ERROR && hlsFatalRetries < 2) {
+            hlsFatalRetries++
+            hls.startLoad()
+            return
+          }
+          if (data.type === hlsCls.ErrorTypes.MEDIA_ERROR && hlsFatalRetries < 2) {
+            hlsFatalRetries++
+            hls.recoverMediaError()
+            return
+          }
+          try { hls.destroy() } catch { /* ignore */ }
+          if (slot.playerInstance === hls) slot.playerInstance = null
+          const nextFmt = getNextFallbackFormat('hls', slot.codec, slot.urls)
+          if (nextFmt) {
+            void attachPlayerByFormat(slotIdx, nextFmt)
+          } else {
+            showPlayFailureHint(slotIdx, codecErrorText(slot.codec))
           }
         })
         slot.playerInstance = hls
@@ -1758,6 +1909,9 @@ async function attachPlayerByFormat(slotIdx: number, fmt: PlayerFormat) {
       } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
         video.src = url
         video.addEventListener('loadedmetadata', () => video.play().catch(() => {}))
+      } else {
+        // [FIX flv-h265 2026-09-20] 无任何 HLS 播放能力 → 明确报错 (原静默黑屏)
+        showPlayFailureHint(slotIdx, '当前浏览器不支持 HLS 播放 (MSE 与原生 HLS 均不可用)')
       }
       break
 
@@ -1766,6 +1920,10 @@ async function attachPlayerByFormat(slotIdx: number, fmt: PlayerFormat) {
       attachWebRtc(slotIdx, url)
       break
   }
+
+  // [FIX flv-h265 2026-09-20] 首帧看门狗: 附加后 7s 仍无画面自动切下一格式, 链尾明确报错
+  //   (WebRTC 有自身 ICE 超时降级链, 不重复挂看门狗)
+  if (fmt !== 'webrtc') startFirstFrameWatchdog(slotIdx, fmt)
 }
 
 function destroyPlayer(slot: any, slotIdx?: number) {
@@ -1774,6 +1932,16 @@ function destroyPlayer(slot: any, slotIdx?: number) {
 
   // 获取原始对象（避免响应式代理导致的 undefined）
   const rawSlot = toRaw(gridSlots[slotOrIdx])
+  // [FIX live-rec 2026-09-21] 在录通道被关闭/切换: 自动停录并后台下载, 防录制
+  //   悬挂 (ZLM 30min 切片自停但用户拿不到文件)。fire-and-forget 不阻塞销毁。
+  if (rawSlot?.recording && rawSlot?.channelId) {
+    rawSlot.recording = false
+    const recChan = rawSlot.channelId
+    void liveRecordStop(recChan)
+      .then((out) => fetchAndDownload(out.download_url, out.filename || `live_${recChan}.mp4`))
+      .then(() => ElMessage.success('该通道录像已停止并下载'))
+      .catch((e) => console.warn('[LiveView] 关闭通道时停录失败:', e))
+  }
   const p = rawSlot?.playerInstance
   if (p) {
     // 停止健康监测
@@ -1864,40 +2032,20 @@ async function reconnectStream(slotIdx: number, preferredFmt?: PlayerFormat) {
   })
 }
 
-// 智能选择最佳播放格式（使用统一降级链）
+// 智能选择最佳播放格式（使用统一降级链 + 浏览器解码能力）
 function selectBestFormat(urls: Partial<Record<PlayerFormat, string>>, codec?: string): PlayerFormat {
-  const isH265 = !!(codec && (codec.toUpperCase().includes('H265') || codec.toUpperCase().includes('HEVC')))
+  // [FIX flv-h265 2026-09-20] 链解析收口 chainForCodec: H265 视 MSE/WebRTC 能力三态
+  //   (原实现硬编码「H265 无 WebRTC → 纯 HLS」, FLV/mpegts 能力未参与 → 黑屏根因之一)
+  const chain = chainForCodec(codec || '')
 
-  // [P1-VP2] H.265 WebRTC 可用性预检：检测浏览器是否支持 H.265 硬解
-  // Safari 全支持 H.265 WebRTC；Chrome 仅在特定编解码器配置下支持；Firefox 不支持
-  const h265WebRtcSupported = (() => {
-    try {
-      const caps = RTCRtpReceiver.getCapabilities('video')
-      if (!caps?.codecs) return false
-      return caps.codecs.some(c =>
-        c.mimeType.toLowerCase() === 'video/h265' ||
-        c.mimeType.toLowerCase() === 'video/hvc1' ||
-        c.mimeType.toLowerCase() === 'video/hevc'
-      )
-    } catch { return false }
-  })()
-
-  // H.265 + 浏览器不支持 WebRTC H.265 → 使用纯 HLS 降级链
-  const chain: PlayerFormat[] = (isH265 && !h265WebRtcSupported)
-    ? ['hls']
-    : (isH265 ? DEGRADATION_CHAINS.h265 : DEGRADATION_CHAINS.h264)
-
-  if (isH265) {
-    console.debug(`[LiveView] H.265 编码, WebRTC H.265 支持=${h265WebRtcSupported}, 降级链: ${chain.join(' → ')}, codec=${codec}`)
+  if (isH265Codec(codec || '')) {
+    console.debug(`[LiveView] H.265 编码, WebRTC H.265 支持=${browserH265WebRtcCapable()}, MSE H265=${browserH265MseCapable()}, 降级链: ${chain.join(' → ')}, codec=${codec}`)
   }
 
-  // [P2-VP2] 用户显式选择了格式时，优先使用该格式（如果可用且兼容编码）
-  if (preferredFormat.value && urls[preferredFormat.value]) {
-    // H.265 时检查格式兼容性
-    if (!isH265 || (preferredFormat.value === 'webrtc' && h265WebRtcSupported) || preferredFormat.value === 'hls') {
-      console.debug(`[LiveView] 使用用户首选格式: ${preferredFormat.value}`)
-      return preferredFormat.value
-    }
+  // [P2-VP2] 用户显式选择了格式时，优先使用该格式 (以链能力为准的兼容性守卫)
+  if (preferredFormat.value && urls[preferredFormat.value] && chain.includes(preferredFormat.value)) {
+    console.debug(`[LiveView] 使用用户首选格式: ${preferredFormat.value}`)
+    return preferredFormat.value
   }
 
   // 返回降级链中第一个有 URL 的格式
@@ -1921,39 +2069,23 @@ async function attachWebRtc(slotIdx: number, webrtcUrl: string) {
   const slot = gridSlots[slotIdx] as GridSlot
   const video = videoRefs.value[slotIdx]
   // 会话级快速路径: 后端 WebRTC 信令已确认不可用, 直接降级
+  // [FIX flv-h265 2026-09-20] 三处快速降级改走编码感知链 (原硬编码 HLS 优先,
+  //   忽略 H265+mpegts 场景下 FLV 的可用性)
   if (webrtcUnavailable) {
-    console.info('[WebRTC] 后端信令不可用（ZLM 未启用 WebRTC），本会话直接使用 HLS/FLV')
-    if (slot.urls['hls']) {
-      attachPlayerByFormat(slotIdx, 'hls')
-    } else if (slot.urls['ws-flv']) {
-      attachPlayerByFormat(slotIdx, 'ws-flv')
-    } else if (slot.urls.flv) {
-      attachPlayerByFormat(slotIdx, 'flv')
-    }
+    console.info('[WebRTC] 后端信令不可用（ZLM 未启用 WebRTC），本会话直接降级')
+    degradeWebRtcToNext(slotIdx, '')
     return
   }
   if (!video || !slot.channelId) {
-    console.warn(`[WebRTC] slot${slotIdx} 缺少 video 或 channelId，降级到 HLS`)
-    if (slot.urls['hls']) {
-      attachPlayerByFormat(slotIdx, 'hls')
-    } else if (slot.urls['ws-flv']) {
-      attachPlayerByFormat(slotIdx, 'ws-flv')
-    } else if (slot.urls.flv) {
-      attachPlayerByFormat(slotIdx, 'flv')
-    }
+    console.warn(`[WebRTC] slot${slotIdx} 缺少 video 或 channelId，降级`)
+    degradeWebRtcToNext(slotIdx, '')
     return
   }
 
-  // 连续失败 2 次后该 slot 直接走 HLS
+  // 连续失败 2 次后该 slot 直接走降级链
   if (slot.webrtcRetryCount >= 2) {
-    console.warn(`[WebRTC] slot${slotIdx} 已连续失败 ${slot.webrtcRetryCount} 次，直接使用 HLS`)
-    if (slot.urls['hls']) {
-      attachPlayerByFormat(slotIdx, 'hls')
-    } else if (slot.urls['ws-flv']) {
-      attachPlayerByFormat(slotIdx, 'ws-flv')
-    } else {
-      attachPlayerByFormat(slotIdx, 'flv')
-    }
+    console.warn(`[WebRTC] slot${slotIdx} 已连续失败 ${slot.webrtcRetryCount} 次，直接降级`)
+    degradeWebRtcToNext(slotIdx, '')
     return
   }
 
@@ -2024,17 +2156,13 @@ async function attachWebRtc(slotIdx: number, webrtcUrl: string) {
     iceTimeoutTimer = setTimeout(() => {
       const state = pc.iceConnectionState
       if (state === 'new' || state === 'checking') {
-        console.warn(`[WebRTC] slot${slotIdx} ICE 超时（状态=${state}，超时=${ICE_TIMEOUT_MS}ms），降级到 HLS`)
+        console.warn(`[WebRTC] slot${slotIdx} ICE 超时（状态=${state}，超时=${ICE_TIMEOUT_MS}ms），降级`)
         slot.webrtcRetryCount++
         pc.close()
         slot.playerInstance = null
-        ElMessage.warning('WebRTC 连接超时，已切换为 HLS')
-        // WebRTC 失败后降级到 HLS（HLS 支持 H.265）
-        if (slot.urls['hls']) {
-          attachPlayerByFormat(slotIdx, 'hls')
-        } else {
-          ElMessage.error('WebRTC 和 HLS 均不可用，视频播放失败')
-        }
+        ElMessage.warning('WebRTC 连接超时，已切换降级格式')
+        // [FIX flv-h265 2026-09-20] 统一走编码感知降级链 (原硬编码 HLS)
+        degradeFromWebRtc(slotIdx, slot)
       }
     }, ICE_TIMEOUT_MS)
 
@@ -2054,7 +2182,7 @@ async function attachWebRtc(slotIdx: number, webrtcUrl: string) {
         if (iceDisconnectTimer) { clearTimeout(iceDisconnectTimer); iceDisconnectTimer = null }
         pc.close()
         slot.playerInstance = null
-        ElMessage.warning('WebRTC 连接失败，已切换为 HLS')
+        ElMessage.warning('WebRTC 连接失败，已切换降级格式')
         degradeFromWebRtc(slotIdx, slot)
       } else if (iceState === 'disconnected') {
         // disconnected = 可能是瞬态网络抖动，等待 5s 恢复，超时再降级
@@ -2066,7 +2194,7 @@ async function attachWebRtc(slotIdx: number, webrtcUrl: string) {
               slot.webrtcRetryCount++
               pc.close()
               slot.playerInstance = null
-              ElMessage.warning('WebRTC 连接中断，已切换为 HLS')
+              ElMessage.warning('WebRTC 连接中断，已切换降级格式')
               degradeFromWebRtc(slotIdx, slot)
             }
           }, ICE_DISCONNECT_GRACE_MS)
@@ -2104,21 +2232,32 @@ async function attachWebRtc(slotIdx: number, webrtcUrl: string) {
     if (iceTimeoutTimer) { clearTimeout(iceTimeoutTimer); iceTimeoutTimer = null }
     if (candidateCheckTimer) { clearTimeout(candidateCheckTimer); candidateCheckTimer = null }
     console.error('WebRTC failed:', e)
-    ElMessage.warning(`WebRTC 连接失败(${e.message || '未知'})，已切换为 HLS`)
+    ElMessage.warning(`WebRTC 连接失败(${e.message || '未知'})，已切换降级格式`)
     degradeFromWebRtc(slotIdx, slot)
   }
 }
 
-// [P1-VP1] WebRTC 降级辅助函数：按优先级尝试 HLS → WS-FLV → FLV
+// [P1-VP1] WebRTC 降级辅助函数
+// [FIX flv-h265 2026-09-20] 改走 getNextFallbackFormat 编码感知链 (原硬编码 HLS→WS-FLV→FLV),
+//   链尾耗尽时给明确错误提示 (原仅 ElMessage, 单元格仍黑屏)
 function degradeFromWebRtc(slotIdx: number, slot: GridSlot) {
-  if (slot.urls['hls']) {
-    attachPlayerByFormat(slotIdx, 'hls')
-  } else if (slot.urls['ws-flv']) {
-    attachPlayerByFormat(slotIdx, 'ws-flv')
-  } else if (slot.urls.flv) {
-    attachPlayerByFormat(slotIdx, 'flv')
+  const next = getNextFallbackFormat('webrtc', slot.codec, slot.urls)
+  if (next) {
+    void attachPlayerByFormat(slotIdx, next)
   } else {
-    ElMessage.error('WebRTC 降级失败：所有播放格式均不可用')
+    showPlayFailureHint(slotIdx, 'WebRTC 失败且无可用降级格式')
+  }
+}
+
+/** [FIX flv-h265 2026-09-20] WebRTC 各类快速失败路径统一降级入口 (reason 为空时用编码化文案) */
+function degradeWebRtcToNext(slotIdx: number, reason: string) {
+  const slot = gridSlots[slotIdx] as GridSlot
+  if (!slot?.channelId) return
+  const next = getNextFallbackFormat('webrtc', slot.codec, slot.urls)
+  if (next) {
+    void attachPlayerByFormat(slotIdx, next)
+  } else {
+    showPlayFailureHint(slotIdx, reason || codecErrorText(slot.codec))
   }
 }
 
@@ -2253,7 +2392,8 @@ watch(
       let targetFmt = currentFmt
 
       if (currentFmt === 'webrtc') {
-        targetFmt = slot.urls['flv'] ? 'flv' : (slot.urls['hls'] ? 'hls' : 'webrtc')
+        // [FIX flv-h265 2026-09-20] 编码感知链选择 (原硬编码 flv→hls)
+        targetFmt = getNextFallbackFormat('webrtc', slot.codec, slot.urls) || 'hls'
         console.warn(`[StreamHealth] slot${idx} WebRTC 重连失败，切换到 ${targetFmt}`)
       } else {
         console.warn(`[StreamHealth] slot${idx} status→error，同格式重连 ${targetFmt} (${slot.reconnectCount}/${MAX_SAME_FORMAT_RETRIES})`)
@@ -2809,13 +2949,35 @@ function startTalkDownstream(callId: string) {
   }
 }
 
-// 录像
-function toggleRecordSlot(idx: number) {
+// 录像 [FIX live-rec 2026-09-21] 原为纯 UI 摆设 (只切布尔+假提示「录像已保存」,
+// 无任何实际录制) — 用户感知「录像功能不正常」根因。现接后端 live-record 链:
+// start 录直播流 (H265 由后端起转码录 H264, 同步等就绪最长 ~10s);
+// stop 产出 mp4 并经 fetchAndDownload 下载 (同回放页 mark 链, 带候选+超时)。
+async function toggleRecordSlot(idx: number) {
   const slot = gridSlots[idx]
   if (!slot?.channelId) return
-  slot.recording = !slot.recording
-  if (slot.recording) ElMessage.info('开始录像（前端录制）')
-  else ElMessage.success('录像已保存')
+  if (slot.recording) {
+    // 停止 → 服务器 finalize 产物 → 下载 (stop 含 800ms 落盘等待, 已在请求超时预算内)
+    slot.recording = false
+    ElMessage.info('正在生成录像文件…')
+    try {
+      const out = await liveRecordStop(slot.channelId)
+      const fname = out.filename || `live_${slot.channelId}.mp4`
+      await fetchAndDownload(out.download_url, fname)
+      ElMessage.success(`录像已下载 (${out.file_size ? (out.file_size / 1024 / 1024).toFixed(1) + 'MB' : fname})`)
+    } catch (e: any) {
+      ElMessage.error('录像停止/下载失败: ' + (e?.message || e))
+    }
+    return
+  }
+  if (!slot.playing) { ElMessage.warning('请先开始预览再录像'); return }
+  try {
+    await liveRecordStart(slot.channelId)
+    slot.recording = true
+    ElMessage.success('开始录像 (服务器录制, 上限 30 分钟)')
+  } catch (e: any) {
+    ElMessage.error('录像启动失败: ' + (e?.message || e))
+  }
 }
 function toggleRecordActive() { toggleRecordSlot(activeSlotIdx.value) }
 
@@ -3063,6 +3225,8 @@ onUnmounted(() => {
   border-left: 2px solid #00D4AA;
 }
 .video-empty { width: 100%; height: 100%; min-height: 160px; display: flex; flex-direction: column; align-items: center; justify-content: center; color: #555; gap: 8px; font-size: 13px; }
+/* [FIX flv-h265 2026-09-20] 播放失败常驻文案 (替代黑屏/静默) */
+.video-empty .play-error-text { color: #f56c6c; font-size: 12px; line-height: 1.5; max-width: 90%; text-align: center; }
 .video-loading { width: 100%; height: 100%; min-height: 160px; display: flex; flex-direction: column; align-items: center; justify-content: center; color: #1A73E8; gap: 8px; }
 .spin { animation: spin 1s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }

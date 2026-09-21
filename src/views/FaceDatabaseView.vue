@@ -142,7 +142,8 @@
         <el-table-column type="index" label="序号" width="60" />
         <el-table-column label="照片" width="80">
           <template #default="{ row }">
-            <el-avatar :size="40" :src="row.image_data || row.image_path || ''" shape="square">
+            <!-- [FIX face-edit-preview 2026-09-20] 统一走 resolveFaceImageUrl (兼容 base64/绝对URL/nginx相对路径) -->
+            <el-avatar :size="40" :src="resolveFaceImageUrl(row)" shape="square">
               <el-icon :size="20"><User /></el-icon>
             </el-avatar>
           </template>
@@ -289,6 +290,8 @@
                 <el-icon><Delete /></el-icon>
               </el-button>
             </div>
+            <!-- [FIX face-edit-preview 2026-09-20] 无注册照时给占位提示 (原整块隐藏, 编辑时易误判「预览缺失」) -->
+            <div v-else class="image-preview-empty">暂无注册照片，请上传</div>
           </div>
         </el-form-item>
         <el-form-item label="有效期" v-if="formData.group_type === 'visitor'">
@@ -356,7 +359,7 @@
     <el-dialog v-model="showDetailDialog" title="人员详情" width="600px">
       <template v-if="detailRecord">
         <div class="detail-header">
-          <el-avatar :size="80" :src="detailRecord.image_data || detailRecord.image_path || ''" shape="square">
+          <el-avatar :size="80" :src="resolveFaceImageUrl(detailRecord)" shape="square">
             <el-icon :size="40"><User /></el-icon>
           </el-avatar>
           <div class="detail-header-info">
@@ -440,6 +443,8 @@ import { User, Warning, CircleCheck, UserFilled, Search, Plus, Upload, Download,
 import faceApi, { FaceRecord, FaceDatabaseStats, FaceGroupTypeStr } from '@/api/face'
 import { rbacApi } from '@/api/rbac'   // [UI-7] 平台用户↔人脸库双向打通
 import { evaluateImageQuality, evaluateImageQualityFromDataUrl } from '@/utils/imageQuality'
+// [FIX face-edit-preview 2026-09-20] 人脸图片 URL 解析 SSOT (原编辑页拼 '/api/v1' 前缀 404)
+import { resolveFaceImageUrl } from '@/utils/faceImage'
 import { useI18n } from 'vue-i18n'
 
 const { t } = useI18n()
@@ -712,7 +717,10 @@ function doEdit(row: FaceRecord) {
     address: row.address || '',
     image_path: row.image_path || '',
     image_data: row.image_data || '',
-    imagePreview: row.image_data || (row.image_path ? '/api/v1' + row.image_path : ''),
+    // [FIX face-edit-preview 2026-09-20] 原 '/api/v1' + image_path 前缀经 /api/ 反代
+    //   到 box-sdk(18080), 该路径无 /face_images 静态路由 → 404 → 编辑页预览空。
+    //   image_path 本身即 nginx 直出路径 (/face_images/..), 直接使用。
+    imagePreview: resolveFaceImageUrl(row),
     valid_days: 7
   })
   showAddDialog.value = true
@@ -953,6 +961,8 @@ onMounted(() => { readConsentRecord(); loadStats(); loadRecords(); fetchUsers() 
 }
 .image-preview .el-image { width: 100%; height: 100%; }
 .image-preview .el-button { position: absolute; top: 5px; right: 5px; }
+/* [FIX face-edit-preview 2026-09-20] 无注册照占位 */
+.image-preview-empty { margin-top: 10px; width: 148px; height: 148px; display: flex; align-items: center; justify-content: center; border: 1px dashed #dcdfe6; border-radius: 8px; color: #909399; font-size: 12px; text-align: center; padding: 0 12px; box-sizing: border-box; }
 .detail-header { display: flex; align-items: center; gap: 20px; }
 .detail-header-info h3 { margin: 0 0 6px 0; font-size: 18px; color: #303133; }
 /* [P0-4 v2.1 §7.5] 单独同意告知样式 */

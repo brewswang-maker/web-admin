@@ -4,8 +4,10 @@ import {
   buildEvidenceSlots,
   hasEvidenceChain,
   evidenceAlgoHint,
+  evidenceFrameLag,
   extractEvidenceTs,
   fmtEvidenceAbs,
+  fmtEvidenceLag,
   fmtEvidenceRel,
   isEvidencePostPending,
   resolveEvidenceLabels,
@@ -189,5 +191,39 @@ describe('hasEvidenceChain (取证链痕迹判定)', () => {
     expect(hasEvidenceChain({})).toBe(false)
     expect(hasEvidenceChain({ snapshot_url: '/x.jpg', missing_frames: {} })).toBe(false)
     expect(hasEvidenceChain(null)).toBe(false)
+  })
+})
+
+// [FIX ev-frame-lag 2026-09-20] P1-5 证据帧-检测帧相位差判定 (弹窗帧滞后提示)
+describe('evidenceFrameLag (帧滞后判定)', () => {
+  it('mid 帧晚于告警 5.8s → lagging + 帧滞后文案', () => {
+    const lag = evidenceFrameLag({ evidence_ts: { mid: T_MID } }, T_MID - 5800)
+    expect(lag).toEqual({ lagging: true, deltaMs: 5800 })
+    expect(fmtEvidenceLag(lag!.deltaMs)).toBe('帧滞后 5.8s')
+  })
+
+  it('mid 帧早于告警 4s → lagging + 帧超前文案', () => {
+    const lag = evidenceFrameLag({ evidence_ts: { mid: T_MID } }, T_MID + 4000)
+    expect(lag).toEqual({ lagging: true, deltaMs: -4000 })
+    expect(fmtEvidenceLag(lag!.deltaMs)).toBe('帧超前 4.0s')
+  })
+
+  it('偏差 <2s → 不判滞后 (正常相位差)', () => {
+    expect(evidenceFrameLag({ evidence_ts: { mid: T_MID } }, T_MID - 1500)?.lagging).toBe(false)
+  })
+
+  it('偏差 ≥30s → 不判滞后 (重建/关联异常, 提示无意义)', () => {
+    expect(evidenceFrameLag({ evidence_ts: { mid: T_MID } }, T_MID - 35000)?.lagging).toBe(false)
+  })
+
+  it('mid 优先, 缺失退化 pre/post', () => {
+    expect(evidenceFrameLag({ evidence_ts: { pre: T_PRE } }, T_MID)?.deltaMs).toBe(T_PRE - T_MID)
+    expect(evidenceFrameLag({ evidence_ts: { post: T_POST } }, T_MID)?.deltaMs).toBe(T_POST - T_MID)
+  })
+
+  it('无告警时刻 / 无帧时刻 → null (老告警兼容)', () => {
+    expect(evidenceFrameLag({ evidence_ts: { mid: T_MID } }, 0)).toBeNull()
+    expect(evidenceFrameLag({ evidence_ts: { mid: T_MID } }, undefined)).toBeNull()
+    expect(evidenceFrameLag({}, T_MID)).toBeNull()
   })
 })

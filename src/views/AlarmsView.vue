@@ -22,6 +22,18 @@
       </el-col>
     </el-row>
 
+    <!-- ===== [AI-RQ 2026-09-20] VLM 审核队列状态卡 (排队/复核中才显示) ===== -->
+    <!-- 数据源 GET /alarm/vlm/status 的 queue 节; 30s 轮询; 失败静默不干扰主链路 -->
+    <el-alert
+      v-if="rqVisible"
+      class="rq-banner"
+      type="info"
+      :closable="false"
+      show-icon
+      :title="rqText"
+      style="margin-bottom: 16px"
+    />
+
     <!-- ===== [P1-1 2026-09-20] 告警漏斗 (可折叠) ===== -->
     <!-- 产生→闸门→规则匹配→推送→弹窗 五环节转化率 + 去重比 + 无规则缺口 TopN;
          数据源 GET /api/v1/stats/alarm-funnel (服务端五环节计数器快照);
@@ -91,7 +103,7 @@
                 size="small"
                 type="warning"
                 effect="light"
-              >{{ zh(t.type) }} ×{{ t.count }}</el-tag>
+              >{{ typeLabel(t) }} ×{{ t.count }}</el-tag>
             </span>
           </div>
         </template>
@@ -145,6 +157,10 @@
             <el-option label="疑似误报" value="false_alarm_suggested" />
             <el-option label="VLM 未决" value="unverified" />
           </el-select>
+
+          <!-- [FIX test-probe-tag 2026-09-20] P2-7: 测试探针默认隐藏 — 勾选放行
+               (trigger-test 注入告警不进列表/统计/复核; 联调时手动显形) -->
+          <el-checkbox v-model="showTestAlarms" style="margin-right: 4px">显示测试</el-checkbox>
 
           <!-- [P0-12 2026-09-04] 设备分组筛选 (海康式分组过滤; 分组表为空时下拉自然为空) -->
           <el-select v-model="groupFilter" placeholder="所属区域" style="width: 150px" clearable @change="handleFilterChange">
@@ -297,7 +313,7 @@
             <div style="margin-top:8px;font-size:12px">
               <div style="font-weight:600;display:flex;justify-content:space-between">
                 <!-- [FIX dev-col-leak 2026-09-19] 证据库卡片类型与表格列同口径 (canonical zh) -->
-                <span>{{ zh(item.type) }}</span>
+                <span>{{ typeLabel(item) }}</span>
                 <el-tag size="small" :type="levelTagType(item.severity)" :effect="levelTagEffect(item.severity)">{{ severityLabel(item.severity) }}</el-tag>
               </div>
               <div style="color:#909399;margin-top:4px">{{ alarmDevLabel(item) }} · {{ alarmChLabel(item) }}</div>
@@ -420,7 +436,7 @@
         <el-table-column prop="type" label="类型" width="130">
           <template #default="{ row }">
             <span class="type-cell">
-              <span class="type-badge">{{ zh(row.type) }}</span>
+              <span class="type-badge">{{ typeLabel(row) }}</span>
               <!-- [C3 2026-09-18] 携带来源 marker: 属性合成/检测路线 (插件 meta.carry_source 出站) -->
               <span
                 v-if="carrySourceOf(row)"
@@ -958,11 +974,11 @@ import {
   Search, Refresh, Download, WarningFilled,
   Picture, VideoPlay, Position, ArrowDown, TrendCharts,
 } from '@element-plus/icons-vue'
-import { alarmApi } from '@/api/alarm'
+import { alarmApi, fetchVlmQueueSnapshot } from '@/api/alarm'
 // [P1-1 2026-09-20] 告警漏斗五环节快照 (GET /stats/alarm-funnel)
 import { statisticsApi, type AlarmFunnelResponse } from '@/api/statistics'
 // [AGG-DETAIL 2026-09-12] ×N 展开明细行类型 (后端原始 snake_case 形态)
-import type { AlarmOccurrence } from '@/api/alarm'
+import type { AlarmOccurrence, VlmQueueSnapshot } from '@/api/alarm'
 import { screeningApi, type AlarmFeedbackItem } from '@/api/screening'
 import { exportApi } from '@/api/export'
 import { queryRecordings, toLocalISOString, recordUrlCandidates, ensureRecordTranscoded, type DeviceRecording } from '@/api/recording'
@@ -977,7 +993,7 @@ import { useWebSocket } from '@/composables/useWebSocket'
 // [P0-9/6/10 2026-09-04] canonical zh SSOT + 规范处警对话框
 import { useEventTypeZh } from '@/composables/useEventTypeZh'
 // [FIX dev-name-num 2026-09-11] 设备名称数字形态治理 (共享目录反查)
-import { alarmDevLabel, alarmChLabel, mergedCountOf, isAlarmStateSyncFrame, carrySourceOf } from '@/composables/useAlarmTableHelpers'  // [chan-col 2026-09-11] 展示口径 SSOT 单一源 (替代内联同款); [FIX-P1-2] mergedCountOf; [FIX ws-frame-classify 2026-09-18] 帧分类判定共用
+import { alarmDevLabel, alarmChLabel, mergedCountOf, isAlarmStateSyncFrame, carrySourceOf, carriedItemLabel } from '@/composables/useAlarmTableHelpers'  // [chan-col 2026-09-11] 展示口径 SSOT 单一源 (替代内联同款); [FIX-P1-2] mergedCountOf; [FIX ws-frame-classify 2026-09-18] 帧分类判定共用; [FIX carry-display 2026-09-21] 携带类细分名
 import DisposeDialog from '@/components/alarm/DisposeDialog.vue'
 // [P3 2026-09-10] 右侧设备树筛选面板 (安保区域→子区域→设备 多选)
 import AlarmDeviceTreePanel from '@/components/alarm/AlarmDeviceTreePanel.vue'
@@ -1037,11 +1053,33 @@ const loading = ref(false)
 const ruleIdFilter = ref(String(route.query.rule_id ?? ''))
 const ruleNameFilter = ref(String(route.query.rule_name ?? ''))
 
+// ── [FIX test-probe-tag 2026-09-20] P2-7 探针隔离 ──
+//   trigger-test 注入告警 (metadata.is_test / alarm_id 前缀 test_) 默认不进
+//   列表与复核面板 (曾混流污染生产复核统计); 勾选「显示测试」放行供联调。
+const showTestAlarms = ref(false)
+/** 测试探针判定: metadata.is_test 显式标记优先 (落库统一入口 insertAlarm
+ *  强制补标), alarm_id 前缀兜底 (P2-7 打标上线前的历史行; metadata 兼容
+ *  object/array 双形态与 COALESCE 读取口径一致)。 */
+function isTestAlarm(a: any): boolean {
+  const m = Array.isArray(a?.metadata) ? a.metadata[0] : a?.metadata
+  if (m && typeof m === 'object') {
+    if (m.is_test === true) return true
+    if (typeof m.source === 'string' && /(^|[_.-])test([_.\s-]|$)/.test(m.source)) return true
+  }
+  return typeof a?.id === 'string' && a.id.startsWith('test_')
+}
+
 // ── 告警数据 ──
 const alarms = shallowRef<any[]>([])
 
 // ── [P0-9/6/12 2026-09-04] canonical zh SSOT + 设备分组 ──
 const { ensure: ensureEventTypes, zh, canonicalTypes } = useEventTypeZh()
+/** [FIX carry-display 2026-09-21] 类型列显示名: 携带类行按 meta.class_name_zh
+ *  细分 (人员携带背包/斜挎包/手提包/单肩包/行李箱), 其余类型直通 canonical
+ *  zh 名 — 9803 实锚: handbag 真包检出被统一显示为"背包"致用户误判误报。 */
+function typeLabel(row: any): string {
+  return carriedItemLabel(row) || zh(String(row?.type || row?.alarm_type || ''))
+}
 /** 类型筛选下拉数据 (canonical SSOT 动态, zh 名) */
 const canonicalTypeOptions = computed(() =>
   canonicalTypes.value.map((t) => ({ key: t.key, zh: zh(t.key) }))
@@ -1244,7 +1282,7 @@ async function openInlineVideo(item: any) {
   inlineVideoItem.value = item
   // [FIX dev-name-num 2026-09-11] 视频弹窗标题同口径治理 (不裸显数字编号)
   // [FIX dev-col-leak 2026-09-19] 类型同步 zh 化 (原裸显 type key)
-  inlineVideoTitle.value = `${zh(item.type)} · ${alarmDevLabel(item)} · ${formatTime(item.createdAt)}`
+  inlineVideoTitle.value = `${typeLabel(item)} · ${alarmDevLabel(item)} · ${formatTime(item.createdAt)}`
   inlineVideoVisible.value = true
   inlineVideoLoading.value = true
   inlineVideoUrl.value = ''
@@ -1781,6 +1819,10 @@ const { alarmStatCards, filteredAlarms } = (() => {
     const dateEnd = hasDate ? dateRange.value![1]!.getTime() : 0
 
     for (const a of src) {
+      // [FIX test-probe-tag 2026-09-20] P2-7: 测试探针默认隔离 — 列表/统计卡/
+      //   复核入口同源过滤 (勾选「显示测试」放行); 置于统计累加之前, 避免
+      //   探针污染「总告警/未处理」等卡片数字。
+      if (!showTestAlarms.value && isTestAlarm(a)) continue
       // 统计（全量）
       if (a.severity === 'critical' || a.level === 'critical') crit++
       if (a.status === 'unhandled') unhandled++
@@ -1826,6 +1868,35 @@ const { alarmStatCards, filteredAlarms } = (() => {
     filteredAlarms: computed(() => filtered.value.filtered),
   }
 })()
+
+// ── [AI-RQ 2026-09-20] VLM 审核队列状态卡 (GET /alarm/vlm/status 的 queue 节) ──
+//   排队 >0 或正在复核时显示; 30s 轮询; 失败静默置空 (不阻塞告警主列表)。
+const rqQueue = ref<VlmQueueSnapshot | null>(null)
+const rqEffectiveEnabled = ref<boolean | null>(null)
+let rqTimer: number | null = null
+
+async function refreshRqQueue() {
+  const st = await fetchVlmQueueSnapshot()
+  rqEffectiveEnabled.value = st?.effectiveEnabled ?? null
+  rqQueue.value = st?.queue ?? null
+}
+
+const rqVisible = computed(() => {
+  const q = rqQueue.value
+  return !!q && (q.depth > 0 || q.running_count > 0)
+})
+
+const rqText = computed(() => {
+  const q = rqQueue.value!
+  const parts: string[] = []
+  if (q.current) parts.push(`复核中 1 条 (已 ${Math.round(q.current.elapsed_ms / 1000)}s)`)
+  if (q.depth > 0) parts.push(`排队 ${q.depth} 条`)
+  if (typeof q.eta_ms_estimate === 'number' && q.eta_ms_estimate >= 0)
+    parts.push(`预计清空 ~${Math.round(q.eta_ms_estimate / 1000)}s`)
+  if (q.throughput && q.throughput.completed_last_60s > 0)
+    parts.push(`近 1 分钟完成 ${q.throughput.completed_last_60s} 条`)
+  return `AI 审核队列：${parts.join(' · ') || '空闲'}`
+})
 
 // ── [P1-1 2026-09-20] 告警漏斗 (可折叠): 产生→闸门→规则匹配→推送→弹窗 ──
 //   数据源 GET /api/v1/stats/alarm-funnel (服务端 AlarmFunnelCounters 五环节计数器
@@ -2605,6 +2676,9 @@ onMounted(() => {
   fetchAlarms()
   loadFeedbackMap()
   loadFbStats()
+  // [AI-RQ 2026-09-20] 队列状态卡首次拉取 + 30s 轮询
+  refreshRqQueue()
+  rqTimer = window.setInterval(refreshRqQueue, 30000)
   // [P0-9/6/12] canonical zh 类型表 + 设备分组 预热 (非阻塞)
   ensureEventTypes()
   fetchDeviceGroups()
@@ -2614,6 +2688,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   unsubscribeAlarm?.()
+  if (rqTimer) { clearInterval(rqTimer); rqTimer = null }  // [AI-RQ] 队列轮询清理
   window.removeEventListener('alarm-clip-updated', onAlarmClipUpdated)
   window.removeEventListener('alarm-handled', onAlarmHandled)
   if (exportPollTimer) {

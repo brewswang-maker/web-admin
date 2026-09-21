@@ -70,6 +70,10 @@ export interface SituationAlarmStream {
   timestamp?: number | string
   /** 后端 metadata 透传: 含 snapshot_base64/snapshot_format 用于前端兜底 */
   metadata?: Record<string, unknown>
+  /** [FIX ss-merged-parity 2026-09-20] 长窗聚合合并计数 (REST snake 主形态 /
+   *  WS 帧同名字段; N>1 时类型列渲染 ×N 角标 — 与告警中心 mergedCountOf 同口径) */
+  aggregated_count?: number
+  aggregatedCount?: number
 }
 
 /** Agent实时状态 */
