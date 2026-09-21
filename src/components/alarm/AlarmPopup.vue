@@ -1656,33 +1656,51 @@ async function playSelectedRecording(rec: DeviceRecording, opts?: { silent?: boo
 
 // [VCR-WIN 2026-09-18] NVR 回放启动/跳转共用 (playSelectedRecording 初始入口与 onNvrSeek
 //   拖动/快进退/停止/断点续播共用): 窗口裁剪 + /play + 源接线。
-//   - 窗口 = [max(段起点, T-半窗), min(段终点, T+半窗)]; startMs 指定起播时刻 (缺省=窗口左端)
+//   - 窗口 = [T-半窗, T+半窗] 全窗 (2026-09-21 去段头/段尾钳制; 被拒降级 ∩段范围重试); startMs 指定起播时刻 (缺省=窗口左端)
 //   - queueEpoch 自增强制 MiniPlayer 重建 (同 URL 重开也重启流)
 async function startNvrPlayback(rec: DeviceRecording, startMs?: number, silent?: boolean) {
   const alarm = currentAlarm.value
   await stopGbPlayback()  // [FIX p1-session] 释放上一回放会话 (NVR 并发会话数有限)
   // [NVR-PB 2026-09-13] /play 窗口裁剪: 原样传整段 start_time 会从段头开播 (NVR 段
   //   可达 30 分钟, 用户看到的是事件前很久的画面); GB28181 Playback 原生支持任意起点,
-  //   裁到 [T-半窗, T+半窗] ∩ 段范围 = 精确联动回放窗口
+  //   裁到 [T-半窗, T+半窗] = 精确联动回放窗口
+  // [FIX nvr-win 2026-09-21 用户令] 移除「∩段范围」钳制 (原 Math.max(rs,·)/Math.min(re,·)):
+  //   告警落在段边界 90s 内时事前/事后画面被段头/段尾截断 (15300 case 丢 66s 事前画面,
+  //   即「起始时间不对」根因 1); 实测 NVR 精确响应 t= 且跨 30min 段边界 1:1 无缝 (exp2),
+  //   直接请求全窗; 全窗被拒时下方钳回段范围降级重试一次 (空档等场景行为不劣于旧版)。
   const tMs = alarm ? new Date(alarm.createdAt).getTime() : NaN
   const rs = parseRecTime(rec.start_time), re = parseRecTime(rec.end_time)
-  const baseStart = Number.isFinite(tMs) && Number.isFinite(rs) ? Math.max(rs, tMs - CLIP_HALF_MS) : rs
+  const baseStart = Number.isFinite(tMs) ? tMs - CLIP_HALF_MS : rs
   let winStart = baseStart
   if (Number.isFinite(startMs as number)) winStart = Math.max(baseStart, startMs as number)
-  const winEnd = Number.isFinite(tMs) && Number.isFinite(re) ? Math.min(re, tMs + CLIP_HALF_MS) : re
+  let winEnd = Number.isFinite(tMs) ? tMs + CLIP_HALF_MS : re
   if (Number.isFinite(winStart) && Number.isFinite(winEnd)) winStart = Math.min(winStart, winEnd - 1000)
   const fmtLocal = (ms: number) => {
     const d = new Date(ms), p = (n: number) => String(n).padStart(2, '0')
     return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
       + `T${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
   }
-  const { data } = await recordingHttp.post(`/${rec.id}/play`, {
+  const postPlay = (ws: number, we: number) => recordingHttp.post(`/${rec.id}/play`, {
     device_id: alarm?.deviceId || rec.device_id,
     channel_id: alarm?.channelId || rec.channel_id,
-    start_time: Number.isFinite(winStart) ? fmtLocal(winStart) : rec.start_time,
-    end_time: Number.isFinite(winEnd) ? fmtLocal(winEnd) : rec.end_time,
+    start_time: Number.isFinite(ws) ? fmtLocal(ws) : rec.start_time,
+    end_time: Number.isFinite(we) ? fmtLocal(we) : rec.end_time,
   }, { timeout: 15000 })  // [FIX p1-timeout] NVR 对「仍在归档的新段」回放会挂起, 不再无限等待
-  const result = data?.data || data
+  let resp = await postPlay(winStart, winEnd)
+  let result = resp.data?.data || resp.data
+  // [FIX nvr-win] 全窗被拒 (无 urls, 典型: T±半窗落空档) → 钳回段范围降级重试一次 (旧行为兜底;
+  //   降级成功以降级窗为准, 仍无 urls / 请求异常 → 走下方原失败链)
+  if (!result?.urls) {
+    const ws2 = Number.isFinite(rs) ? Math.max(rs, winStart) : winStart
+    const we2 = Number.isFinite(re) ? Math.min(re, winEnd) : winEnd
+    if (ws2 !== winStart || we2 !== winEnd) {
+      try {
+        resp = await postPlay(ws2, we2)
+        result = resp.data?.data || resp.data
+        if (result?.urls) { winStart = ws2; winEnd = we2 }
+      } catch { /* 降级请求异常 → 按 !urls 失败链处理 */ }
+    }
+  }
   // [FIX p1-session] 记录会话 id 供 /stop 生命周期治理 (关弹窗/切告警/新播放/卸载)
   const cid = String(result?.call_id || '')
   if (cid) gbPlaybackCallId.value = cid
@@ -1799,7 +1817,8 @@ function maybeResumeNvr() {
 }
 // [VCR-WIN] 终态「重播」: 清计数从原始窗口头重开
 //   [VCR-WIN-FIX2 2026-09-18] nvrWindowStart 被拖动/断点续播逐次收敛覆盖, 直接用它
-//   重播会从尾段重开而非窗口起点 — 现按「段起点∩T-半窗」重算原始窗口头
+//   重播会从尾段重开而非窗口起点 — 现重算原始窗口头 (2026-09-21 用户令: 去段头钳制,
+//   与 startNvrPlayback 同取 T-半窗)
 function replayNvr() {
   const rec = nvrRec
   const alarm = currentAlarm.value
@@ -1810,7 +1829,8 @@ function replayNvr() {
   nvrResumeTotal = 0
   const rs = parseRecTime(rec.start_time)
   const tMs = alarm ? new Date(alarm.createdAt).getTime() : NaN
-  const baseStart = Number.isFinite(tMs) && Number.isFinite(rs) ? Math.max(rs, tMs - CLIP_HALF_MS) : rs
+  // [FIX nvr-win 2026-09-21] 去段头钳制: 与 startNvrPlayback 全窗口径一致 (重播从完整 T-半窗 起)
+  const baseStart = Number.isFinite(tMs) ? tMs - CLIP_HALF_MS : rs
   void onNvrSeek(baseStart)
 }
 // [FIX p1-session 2026-09-12] GB28181 回放会话生命周期治理: 原实现全程零 /stop 调用

@@ -1297,41 +1297,45 @@ async function openInlineVideo(item: any) {
         ...(streamName ? { stream_name: streamName } : {}),
       })
       if (recs && recs.length > 0) {
-        // [FIX rec-tc 2026-09-15] 优先本地片直链 (带 url; 无需 NVR 回放会话, 不受设备侧
-        //   5002/会话数限制): 直链经双层归一 + 转码后浏览器原生播放, 稳定优于回放流;
-        //   GB28181 条目 (无 url) → 原 /play 回放流路径。
+        // [NVR-PRIO 2026-09-21 用户令 必须条件] 翻转原 [FIX rec-tc 2026-09-15] 本地片直链优先:
+        //   同刻双源时 NVR 条目 (无 url) 先行 /play 回放流; /play 无地址或异常时回落本地片
+        //   直链 (原「直链稳定优于回放流」路径保留为兜底, 稳定性不回退)。
+        const nvrRec = recs.find((r: DeviceRecording) => !r.url)
         const localRec = recs.find((r: DeviceRecording) => !!r.url)
+        if (nvrRec) {
+          try {
+            // [FIX rec-play-404 2026-09-15] 原 post('/play') 请求 /api/v1/recordings/play
+            //   — 后端无此路由 (仅 /:id/play) → 恒 404 (排查 R5); 补 id 段
+            //   (GB 条目 id 含空格/冒号 → encodeURIComponent)。
+            const playRes = await recordingHttp.post(`/${encodeURIComponent(nvrRec.id)}/play`, {
+              id: nvrRec.id,
+              device_id: deviceId,
+              channel_id: channelId,
+              start_time: nvrRec.start_time || startTime,
+              end_time: nvrRec.end_time || endTime,
+            })
+            const playData = playRes?.data?.data ?? playRes?.data ?? {}
+            const urls = playData?.urls || {}
+            // 优先 wsFlv(浏览器内嵌播放最佳), 然后普通 flv
+            const flvUrl = urls.wsFlv || urls.ws_flv || urls.flv || urls['ws-flv'] || ''
+            if (flvUrl) {
+              inlineVideoUrl.value = flvUrl
+              inlineVideoMode.value = 'live'  // 用 flv.js 播放
+              inlineVideoIsPlayback.value = true  // 录像回放
+              inlineVideoLoading.value = false
+              return
+            }
+            // 如果有 HLS 也可以用 video 标签直接播
+            if (urls.hls) {
+              inlineVideoUrl.value = urls.hls
+              inlineVideoMode.value = 'clip'  // HLS 用 video 标签
+              inlineVideoLoading.value = false
+              return
+            }
+          } catch { /* /play 异常 → 回落本地片直链 */ }
+        }
         if (localRec?.url) {
           await loadInlineClip(recordUrlCandidates(localRec.url)[0] || localRec.url)
-          return
-        }
-        // 调用 play 获取回放 URL; [FIX rec-play-404 2026-09-15] 原 post('/play') 请求
-        //   /api/v1/recordings/play — 后端无此路由 (仅 /:id/play) → 恒 404 (排查 R5);
-        //   补 id 段 (GB 条目 id 含空格/冒号 → encodeURIComponent)。
-        const rec = recs[0]
-        const playRes = await recordingHttp.post(`/${encodeURIComponent(rec.id)}/play`, {
-          id: rec.id,
-          device_id: deviceId,
-          channel_id: channelId,
-          start_time: rec.start_time || startTime,
-          end_time: rec.end_time || endTime,
-        })
-        const playData = playRes?.data?.data ?? playRes?.data ?? {}
-        const urls = playData?.urls || {}
-        // 优先 wsFlv(浏览器内嵌播放最佳), 然后普通 flv
-        const flvUrl = urls.wsFlv || urls.ws_flv || urls.flv || urls['ws-flv'] || ''
-        if (flvUrl) {
-          inlineVideoUrl.value = flvUrl
-          inlineVideoMode.value = 'live'  // 用 flv.js 播放
-          inlineVideoIsPlayback.value = true  // 录像回放
-          inlineVideoLoading.value = false
-          return
-        }
-        // 如果有 HLS 也可以用 video 标签直接播
-        if (urls.hls) {
-          inlineVideoUrl.value = urls.hls
-          inlineVideoMode.value = 'clip'  // HLS 用 video 标签
-          inlineVideoLoading.value = false
           return
         }
       }

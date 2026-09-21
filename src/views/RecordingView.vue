@@ -586,19 +586,22 @@ function buildSegs(): TlSeg[] {
 }
 
 /** [P0-3] 时刻→段 公共匹配 (复用 doTimeSeek 四级选择):
- *  ① 本地段覆盖 ② 任意覆盖段 ③ 就近本地段 ④ 就近任意段。
+ *  ① NVR 覆盖段 ② 本地片覆盖段 ③ 就近本地段 ④ 就近任意段。
  *  [REC-FAST 2026-09-19] ②③ 对调 (原「就近本地段」先于「任意覆盖段」): 目标时刻被设备
  *  存储段覆盖、而近旁恰有 ≤60s 的本地片时, 原序会选中不覆盖的本地片 (near) → 提示
- *  "无精确覆盖段"并错位播放。覆盖优先保证「时间定位准确命中目标时刻所在片段」;
- *  同为覆盖/同为就近时仍本地片优先 (①/③), 与本地片秒开取舍不冲突。
+ *  "无精确覆盖段"并错位播放。覆盖优先保证「时间定位准确命中目标时刻所在片段」。
+ *  [NVR-PRIO 2026-09-21 用户令 必须条件] ①↔② 对调 (原「同为覆盖时本地片优先」→ NVR 优先):
+ *  回放页与事件证据同口径 — 同刻双源覆盖一律先选 NVR 段 (GB28181 回放流), 本地片仅兜底;
+ *  原「本地片秒开取舍」被用户令替代 (③④ 就近链不变)。
  *  hit=覆盖段可直接定位; near=仅就近段(不保证覆盖), 由调用方决定提示/跳转。 */
 function resolveSegmentAt(targetMs: number, segs?: TlSeg[]): { hit?: TlSeg; near?: TlSeg } {
   const list = segs || buildSegs()
   const covers = (x: TlSeg) => x.s <= targetMs && targetMs <= x.e + 5000
   const dist = (x: TlSeg) => Math.min(Math.abs(x.s - targetMs), Math.abs(x.e - targetMs))
   const locals = list.filter(x => x.r.url)
-  const hit = locals.find(covers)
-    || list.find(covers)
+  const nvrSegs = list.filter(x => !x.r.url)  // [NVR-PRIO 2026-09-21 用户令] ① NVR 覆盖优先
+  const hit = nvrSegs.find(covers)
+    || locals.find(covers)
     || locals.filter(x => dist(x) <= TL_SEEK_NEAR_MS).sort((a, b) => dist(a) - dist(b))[0]
     || list.reduce<TlSeg | undefined>((best, cur) => (!best || dist(cur) < dist(best) ? cur : best), undefined)
   if (!hit) return {}
@@ -1368,7 +1371,7 @@ const SEEK_STEP_LARGE_SEC = 30
  *  基于回放钟绝对时刻 (段起点+进度) ±N 秒, 分档处理保证「不越界/不跳错位置/点击必有效」:
  *  ① 目标仍在当前段内 → ZLM 直链直接写 video.currentTime (无请求/无重载, 即时响应);
  *     GB28181 回放流无 Range seek → 重新起会话从目标时刻推流 (设备固有限制, 附受理提示)
- *  ② 跨段 → 命中覆盖目标时刻的段 (本地片优先, 同 resolveSegmentAt 口径) 从目标时刻开播;
+ *  ② 跨段 → 命中覆盖目标时刻的段 (NVR 覆盖优先, 同 resolveSegmentAt 口径) 从目标时刻开播;
  *  ③ 空档 → 前进衔接近邻下一段起点 / 后退回退近邻上一段末尾 (明示, 不静默);
  *  ④ 首尾越界 → 明确提示 (已是当日录像开头/末尾)。
  *  [REC-FAST] 段列表用全量 recordings (含被存储位置过滤隐藏的段): 时间操作不因显示过滤失准。 */
@@ -1403,8 +1406,9 @@ async function seekBy(deltaSec: number) {
     return
   }
   // ② 跨段: 命中覆盖目标时刻的段 (含段尾 5s 容差; 与 resolveSegmentAt 同优先级)
+  //    [NVR-PRIO 2026-09-21 用户令 必须条件] NVR 覆盖段优先 (原本地片优先对调; 本地片仅兜底)
   const coversT = (x: TlSeg) => x.s <= targetMs && targetMs <= x.e + 5000
-  const hit = segs.filter(x => x.r.url).find(coversT) || segs.find(coversT)
+  const hit = segs.filter(x => !x.r.url).find(coversT) || segs.find(coversT)
   if (hit) {
     // 命中当前段 (目标落段尾余量内): 段内收敛, 避免无谓重载
     if (String(hit.r.id) === String(currentRecId.value) && seekWithinCurrentSegment(targetMs)) return
