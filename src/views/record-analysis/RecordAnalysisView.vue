@@ -262,7 +262,7 @@ async function openDetail(t: OfflineTask): Promise<void> {
   detailVisible.value = true
   detailLoading.value = true
   try {
-    // 关联告警: 按虚拟通道 id 精确过滤 (后端 channel_id 归一过滤口径);
+    // 关联告警: 按虚拟通道 id 拉取 + 任务级精确过滤;
     // alarmApi 泛型为 ApiResponse<PageResponse>, axios 语义双层取 data;
     // [FIX offline-analysis 2026-09-21] alarms 端点实测返回 {alarms:[...]}
     //   键名 (AlarmsView 同口径两形态兼容), 纯数字 channel_id 曾触发
@@ -270,11 +270,25 @@ async function openDetail(t: OfflineTask): Promise<void> {
     const resp = await alarmApi.getList({ channel_id: String(t.channel_id), page: 1, pageSize: 50 })
     const respData: any = resp.data?.data ?? resp.data
     const rawList: any[] = respData?.alarms || respData?.items || []
+    // [FIX rec-alarm-scope 2026-09-22] 任务级过滤: 虚拟通道号在任务间复用
+    //   分配 (空闲通道池), 按 channel_id 聚合会把历史任务告警混入当前任务
+    //   详情 (实证: merged_背包2 详情出现凌晨 00:02 聚集告警, 早于任务创建
+    //   12.7h, 用户误以为检测串台)。离线任务告警的 matched_rule_ids 恒含
+    //   "offline_<task_id>" (虚拟规则绑定), 以此精确过滤; 无该字段的
+    //   历史数据退回任务时间窗 (创建→结束+2min 缓冲)。
+    const ruleKey = `offline_${t.task_id}`
+    const winEndMs = (t.finished_at_ms || Date.now()) + 120_000
+    const scoped = rawList.filter((r: any) => {
+      const ids: string[] = r.matched_rule_ids || []
+      if (ids.length > 0) return ids.includes(ruleKey)
+      const evMs = Number(r.event_start_ms || r.timestamp_ms || r.created_at_ms || 0)
+      return evMs >= t.created_at_ms && evMs <= winEndMs
+    })
     // [FIX offline-analysis 2026-09-21] REST 行为 snake_case 原始态
     //   (alarm_type/created_at/snapshot_*), 模板按 AlarmEvent 归一字段消费 —
     //   必须经项目标准 normalizeAlarmCore (AlarmsView 同源), 否则事件列
     //   恒 undefined / 时间串错位 (真机验收实证)
-    detailAlarms.value = rawList.map((r) => normalizeAlarmCore(r))
+    detailAlarms.value = scoped.map((r) => normalizeAlarmCore(r))
   } catch (err) {
     console.error('[RecordAnalysis] 关联告警拉取失败:', err)
   } finally {
