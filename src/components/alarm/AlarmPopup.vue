@@ -2390,7 +2390,19 @@ const popupBbox = computed<number[]>(() => {
 const popupDetections = computed<any[]>(() => {
   const m = (currentAlarm.value?.metadata || {}) as Record<string, unknown>
   const src = ((m[0] && typeof m[0] === 'object') ? m[0] : m) as Record<string, unknown>
-  return Array.isArray(src.detections) ? (src.detections as any[]) : []
+  const dets = Array.isArray(src.detections) ? (src.detections as any[]) : []
+  // [FIX synth-mark 2026-09-22] 属性路线合成框打标 (carry_source=attr_synth):
+  //   包框为「人框躯干带」几何合成 (y 30%~80% 高, 非真实检测位置) → 渲染侧
+  //   画虚线 + 「推定」后缀与真检框 (detect) 视觉区隔, 防用户读作「包框
+  //   覆盖人躯干 = 标注错位/重叠」。person 框恒为真实检测主体不打标;
+  //   仅框对象增量注入, 不改后端字段, 其它消费方零影响。
+  if (src.carry_source === 'attr_synth' || src.attr_src === 'attribute') {
+    return dets.map((d) => {
+      const label = d?.label || d?.class_name || d?.class || ''
+      return (label && label !== 'person') ? { ...d, synthetic: true } : d
+    })
+  }
+  return dets
 })
 const popupTargetLabel = computed(() => {
   const m = (currentAlarm.value?.metadata || {}) as Record<string, unknown>

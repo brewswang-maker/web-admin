@@ -459,6 +459,9 @@ import type { Channel, DeviceItem } from '@/types/device'
 import type flvjs from 'flv.js'   // 仅类型空间 (编译期擦除, 无运行时依赖)
 import { useStreamHealth } from '@/composables/useStreamHealth'
 import { useAdaptiveBitrate } from '@/composables/useAdaptiveBitrate'
+// [FIX label-zh-coco 2026-09-22] 实时叠加层类别中文化 (与告警快照同一 SSOT):
+//   此前直接裸显后端 canonical 英文 key (图 18 同源问题在实时页的投影)
+import { zhLabel } from '@/composables/useAlarmShapes'
 import StreamStatsPanel from '@/components/StreamStatsPanel.vue'
 import { normalizeStreamUrl, normalizeWsFlvUrl } from '@/utils/streamUrl'
 // [FIX live-rec 2026-09-21] 录像按钮真链路: 直播录像 API + 下载公共体 (同回放页 mark 链)
@@ -671,7 +674,9 @@ function drawDetections() {
       ctx.strokeRect(x, y, w, h)
 
       // 标签背景
-      const label = `${box.class_name} ${(box.confidence * 100).toFixed(0)}%`
+      // [FIX label-zh-coco 2026-09-22] zhLabel SSOT: canonical key 保留在
+      //   DETECTION_COLORS 配色查表 (国际惯例英文 key), 仅展示层中文化
+      const label = `${zhLabel(box.class_name)} ${(box.confidence * 100).toFixed(0)}%`
       const textW = ctx.measureText(label).width
       const labelH = Math.max(16, canvas.width / 40)
       ctx.fillStyle = color

@@ -397,6 +397,11 @@ export interface ParsedDet {
   x: number; y: number; w: number; h: number
   label: string; confidence: number
   danger: boolean
+  // [FIX synth-mark 2026-09-22] 属性路线合成框标记 (person_with_backpack 链
+  //   carry_source=attr_synth): 包框 = 人框躯干带几何合成 (y 30%~80% 高,
+  //   见 personal_item_detector.cpp runAttributeRoute), 非真实检测位置 —
+  //   渲染侧虚线 + 「推定」后缀与真检框区隔, 防用户读作「标注错位/重叠」。
+  synthetic?: boolean
 }
 
 /** detections 数组三形态解析: {x1,y1,x2,y2} / {x,y,w,h} / [x1,y1,x2,y2];
@@ -439,6 +444,11 @@ export function parseDetections(
       label: d?.label || d?.class_name || d?.class || d?.targetLabel || fallbackLabel,
       confidence: typeof d?.confidence === 'number' ? d.confidence : (typeof d?.score === 'number' ? d.score : 1),
       danger: false,
+      // [FIX synth-mark 2026-09-22] 合成框标记三键兼容: 前端注入 synthetic
+      //   (AlarmPopup 按顶层 carry_source 打标) / 后端 attributes.attr_src
+      //   / 直报链 carry_source 原样。
+      synthetic: d?.synthetic === true || d?.attr_src === 'attribute'
+        || d?.carry_source === 'attr_synth',
     })
   }
   return out
@@ -621,6 +631,35 @@ const LABEL_ZH: Record<string, string> = {
   phone: '电话',
   'cell phone': '电话',
   head: '头部',
+  // [FIX label-zh-coco 2026-09-22] COCO 80 全量中文补全 (图 18 汽车快照
+  //   裸显 "car" 根因): 原表只覆盖安防包类/电话/头部, 车辆/动物/家具等
+  //   类别英文直出 canvas 标签 (真机日志实锚 classes=[couch/truck/car/
+  //   traffic light/tv], couch 高频误检 2646 次全部裸显)。键格式对齐后端
+  //   COCO_CLASSES (小写+空格, 见 YOLOv8Postprocessor.cpp), 中文口径对齐
+  //   MiniCPMAdapter::cnClassNames; 未注册类回退原样输出不变。
+  bicycle: '自行车', car: '汽车', motorcycle: '摩托车', airplane: '飞机',
+  bus: '公交车', train: '火车', truck: '卡车', boat: '船',
+  'traffic light': '交通灯', 'fire hydrant': '消防栓', 'stop sign': '停止标志',
+  'parking meter': '停车计时器', bench: '长椅',
+  bird: '鸟', cat: '猫', dog: '狗', horse: '马', sheep: '羊', cow: '牛',
+  elephant: '大象', bear: '熊', zebra: '斑马', giraffe: '长颈鹿',
+  umbrella: '雨伞', tie: '领带', frisbee: '飞盘', skis: '滑雪板',
+  snowboard: '单板滑雪', 'sports ball': '运动球', kite: '风筝',
+  'baseball bat': '棒球棒', 'baseball glove': '棒球手套', skateboard: '滑板',
+  surfboard: '冲浪板', 'tennis racket': '网球拍', bottle: '瓶子',
+  'wine glass': '酒杯', cup: '杯子', fork: '叉子', knife: '刀',
+  spoon: '勺子', bowl: '碗', banana: '香蕉', apple: '苹果',
+  sandwich: '三明治', orange: '橙子', broccoli: '西兰花', carrot: '胡萝卜',
+  'hot dog': '热狗', pizza: '披萨', donut: '甜甜圈', cake: '蛋糕',
+  chair: '椅子', couch: '沙发', 'potted plant': '盆栽', bed: '床',
+  'dining table': '餐桌', toilet: '马桶', tv: '电视', laptop: '笔记本电脑',
+  mouse: '鼠标', remote: '遥控器', keyboard: '键盘', cellphone: '手机',
+  microwave: '微波炉', oven: '烤箱', toaster: '烤面包机', sink: '水槽',
+  refrigerator: '冰箱', book: '书', clock: '时钟', vase: '花瓶',
+  scissors: '剪刀', 'teddy bear': '泰迪熊', 'hair drier': '吹风机',
+  toothbrush: '牙刷',
+  // 安防扩展类 (非 COCO: 插件自定义/内置链实际出现值域)
+  face: '人脸', motor: '电动车', helmet: '头盔', fire: '火焰', smoke: '烟雾',
 }
 export function zhLabel(label: string): string {
   return LABEL_ZH[label] || label
@@ -654,10 +693,16 @@ export function drawDetsOnCtx(
     if (bw < 1 || bh < 1) continue
     const color = (forceDanger || d.danger) ? '#f56c6c' : (CLASS_COLORS[d.label] || '#FF3D71')
     const x = d.x * w, y = d.y * h
+    const isSynth = d.synthetic === true
     ctx.strokeStyle = color
     ctx.lineWidth = 2 * scale
+    // [FIX synth-mark 2026-09-22] 合成框虚线 (虚线后立即复位 — 同一 ctx
+    //   连续画多框, setLineDash 残留会污染后续真检框; 实线=真实检测,
+    //   虚线=属性推定位置的通用视觉约定)
+    if (isSynth) ctx.setLineDash([6 * scale, 4 * scale])
     ctx.strokeRect(x, y, bw, bh)
-    const label = `${zhLabel(d.label)} ${Math.round(d.confidence * 100)}%`
+    if (isSynth) ctx.setLineDash([])
+    const label = `${zhLabel(d.label)} ${Math.round(d.confidence * 100)}%${isSynth ? ' (推定)' : ''}`
     ctx.font = `bold ${Math.round(11 * scale)}px sans-serif`
     const tw = ctx.measureText(label).width + 8 * scale
     const th = 18 * scale
