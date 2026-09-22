@@ -20,6 +20,7 @@ import {
 import eventTypesApi, { type CanonicalEventType } from '@/api/eventTypes'
 import { alarmApi } from '@/api/alarm'
 import { normalizeAlarmCore, type AlarmEvent } from '@/types/alarm'
+import { openAlarmDetailById } from '@/composables/useAlarmPopup'
 
 // ============================================================
 // 工具
@@ -281,6 +282,17 @@ async function openDetail(t: OfflineTask): Promise<void> {
   }
 }
 
+/**
+ * [FIX rec-alarm-click 2026-09-22] 关联告警点击 → 全局 AlarmPopup
+ *   复用按 ID 拉全量详情的统一入口 (与设备详情/态势屏/检索页同链路),
+ *   不重复建设详情视图。v1.0 首版仅静态展示未接线点击 (用户反馈点击
+ *   无响应) — 此处补齐交互; 仅加点击接线, 拉取口径 (虚拟通道过滤) 与
+ *   normalize 展示逻辑保持原样不动。
+ */
+function onAlarmClick(row: AlarmEvent): void {
+  if (row?.id) openAlarmDetailById(String(row.id))
+}
+
 // ============================================================
 // 生命周期
 // ============================================================
@@ -493,14 +505,21 @@ onUnmounted(() => {
               <span v-else class="task-sub">--</span>
             </template>
           </el-table-column>
+          <!-- [FIX rec-alarm-click 2026-09-22] 事件/描述列可点击 → 全局
+               AlarmPopup (openAlarmDetailById 按告警 ID 拉详情后弹出);
+               快照列保持 el-image 预览行为不受影响 -->
           <el-table-column label="事件" min-width="120">
             <template #default="{ row }">
-              <div class="task-name">{{ evName(String(row.type)) }}</div>
-              <div class="task-sub">{{ confText(row.confidence) }} · {{ fmtAlarmTime(row.createdAt) }}</div>
+              <div class="alarm-clickable" @click="onAlarmClick(row)">
+                <div class="task-name">{{ evName(String(row.type)) }}</div>
+                <div class="task-sub">{{ confText(row.confidence) }} · {{ fmtAlarmTime(row.createdAt) }}</div>
+              </div>
             </template>
           </el-table-column>
           <el-table-column label="描述" min-width="160" show-overflow-tooltip>
-            <template #default="{ row }">{{ row.description }}</template>
+            <template #default="{ row }">
+              <span class="alarm-clickable alarm-desc" @click="onAlarmClick(row)">{{ row.description }}</span>
+            </template>
           </el-table-column>
           <template #empty>
             <el-empty description="任务运行中产生告警后将在此展示" :image-size="60" />
@@ -570,5 +589,15 @@ onUnmounted(() => {
   height: 44px;
   border-radius: 4px;
   display: block;
+}
+/* [FIX rec-alarm-click 2026-09-22] 关联告警可点击列: hover 提示可点 (主色),
+   与全局 AlarmPopup 点击入口视觉一致 */
+.alarm-clickable {
+  cursor: pointer;
+}
+.alarm-clickable:hover .task-name,
+.alarm-clickable:hover .task-sub,
+.alarm-clickable.alarm-desc:hover {
+  color: var(--el-color-primary);
 }
 </style>
