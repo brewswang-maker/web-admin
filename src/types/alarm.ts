@@ -586,6 +586,10 @@ export const ALARM_TYPE_CN: Record<string, string> = {
   leave_region: '离开区域检测',
   fast_move: '快速移动检测',
   non_motor_vehicle: '非机动车检测',
+  // ── [SUBSCRIBE 2026-09-22 NL事件订阅 P1.5] 智能订阅系镜像 (双注册铁律: 与
+  //    EventTypeAliases.h meta_table agent_subscription_hit 同步; CI
+  //    AlarmTsMirror 校验 meta_table keys ⊆ 本表) ──
+  agent_subscription_hit: '智能订阅命中',
 }
 
 /**

@@ -95,6 +95,9 @@ const GROUP_LABEL_MAP: Record<string, string> = {
   other: '其他',
   person: '人员检测',
   object: '物体检测',
+  // [SUBSCRIBE 2026-09-22 NL事件订阅 P1.5] 智能订阅系 (agent_subscription_hit,
+  // 分组键与后端 inferEventUiGroup 对齐)
+  agent_sub: '智能订阅',
   // event category (metadata groups 的 key 是小写 category)
   alarm: '报警事件',
   notification: '通行通知',
