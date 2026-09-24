@@ -318,7 +318,9 @@ async function onCreate() {
     await createSubscription({
       nl_text: previewRes.value.nl_text,
       name,
-      preview: previewRes.value,
+      // [FIX sub-preview 2026-09-24] 传产物本体 (preview 字段) 而非整包装 —
+      //   后端 req["preview"].dump() 直喂编译器, 包装对象顶层无字段会被安全门拒
+      preview: previewRes.value.preview,
       channels: [],
       phone_notify: phoneNotify.value,  // [P3] 电话提醒开关 → notify_channels 含 phone
     })

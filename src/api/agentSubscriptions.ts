@@ -66,8 +66,11 @@ export interface SubscriptionSampleResult {
 export interface CreateSubscriptionReq {
   nl_text: string
   name: string
-  /** 创建必须携带确认过的预览产物 (后端以此落 compiled_json) */
-  preview: CompilePreviewResult
+  /** 创建必须携带确认过的预览产物本体 (compile-preview 响应的 .preview 字段)。
+   *  [FIX sub-preview 2026-09-24] 曾误传 CompilePreviewResult 整包装 — 后端
+   *  RestApiHandlers L11328 req["preview"].dump() 直喂编译器, 顶层读不到
+   *  target/action/mappable_event → 安全门 ContradictoryMapping 拒绝创建。 */
+  preview: CompiledArtifact
   /** 监控通道; 空 = 全通道 */
   channels?: string[]
   notify_channels?: string[]
