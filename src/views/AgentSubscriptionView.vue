@@ -1,0 +1,414 @@
+<template>
+  <div class="agent-sub-page">
+    <div class="page-title">
+      <h2>智能订阅</h2>
+    </div>
+
+    <!-- 工具条: 状态过滤 + 刷新 + 新建 -->
+    <el-card shadow="never" class="toolbar-card">
+      <div class="toolbar">
+        <span class="page-desc">
+          用一句自然语言订阅告警事件：AI 编译为结构化任务，先进入影子观察（不产生真实联动），验证达标后激活。
+        </span>
+        <div class="toolbar-actions">
+          <el-select v-model="statusFilter" placeholder="全部状态" clearable style="width: 140px" @change="load">
+            <el-option v-for="(m, k) in STATUS_META" :key="k" :label="m.text" :value="k" />
+          </el-select>
+          <el-button :icon="Refresh" @click="load">刷新</el-button>
+          <el-button type="primary" :icon="Plus" @click="openCreate">新建订阅</el-button>
+        </div>
+      </div>
+    </el-card>
+
+    <!-- 订阅列表 -->
+    <el-card shadow="never">
+      <el-table v-loading="loading" :data="list" stripe>
+        <el-table-column label="订阅" min-width="260">
+          <template #default="{ row }">
+            <div class="sub-name">{{ row.name }}</div>
+            <div class="sub-nl">"{{ row.nl_text }}"</div>
+          </template>
+        </el-table-column>
+        <el-table-column label="类型" width="110">
+          <template #default="{ row }">
+            <el-tag v-if="kindOf(row) === 'vlm_task'" type="warning" size="small">语义视觉</el-tag>
+            <el-tag v-else-if="kindOf(row) === 'linkage_rule'" size="small">规则</el-tag>
+            <el-tag v-else type="info" size="small">未编译</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="状态" width="110">
+          <template #default="{ row }">
+            <el-tag :type="statusTag(row.status)" size="small">{{ statusText(row.status) }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="监控通道" width="140">
+          <template #default="{ row }">
+            {{ (row.channels && row.channels.length) ? row.channels.join(', ') : '全通道' }}
+          </template>
+        </el-table-column>
+        <el-table-column label="最近命中" width="170">
+          <template #default="{ row }">{{ fmtTime(row.last_hit_at) }}</template>
+        </el-table-column>
+        <el-table-column label="操作" width="320" fixed="right">
+          <template #default="{ row }">
+            <el-button v-if="row.status === 'DRAFT'" type="primary" size="small" @click="onConfirm(row)">确认编译</el-button>
+            <el-button v-if="canSample(row)" size="small" @click="openSample(row)">采样</el-button>
+            <el-button v-if="row.status === 'SANDBOX'" size="small" @click="onVerify(row)">验证</el-button>
+            <el-button v-if="row.status === 'ACTIVE'" size="small" @click="onAction(row, 'pause')">暂停</el-button>
+            <el-button v-if="row.status === 'PAUSED'" type="success" size="small" @click="onAction(row, 'resume')">恢复</el-button>
+            <el-button size="small" link @click="openDetail(row)">详情</el-button>
+            <el-button v-if="row.status === 'DRAFT'" type="danger" size="small" link @click="onDelete(row)">删除</el-button>
+          </template>
+        </el-table-column>
+        <template #empty>
+          <el-empty description="暂无订阅 — 点击右上角「新建订阅」用一句自然语言创建" />
+        </template>
+      </el-table>
+    </el-card>
+
+    <!-- 创建弹层: NL → 编译预览 → 确认创建 (规格 §4.3 步骤 1-3) -->
+    <el-dialog v-model="createVisible" title="新建智能订阅" width="620px" :close-on-click-modal="false">
+      <el-form label-width="90px">
+        <el-form-item label="订阅描述">
+          <el-input
+            v-model="nlInput"
+            type="textarea" :rows="2" maxlength="15" show-word-limit
+            placeholder="例：发现孩子放学回家就提醒我（15 字以内）"
+          />
+        </el-form-item>
+        <el-form-item>
+          <el-button type="primary" :loading="previewing" :disabled="!nlInput.trim()" @click="onPreview">
+            AI 编译预览
+          </el-button>
+          <span class="preview-hint">先预览确认 AI 理解，再创建</span>
+        </el-form-item>
+        <el-form-item v-if="previewRes" label="理解结果">
+          <div class="preview-box">
+            <div class="preview-kind">
+              <el-tag :type="previewRes.need_vlm ? 'warning' : 'primary'" size="small">
+                {{ previewRes.need_vlm ? '语义视觉任务 (VLM 复核)' : '结构化联动规则' }}
+              </el-tag>
+              <span class="preview-kind-text">{{ previewKindText }}</span>
+            </div>
+            <pre class="preview-json">{{ JSON.stringify(previewRes.preview, null, 2) }}</pre>
+          </div>
+        </el-form-item>
+        <el-form-item label="订阅名称">
+          <el-input v-model="nameInput" maxlength="30" placeholder="给订阅起个名字（默认自动生成）" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="createVisible = false">取消</el-button>
+        <el-button type="primary" :loading="creating" :disabled="!previewRes" @click="onCreate">
+          确认创建 (进入影子观察)
+        </el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 手动采样弹层: 选通道 → 单次判定 (P1.5 链路验证入口) -->
+    <el-dialog v-model="sampleVisible" title="手动采样判定" width="560px" :close-on-click-modal="false">
+      <el-form label-width="90px">
+        <el-form-item label="采样通道">
+          <el-select v-model="sampleChannel" style="width: 100%" placeholder="选择监控通道">
+            <el-option v-for="c in channelOpts" :key="c.id" :label="`${c.id} · ${c.name}`" :value="c.id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item>
+          <el-button type="primary" :loading="sampling" :disabled="!sampleChannel" @click="onSample">
+            立即抓帧判定
+          </el-button>
+          <span class="preview-hint">抓取当前画面交 VLM 判定一次 (hit 会注入联动引擎)</span>
+        </el-form-item>
+      </el-form>
+      <div v-if="sampleRes" class="sample-result">
+        <el-alert
+          :type="sampleRes.hit ? 'success' : 'info'"
+          :closable="false"
+          :title="sampleRes.hit ? '命中 — 已按订阅规则注入联动引擎' : '未命中'"
+          :description="sampleRes.evidence || '(无证据描述)'"
+        />
+        <div class="sample-meta">
+          <span>置信度: {{ (sampleRes.confidence * 100).toFixed(0) }}%</span>
+          <span>判定状态: {{ sampleRes.status }}</span>
+          <span>耗时: {{ sampleRes.latency_ms }}ms</span>
+          <span v-if="sampleRes.snapshot_url">
+            <a :href="sampleRes.snapshot_url" target="_blank">查看抓帧</a>
+          </span>
+        </div>
+      </div>
+    </el-dialog>
+
+    <!-- 详情抽屉: 编译产物只读 + 错误信息 -->
+    <el-drawer v-model="detailVisible" title="订阅详情" size="480px">
+      <template v-if="detailRow">
+        <el-descriptions :column="1" border size="small">
+          <el-descriptions-item label="名称">{{ detailRow.name }}</el-descriptions-item>
+          <el-descriptions-item label="描述">{{ detailRow.nl_text }}</el-descriptions-item>
+          <el-descriptions-item label="状态">{{ statusText(detailRow.status) }}</el-descriptions-item>
+          <el-descriptions-item label="订阅 ID">{{ detailRow.id }}</el-descriptions-item>
+          <el-descriptions-item label="最近命中">{{ fmtTime(detailRow.last_hit_at) || '—' }}</el-descriptions-item>
+          <el-descriptions-item v-if="detailRow.last_error" label="最近错误">
+            <span class="sub-error">{{ detailRow.last_error }}</span>
+          </el-descriptions-item>
+        </el-descriptions>
+        <div class="detail-json-title">编译产物 (只读)</div>
+        <pre class="preview-json">{{ detailCompiledText }}</pre>
+      </template>
+    </el-drawer>
+  </div>
+</template>
+
+<script setup lang="ts">
+/**
+ * 智能订阅管理视图 (NL 事件订阅 P2 前端入口)
+ * [SUBSCRIBE 2026-09-22] 规格 v1.1 §3.8/§4.3/§7.1:
+ *   创建流 = NL 输入 → compile-preview (AI 编译) → 用户确认产物 → 创建 (DRAFT)
+ *   → confirm (落动作载体规则, SANDBOX 影子观察) → verify 达标 → ACTIVE
+ *   状态机操作按钮可见性与后端 SubscriptionStore 迁移表严格对齐
+ *   (DRAFT 才 confirm/删除; SANDBOX/ACTIVE 才采样; pause 仅 ACTIVE —
+ *    SANDBOX 态 pause 会被后端 1409 拒绝, 属设计行为)
+ */
+import { ref, computed, onMounted } from 'vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { Plus, Refresh } from '@element-plus/icons-vue'
+import {
+  compilePreview, createSubscription, listSubscriptions,
+  updateSubscription, sampleSubscription, deleteSubscription, verifySubscription,
+  type AgentSubscription, type CompilePreviewResult, type SubscriptionSampleResult,
+} from '@/api/agentSubscriptions'
+import { channelApi } from '@/api/channel'
+
+// ── 状态展示映射 (与后端 subscriptionStatusToString 对齐) ──
+const STATUS_META: Record<string, { text: string; tag: 'info' | 'warning' | 'success' | 'danger' }> = {
+  DRAFT: { text: '草稿', tag: 'info' },
+  SANDBOX: { text: '影子观察', tag: 'warning' },
+  ACTIVE: { text: '已激活', tag: 'success' },
+  PAUSED: { text: '已暂停', tag: 'danger' },
+}
+const statusText = (s: string) => STATUS_META[s]?.text ?? s
+const statusTag = (s: string) => STATUS_META[s]?.tag ?? 'info'
+
+// ── 列表 ──
+const list = ref<AgentSubscription[]>([])
+const loading = ref(false)
+const statusFilter = ref('')
+async function load() {
+  loading.value = true
+  try {
+    const res = await listSubscriptions(statusFilter.value ? { status: statusFilter.value } : undefined)
+    list.value = res.data?.data?.subscriptions ?? []
+  } catch (e) {
+    handleErr(e, '加载订阅列表失败')
+  } finally {
+    loading.value = false
+  }
+}
+onMounted(load)
+
+/** 编译产物 kind (compiled 可能是对象或解析失败回退的字符串) */
+function kindOf(s: AgentSubscription): string {
+  if (s.compiled && typeof s.compiled === 'object') return String(s.compiled.kind ?? '')
+  return ''
+}
+
+// ── 创建 (两步: 预览 → 确认) ──
+const createVisible = ref(false)
+const nlInput = ref('')
+const nameInput = ref('')
+const previewing = ref(false)
+const creating = ref(false)
+const previewRes = ref<CompilePreviewResult | null>(null)
+
+function openCreate() {
+  nlInput.value = ''
+  nameInput.value = ''
+  previewRes.value = null
+  createVisible.value = true
+}
+
+async function onPreview() {
+  previewing.value = true
+  previewRes.value = null
+  try {
+    const res = await compilePreview(nlInput.value.trim())
+    previewRes.value = res.data?.data ?? null
+  } catch (e) {
+    // 1400 超字数 / SUB_LLM_NOT_READY (可稍后重试) / SUB_INTENT_UNCLEAR 等结构化错误
+    handleErr(e, '编译预览失败')
+  } finally {
+    previewing.value = false
+  }
+}
+
+const previewKindText = computed(() => {
+  if (!previewRes.value) return ''
+  return previewRes.value.need_vlm
+    ? '订阅包含视觉语义判断, 命中由 VLM 抓帧复核后注入联动引擎'
+    : '订阅已编译为可执行的联动规则, 命中走规则引擎判定'
+})
+
+async function onCreate() {
+  if (!previewRes.value) return
+  creating.value = true
+  try {
+    // 名称缺省自动生成 (后端 name 必填; 避免撞 SUB_DUPLICATE)
+    const name = nameInput.value.trim() || `订阅-${new Date().toISOString().slice(5, 16).replace('T', ' ')}`
+    await createSubscription({
+      nl_text: previewRes.value.nl_text,
+      name,
+      preview: previewRes.value,
+      channels: [],
+    })
+    ElMessage.success('订阅已创建 (草稿) — 点击「确认编译」进入影子观察')
+    createVisible.value = false
+    await load()
+  } catch (e) {
+    handleErr(e, '创建订阅失败')
+  } finally {
+    creating.value = false
+  }
+}
+
+// ── 状态机操作 ──
+async function onConfirm(row: AgentSubscription) {
+  try {
+    await updateSubscription(row.id, { action: 'confirm' })
+    ElMessage.success('已确认 — 进入影子观察期 (规则已挂载但暂不真实联动)')
+    await load()
+  } catch (e) {
+    handleErr(e, '确认失败')
+  }
+}
+
+async function onAction(row: AgentSubscription, action: 'pause' | 'resume') {
+  try {
+    await updateSubscription(row.id, { action })
+    ElMessage.success(action === 'pause' ? '已暂停 (联动规则同步禁用)' : '已恢复 (联动规则同步启用)')
+    await load()
+  } catch (e) {
+    handleErr(e, '操作失败')
+  }
+}
+
+async function onDelete(row: AgentSubscription) {
+  try {
+    await ElMessageBox.confirm(`确定删除订阅「${row.name}」吗？`, '删除订阅', { type: 'warning' })
+  } catch {
+    return
+  }
+  try {
+    await deleteSubscription(row.id)
+    ElMessage.success('已删除')
+    await load()
+  } catch (e) {
+    handleErr(e, '删除失败 (仅草稿态可删除)')
+  }
+}
+
+async function onVerify(row: AgentSubscription) {
+  try {
+    await verifySubscription(row.id)
+    ElMessage.success('验证已提交')
+    await load()
+  } catch (e) {
+    // 后端契约先行 (1501 能力建设中) — 如实提示
+    handleErr(e, '验证未完成')
+  }
+}
+
+const canSample = (row: AgentSubscription) => row.status === 'SANDBOX' || row.status === 'ACTIVE'
+
+// ── 手动采样 ──
+const sampleVisible = ref(false)
+const sampling = ref(false)
+const sampleRes = ref<SubscriptionSampleResult | null>(null)
+const sampleChannel = ref('')
+const channelOpts = ref<{ id: string; name: string }[]>([])
+let sampleTarget: AgentSubscription | null = null
+
+async function openSample(row: AgentSubscription) {
+  sampleTarget = row
+  sampleRes.value = null
+  sampleVisible.value = true
+  if (channelOpts.value.length === 0) {
+    try {
+      const res = await channelApi.getList({ pageSize: 100 })
+      // [FIX 2026-09-24 真机] 后端通道实体的键是 channel_id (20 位国标码字符串),
+      //   ChannelItem.id 在该响应中不存在 — 取值必须 channel_id 优先, 否则下拉空
+      channelOpts.value = (res.data?.data?.items ?? []).map(c => ({
+        id: (c as unknown as { channel_id?: string }).channel_id ?? c.id,
+        name: c.name,
+      }))
+    } catch {
+      // 通道列表拉取失败不阻塞弹层 — 用户仍可手动输入? MVP 直接提示
+      handleErr(new Error('通道列表加载失败'), '采样')
+    }
+  }
+  if (!sampleChannel.value) sampleChannel.value = channelOpts.value[0]?.id ?? ''
+}
+
+async function onSample() {
+  if (!sampleTarget || !sampleChannel.value) return
+  sampling.value = true
+  sampleRes.value = null
+  try {
+    const res = await sampleSubscription(sampleTarget.id, sampleChannel.value)
+    sampleRes.value = res.data?.data ?? null
+  } catch (e) {
+    handleErr(e, '采样失败')
+  } finally {
+    sampling.value = false
+  }
+}
+
+// ── 详情 ──
+const detailVisible = ref(false)
+const detailRow = ref<AgentSubscription | null>(null)
+const detailCompiledText = computed(() => {
+  const c = detailRow.value?.compiled
+  if (!c) return '(尚未编译)'
+  return typeof c === 'string' ? c : JSON.stringify(c, null, 2)
+})
+function openDetail(row: AgentSubscription) {
+  detailRow.value = row
+  detailVisible.value = true
+}
+
+// ── 工具 ──
+function fmtTime(ms?: number): string {
+  if (!ms) return '—'
+  const d = new Date(ms)
+  return d.toLocaleString('zh-CN', { hour12: false })
+}
+function handleErr(e: unknown, fallback: string) {
+  const msg = e instanceof Error && e.message ? e.message : fallback
+  ElMessage.error(msg)
+}
+</script>
+
+<style scoped>
+.agent-sub-page { padding: 16px 20px; }
+.page-title h2 { margin: 0 0 14px; font-size: 20px; }
+.toolbar-card { margin-bottom: 14px; }
+.toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.toolbar-actions { display: flex; gap: 10px; flex-shrink: 0; }
+.page-desc { color: var(--el-text-color-secondary); font-size: 13px; line-height: 1.6; }
+.sub-name { font-weight: 600; }
+.sub-nl { color: var(--el-text-color-secondary); font-size: 12px; margin-top: 2px; }
+.sub-error { color: var(--el-color-danger); font-size: 12px; }
+.preview-hint { margin-left: 10px; color: var(--el-text-color-secondary); font-size: 12px; }
+.preview-box { width: 100%; }
+.preview-kind { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.preview-kind-text { color: var(--el-text-color-secondary); font-size: 12px; }
+.preview-json {
+  margin: 0; padding: 10px; max-height: 220px; overflow: auto;
+  background: var(--el-fill-color-light); border-radius: 6px;
+  font-size: 12px; line-height: 1.5; white-space: pre-wrap; word-break: break-all;
+}
+.sample-result { margin-top: 4px; }
+.sample-meta {
+  display: flex; gap: 16px; flex-wrap: wrap; margin-top: 10px;
+  color: var(--el-text-color-secondary); font-size: 13px;
+}
+.detail-json-title { margin: 14px 0 8px; font-weight: 600; font-size: 13px; }
+</style>

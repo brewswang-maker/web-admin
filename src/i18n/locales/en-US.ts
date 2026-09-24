@@ -161,6 +161,7 @@ const enUS: MessageSchema = {
     pipelineEditor: 'Pipeline Editor',
     pipelineHealth: 'Pipeline Health',
     linkage: 'Linkage Rules',
+    agentSub: 'Smart Subscriptions', // [SUBSCRIBE 2026-09-22 NL事件订阅 P2]
     floorMap: 'Floor Maps', // [FLOOR-MAP 2026-09-03]
     situationScreen: 'Situation Screen',
     statistics: 'Statistics',

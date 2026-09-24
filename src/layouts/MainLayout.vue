@@ -344,6 +344,10 @@
             <el-icon><Connection /></el-icon>
             <template #title>{{ $t('menu.linkage') }}</template>
           </el-menu-item>
+          <el-menu-item index="/agent-subscriptions">
+            <el-icon><MagicStick /></el-icon>
+            <template #title>{{ $t('menu.agentSub') }}</template>
+          </el-menu-item>
           <el-menu-item index="/projects" v-if="auth.can('projects', 'read')">
             <el-icon><FolderOpened /></el-icon>
             <template #title>{{ $t('menu.projects') }}</template>
@@ -798,6 +802,8 @@ const primaryMenus = computed<PrimaryMenu[]>(() => {
       { path: '/scene-management', label: '3D场景管理', icon: MapLocation, roles: ['admin'] },
       { path: '/topology', label: t('menu.topology'), icon: Share },
       { path: '/linkage', label: t('menu.linkage'), icon: Connection },
+      // [SUBSCRIBE 2026-09-22 NL事件订阅 P2] 智能订阅入口 (与联动规则同域, 全员可见)
+      { path: '/agent-subscriptions', label: t('menu.agentSub'), icon: MagicStick },
       { path: '/projects', label: t('menu.projects'), icon: FolderOpened },
       { path: '/teams', label: t('menu.team'), icon: User, roles: ['admin'] },
       { path: '/upgrade', label: t('menu.ota'), icon: Upload, roles: ['admin'] },
@@ -1072,6 +1078,7 @@ watch(searchQuery, async (q) => {
       { type: t('search.page'), title: t('menu.algorithms'), path: '/algorithm-store', desc: t('menu.algorithms') },
       { type: t('search.page'), title: t('menu.billing'), path: '/billing', desc: t('menu.billing') },
       { type: t('search.page'), title: t('menu.linkage'), path: '/linkage', desc: t('menu.linkage') },
+      { type: t('search.page'), title: t('menu.agentSub'), path: '/agent-subscriptions', desc: t('menu.agentSub') },
       { type: t('search.page'), title: t('menu.gb28181'), path: '/gb28181', desc: t('menu.gb28181') },
       { type: t('search.page'), title: t('menu.onvif'), path: '/onvif', desc: t('menu.onvif') },
       { type: t('search.page'), title: t('menu.streams'), path: '/streams', desc: t('menu.streams') },

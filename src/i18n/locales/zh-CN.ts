@@ -159,6 +159,7 @@ const zhCN = {
     pipelineEditor: '流水线编辑',
     pipelineHealth: '流水线健康',
     linkage: '联动规则',
+    agentSub: '智能订阅', // [SUBSCRIBE 2026-09-22 NL事件订阅 P2]
     floorMap: '平面图', // [FLOOR-MAP 2026-09-03]
     situationScreen: '态势大屏',
     statistics: '数据分析',

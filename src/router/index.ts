@@ -38,6 +38,8 @@ const RecordingView = () => import('@/views/RecordingView.vue')
 const PipelineListView = () => import('@/views/PipelineListView.vue')
 const PipelineEditorView = () => import('@/views/PipelineEditorView.vue')
 const LinkageRuleView = () => import('@/views/LinkageRuleView.vue')
+// [SUBSCRIBE 2026-09-22 NL事件订阅 P2] 智能订阅管理页 (NL→编译→影子观察→告警)
+const AgentSubscriptionView = () => import('@/views/AgentSubscriptionView.vue')
 // [FLOOR-MAP 2026-09-03] 2D 室内定位平面图管理页 (三层联动·管理层)
 const FloorMapView = () => import('@/views/FloorMapView.vue')
 const FederationDashboard = () => import('@/views/FederationDashboard.vue')
@@ -270,6 +272,13 @@ export const asyncRoutes: RouteRecordRaw[] = [
         name: 'LinkageRule',
         component: LinkageRuleView,
         meta: { title: '联动规则', icon: 'Connection', roles: ['admin', 'user'] }
+      },
+      {
+        // [SUBSCRIBE 2026-09-22 NL事件订阅 P2] 智能订阅 (与联动规则同域, 全员可见对齐 linkage)
+        path: 'agent-subscriptions',
+        name: 'AgentSubscription',
+        component: AgentSubscriptionView,
+        meta: { title: '智能订阅', icon: 'MagicStick', roles: ['admin', 'user'] }
       },
       {
         // [FLOOR-MAP 2026-09-03] 平面图管理 (admin 专属, 照 algo-config 对齐)
