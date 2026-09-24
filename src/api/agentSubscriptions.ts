@@ -38,6 +38,8 @@ export interface AgentSubscription {
   last_error?: string
   /** 最近命中时间戳 ms (影子观察期也记账 — verify 达标判定输入) */
   last_hit_at?: number
+  /** [P3 2026-09-24] 累计命中次数 (订阅级聚合: 冷却抑通知不丢计) */
+  hit_count?: number
 }
 
 /** 编译预览响应 — kind/need_vlm 是确认弹层分流文案的依据 */
@@ -69,6 +71,8 @@ export interface CreateSubscriptionReq {
   /** 监控通道; 空 = 全通道 */
   channels?: string[]
   notify_channels?: string[]
+  /** [P3 2026-09-24] 电话提醒开关 (§4.3): true → notify_channels 含 phone */
+  phone_notify?: boolean
 }
 
 // ── 八端点封装 (与 RestApiHandlers.cpp L11233-11610 一一对应) ──

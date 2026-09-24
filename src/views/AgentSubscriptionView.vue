@@ -46,8 +46,12 @@
             {{ (row.channels && row.channels.length) ? row.channels.join(', ') : '全通道' }}
           </template>
         </el-table-column>
-        <el-table-column label="最近命中" width="170">
-          <template #default="{ row }">{{ fmtTime(row.last_hit_at) }}</template>
+        <el-table-column label="命中 (累计)" width="170">
+          <template #default="{ row }">
+            <div>{{ fmtTime(row.last_hit_at) }}</div>
+            <!-- [P3 2026-09-24] 订阅级聚合计数: 冷却窗抑制重复通知但计数不丢 -->
+            <div v-if="row.hit_count > 0" class="sub-hit-count">共 {{ row.hit_count }} 次</div>
+          </template>
         </el-table-column>
         <el-table-column label="操作" width="320" fixed="right">
           <template #default="{ row }">
@@ -95,6 +99,11 @@
         </el-form-item>
         <el-form-item label="订阅名称">
           <el-input v-model="nameInput" maxlength="30" placeholder="给订阅起个名字（默认自动生成）" />
+        </el-form-item>
+        <!-- [P3 2026-09-24] 规格 §4.3 电话提醒开关: notify_channels 含 phone -->
+        <el-form-item label="电话提醒">
+          <el-switch v-model="phoneNotify" />
+          <span class="phone-hint">命中后自动拨打，未接听将重试</span>
         </el-form-item>
       </el-form>
       <template #footer>
@@ -269,11 +278,13 @@ const nameInput = ref('')
 const previewing = ref(false)
 const creating = ref(false)
 const previewRes = ref<CompilePreviewResult | null>(null)
+const phoneNotify = ref(false)  // [P3 2026-09-24] 电话提醒开关 (§4.3)
 
 function openCreate() {
   nlInput.value = ''
   nameInput.value = ''
   previewRes.value = null
+  phoneNotify.value = false
   createVisible.value = true
 }
 
@@ -309,6 +320,7 @@ async function onCreate() {
       name,
       preview: previewRes.value,
       channels: [],
+      phone_notify: phoneNotify.value,  // [P3] 电话提醒开关 → notify_channels 含 phone
     })
     ElMessage.success('订阅已创建 (草稿) — 点击「确认编译」进入影子观察')
     createVisible.value = false
@@ -480,6 +492,10 @@ function handleErr(e: unknown, fallback: string) {
 .sub-nl { color: var(--el-text-color-secondary); font-size: 12px; margin-top: 2px; }
 .sub-error { color: var(--el-color-danger); font-size: 12px; }
 .preview-hint { margin-left: 10px; color: var(--el-text-color-secondary); font-size: 12px; }
+
+/* [P3 2026-09-24] 电话开关副文案 + 订阅聚合命中计数 */
+.phone-hint { margin-left: 10px; color: var(--el-text-color-secondary); font-size: 12px; }
+.sub-hit-count { margin-top: 2px; color: var(--el-text-color-secondary); font-size: 12px; }
 .preview-box { width: 100%; }
 .preview-kind { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
 .preview-kind-text { color: var(--el-text-color-secondary); font-size: 12px; }
