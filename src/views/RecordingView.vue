@@ -2,7 +2,7 @@
 import { ref, reactive, onMounted, computed, watch, nextTick, onUnmounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { deviceHttp, recordingHttp } from '@/api/http'
+import { deviceHttp, recordingHttp, alarmHttp } from '@/api/http'
 import { alarmApi } from '@/api/alarm'  // [P3-VP1] 时间轴告警标记
 import { getRecordings, playRecording, stopPlayback as stopRecordingPlayback, controlPlayback, downloadRecording, recordUrlCandidates, toLocalISOString, exportRangeRecordingAsync, fetchAndDownload, ensureRecordTranscoded, markRecordStart, markRecordStop, type RecordingSegment as ApiRecordingSeg } from '@/api/recording'
 import {
@@ -2155,6 +2155,53 @@ async function deleteLocalRecording(rec: LocalRecording) {
 }
 
 // ---- Task #26: AI 智能检索 ----
+// [SUBSCRIBE 2026-09-24 M1 收尾] NL 自然语言检索 (规格 §6.1 M1: NL 输入 + LLM 摘要 +
+//   时间线卡片; 后端 GET /alarms/search?nl= 已有 — TinyLLM parseAlarmQuery 解析,
+//   TF-IDF 相关性打分排序; 摘要卡由结构化理解结果前端合成, 不额外消耗一次 LLM)
+const NL_EXAMPLES = ['今天的入侵事件', '最近一小时火灾', '昨天的摔倒']
+const smartNl = ref('')
+const smartNlLoading = ref(false)
+const smartNlSummary = ref<{ parse_ok: boolean; understanding: string; total: number } | null>(null)
+
+async function doNlSearch() {
+  const nl = smartNl.value.trim()
+  if (!nl) return
+  smartNlLoading.value = true
+  smartNlSummary.value = null
+  try {
+    const { data } = await alarmHttp.get('/search', { params: { nl } })
+    const d = data?.data
+    const items = (d?.items ?? []) as Array<Record<string, unknown>>
+    smartTotal.value = d?.total ?? items.length
+    // 映射进现有 SmartSearchResult 复用 时间线/结果表/跳转 链路 —
+    // snapshot_path/target_type 该端点不返回, 现有列分支 (无截图/空目标) 已兼容
+    smartResults.value = items.map((it, i) => ({
+      id: (it.alarm_id as string) ?? i,
+      alarm_type: (it.alarm_type as string) ?? '',
+      target_type: '',
+      confidence: (it.confidence as number) ?? 0,
+      timestamp: it.timestamp as number,
+      channel_id: String(it.channel_id ?? ''),
+      snapshot_path: '',
+    }))
+    // 摘要卡: 后端 filter 已是理解产物 (parse_ok=true=LLM 解析 / false=关键词降级)
+    const f = (d?.filter ?? {}) as { alarm_type?: string; start_ms?: number; end_ms?: number }
+    const spanH = f.start_ms
+      ? Math.max(1, Math.round(((f.end_ms ?? Date.now()) - f.start_ms) / 3600000))
+      : null
+    smartNlSummary.value = {
+      parse_ok: !!d?.parse_ok,
+      understanding: `类型 ${f.alarm_type ? zh(f.alarm_type) : '全部'}${spanH ? ` · 近 ${spanH} 小时` : ''}`,
+      total: smartTotal.value,
+    }
+    await nextTick()
+    drawTimelineWithDetections()
+  } catch {
+    ElMessage.error('NL 检索失败')
+  } finally {
+    smartNlLoading.value = false
+  }
+}
 // [FIX rec-fuse2 2026-09-11] 后端实际返回: timestamp 为 int 毫秒, channel_id 为告警库
 //   hash 整型字符串, 无 device_id/recording_id (老库表结构); 类型放宽以保证渲染与
 //   跳转逻辑不再对数字调用字符串方法。
@@ -3167,6 +3214,25 @@ onUnmounted(() => {
     <el-drawer v-model="smartDrawerVisible" title="AI 智能检索" :size="720" direction="rtl">
       <div class="smart-drawer-body">
         <div class="smart-search-form">
+          <!-- [SUBSCRIBE 2026-09-24 M1 收尾] NL 自然语言检索行 (规格 §1.2: 叠加不推翻基线,
+               后端 GET /alarms/search TinyLLM parseAlarmQuery + 关键词降级已有) -->
+          <div class="smart-form-row smart-nl-row">
+            <el-input
+              v-model="smartNl" clearable
+              placeholder="用一句话检索，例：今天的入侵事件 / 最近一小时火灾"
+              @keyup.enter="doNlSearch"
+            />
+            <el-button type="warning" :loading="smartNlLoading" :disabled="!smartNl.trim()" @click="doNlSearch">
+              AI 检索
+            </el-button>
+          </div>
+          <div class="smart-form-row smart-nl-examples">
+            <span class="smart-label">试试:</span>
+            <el-tag
+              v-for="q in NL_EXAMPLES" :key="q" size="small" type="info"
+              class="smart-nl-example" @click="smartNl = q; doNlSearch()"
+            >{{ q }}</el-tag>
+          </div>
           <div class="smart-form-row">
             <span class="smart-label">告警类型:</span>
             <el-select v-model="smartQuery.alarm_type" placeholder="全部" clearable style="width:150px">
@@ -3196,6 +3262,15 @@ onUnmounted(() => {
             <el-button type="primary" @click="doSmartSearch" :loading="smartLoading">开始检索</el-button>
           </div>
         </div>
+
+        <!-- AI 摘要卡: NL 检索理解结果 (LLM 解析/关键词降级 如实标注) -->
+        <el-alert
+          v-if="smartNlSummary" closable class="smart-nl-summary"
+          :type="smartNlSummary.parse_ok ? 'success' : 'warning'"
+          :title="`AI 理解：${smartNlSummary.understanding} · 命中 ${smartNlSummary.total} 条`">
+          <span v-if="!smartNlSummary.parse_ok">语义解析不可用, 已降级为关键词匹配 — 结果可能偏宽</span>
+          <span v-else>已按语义解析结果过滤, 点击下方结果可跳转到该时刻回放</span>
+        </el-alert>
 
         <!-- AI 检测时间分布 (24小时) -->
         <el-card v-if="smartResults.length" shadow="never" class="smart-dist-card">
@@ -3264,6 +3339,10 @@ onUnmounted(() => {
 .smart-search-form { display: flex; flex-direction: column; gap: 12px; }
 .smart-form-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .smart-label { font-size: 13px; color: #606266; white-space: nowrap; flex-shrink: 0; }
+/* NL 检索行 + 摘要卡 (subscribe-verify 2026-09-24 M1 收尾) */
+.smart-nl-row .el-input { flex: 1; min-width: 260px; }
+.smart-nl-example { cursor: pointer; }
+.smart-nl-summary { margin-bottom: 10px; }
 
 /* [V4-X4 2026-07-08] 播放器进度条与全屏 */
 .video-container {

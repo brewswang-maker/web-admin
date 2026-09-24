@@ -106,11 +106,12 @@ export function getSubscription(id: string) {
 
 /**
  * [5] PUT /agent/subscriptions/:id 状态迁移/改名
- * action: confirm (DRAFT→SANDBOX, 需编译产物) | pause | resume; 缺省 = 改名
+ * action: confirm (DRAFT→SANDBOX, 需编译产物) | activate (SANDBOX→ACTIVE,
+ * 需先 verify 达标否则 1409 SUB_VERIFY_NOT_PASSED) | pause | resume; 缺省 = 改名
  */
 export function updateSubscription(
   id: string,
-  data: { action?: 'confirm' | 'pause' | 'resume'; name?: string }
+  data: { action?: 'confirm' | 'activate' | 'pause' | 'resume'; name?: string }
 ) {
   return http.put<ApiResponse<{ subscription: AgentSubscription }>>(
     `/agent/subscriptions/${id}`,
@@ -133,9 +134,35 @@ export function deleteSubscription(id: string) {
   return http.delete<ApiResponse<{ message: string }>>(`/agent/subscriptions/${id}`)
 }
 
-/** [8] POST /agent/subscriptions/:id/verify SANDBOX 历史回放验证 (后端契约先行, 恒 1501) */
+/** SANDBOX 历史回放验证报告 — 字段与后端 SubscriptionVerifyReport 一一对应
+ *  (口径: 验证「产物可执行 + 画面有效 + 无误报风暴」, 非命中竞赛 — 头文件注释) */
+export interface VerifyReport {
+  /** 有效样本充足 (语义类快照帧 ≥3 / 规则类 24h 事件记录 ≥1) */
+  feasible: boolean
+  /** 实际扫描帧数 (读文件失败不计; 规则类恒 0) */
+  frames_scanned: number
+  hits: number
+  /** 无效画面帧 (NO VIDEO 哨兵拦截) */
+  invalid_frames: number
+  /** 真实跑通判定链的帧 (status=ok) */
+  backend_ok_frames: number
+  backend_failures: number
+  /** 规则类: 24h 匹配事件记录数 */
+  rule_events_24h: number
+  evidence_frames: string[]
+  evidence_summary: string
+  elapsed_ms: number
+  error_message: string
+}
+
+/** [8] POST /agent/subscriptions/:id/verify SANDBOX 历史回放验证 (仅 SANDBOX 态)
+ *  next: confirm_activate = 达标可人工激活; shadow_observe = 继续影子观察 */
 export function verifySubscription(id: string) {
-  return http.post<ApiResponse<{ report: unknown }>>(
+  return http.post<ApiResponse<{
+    report: VerifyReport
+    meets_threshold: boolean
+    next: 'confirm_activate' | 'shadow_observe'
+  }>>(
     `/agent/subscriptions/${id}/verify`,
     {}
   )

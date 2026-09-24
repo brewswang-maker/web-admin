@@ -138,6 +138,56 @@
       </div>
     </el-dialog>
 
+    <!-- 验证报告弹层: 历史回放结果 + 达标人工确认激活 (规格红线 #2: 激活必须人工确认) -->
+    <el-dialog v-model="verifyVisible" title="历史回放验证报告" width="640px" :close-on-click-modal="false">
+      <div v-loading="verifying" element-loading-text="正在回放近 24h 样本并逐帧判定…" style="min-height: 120px">
+      <template v-if="verifyRes">
+        <el-alert
+          :type="verifyMeets ? 'success' : 'warning'"
+          :closable="false"
+          :title="verifyMeets ? '回放验证达标 — 可人工确认激活' : '未达标 — 保持影子观察期继续积累样本'"
+          :description="verifyMeets
+            ? '激活后订阅进入真实联动 (命中将执行通知动作)。历史回放验证的是产物可执行与画面有效, 不代表未来必然命中。'
+            : (verifyRes.report.error_message || '有效样本不足或画面无效占比过高, 建议稍后重新验证。')"
+        />
+        <el-descriptions :column="2" border size="small" class="verify-stats">
+          <el-descriptions-item label="验证方式">
+            {{ verifyRes.report.frames_scanned > 0 ? '快照帧逐帧判定' : (verifyRes.report.rule_events_24h > 0 ? '规则事件记录' : '样本不足') }}
+          </el-descriptions-item>
+          <el-descriptions-item label="耗时">{{ verifyRes.report.elapsed_ms }}ms</el-descriptions-item>
+          <el-descriptions-item label="扫描样本">{{ verifyRes.report.frames_scanned }} 帧</el-descriptions-item>
+          <el-descriptions-item label="24h 事件记录">{{ verifyRes.report.rule_events_24h }} 条</el-descriptions-item>
+          <el-descriptions-item label="命中帧">{{ verifyRes.report.hits }}</el-descriptions-item>
+          <el-descriptions-item label="无效画面 (拦截)">{{ verifyRes.report.invalid_frames }}</el-descriptions-item>
+          <el-descriptions-item label="判定链跑通">{{ verifyRes.report.backend_ok_frames }} 帧</el-descriptions-item>
+          <el-descriptions-item label="链路失败">{{ verifyRes.report.backend_failures }} 帧</el-descriptions-item>
+        </el-descriptions>
+        <div v-if="verifyRes.report.evidence_frames.length" class="verify-evidence">
+          <div class="detail-json-title">证据帧 (近 24h 回放抽样)</div>
+          <div class="verify-frames">
+            <el-image
+              v-for="f in verifyRes.report.evidence_frames" :key="f"
+              :src="f" :preview-src-list="verifyRes.report.evidence_frames"
+              fit="cover" class="verify-frame" hide-on-click-modal
+            />
+          </div>
+        </div>
+        <div v-if="verifyRes.report.evidence_summary" class="verify-summary">
+          首个命中证据: {{ verifyRes.report.evidence_summary }}
+        </div>
+      </template>
+      </div>
+      <template #footer>
+        <el-button @click="verifyVisible = false">关闭</el-button>
+        <el-button
+          v-if="verifyMeets && verifyTarget"
+          type="primary" :loading="activating" @click="onActivate"
+        >
+          确认激活 (进入真实联动)
+        </el-button>
+      </template>
+    </el-dialog>
+
     <!-- 详情抽屉: 编译产物只读 + 错误信息 -->
     <el-drawer v-model="detailVisible" title="订阅详情" size="480px">
       <template v-if="detailRow">
@@ -175,6 +225,7 @@ import {
   compilePreview, createSubscription, listSubscriptions,
   updateSubscription, sampleSubscription, deleteSubscription, verifySubscription,
   type AgentSubscription, type CompilePreviewResult, type SubscriptionSampleResult,
+  type VerifyReport,
 } from '@/api/agentSubscriptions'
 import { channelApi } from '@/api/channel'
 
@@ -305,14 +356,46 @@ async function onDelete(row: AgentSubscription) {
   }
 }
 
+// ── 验证报告 (SANDBOX 历史回放 → 达标人工激活) ──
+// [subscribe-verify 2026-09-24] verify 端点已实现 (此前恒 1501 契约占位):
+//   报告弹层展示回放统计 + 证据帧; meets_threshold 时人工点击激活 —
+//   后端 PUT activate 会对存档报告二次校验, 双保险绕不过红线 #2
+const verifyVisible = ref(false)
+const verifying = ref(false)
+const activating = ref(false)
+const verifyRes = ref<{ report: VerifyReport; meets_threshold: boolean; next: string } | null>(null)
+const verifyTarget = ref<AgentSubscription | null>(null)
+const verifyMeets = computed(() => verifyRes.value?.meets_threshold ?? false)
+
 async function onVerify(row: AgentSubscription) {
+  verifyTarget.value = row
+  verifyRes.value = null
+  verifying.value = true
+  verifyVisible.value = true
   try {
-    await verifySubscription(row.id)
-    ElMessage.success('验证已提交')
+    const res = await verifySubscription(row.id)
+    verifyRes.value = res.data?.data ?? null
+  } catch (e) {
+    verifyVisible.value = false
+    handleErr(e, '验证未完成 (仅影子观察态可验证)')
+  } finally {
+    verifying.value = false
+  }
+}
+
+async function onActivate() {
+  if (!verifyTarget.value) return
+  activating.value = true
+  try {
+    await updateSubscription(verifyTarget.value.id, { action: 'activate' })
+    ElMessage.success('已激活 — 订阅进入真实联动 (命中将执行通知动作)')
+    verifyVisible.value = false
     await load()
   } catch (e) {
-    // 后端契约先行 (1501 能力建设中) — 如实提示
-    handleErr(e, '验证未完成')
+    // 1409 SUB_VERIFY_NOT_PASSED (报告未达标/不存在) / SUB_INVALID_TRANSITION
+    handleErr(e, '激活失败')
+  } finally {
+    activating.value = false
   }
 }
 
@@ -411,4 +494,9 @@ function handleErr(e: unknown, fallback: string) {
   color: var(--el-text-color-secondary); font-size: 13px;
 }
 .detail-json-title { margin: 14px 0 8px; font-weight: 600; font-size: 13px; }
+/* 验证报告弹层 (subscribe-verify 2026-09-24) */
+.verify-stats { margin-top: 14px; }
+.verify-frames { display: flex; gap: 8px; flex-wrap: wrap; }
+.verify-frame { width: 96px; height: 64px; border-radius: 4px; background: var(--el-fill-color-light); }
+.verify-summary { margin-top: 10px; color: var(--el-text-color-secondary); font-size: 13px; }
 </style>
