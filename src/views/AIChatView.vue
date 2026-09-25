@@ -55,7 +55,7 @@
             <h2>华盾AI安全助手</h2>
             <p>基于MACSA五智能体架构，融合感知、研判、决策、执行、元认知五环认知</p>
             <div class="quick-actions">
-              <el-button v-for="qa in quickActions" :key="qa.text" @click="sendQuickAction(qa.prompt)">
+              <el-button v-for="qa in quickActions" :key="qa.text" @click="onQuickAction(qa)">
                 {{ qa.icon }} {{ qa.text }}
               </el-button>
             </div>
@@ -128,6 +128,48 @@
               </div>
             </div>
 
+            <!-- [FEAT subscribe-v12 2026-09-25] 订阅预览确认卡: AI 对话直通创建 (M3 第二入口) -->
+            <div v-else-if="msg.role === 'action' && msg.actionType === 'subscription_preview'" class="msg-bubble ai-bubble">
+              <img class="msg-avatar ai-avatar" :src="aiAvatarImage" alt="AI助手" />
+              <div v-if="msg.subPreview" class="sub-card">
+                <div class="sub-card-head">
+                  <el-tag :type="msg.subPreview.need_vlm ? 'warning' : 'primary'" size="small">
+                    {{ msg.subPreview.need_vlm ? '语义视觉任务 (VLM 复核)' : '结构化联动规则' }}
+                  </el-tag>
+                  <span class="sub-card-nl">{{ msg.subPreview.nl_text }}</span>
+                </div>
+                <pre class="sub-card-json">{{ formatJson(msg.subPreview.preview) }}</pre>
+                <template v-if="msg.subState === 'pending' || msg.subState === 'creating'">
+                  <div class="sub-card-row">
+                    <span class="sub-card-label">电话提醒</span>
+                    <el-switch v-model="msg.subPhone" size="small" :disabled="msg.subState === 'creating'" />
+                    <span class="sub-card-hint">命中后自动拨打，未接听将重试</span>
+                  </div>
+                  <div class="sub-card-actions">
+                    <el-button type="primary" size="small" :loading="msg.subState === 'creating'"
+                      @click="confirmSubscriptionCard(msg)">确认创建 (进入草稿)</el-button>
+                    <el-button size="small" :disabled="msg.subState === 'creating'"
+                      @click="msg.subState = 'cancelled'">取消</el-button>
+                  </div>
+                  <div class="sub-card-hint">创建后为草稿态, 需在订阅页「确认编译 → 影子观察 → 验证激活」</div>
+                </template>
+                <template v-else-if="msg.subState === 'created'">
+                  <el-alert type="success" :closable="false" title="订阅已创建 (草稿)"
+                    :description="`ID: ${msg.subSubId} — 请前往「智能订阅」页确认编译, 进入影子观察期`" />
+                  <div class="sub-card-actions">
+                    <el-button type="primary" size="small" @click="goSubscriptionPage">去订阅页管理</el-button>
+                  </div>
+                </template>
+                <template v-else-if="msg.subState === 'error'">
+                  <el-alert type="error" :closable="false" title="创建失败" :description="msg.subError" />
+                  <div class="sub-card-actions">
+                    <el-button size="small" @click="msg.subState = 'pending'">重试</el-button>
+                  </div>
+                </template>
+                <div v-else class="sub-card-hint">已取消该订阅预览。</div>
+              </div>
+            </div>
+
             <!-- 系统消息 -->
             <div v-else-if="msg.role === 'system'" class="msg-system">
               <span>{{ msg.content }}</span>
@@ -184,8 +226,8 @@
             <el-switch v-model="ttsEnabled" size="small" active-text="语音播报" inline-prompt
               style="margin: 0 8px" />
             <div class="input-shortcuts">
-              <el-button size="small" text v-for="qa in quickActions.slice(0,3)" :key="qa.text"
-                @click="sendQuickAction(qa.prompt)">{{ qa.text }}</el-button>
+              <el-button size="small" text v-for="qa in quickActions" :key="qa.text"
+                @click="onQuickAction(qa)">{{ qa.text }}</el-button>
             </div>
           </div>
         </div>
@@ -197,7 +239,9 @@
 
 <script setup lang="ts">
 import { ref, reactive, onMounted, nextTick, onUnmounted } from 'vue'
+import { useRouter } from 'vue-router'
 import { aiHttp } from '@/api/http'
+import { createSubscription, type CompilePreviewResult } from '@/api/agentSubscriptions'
 import { ElMessage } from 'element-plus'
 import { Promotion } from '@element-plus/icons-vue'
 import type { ApiResponse } from '@/types/common'
@@ -218,6 +262,12 @@ interface ChatMessage {
   running?: boolean
   snapshotUrl?: string
   actionType?: string
+  // [FEAT subscribe-v12 2026-09-25] AI 助手订阅预览卡状态机
+  subPreview?: CompilePreviewResult
+  subState?: 'pending' | 'creating' | 'created' | 'error' | 'cancelled'
+  subPhone?: boolean
+  subError?: string
+  subSubId?: string
 }
 interface Conversation { id: string; title: string; created_at: string }
 
@@ -237,11 +287,18 @@ const ttsEnabled = ref(false)
 let recognition: any = null
 let speechSynthesis: SpeechSynthesis | null = null
 
-const quickActions = [
+interface QuickAction { icon: string; text: string; prompt: string; special?: 'subscribe' }
+// [FEAT quick-cmd 2026-09-25] 快捷命令扩展: 用户点名 4 条 (今日报告/设备巡警/策略优化/
+//   策略分析) + 趋势分析保留 + 「新建订阅」直通 AI 订阅入口 (subscribe-v12)。
+//   设备巡警命中后端本地数据拦截 (不依赖 LLM); 订阅类为引导型: 点击后用户直接
+//   描述事件, 意图由 IntentParser SUBSCRIBE 判定, 预览产物经 SSE action 下发确认卡。
+const quickActions: QuickAction[] = [
   { icon: '📊', text: '今日报告', prompt: '帮我生成今日安全报告' },
-  { icon: '🔍', text: '设备巡检', prompt: '帮我检查所有设备的在线状态和运行情况' },
+  { icon: '🛡️', text: '设备巡警', prompt: '帮我做一次设备巡警，检查所有设备的在线状态和运行情况' },
   { icon: '⚡', text: '策略优化', prompt: '分析最近的告警数据，给出安全策略优化建议' },
+  { icon: '🧭', text: '策略分析', prompt: '结合最近告警数据分析当前安全策略的覆盖情况，指出可能遗漏的风险场景' },
   { icon: '📈', text: '趋势分析', prompt: '分析最近7天的告警趋势，识别高风险时段' },
+  { icon: '🔔', text: '新建订阅', prompt: '', special: 'subscribe' },
 ]
 
 let abortCtrl: AbortController | null = null
@@ -252,12 +309,70 @@ function scrollToBottom() {
   })
 }
 
-function renderMarkdown(text: string): string {
-  return text
-    .replace(/```(\w*)\n([\s\S]*?)```/g, '<pre><code class="lang-$1">$2</code></pre>')
+// markdown 渲染器: 块级 (标题/表格/列表/引用/分隔线/代码块) + 行内 (code/bold)
+//   [FEAT md-render 2026-09-25] 原实现仅 code/bold/换行 — 「策略优化/策略分析」等长回答的
+//   # 标题与 | 表格裸显 markdown 符号. 本版补块级渲染, 并顺势补 HTML 转义: 原 v-html 直插
+//   未转义文本, LLM 输出中的 <...> 会被浏览器当标签吞掉 (且属注入面). 实现为纯字符串
+//   状态机 (零第三方依赖, 标签始终配对) — 流式增量下未成形的表格/列表退化为纯文本行,
+//   不产生半截标签.
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+}
+
+function renderInline(s: string): string { // 入参须已转义
+  return s
     .replace(/`([^`]+)`/g, '<code>$1</code>')
     .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-    .replace(/\n/g, '<br>')
+}
+
+function renderMarkdown(text: string): string {
+  if (!text) return ''
+  // ① 围栏代码块先抽离 (\u0000 占位 — 转义与行级规则都不触碰), 块内原样转义
+  const fences: string[] = []
+  let src = text.replace(/```(\w*)\n([\s\S]*?)```/g, (_m: string, lang: string, code: string) => {
+    fences.push(`<pre><code${lang ? ` class="lang-${lang}"` : ''}>${escapeHtml(code.replace(/\n$/, ''))}</code></pre>`)
+    return `\u0000f${fences.length - 1}\u0000`
+  })
+  src = escapeHtml(src)
+  const lines = src.split('\n')
+  const html: string[] = []
+  let para: string[] = []
+  let listTag: 'ul' | 'ol' | null = null
+  const flushPara = () => { if (para.length) { html.push(para.join('<br>')); para = [] } }
+  const closeList = () => { if (listTag) { html.push(`</${listTag}>`); listTag = null } }
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]
+    // 代码块占位行 — 按块处理 (避免前后多出 <br>)
+    if (/^\s*\u0000f\d+\u0000\s*$/.test(line)) { flushPara(); closeList(); html.push(line.trim()); continue }
+    // 表格: 本行含 | 且下一行为 |---| 分隔行 (含 :---: 对齐符)
+    if (line.includes('|') && i + 1 < lines.length && lines[i + 1].includes('-') &&
+        /^\s*\|?[\s:|-]+\|[\s:|-]*$/.test(lines[i + 1])) {
+      flushPara(); closeList()
+      const cells = (l: string) =>
+        l.replace(/^\s*\|/, '').replace(/\|\s*$/, '').split('|').map((c) => renderInline(c.trim()))
+      const head = cells(line)
+      i += 2
+      const rows: string[][] = []
+      while (i < lines.length && lines[i].includes('|') && lines[i].trim()) { rows.push(cells(lines[i])); i++ }
+      i--
+      html.push('<table><thead><tr>' + head.map((c) => `<th>${c}</th>`).join('') + '</tr></thead><tbody>' +
+        rows.map((r) => '<tr>' + r.map((c) => `<td>${c}</td>`).join('') + '</tr>').join('') + '</tbody></table>')
+      continue
+    }
+    const h = line.match(/^(#{1,6})\s+(.+)$/)
+    if (h) { flushPara(); closeList(); html.push(`<h${h[1].length}>${renderInline(h[2])}</h${h[1].length}>`); continue }
+    if (/^\s*(?:-{3,}|\*{3,})\s*$/.test(line)) { flushPara(); closeList(); html.push('<hr>'); continue }
+    const bq = line.match(/^\s*&gt;\s?(.*)$/) // '>' 已被转义为 &gt;
+    if (bq) { flushPara(); closeList(); html.push(`<blockquote>${renderInline(bq[1])}</blockquote>`); continue }
+    const ul = line.match(/^\s*[-*]\s+(.+)$/)
+    if (ul) { flushPara(); if (listTag !== 'ul') { closeList(); html.push('<ul>'); listTag = 'ul' } html.push(`<li>${renderInline(ul[1])}</li>`); continue }
+    const ol = line.match(/^\s*(\d+)[.、]\s+(.+)$/) // 捕获序号: 子项打断后续排时用 start 属性对齐原始编号
+    if (ol) { flushPara(); if (listTag !== 'ol') { closeList(); html.push(`<ol start="${ol[1]}">`); listTag = 'ol' } html.push(`<li>${renderInline(ol[2])}</li>`); continue }
+    closeList()
+    para.push(line.trim() ? renderInline(line) : '') // 空行贡献空段 — 保留原 \n→<br> 空行观感
+  }
+  flushPara(); closeList()
+  return html.join('').replace(/\u0000f(\d+)\u0000/g, (_m, n: string) => fences[Number(n)])
 }
 
 function openSnapshot(url: string) {
@@ -321,6 +436,50 @@ function onToolbarAction(cmd: string) {
 function sendQuickAction(prompt: string) {
   inputText.value = prompt
   sendMessage()
+}
+
+// [FEAT quick-cmd 2026-09-25] 快捷命令统一入口: 订阅类 = 引导型 (不直接发送 —
+//   NL 由用户输入, 下一步消息经 IntentParser SUBSCRIBE 判定后回传预览卡);
+//   其余 = prompt 直发 (今日报告/设备巡警走后端本地数据拦截, 分析类走 LLM)。
+function onQuickAction(qa: QuickAction) {
+  if (qa.special === 'subscribe') {
+    messages.value.push({
+      role: 'system',
+      content: '订阅入口已就绪 · 请直接描述要关注的事件 (15 字内), 例: 有人闯入仓库就提醒我',
+    })
+    scrollToBottom()
+    return
+  }
+  sendQuickAction(qa.prompt)
+}
+
+// [FEAT subscribe-v12 2026-09-25] 订阅预览卡确认 → 复用既有创建端点 (同安全门同落库;
+//   产物 = 用户确认件直喂, 不重调 LLM — 与订阅页「确认创建」完全同口径, DRAFT 初态)。
+const router = useRouter()
+
+async function confirmSubscriptionCard(msg: ChatMessage) {
+  if (!msg.subPreview || msg.subState === 'creating') return
+  msg.subState = 'creating'
+  try {
+    const res = await createSubscription({
+      nl_text: msg.subPreview.nl_text,
+      name: '', // 后端缺省取 NL (与订阅页自动生成口径一致)
+      preview: msg.subPreview.preview,
+      channels: [],
+      phone_notify: !!msg.subPhone,
+    })
+    msg.subSubId = res.data?.data?.subscription?.id ?? ''
+    msg.subState = 'created'
+    messages.value.push({ role: 'system', content: '✅ 订阅已创建 (草稿) — 可前往「智能订阅」页确认编译' })
+  } catch (e: unknown) {
+    msg.subState = 'error'
+    msg.subError = e instanceof Error && e.message ? e.message : '创建订阅失败, 请稍后重试'
+  }
+  scrollToBottom()
+}
+
+function goSubscriptionPage() {
+  router.push({ name: 'AgentSubscription' })
 }
 
 // [P2-2] 语音输入 (Web Speech API SpeechRecognition)
@@ -594,6 +753,22 @@ function handleSSEEvent(evt: any, thinkSteps: ThinkStep[]) {
         if (!evt.success && evt.error) {
           messages.value.push({ role: 'system', content: `⚠️ 截图失败: ${evt.error}` })
         }
+      } else if (evt.action_type === 'subscription_preview') {
+        // [FEAT subscribe-v12 2026-09-25] 后端订阅编译预览 (compile-preview 同源产物)
+        messages.value.push({
+          role: 'action',
+          content: '',
+          actionType: 'subscription_preview',
+          status: 'success',
+          subPreview: {
+            preview: evt.preview,
+            kind: evt.kind ?? '',
+            need_vlm: !!evt.need_vlm,
+            nl_text: evt.nl_text ?? '',
+          } as CompilePreviewResult,
+          subState: 'pending',
+          subPhone: false,
+        })
       }
       break
     case 'text':
@@ -634,6 +809,16 @@ onUnmounted(() => {
 .snapshot-img { width: 100%; height: auto; display: block; border-radius: 8px; border: 1px solid #dcdfe6; transition: opacity 0.2s; }
 .snapshot-img:hover { opacity: 0.85; }
 .snapshot-error { color: #909399; font-size: 14px; padding: 12px; }
+
+/* [FEAT subscribe-v12 2026-09-25] 订阅预览确认卡 */
+.sub-card { background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 12px; padding: 10px 14px; width: 100%; max-width: 560px; }
+.sub-card-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.sub-card-nl { font-weight: 600; font-size: 13px; color: #1e40af; }
+.sub-card-json { background: #ffffff; border: 1px solid #dcdfe6; border-radius: 6px; padding: 8px 12px; font-size: 12px; color: #303133; overflow: auto; margin: 0 0 8px; max-height: 160px; }
+.sub-card-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.sub-card-label { font-size: 13px; color: #303133; }
+.sub-card-hint { color: #909399; font-size: 12px; }
+.sub-card-actions { display: flex; gap: 8px; margin: 8px 0 6px; }
 
 /* 左侧对话列表 */
 .chat-sidebar { width: 240px; background: #f7f8fa; border-right: 1px solid #e4e7ed; display: flex; flex-direction: column; flex-shrink: 0; }
@@ -684,6 +869,16 @@ onUnmounted(() => {
 .msg-content :deep(pre) { background: #f5f7fa; border: 1px solid #e4e7ed; border-radius: 6px; padding: 8px 12px; overflow-x: auto; font-size: 13px; margin: 8px 0; }
 .msg-content :deep(code) { font-family: 'Roboto Mono', monospace; font-size: 13px; }
 .msg-content :deep(strong) { color: #1A73E8; }
+/* [FEAT md-render 2026-09-25] 块级渲染配套样式: 标题/表格/列表/引用/分隔线 */
+.msg-content :deep(h1), .msg-content :deep(h2), .msg-content :deep(h3) { font-size: 15px; font-weight: 600; margin: 10px 0 6px; color: #1e3a8a; }
+.msg-content :deep(h4), .msg-content :deep(h5), .msg-content :deep(h6) { font-size: 14px; font-weight: 600; margin: 8px 0 4px; color: #1e3a8a; }
+.msg-content :deep(table) { border-collapse: collapse; margin: 8px 0; font-size: 13px; width: 100%; }
+.msg-content :deep(th), .msg-content :deep(td) { border: 1px solid #dbe4f0; padding: 4px 8px; text-align: left; }
+.msg-content :deep(th) { background: #eaf1fb; font-weight: 600; }
+.msg-content :deep(ul), .msg-content :deep(ol) { margin: 6px 0; padding-left: 20px; }
+.msg-content :deep(li) { margin: 2px 0; }
+.msg-content :deep(blockquote) { margin: 6px 0; padding: 4px 10px; border-left: 3px solid #93c5fd; background: #f0f6ff; color: #475569; }
+.msg-content :deep(hr) { border: none; border-top: 1px solid #dbe4f0; margin: 10px 0; }
 
 .msg-system { text-align: center; color: #909399; font-size: 12px; padding: 4px; }
 
@@ -724,7 +919,7 @@ onUnmounted(() => {
 .input-wrapper :deep(.el-button.is-circle) { margin-bottom: 4px; }
 .input-footer { display: flex; justify-content: space-between; align-items: center; margin-top: 6px; }
 .input-hint { color: #909399; font-size: 11px; }
-.input-shortcuts { display: flex; gap: 4px; }
+.input-shortcuts { display: flex; gap: 4px; flex-wrap: wrap; }
 
 /* 图片预览 */
 .image-preview-bar { display: flex; gap: 8px; padding: 6px 0; overflow-x: auto; }
