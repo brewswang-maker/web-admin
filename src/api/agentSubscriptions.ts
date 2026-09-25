@@ -28,8 +28,11 @@ export interface AgentSubscription {
   nl_text: string
   compiled?: CompiledArtifact | string
   status: SubscriptionStatus
-  /** 动作通知通道 (web_popup/email/phone 等, 后端 notifyChannelToString) */
+  /** 动作通知通道 (web_popup/email/phone/sms 等, 后端 notifyChannelToString) */
   notify_channels: string[]
+  /** [P2 2026-09-25 多用户通知对象] 订阅通知接收人 user_id 列表 (空 = 仅创建者
+   *  本人; PHONE/SMS/EMAIL 通道按此展开 user_ids, 多人值班场景对标萤石群组分享) */
+  notify_user_ids?: string[]
   /** 监控通道 id 列表 (string; 空 = 全通道) */
   channels: string[]
   created_by?: string
@@ -74,9 +77,12 @@ export interface CreateSubscriptionReq {
   /** [P1-4 2026-09-25] 监控通道多选 (通道 id / 20 位国标码); 空 = 全通道
    *  (后端 SubscriptionVerifier 过滤含国标码兼容) */
   channels?: string[]
-  /** [P1-1 2026-09-25] 通知方式多选 (canonical: ws/email/phone/tts_broadcast;
+  /** [P1-1 2026-09-25] 通知方式多选 (canonical: ws/email/phone/tts_broadcast/sms;
    *  宽容别名 push/mail/call/tts 亦可; 空/缺失 → 后端兜底 WS) */
   notify_channels?: string[]
+  /** [P2 2026-09-25 多用户通知对象] 通知接收人 user_id 列表 (多选; 空 = 仅创建者
+   *  本人 — 后端 SubscriptionCompiler notifyRecipients 展开 PHONE/SMS/EMAIL user_ids) */
+  notify_user_ids?: string[]
   /** [P3 2026-09-24] 电话提醒开关 (§4.3): true → notify_channels 含 phone */
   phone_notify?: boolean
 }

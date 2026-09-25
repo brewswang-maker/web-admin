@@ -100,17 +100,30 @@
         <el-form-item label="订阅名称">
           <el-input v-model="nameInput" maxlength="30" placeholder="给订阅起个名字（默认自动生成）" />
         </el-form-item>
-        <!-- [P1-1 2026-09-25 通知方式多选] 后端四通道白名单 (ws/email/phone/
-             tts_broadcast) 全量开放; 站内推送恒选不可关 (规格 §3.4 空勾选兜底 WS)。
-             电话/语音走 executor 独立链路, 不受免打扰 (静默时段) 限制 -->
+        <!-- [P1-1 2026-09-25 通知方式多选] 后端五通道白名单 (ws/email/phone/
+             tts_broadcast/sms) 全量开放; 站内推送恒选不可关 (规格 §3.4 空勾选兜底 WS)。
+             电话/语音走 executor 独立链路, 不受免打扰 (静默时段) 限制;
+             [P2 2026-09-25] 短信走腾讯云直连 (设置页 alarm.sms_notify 配置, 未配置降级 WS) -->
         <el-form-item label="通知方式">
           <el-checkbox-group v-model="notifyChannels">
             <el-checkbox label="ws" disabled>站内推送</el-checkbox>
             <el-checkbox label="email">邮件</el-checkbox>
             <el-checkbox label="phone">电话提醒</el-checkbox>
+            <el-checkbox label="sms">短信</el-checkbox>
             <el-checkbox label="tts_broadcast">语音播报</el-checkbox>
           </el-checkbox-group>
-          <div class="notify-tip">电话命中后自动拨打，未接听将重试；电话/语音不受免打扰限制</div>
+          <div class="notify-tip">电话命中后自动拨打，未接听将重试；电话/语音不受免打扰限制；短信经腾讯云直连发送（需在设置页配置）</div>
+        </el-form-item>
+        <!-- [P2 2026-09-25 多用户通知对象] 订阅通知接收人多选 (空 = 仅创建者本人);
+             电话/短信/邮件按此展开 user_ids (多人值班场景对标萤石群组分享) -->
+        <el-form-item label="通知对象">
+          <el-select
+            v-model="notifyUserIds" multiple clearable collapse-tags
+            :loading="userOptsLoading" placeholder="默认仅自己 (创建者)" style="width: 100%"
+          >
+            <el-option v-for="u in userOpts" :key="u.id" :label="u.label" :value="u.id" />
+          </el-select>
+          <div class="notify-tip">不选 = 仅通知创建者本人；电话/短信/邮件将发送给所选成员</div>
         </el-form-item>
         <!-- [P1-4 2026-09-25 通道范围] 订阅生效通道多选; 空 = 全部通道 (规格 §3.3)。
              后端 sub.channels 过滤含国标码兼容 (SubscriptionVerifier) -->
@@ -226,6 +239,7 @@
             {{ (detailRow.channels && detailRow.channels.length) ? detailRow.channels.join(', ') : '全通道' }}
           </el-descriptions-item>
           <el-descriptions-item label="通知方式">{{ notifyText(detailRow.notify_channels) }}</el-descriptions-item>
+          <el-descriptions-item label="通知对象">{{ detailUserText(detailRow.notify_user_ids) }}</el-descriptions-item>
           <el-descriptions-item label="订阅 ID">{{ detailRow.id }}</el-descriptions-item>
           <el-descriptions-item label="最近命中">{{ fmtTime(detailRow.last_hit_at) || '—' }}</el-descriptions-item>
           <el-descriptions-item v-if="detailRow.last_error" label="最近错误">
@@ -259,6 +273,7 @@ import {
   type VerifyReport,
 } from '@/api/agentSubscriptions'
 import { channelApi } from '@/api/channel'
+import { rbacApi } from '@/api/rbac'
 
 // ── 状态展示映射 (与后端 subscriptionStatusToString 对齐) ──
 const STATUS_META: Record<string, { text: string; tag: 'info' | 'warning' | 'success' | 'danger' }> = {
@@ -273,6 +288,8 @@ const statusTag = (s: string) => STATUS_META[s]?.tag ?? 'info'
 // ── 通知方式展示映射 (canonical 与后端 notifyChannelToString 对齐) ──
 const NOTIFY_META: Record<string, string> = {
   ws: '站内推送', email: '邮件', phone: '电话提醒', tts_broadcast: '语音播报',
+  // [P2 2026-09-25] 短信通道 (腾讯云直连)
+  sms: '短信',
 }
 function notifyText(list?: string[]): string {
   if (!list || !list.length) return '站内推送'
@@ -309,8 +326,10 @@ const nameInput = ref('')
 const previewing = ref(false)
 const creating = ref(false)
 const previewRes = ref<CompilePreviewResult | null>(null)
-// [P1-1 2026-09-25 通知方式多选] 站内推送恒选不可关 (§3.4 兜底); email/phone/tts 可选
+// [P1-1 2026-09-25 通知方式多选] 站内推送恒选不可关 (§3.4 兜底); email/phone/tts/sms 可选
 const notifyChannels = ref<string[]>(['ws'])
+// [P2 2026-09-25 多用户通知对象] 通知接收人多选 (空 = 仅创建者本人; 多人值班场景)
+const notifyUserIds = ref<string[]>([])
 // [P1-4 2026-09-25 通道范围] 订阅生效通道; 空 = 全部通道 (§3.3)
 const channelScope = ref<string[]>([])
 
@@ -319,9 +338,11 @@ function openCreate() {
   nameInput.value = ''
   previewRes.value = null
   notifyChannels.value = ['ws']
+  notifyUserIds.value = []
   channelScope.value = []
   createVisible.value = true
   ensureChannelOpts()  // 通道下拉 (异步, 不阻塞弹层)
+  ensureUserOpts()     // 通知对象下拉 (异步, 不阻塞弹层)
 }
 
 async function onPreview() {
@@ -359,8 +380,10 @@ async function onCreate() {
       preview: previewRes.value.preview,
       // [P1-4 2026-09-25] 通道范围: 空 = 全通道; 后端 sub.channels 过滤 (含国标码兼容)
       channels: channelScope.value,
-      // [P1-1 2026-09-25] 通知方式多选 (canonical ws/email/phone/tts_broadcast)
+      // [P1-1 2026-09-25] 通知方式多选 (canonical ws/email/phone/tts_broadcast/sms)
       notify_channels: notifyChannels.value,
+      // [P2 2026-09-25 多用户通知对象] 接收人 user_id 列表 (空 = 仅创建者本人)
+      notify_user_ids: notifyUserIds.value,
       // [P3 兼容] 电话布尔字段保留 (旧面板语义; 后端与数组合并去重)
       phone_notify: notifyChannels.value.includes('phone'),
     })
@@ -483,6 +506,34 @@ async function ensureChannelOpts() {
   }
 }
 
+// [P2 2026-09-25 多用户通知对象] 接收人下拉数据 (懒加载一次; 失败不阻塞弹层)
+const userOpts = ref<{ id: string; label: string }[]>([])
+const userOptsLoading = ref(false)
+
+async function ensureUserOpts() {
+  if (userOpts.value.length > 0 || userOptsLoading.value) return
+  userOptsLoading.value = true
+  try {
+    const res = await rbacApi.getUsers({ pageSize: 100 })
+    // [FIX 口径] /rbac/users 的 id 字段 = user_id (后端 listAllUsers colText user_id);
+    //   notify_user_ids 取值必须用 id (RbacService::getUserPhone 的查询键)
+    userOpts.value = ((res.data?.data?.items ?? []) as unknown as Array<Record<string, unknown>>).map(u => ({
+      id: String(u.id ?? ''),
+      label: `${(u.displayName as string) || (u.username as string) || String(u.id ?? '')}${u.phone ? ' · ' + String(u.phone) : ''}`,
+    })).filter(u => u.id !== '')
+  } catch (e) {
+    handleErr(e, '用户列表加载失败')
+  } finally {
+    userOptsLoading.value = false
+  }
+}
+
+/** 详情抽屉通知对象展示 (空 = 仅创建者本人; 名字未知时回退裸 id 供排查) */
+function detailUserText(ids?: string[]): string {
+  if (!ids || !ids.length) return '仅创建者本人'
+  return ids.map(id => userOpts.value.find(u => u.id === id)?.label ?? id).join(' / ')
+}
+
 async function openSample(row: AgentSubscription) {
   sampleTarget = row
   sampleRes.value = null
@@ -516,6 +567,7 @@ const detailCompiledText = computed(() => {
 function openDetail(row: AgentSubscription) {
   detailRow.value = row
   detailVisible.value = true
+  ensureUserOpts()  // [P2 2026-09-25] 通知对象名字解析 (异步, 不阻塞抽屉)
 }
 
 // ── 工具 ──

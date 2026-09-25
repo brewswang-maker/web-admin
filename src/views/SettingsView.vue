@@ -294,6 +294,67 @@
               {{ $t('settings.quietHoursStats', { suppressed: quietHoursSuppressed }) }}
             </span>
           </el-form-item>
+          <!-- [P2 2026-09-25 短信通知] 腾讯云短信直连 (对标乐橙三渠道之短信):
+               enabled 且五要素齐 (SecretId/SecretKey/SdkAppId/签名/模板) 时订阅「短信」
+               通道直连腾讯云; SecretKey 脱敏回显 (掩码字段默认空, 留空 = 保留现值)。
+               即时生效 + 持久化 box_config alarm.sms_notify -->
+          <el-divider content-position="left">{{ $t('settings.smsNotify') }}</el-divider>
+          <el-form-item :label="$t('settings.smsNotifyEnabled')">
+            <el-switch v-model="smsNotify.enabled" />
+            <span class="form-tip">{{ $t('settings.smsNotifyEnabledTip') }}</span>
+          </el-form-item>
+          <template v-if="smsNotify.enabled">
+            <el-form-item :label="$t('settings.smsNotifySecretId')">
+              <el-input v-model="smsNotify.secret_id" placeholder="AKID..." style="width: 320px" />
+            </el-form-item>
+            <el-form-item :label="$t('settings.smsNotifySecretKey')">
+              <el-input
+                v-model="smsNotify.secret_key" type="password" show-password
+                :placeholder="smsSecretKeyPlaceholder" style="width: 320px"
+              />
+            </el-form-item>
+            <el-form-item :label="$t('settings.smsNotifyAppId')">
+              <el-input v-model="smsNotify.sdk_app_id" placeholder="1400xxxxxx" style="width: 320px" />
+            </el-form-item>
+            <el-form-item :label="$t('settings.smsNotifySign')">
+              <el-input v-model="smsNotify.sign_name" style="width: 320px" />
+            </el-form-item>
+            <el-form-item :label="$t('settings.smsNotifyTemplate')">
+              <el-input v-model="smsNotify.template_id" style="width: 320px" />
+            </el-form-item>
+            <el-form-item :label="$t('settings.smsNotifyRegion')">
+              <el-input v-model="smsNotify.region" style="width: 320px" />
+            </el-form-item>
+            <el-form-item :label="$t('settings.smsNotifyParamOrder')">
+              <el-input v-model="smsNotifyParamOrderText" :placeholder="$t('settings.smsNotifyParamOrderPh')" style="width: 480px" />
+              <span class="form-tip">{{ $t('settings.smsNotifyParamOrderTip') }}</span>
+            </el-form-item>
+          </template>
+          <el-form-item>
+            <el-button type="primary" @click="saveSmsNotify" :loading="smsNotifySaving">{{ $t('settings.save') }}</el-button>
+            <span v-if="smsNotifyConfigured !== null" class="form-tip">
+              {{ smsNotifyConfigured ? $t('settings.smsNotifyReady') : $t('settings.smsNotifyNotReady') }}
+            </span>
+          </el-form-item>
+          <!-- [P2 2026-09-25 订阅聚合摘要] 每日动态汇总 (对标萤石「今日动态」):
+               每日 time 时刻汇总订阅近 24h 命中动态, 有动态才经 WS 推送
+               subscription_digest 帧; 即时生效 + 持久化 box_config -->
+          <el-divider content-position="left">{{ $t('settings.subscriptionDigest') }}</el-divider>
+          <el-form-item :label="$t('settings.subscriptionDigestEnabled')">
+            <el-switch v-model="subscriptionDigest.enabled" />
+            <span class="form-tip">{{ $t('settings.subscriptionDigestEnabledTip') }}</span>
+          </el-form-item>
+          <template v-if="subscriptionDigest.enabled">
+            <el-form-item :label="$t('settings.subscriptionDigestTime')">
+              <el-time-select v-model="subscriptionDigest.time" start="00:00" step="00:30" end="23:30" style="width: 160px" />
+            </el-form-item>
+          </template>
+          <el-form-item>
+            <el-button type="primary" @click="saveSubscriptionDigest" :loading="digestSaving">{{ $t('settings.save') }}</el-button>
+            <span v-if="digestPreviewTotal !== null" class="form-tip">
+              {{ $t('settings.subscriptionDigestStats', { total: digestPreviewTotal }) }}
+            </span>
+          </el-form-item>
           <el-form-item :label="$t('settings.dedupWindow')">
             <el-input-number v-model="alarm.dedupWindow" :min="5" :max="300" />
           </el-form-item>
@@ -645,7 +706,7 @@
 </template>
 
 <script setup lang="ts">
-import { reactive, ref, onMounted } from 'vue'
+import { reactive, ref, onMounted, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { settingsApi, type BasicSettings, type CloudSettings, type AlarmPolicySettings, type SystemInfo, type RecordingSettings } from '@/api/settings'
@@ -829,6 +890,97 @@ async function saveQuietHours() {
     ElMessage.error(t('settings.saveFail') + ': ' + (e.message || t('settings.unknownError')))
   } finally {
     quietHoursSaving.value = false
+  }
+}
+
+// ---- [P2 2026-09-25 短信通知] 腾讯云短信直连 (对标乐橙三渠道之短信) ----
+//   enabled 且五要素齐时订阅「短信」通道直连腾讯云 (TC3 签名); SecretKey 明文
+//   永不回显 (掩码字段默认空, 留空 = 保留现值); 即时生效 + 持久化 alarm.sms_notify。
+const smsNotifySaving = ref(false)
+const smsNotify = reactive({
+  enabled: false, secret_id: '', secret_key: '', sdk_app_id: '',
+  sign_name: '', template_id: '', region: 'ap-guangzhou',
+})
+const smsNotifyParamOrderText = ref('')
+const smsNotifySecretKeySet = ref(false)
+const smsNotifyConfigured = ref<boolean | null>(null)
+const smsSecretKeyPlaceholder = computed(() =>
+  smsNotifySecretKeySet.value ? t('settings.smsNotifyKeyKeep') : 'SecretKey')
+
+async function loadSmsNotify() {
+  try {
+    const res = await settingsApi.getSmsNotify()
+    const d = res.data.data
+    smsNotify.enabled = d.enabled
+    smsNotify.secret_id = d.secret_id ?? ''
+    smsNotify.sdk_app_id = d.sdk_app_id ?? ''
+    smsNotify.sign_name = d.sign_name ?? ''
+    smsNotify.template_id = d.template_id ?? ''
+    smsNotify.region = d.region || 'ap-guangzhou'
+    smsNotifyParamOrderText.value = (d.param_order ?? []).join(',')
+    smsNotifySecretKeySet.value = !!d.secret_key_set
+    smsNotify.secret_key = ''  // 明文永不回显 (掩码字段默认空)
+    smsNotifyConfigured.value = d.configured ?? null
+  } catch (e) {
+    console.error('loadSmsNotify failed', e)
+  }
+}
+
+async function saveSmsNotify() {
+  smsNotifySaving.value = true
+  try {
+    const order = smsNotifyParamOrderText.value.split(',').map(s => s.trim()).filter(Boolean)
+    const res = await settingsApi.saveSmsNotify({
+      enabled: smsNotify.enabled,
+      secret_id: smsNotify.secret_id.trim(),
+      secret_key: smsNotify.secret_key,  // 空串 = 保留现值 (掩码场景)
+      sdk_app_id: smsNotify.sdk_app_id.trim(),
+      sign_name: smsNotify.sign_name.trim(),
+      template_id: smsNotify.template_id.trim(),
+      region: smsNotify.region.trim() || 'ap-guangzhou',
+      param_order: order,
+    })
+    smsNotifyConfigured.value = res.data.data?.configured ?? null
+    ElMessage.success(t('settings.saveAlarmOk'))
+    await loadSmsNotify()  // 回读生效配置 (REST 往返一致)
+  } catch (e: any) {
+    ElMessage.error(t('settings.saveFail') + ': ' + (e.message || t('settings.unknownError')))
+  } finally {
+    smsNotifySaving.value = false
+  }
+}
+
+// ---- [P2 2026-09-25 聚合摘要] 每日动态汇总 (对标萤石「今日动态」) ----
+//   定时线程到点推送 WS subscription_digest 帧 (近 24h 有动态的订阅);
+//   无动态静默。重开 (false→true) 重置当日哨兵, 开启后当天即可收到补推。
+const digestSaving = ref(false)
+const subscriptionDigest = reactive({ enabled: false, time: '09:00' })
+const digestPreviewTotal = ref<number | null>(null)
+
+async function loadSubscriptionDigest() {
+  try {
+    const res = await settingsApi.getSubscriptionDigest()
+    const d = res.data.data
+    subscriptionDigest.enabled = d.enabled
+    subscriptionDigest.time = d.time || '09:00'
+    digestPreviewTotal.value = d.digest?.total ?? 0
+  } catch (e) {
+    console.error('loadSubscriptionDigest failed', e)
+  }
+}
+
+async function saveSubscriptionDigest() {
+  digestSaving.value = true
+  try {
+    await settingsApi.saveSubscriptionDigest({
+      enabled: subscriptionDigest.enabled, time: subscriptionDigest.time,
+    })
+    ElMessage.success(t('settings.saveAlarmOk'))
+    await loadSubscriptionDigest()  // 回读生效配置 + 最新摘要预览
+  } catch (e: any) {
+    ElMessage.error(t('settings.saveFail') + ': ' + (e.message || t('settings.unknownError')))
+  } finally {
+    digestSaving.value = false
   }
 }
 
@@ -1252,6 +1404,8 @@ onMounted(async () => {
   refreshLlmStatus()  // AI 模型状态 (异步, 不阻塞)
   loadSizeFilter()    // [P1-1 2026-09-13] 尺寸过滤配置 (异步, 不阻塞)
   loadQuietHours()    // [P1-2 2026-09-25] 免打扰配置 (异步, 不阻塞)
+  loadSmsNotify()     // [P2 2026-09-25] 腾讯云短信配置 (异步, 不阻塞)
+  loadSubscriptionDigest()  // [P2 2026-09-25] 聚合摘要配置 (异步, 不阻塞)
   loadRecordingPolicy()  // [REC-ARCH 2026-09-17] 录像存储策略 (异步, 不阻塞)
   try {
     const [basicRes, cloudRes, alarmRes, infoRes, netRes] = await Promise.allSettled([

@@ -67,6 +67,48 @@ export interface QuietHoursSettings {
   suppressed?: number
 }
 
+/** [P2 2026-09-25 NL事件订阅 短信通道] 腾讯云短信直连配置 (box_config alarm.sms_notify)
+ *  语义: enabled 且五要素齐 (secret_id/secret_key/sdk_app_id/sign_name/template_id)
+ *  时, 订阅「短信」通道的 CLIENT_SEND_SMS 执行器走盒子直连腾讯云 (TC3 签名);
+ *  否则维持 WS-only 兜底 (action.params.sms_api_url 网关优先)。 */
+export interface SmsNotifySettings {
+  enabled: boolean
+  /** 腾讯云 API SecretId (非机密公开标识, 便于识别用哪把 key) */
+  secret_id: string
+  /** [脱敏] SecretKey 是否已设置 — 明文永不出后端 (GET 只回布尔) */
+  secret_key_set?: boolean
+  /** 明文 SecretKey — 仅 PUT 输入使用 (空串 = 保留现值); GET 响应中永远不存在 */
+  secret_key?: string
+  /** 短信应用 SdkAppId (1400xxxxxx, 腾讯云控制台创建) */
+  sdk_app_id: string
+  /** 已审核短信签名内容 (非签名 ID) */
+  sign_name: string
+  /** 已审核正文模板 ID */
+  template_id: string
+  /** 地域 (签名 Host 固定 sms.tencentcloudapi.com, region 仅作 Header) */
+  region: string
+  /** 模板参数取值顺序 (元素 ∈ {sub_name,alarm_type,channel,time}, 其余字面量原样; 空 = 默认) */
+  param_order: string[]
+  /** 五要素齐 + enabled (后端 configured() 判定: 短信通道当前是否真正生效) */
+  configured?: boolean
+}
+
+/** [P2 2026-09-25 NL事件订阅 聚合摘要] 每日动态汇总 (box_config alarm.subscription_digest)
+ *  对标萤石「今日动态」: 每日 time 时刻汇总订阅近 24h 命中动态, 有动态才推 WS 帧。 */
+export interface SubscriptionDigestSettings {
+  enabled: boolean
+  /** "HH:MM" 本地时区 (缺省 09:00) */
+  time: string
+  /** 当前近 24h 摘要预览 (GET 附带; 部署前即可预览汇总口径) */
+  digest?: {
+    date: string
+    window_hours: number
+    total: number
+    subscriptions: Array<Record<string, unknown>>
+    generated_at: number
+  }
+}
+
 /** 系统信息 */
 export interface SystemInfo {
   productName: string
@@ -137,6 +179,25 @@ export const settingsApi = {
   saveQuietHours(data: Partial<QuietHoursSettings>) {
     return http.put<ApiResponse<{ applied: boolean; enabled: boolean; start: string; end: string; persisted: string }>>(
       '/alarm/quiet-hours', data)
+  },
+  /** [P2 2026-09-25] 获取腾讯云短信配置 (alarm.sms_notify; secret_key 脱敏仅回布尔) */
+  getSmsNotify() {
+    return http.get<ApiResponse<SmsNotifySettings>>('/alarm/sms-notify')
+  },
+  /** [P2 2026-09-25] 保存腾讯云短信配置 (即时生效 + 持久化 alarm.sms_notify;
+   *  secret_key 传空串 = 保留现值, 仅重新输入才覆盖) */
+  saveSmsNotify(data: Partial<SmsNotifySettings>) {
+    return http.put<ApiResponse<{ applied: boolean; enabled: boolean; configured: boolean; param_order: string[]; persisted: string }>>(
+      '/alarm/sms-notify', data)
+  },
+  /** [P2 2026-09-25] 获取订阅聚合摘要配置 + 当前近 24h 摘要预览 (alarm.subscription_digest) */
+  getSubscriptionDigest() {
+    return http.get<ApiResponse<SubscriptionDigestSettings>>('/alarm/subscription-digest')
+  },
+  /** [P2 2026-09-25] 保存订阅聚合摘要配置 (即时生效 + 持久化; 重开时重置当日哨兵允许当天补推) */
+  saveSubscriptionDigest(data: { enabled?: boolean; time?: string }) {
+    return http.put<ApiResponse<{ applied: boolean; enabled: boolean; time: string; persisted: string }>>(
+      '/alarm/subscription-digest', data)
   },
   /** 获取系统信息 */
   getSystemInfo() {
