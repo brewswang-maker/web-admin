@@ -172,7 +172,11 @@ export interface VerifyReport {
 }
 
 /** [8] POST /agent/subscriptions/:id/verify SANDBOX 历史回放验证 (仅 SANDBOX 态)
- *  next: confirm_activate = 达标可人工激活; shadow_observe = 继续影子观察 */
+ *  next: confirm_activate = 达标可人工激活; shadow_observe = 继续影子观察
+ *  [FIX verify-timeout 2026-09-25 真机] 历史回放 = 逐帧 VLM 云推理, 实测
+ *  89.5s (8 帧 × 5~14s), 最坏 ~112s; 默认 30s 必超时 (nginx /api/ 已同步放宽
+ *  300s)。POST 本不在重试白名单, skipRetry 显式声明防未来白名单变化导致
+ *  超时后白跑第二轮 VLM 重放。 */
 export function verifySubscription(id: string) {
   return http.post<ApiResponse<{
     report: VerifyReport
@@ -180,6 +184,7 @@ export function verifySubscription(id: string) {
     next: 'confirm_activate' | 'shadow_observe'
   }>>(
     `/agent/subscriptions/${id}/verify`,
-    {}
+    {},
+    { timeoutMs: 300_000, skipRetry: true }
   )
 }
