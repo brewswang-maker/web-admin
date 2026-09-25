@@ -271,6 +271,29 @@
               {{ $t('settings.sizeFilterStats', { filtered: sizeFilterStats.size_filtered, skipped: sizeFilterStats.size_filter_skipped }) }}
             </span>
           </el-form-item>
+          <!-- [P1-2 2026-09-25 免打扰] 全局静默时段 (对标萤石「免打扰」): 静默时段内
+               WS 实时推送整体抑制 (AlarmService 推送集成层), 告警仍落库列表可见;
+               电话/语音播报走 executor 独立链路不受影响 (对标乐橙「电话不受免打扰限制」) -->
+          <el-divider content-position="left">{{ $t('settings.quietHours') }}</el-divider>
+          <el-form-item :label="$t('settings.quietHoursEnabled')">
+            <el-switch v-model="quietHours.enabled" />
+            <span class="form-tip">{{ $t('settings.quietHoursEnabledTip') }}</span>
+          </el-form-item>
+          <template v-if="quietHours.enabled">
+            <el-form-item :label="$t('settings.quietHoursStart')">
+              <el-time-select v-model="quietHours.start" start="00:00" step="00:30" end="23:30" style="width: 160px" />
+            </el-form-item>
+            <el-form-item :label="$t('settings.quietHoursEnd')">
+              <el-time-select v-model="quietHours.end" start="00:00" step="00:30" end="23:30" style="width: 160px" />
+              <span class="form-tip">{{ $t('settings.quietHoursCrossTip') }}</span>
+            </el-form-item>
+          </template>
+          <el-form-item>
+            <el-button type="primary" @click="saveQuietHours" :loading="quietHoursSaving">{{ $t('settings.save') }}</el-button>
+            <span v-if="quietHoursSuppressed !== null" class="form-tip">
+              {{ $t('settings.quietHoursStats', { suppressed: quietHoursSuppressed }) }}
+            </span>
+          </el-form-item>
           <el-form-item :label="$t('settings.dedupWindow')">
             <el-input-number v-model="alarm.dedupWindow" :min="5" :max="300" />
           </el-form-item>
@@ -768,6 +791,47 @@ async function saveSizeFilter() {
   }
 }
 
+// ---- [P1-2 2026-09-25 免打扰] 全局静默时段: 推送集成层过滤 WS 推送 ----
+//   对标萤石「免打扰」; 电话/语音走 executor 独立链路豁免 (对标乐橙口径)。
+//   即时生效 (三原子快照) + 持久化 box_config alarm.quiet_hours。
+//   start > end = 跨天窗口; start == end 后端拒绝 (歧义, 用开关控制全静默)
+const quietHoursSaving = ref(false)
+const quietHours = reactive({ enabled: false, start: '22:00', end: '07:00' })
+const quietHoursSuppressed = ref<number | null>(null)
+
+async function loadQuietHours() {
+  try {
+    const res = await settingsApi.getQuietHours()
+    const d = res.data.data
+    quietHours.enabled = d.enabled
+    quietHours.start = d.start || '22:00'
+    quietHours.end = d.end || '07:00'
+    quietHoursSuppressed.value = d.suppressed ?? null
+  } catch (e) {
+    console.error('loadQuietHours failed', e)
+  }
+}
+
+async function saveQuietHours() {
+  // 前端前置校验 (后端同样拒绝, 双保险)
+  if (quietHours.enabled && quietHours.start === quietHours.end) {
+    ElMessage.warning(t('settings.quietHoursSameTip'))
+    return
+  }
+  quietHoursSaving.value = true
+  try {
+    await settingsApi.saveQuietHours({
+      enabled: quietHours.enabled, start: quietHours.start, end: quietHours.end,
+    })
+    ElMessage.success(t('settings.saveAlarmOk'))
+    await loadQuietHours()  // 回读生效配置 + 最新抑制计数 (REST 往返一致)
+  } catch (e: any) {
+    ElMessage.error(t('settings.saveFail') + ': ' + (e.message || t('settings.unknownError')))
+  } finally {
+    quietHoursSaving.value = false
+  }
+}
+
 // ---- AI 模型配置 (本地/云端切换) ----
 const llmStatusLoading = ref(false)
 const llmSwitching = ref(false)
@@ -1187,6 +1251,7 @@ onMounted(async () => {
   loading.value = true
   refreshLlmStatus()  // AI 模型状态 (异步, 不阻塞)
   loadSizeFilter()    // [P1-1 2026-09-13] 尺寸过滤配置 (异步, 不阻塞)
+  loadQuietHours()    // [P1-2 2026-09-25] 免打扰配置 (异步, 不阻塞)
   loadRecordingPolicy()  // [REC-ARCH 2026-09-17] 录像存储策略 (异步, 不阻塞)
   try {
     const [basicRes, cloudRes, alarmRes, infoRes, netRes] = await Promise.allSettled([

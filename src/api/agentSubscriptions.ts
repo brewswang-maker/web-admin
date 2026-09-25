@@ -71,8 +71,11 @@ export interface CreateSubscriptionReq {
    *  RestApiHandlers L11328 req["preview"].dump() 直喂编译器, 顶层读不到
    *  target/action/mappable_event → 安全门 ContradictoryMapping 拒绝创建。 */
   preview: CompiledArtifact
-  /** 监控通道; 空 = 全通道 */
+  /** [P1-4 2026-09-25] 监控通道多选 (通道 id / 20 位国标码); 空 = 全通道
+   *  (后端 SubscriptionVerifier 过滤含国标码兼容) */
   channels?: string[]
+  /** [P1-1 2026-09-25] 通知方式多选 (canonical: ws/email/phone/tts_broadcast;
+   *  宽容别名 push/mail/call/tts 亦可; 空/缺失 → 后端兜底 WS) */
   notify_channels?: string[]
   /** [P3 2026-09-24] 电话提醒开关 (§4.3): true → notify_channels 含 phone */
   phone_notify?: boolean

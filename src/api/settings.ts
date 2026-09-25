@@ -55,6 +55,18 @@ export interface SizeFilterSettings {
   stats?: { size_filtered: number; size_filter_skipped: number }
 }
 
+/** [P1-2 2026-09-25 免打扰] 全局静默时段: 推送集成层按窗口过滤 WS 推送
+ *  (电话/语音播报走 executor 独立链路, 不受影响 — 对标乐橙「电话不受免打扰限制」) */
+export interface QuietHoursSettings {
+  enabled: boolean
+  /** "HH:MM" 24h */
+  start: string
+  /** "HH:MM" 24h; start > end = 跨天窗口, start == end 被后端拒绝 (歧义) */
+  end: string
+  /** 运行期已抑制推送计数 (进程生命周期累计) */
+  suppressed?: number
+}
+
 /** 系统信息 */
 export interface SystemInfo {
   productName: string
@@ -116,6 +128,15 @@ export const settingsApi = {
   /** [P1-1 2026-09-13] 保存事件级尺寸过滤配置 (即时生效 + 持久化 box_config) */
   saveSizeFilter(data: Partial<SizeFilterSettings>) {
     return http.put<ApiResponse<SizeFilterSettings>>('/alarm/size-filter', data)
+  },
+  /** [P1-2 2026-09-25] 获取推送免打扰配置 (alarm.quiet_hours) */
+  getQuietHours() {
+    return http.get<ApiResponse<QuietHoursSettings>>('/alarm/quiet-hours')
+  },
+  /** [P1-2 2026-09-25] 保存推送免打扰配置 (即时生效 + 持久化 box_config alarm.quiet_hours) */
+  saveQuietHours(data: Partial<QuietHoursSettings>) {
+    return http.put<ApiResponse<{ applied: boolean; enabled: boolean; start: string; end: string; persisted: string }>>(
+      '/alarm/quiet-hours', data)
   },
   /** 获取系统信息 */
   getSystemInfo() {

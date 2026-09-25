@@ -100,10 +100,28 @@
         <el-form-item label="订阅名称">
           <el-input v-model="nameInput" maxlength="30" placeholder="给订阅起个名字（默认自动生成）" />
         </el-form-item>
-        <!-- [P3 2026-09-24] 规格 §4.3 电话提醒开关: notify_channels 含 phone -->
-        <el-form-item label="电话提醒">
-          <el-switch v-model="phoneNotify" />
-          <span class="phone-hint">命中后自动拨打，未接听将重试</span>
+        <!-- [P1-1 2026-09-25 通知方式多选] 后端四通道白名单 (ws/email/phone/
+             tts_broadcast) 全量开放; 站内推送恒选不可关 (规格 §3.4 空勾选兜底 WS)。
+             电话/语音走 executor 独立链路, 不受免打扰 (静默时段) 限制 -->
+        <el-form-item label="通知方式">
+          <el-checkbox-group v-model="notifyChannels">
+            <el-checkbox label="ws" disabled>站内推送</el-checkbox>
+            <el-checkbox label="email">邮件</el-checkbox>
+            <el-checkbox label="phone">电话提醒</el-checkbox>
+            <el-checkbox label="tts_broadcast">语音播报</el-checkbox>
+          </el-checkbox-group>
+          <div class="notify-tip">电话命中后自动拨打，未接听将重试；电话/语音不受免打扰限制</div>
+        </el-form-item>
+        <!-- [P1-4 2026-09-25 通道范围] 订阅生效通道多选; 空 = 全部通道 (规格 §3.3)。
+             后端 sub.channels 过滤含国标码兼容 (SubscriptionVerifier) -->
+        <el-form-item label="监控通道">
+          <el-select
+            v-model="channelScope" multiple clearable collapse-tags
+            :loading="channelOptsLoading" placeholder="默认全部通道" style="width: 100%"
+          >
+            <el-option v-for="c in channelOpts" :key="c.id" :label="`${c.id} · ${c.name}`" :value="c.id" />
+          </el-select>
+          <div class="notify-tip">不选 = 订阅全部通道；限定后仅所选通道的命中会通知</div>
         </el-form-item>
       </el-form>
       <template #footer>
@@ -204,6 +222,10 @@
           <el-descriptions-item label="名称">{{ detailRow.name }}</el-descriptions-item>
           <el-descriptions-item label="描述">{{ detailRow.nl_text }}</el-descriptions-item>
           <el-descriptions-item label="状态">{{ statusText(detailRow.status) }}</el-descriptions-item>
+          <el-descriptions-item label="监控通道">
+            {{ (detailRow.channels && detailRow.channels.length) ? detailRow.channels.join(', ') : '全通道' }}
+          </el-descriptions-item>
+          <el-descriptions-item label="通知方式">{{ notifyText(detailRow.notify_channels) }}</el-descriptions-item>
           <el-descriptions-item label="订阅 ID">{{ detailRow.id }}</el-descriptions-item>
           <el-descriptions-item label="最近命中">{{ fmtTime(detailRow.last_hit_at) || '—' }}</el-descriptions-item>
           <el-descriptions-item v-if="detailRow.last_error" label="最近错误">
@@ -248,6 +270,15 @@ const STATUS_META: Record<string, { text: string; tag: 'info' | 'warning' | 'suc
 const statusText = (s: string) => STATUS_META[s]?.text ?? s
 const statusTag = (s: string) => STATUS_META[s]?.tag ?? 'info'
 
+// ── 通知方式展示映射 (canonical 与后端 notifyChannelToString 对齐) ──
+const NOTIFY_META: Record<string, string> = {
+  ws: '站内推送', email: '邮件', phone: '电话提醒', tts_broadcast: '语音播报',
+}
+function notifyText(list?: string[]): string {
+  if (!list || !list.length) return '站内推送'
+  return list.map(k => NOTIFY_META[k] ?? k).join(' / ')
+}
+
 // ── 列表 ──
 const list = ref<AgentSubscription[]>([])
 const loading = ref(false)
@@ -278,14 +309,19 @@ const nameInput = ref('')
 const previewing = ref(false)
 const creating = ref(false)
 const previewRes = ref<CompilePreviewResult | null>(null)
-const phoneNotify = ref(false)  // [P3 2026-09-24] 电话提醒开关 (§4.3)
+// [P1-1 2026-09-25 通知方式多选] 站内推送恒选不可关 (§3.4 兜底); email/phone/tts 可选
+const notifyChannels = ref<string[]>(['ws'])
+// [P1-4 2026-09-25 通道范围] 订阅生效通道; 空 = 全部通道 (§3.3)
+const channelScope = ref<string[]>([])
 
 function openCreate() {
   nlInput.value = ''
   nameInput.value = ''
   previewRes.value = null
-  phoneNotify.value = false
+  notifyChannels.value = ['ws']
+  channelScope.value = []
   createVisible.value = true
+  ensureChannelOpts()  // 通道下拉 (异步, 不阻塞弹层)
 }
 
 async function onPreview() {
@@ -321,8 +357,12 @@ async function onCreate() {
       // [FIX sub-preview 2026-09-24] 传产物本体 (preview 字段) 而非整包装 —
       //   后端 req["preview"].dump() 直喂编译器, 包装对象顶层无字段会被安全门拒
       preview: previewRes.value.preview,
-      channels: [],
-      phone_notify: phoneNotify.value,  // [P3] 电话提醒开关 → notify_channels 含 phone
+      // [P1-4 2026-09-25] 通道范围: 空 = 全通道; 后端 sub.channels 过滤 (含国标码兼容)
+      channels: channelScope.value,
+      // [P1-1 2026-09-25] 通知方式多选 (canonical ws/email/phone/tts_broadcast)
+      notify_channels: notifyChannels.value,
+      // [P3 兼容] 电话布尔字段保留 (旧面板语义; 后端与数组合并去重)
+      phone_notify: notifyChannels.value.includes('phone'),
     })
     ElMessage.success('订阅已创建 (草稿) — 点击「确认编译」进入影子观察')
     createVisible.value = false
@@ -421,26 +461,33 @@ const sampling = ref(false)
 const sampleRes = ref<SubscriptionSampleResult | null>(null)
 const sampleChannel = ref('')
 const channelOpts = ref<{ id: string; name: string }[]>([])
+const channelOptsLoading = ref(false)
 let sampleTarget: AgentSubscription | null = null
+
+/** 通道下拉数据 (创建表单 + 采样弹层共用; 懒加载一次, 失败不阻塞弹层) */
+async function ensureChannelOpts() {
+  if (channelOpts.value.length > 0 || channelOptsLoading.value) return
+  channelOptsLoading.value = true
+  try {
+    const res = await channelApi.getList({ pageSize: 100 })
+    // [FIX 2026-09-24 真机] 后端通道实体的键是 channel_id (20 位国标码字符串),
+    //   ChannelItem.id 在该响应中不存在 — 取值必须 channel_id 优先, 否则下拉空
+    channelOpts.value = (res.data?.data?.items ?? []).map(c => ({
+      id: (c as unknown as { channel_id?: string }).channel_id ?? c.id,
+      name: c.name,
+    }))
+  } catch (e) {
+    handleErr(e, '通道列表加载失败')
+  } finally {
+    channelOptsLoading.value = false
+  }
+}
 
 async function openSample(row: AgentSubscription) {
   sampleTarget = row
   sampleRes.value = null
   sampleVisible.value = true
-  if (channelOpts.value.length === 0) {
-    try {
-      const res = await channelApi.getList({ pageSize: 100 })
-      // [FIX 2026-09-24 真机] 后端通道实体的键是 channel_id (20 位国标码字符串),
-      //   ChannelItem.id 在该响应中不存在 — 取值必须 channel_id 优先, 否则下拉空
-      channelOpts.value = (res.data?.data?.items ?? []).map(c => ({
-        id: (c as unknown as { channel_id?: string }).channel_id ?? c.id,
-        name: c.name,
-      }))
-    } catch {
-      // 通道列表拉取失败不阻塞弹层 — 用户仍可手动输入? MVP 直接提示
-      handleErr(new Error('通道列表加载失败'), '采样')
-    }
-  }
+  await ensureChannelOpts()
   if (!sampleChannel.value) sampleChannel.value = channelOpts.value[0]?.id ?? ''
 }
 
@@ -495,8 +542,8 @@ function handleErr(e: unknown, fallback: string) {
 .sub-error { color: var(--el-color-danger); font-size: 12px; }
 .preview-hint { margin-left: 10px; color: var(--el-text-color-secondary); font-size: 12px; }
 
-/* [P3 2026-09-24] 电话开关副文案 + 订阅聚合命中计数 */
-.phone-hint { margin-left: 10px; color: var(--el-text-color-secondary); font-size: 12px; }
+/* [P3 2026-09-24] 订阅聚合命中计数; [P1-1 2026-09-25] 通知方式/通道副文案 */
+.notify-tip { margin-top: 4px; color: var(--el-text-color-secondary); font-size: 12px; line-height: 1.5; }
 .sub-hit-count { margin-top: 2px; color: var(--el-text-color-secondary); font-size: 12px; }
 .preview-box { width: 100%; }
 .preview-kind { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
