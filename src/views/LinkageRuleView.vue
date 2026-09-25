@@ -176,7 +176,14 @@
         <el-table-column type="selection" width="45" />
         <el-table-column prop="enabled" label="状态" width="60" align="center">
           <template #default="{ row }">
-            <el-switch v-model="row.enabled" size="small" inline-prompt active-text="开" inactive-text="关" @change="toggleRule(row)" />
+            <!-- [P2 D1 2026-09-25 载体防护] agent-sub 载体规则启停由订阅状态驱动,
+                 禁用开关 (手工切换会被对账 60s 内压回 — 避免开关「一跳一跳」的困惑) -->
+            <el-tooltip v-if="isCarrierRule(row)"
+                        content="智能订阅载体规则: 启停由订阅状态驱动 (到「智能订阅」暂停/恢复), 手工切换会在 60s 内被自动压回"
+                        placement="top">
+              <el-switch v-model="row.enabled" size="small" inline-prompt active-text="开" inactive-text="关" disabled />
+            </el-tooltip>
+            <el-switch v-else v-model="row.enabled" size="small" inline-prompt active-text="开" inactive-text="关" @change="toggleRule(row)" />
           </template>
         </el-table-column>
         <el-table-column prop="name" label="规则名称" min-width="180">
@@ -201,7 +208,16 @@
         <el-table-column label="标签" min-width="200">
           <template #default="{ row }">
             <div class="cell-tags">
-              <el-tag v-for="tag in (row.tags || [])" :key="tag" size="small" type="info" effect="plain">{{ tag }}</el-tag>
+              <template v-for="tag in (row.tags || [])" :key="tag">
+                <!-- [P2 D1 2026-09-25 载体防护] agent-sub 特殊渲染: 载体规则由智能
+                     订阅自动维护 (随订阅状态启停; 对账每 60s 自动重建被删项) -->
+                <el-tooltip v-if="tag === 'agent-sub'"
+                            content="智能订阅载体规则: 由「AI 智能检索 → 智能订阅」自动创建维护, 随订阅状态自动启停; 删除后 (订阅仍在时) 约 60s 自动重建。停用请到智能订阅页暂停/删除对应订阅"
+                            placement="top">
+                  <el-tag size="small" type="warning" effect="plain">智能订阅载体</el-tag>
+                </el-tooltip>
+                <el-tag v-else size="small" type="info" effect="plain">{{ tag }}</el-tag>
+              </template>
             </div>
           </template>
         </el-table-column>
@@ -5381,9 +5397,22 @@ async function applyTemplate(tmpl: any) {
 
 // ── 删除 ──
 
+// [P2 D1 2026-09-25 载体防护] 载体规则识别: rule_id 前缀 (编译落地口径
+//   "agent-sub-<订阅id>"; 用 id 而非 tags — tags 可被手工编辑, id 不可)
+function isCarrierRule(row: LinkageRule): boolean {
+  return (row.id || '').startsWith('agent-sub-')
+}
+
 async function handleDelete(row: LinkageRule) {
   try {
-    await ElMessageBox.confirm(`确定删除规则「${row.name}」?`, '删除确认', { type: 'warning' })
+    // [P2 D1 2026-09-25] 载体规则删除二次警示: SubscriptionSampler 对账
+    //   会自动重建 (订阅仍在时), 直接删规则无法停用订阅 — 引导到订阅页
+    const tip = isCarrierRule(row)
+      ? `规则「${row.name}」是智能订阅载体规则, 由订阅状态自动维护。` +
+        `若对应订阅仍存在, 删除后约 60s 会自动重建。` +
+        `如需停用, 请到「AI 智能检索 → 智能订阅」暂停或删除对应订阅。仍要尝试删除?`
+      : `确定删除规则「${row.name}」?`
+    await ElMessageBox.confirm(tip, isCarrierRule(row) ? '智能订阅载体规则' : '删除确认', { type: 'warning' })
     await linkageApi.deleteRule(row.id)
     ElMessage.success('已删除')
     fetchRules()
@@ -5536,8 +5565,13 @@ async function handleBatchToggle(enabled: boolean) {
 async function handleBatchDelete() {
   if (!selectedRows.value.length) return
   try {
+    // [P2 D1 2026-09-25 载体防护] 选中含载体规则时警示条数 (会被对账重建)
+    const carrierCount = selectedRows.value.filter(r => isCarrierRule(r)).length
+    const carrierTip = carrierCount
+      ? ` (含 ${carrierCount} 条智能订阅载体规则, 订阅仍在时会自动重建)`
+      : ''
     await ElMessageBox.confirm(
-      `确定删除选中的 ${selectedRows.value.length} 条规则?`,
+      `确定删除选中的 ${selectedRows.value.length} 条规则?${carrierTip}`,
       '批量删除确认',
       { type: 'warning' }
     )

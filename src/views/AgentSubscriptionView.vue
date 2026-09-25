@@ -32,7 +32,10 @@
         <el-table-column label="类型" width="110">
           <template #default="{ row }">
             <el-tag v-if="kindOf(row) === 'vlm_task'" type="warning" size="small">语义视觉</el-tag>
-            <el-tag v-else-if="kindOf(row) === 'linkage_rule'" size="small">规则</el-tag>
+            <!-- [FIX kind-display 2026-09-25] 编译器产物 kind 实为 "rule" (非
+                 "linkage_rule") — 原判定恒假致规则类订阅误显「未编译」;
+                 保留旧值兼容存量手写产物 -->
+            <el-tag v-else-if="kindOf(row) === 'rule' || kindOf(row) === 'linkage_rule'" size="small">规则</el-tag>
             <el-tag v-else type="info" size="small">未编译</el-tag>
           </template>
         </el-table-column>
