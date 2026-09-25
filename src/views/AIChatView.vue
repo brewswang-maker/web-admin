@@ -190,6 +190,31 @@
 
         <!-- 输入区 -->
         <div class="chat-input-area">
+          <!-- [FEAT smart-sub 2026-09-25] 常用一键订阅面板: 「智能订阅」按钮就地展开 (不跳订阅页) -->
+          <div v-if="smartPanelOpen" class="smart-sub-panel">
+            <div class="smart-sub-head">
+              <span class="smart-sub-title">🔔 常用一键订阅</span>
+              <span class="smart-sub-sub">点击模板自动发送 (15 字内) · 经订阅编译预览后由你确认创建为草稿</span>
+              <el-button size="small" text @click="smartPanelOpen = false">收起</el-button>
+            </div>
+            <div class="smart-sub-grid">
+              <div v-for="tpl in oneClickTemplates" :key="tpl.label" class="smart-sub-item"
+                :class="{ disabled: isStreaming }" @click="applySubTemplate(tpl)">
+                <span class="tpl-icon">{{ tpl.icon }}</span>
+                <div class="tpl-body">
+                  <div class="tpl-label">{{ tpl.label }}</div>
+                  <div class="tpl-nl">{{ tpl.nl }}</div>
+                </div>
+              </div>
+              <div class="smart-sub-item is-custom" @click="onCustomSubscribe">
+                <span class="tpl-icon">✏️</span>
+                <div class="tpl-body">
+                  <div class="tpl-label">自定义订阅</div>
+                  <div class="tpl-nl">自行输入描述 (15 字内)</div>
+                </div>
+              </div>
+            </div>
+          </div>
           <!-- 图片预览 -->
           <div v-if="pendingImages.length" class="image-preview-bar">
             <div v-for="(img, idx) in pendingImages" :key="idx" class="preview-thumb-wrap">
@@ -213,7 +238,7 @@
               :title="isRecording ? '正在录音...点击停止' : '语音输入'">
               {{ isRecording ? '🔴' : '🎤' }}
             </el-button>
-            <el-input v-model="inputText" type="textarea" :rows="2"
+            <el-input ref="inputRef" v-model="inputText" type="textarea" :rows="2"
               placeholder="输入您的问题，如：帮我检查3号厂区的安全状况..."
               @keydown.enter.exact.prevent="sendMessage"
               :disabled="isStreaming" resize="none" />
@@ -287,19 +312,45 @@ const ttsEnabled = ref(false)
 let recognition: any = null
 let speechSynthesis: SpeechSynthesis | null = null
 
-interface QuickAction { icon: string; text: string; prompt: string; special?: 'subscribe' }
+interface QuickAction { icon: string; text: string; prompt: string; special?: 'smart_subscribe' }
 // [FEAT quick-cmd 2026-09-25] 快捷命令扩展: 用户点名 4 条 (今日报告/设备巡警/策略优化/
-//   策略分析) + 趋势分析保留 + 「新建订阅」直通 AI 订阅入口 (subscribe-v12)。
-//   设备巡警命中后端本地数据拦截 (不依赖 LLM); 订阅类为引导型: 点击后用户直接
-//   描述事件, 意图由 IntentParser SUBSCRIBE 判定, 预览产物经 SSE action 下发确认卡。
+//   策略分析) + 趋势分析保留。
+//   [FEAT smart-sub 2026-09-25] 订阅入口更名「智能订阅」: 旧引导消息行为已删除,
+//   改为就地展开「常用一键订阅」面板 (见下定义), 不残留旧命名与旧点击路径。
+//   设备巡警命中后端本地数据拦截 (不依赖 LLM); 订阅类经 IntentParser SUBSCRIBE 判定,
+//   预览产物经 SSE action 下发确认卡。
 const quickActions: QuickAction[] = [
   { icon: '📊', text: '今日报告', prompt: '帮我生成今日安全报告' },
   { icon: '🛡️', text: '设备巡警', prompt: '帮我做一次设备巡警，检查所有设备的在线状态和运行情况' },
   { icon: '⚡', text: '策略优化', prompt: '分析最近的告警数据，给出安全策略优化建议' },
   { icon: '🧭', text: '策略分析', prompt: '结合最近告警数据分析当前安全策略的覆盖情况，指出可能遗漏的风险场景' },
   { icon: '📈', text: '趋势分析', prompt: '分析最近7天的告警趋势，识别高风险时段' },
-  { icon: '🔔', text: '新建订阅', prompt: '', special: 'subscribe' },
+  { icon: '🔔', text: '智能订阅', prompt: '', special: 'smart_subscribe' },
 ]
+
+// [FEAT smart-sub 2026-09-25] 常用一键订阅模板 (集中定义, 便于增删并与事件类型 SSOT 对齐):
+//   每条 = 事件名 + ≤15 字 NL 话术 (IntentParser SUBSCRIBE 正则命中口径:
+//   "有…就提醒我 / 发现…提醒我") + 对应 EventTypeAliases.h 注册表 canonical 事件。
+//   清单经真机 TinyLLM 编译链 2 轮实证筛选 (全 2/2 稳定): 人员闯入/区域徘徊/越界/
+//   摔倒 映射为结构化规则类 (intrusion/loitering/tripwire/fall_detected); 其余映射为
+//   VLM 语义类 (need_vlm=true) — 均为合法产物, 由预览卡如实展示。
+//   ⚠️ 修改 NL 文案前必须重跑真机编译链实测: 小模型对措辞敏感, 换词可能编造注册表
+//   外的 key (实证: "发现明火/火灾就提醒我" 会编 fire_detected 被安全门拒)。
+interface OneClickTemplate { icon: string; label: string; nl: string }
+const oneClickTemplates: OneClickTemplate[] = [
+  { icon: '🚶', label: '人员闯入', nl: '有人闯入就提醒我' },
+  { icon: '🔁', label: '区域徘徊', nl: '有人在禁区徘徊就提醒我' },
+  { icon: '⚠️', label: '越界检测', nl: '有人越界就提醒我' },
+  { icon: '🧗', label: '攀爬检测', nl: '有人攀爬就提醒我' },
+  { icon: '🤕', label: '人员摔倒', nl: '有人摔倒就提醒我' },
+  { icon: '🥊', label: '打架斗殴', nl: '发现有人打架就提醒我' },
+  { icon: '👥', label: '人群聚集', nl: '有人群聚集就提醒我' },
+  { icon: '🔥', label: '烟火检测', nl: '发现着火就提醒我' },
+  { icon: '💨', label: '烟雾检测', nl: '发现浓烟就提醒我' },
+  { icon: '🎒', label: '物品遗留', nl: '发现物品遗落就提醒我' },
+]
+const smartPanelOpen = ref(false)
+const inputRef = ref<{ focus: () => void }>()
 
 let abortCtrl: AbortController | null = null
 
@@ -438,19 +489,36 @@ function sendQuickAction(prompt: string) {
   sendMessage()
 }
 
-// [FEAT quick-cmd 2026-09-25] 快捷命令统一入口: 订阅类 = 引导型 (不直接发送 —
-//   NL 由用户输入, 下一步消息经 IntentParser SUBSCRIBE 判定后回传预览卡);
-//   其余 = prompt 直发 (今日报告/设备巡警走后端本地数据拦截, 分析类走 LLM)。
+// [FEAT quick-cmd 2026-09-25] 快捷命令统一入口: 其余 = prompt 直发 (今日报告/设备巡警
+//   走后端本地数据拦截, 分析类走 LLM)。
+// [FEAT smart-sub 2026-09-25] 智能订阅 = 就地展开/收起常用一键订阅面板 (不跳订阅页)。
 function onQuickAction(qa: QuickAction) {
-  if (qa.special === 'subscribe') {
-    messages.value.push({
-      role: 'system',
-      content: '订阅入口已就绪 · 请直接描述要关注的事件 (15 字内), 例: 有人闯入仓库就提醒我',
-    })
-    scrollToBottom()
+  if (qa.special === 'smart_subscribe') {
+    smartPanelOpen.value = !smartPanelOpen.value
     return
   }
   sendQuickAction(qa.prompt)
+}
+
+// [FEAT smart-sub 2026-09-25] 模板项: 自动填入输入框并直接发送 (等效用户手输+回车),
+//   随后复用既有订阅链路 — IntentParser SUBSCRIBE → subscriptionCompileChain 预览
+//   → SSE action: subscription_preview → 用户预览卡「确认创建」为 DRAFT (同 15 字
+//   上限/同安全门/同落库口径, 零后端新引擎)。
+//   取舍口径: 全部模板统一"填即发"; 仅自定义项为"只聚焦不发送" — 行为一致可观。
+function applySubTemplate(tpl: OneClickTemplate) {
+  if (isStreaming.value) {
+    ElMessage.warning('AI 正在回复中, 请稍候再试')
+    return
+  }
+  inputText.value = tpl.nl
+  sendMessage()
+}
+
+// [FEAT smart-sub 2026-09-25] 自定义项: 不预设话术 — 收起面板并聚焦输入框,
+//   由用户自行输入 (仍受 15 字上限与编译安全门约束, 发送后链路同模板项)。
+function onCustomSubscribe() {
+  smartPanelOpen.value = false
+  nextTick(() => inputRef.value?.focus())
 }
 
 // [FEAT subscribe-v12 2026-09-25] 订阅预览卡确认 → 复用既有创建端点 (同安全门同落库;
@@ -920,6 +988,22 @@ onUnmounted(() => {
 .input-footer { display: flex; justify-content: space-between; align-items: center; margin-top: 6px; }
 .input-hint { color: #909399; font-size: 11px; }
 .input-shortcuts { display: flex; gap: 4px; flex-wrap: wrap; }
+
+/* [FEAT smart-sub 2026-09-25] 常用一键订阅面板 */
+.smart-sub-panel { background: #ffffff; border: 1px solid #dbe4f0; border-radius: 12px; padding: 10px 12px; margin-bottom: 10px; box-shadow: 0 2px 10px rgba(26,115,230,.06); }
+.smart-sub-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.smart-sub-title { font-weight: 600; font-size: 13px; color: #1e3a8a; }
+.smart-sub-sub { flex: 1; color: #909399; font-size: 11px; }
+.smart-sub-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(232px, 1fr)); gap: 6px; max-height: 200px; overflow-y: auto; }
+.smart-sub-item { display: flex; align-items: center; gap: 8px; padding: 5px 10px; border: 1px solid #e4e7ed; border-radius: 8px; cursor: pointer; background: #fafbfd; transition: border-color .15s, background .15s; }
+.smart-sub-item:hover { border-color: #1A73E8; background: #f0f6ff; }
+.smart-sub-item.disabled { opacity: .55; cursor: not-allowed; }
+.smart-sub-item.disabled:hover { border-color: #e4e7ed; background: #fafbfd; }
+.smart-sub-item.is-custom { border-style: dashed; }
+.tpl-icon { font-size: 16px; flex-shrink: 0; }
+.tpl-body { min-width: 0; }
+.tpl-label { font-size: 13px; color: #303133; font-weight: 500; line-height: 1.3; }
+.tpl-nl { font-size: 11px; color: #909399; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* 图片预览 */
 .image-preview-bar { display: flex; gap: 8px; padding: 6px 0; overflow-x: auto; }
