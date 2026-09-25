@@ -121,13 +121,24 @@ export function getSubscription(id: string) {
 }
 
 /**
- * [5] PUT /agent/subscriptions/:id 状态迁移/改名
+ * [5] PUT /agent/subscriptions/:id 状态迁移 / 局部更新
  * action: confirm (DRAFT→SANDBOX, 需编译产物) | activate (SANDBOX→ACTIVE,
- * 需先 verify 达标否则 1409 SUB_VERIFY_NOT_PASSED) | pause | resume; 缺省 = 改名
+ * 需先 verify 达标否则 1409 SUB_VERIFY_NOT_PASSED) | pause | resume |
+ * clear_error (清除 last_error, [P1-3 2026-09-25]); 缺省 = 局部更新
+ * (name / notify_channels / channels / notify_user_ids)
+ * [P1-2 2026-09-25 配置可改] 通知类字段变更由后端以现有 compiled_json 作草稿
+ * 原地重建载体规则 (零 LLM); 激活态重建后自动恢复启用, 失败回 1500
+ * SUB_RULE_REBUILD_FAILED 且行零变化
  */
 export function updateSubscription(
   id: string,
-  data: { action?: 'confirm' | 'activate' | 'pause' | 'resume'; name?: string }
+  data: {
+    action?: 'confirm' | 'activate' | 'pause' | 'resume' | 'clear_error'
+    name?: string
+    notify_channels?: string[]
+    channels?: string[]
+    notify_user_ids?: string[]
+  }
 ) {
   return http.put<ApiResponse<{ subscription: AgentSubscription }>>(
     `/agent/subscriptions/${id}`,
@@ -145,9 +156,14 @@ export function sampleSubscription(id: string, channel?: string) {
   )
 }
 
-/** [7] DELETE /agent/subscriptions/:id (MVP 仅 DRAFT 可硬删) */
+/** [7] DELETE /agent/subscriptions/:id
+ *  [P1-1 2026-09-25 删除死角] DRAFT/SANDBOX/PAUSED 可硬删 (后端级联清载体
+ *  规则 agent-sub-<id>); ACTIVE 拒 → SUB_ACTIVE_DELETE_DENIED (先 pause
+ *  两级确认防误删在线订阅) */
 export function deleteSubscription(id: string) {
-  return http.delete<ApiResponse<{ message: string }>>(`/agent/subscriptions/${id}`)
+  return http.delete<ApiResponse<{ removed: string; rule_id: string }>>(
+    `/agent/subscriptions/${id}`
+  )
 }
 
 /** SANDBOX 历史回放验证报告 — 字段与后端 SubscriptionVerifyReport 一一对应

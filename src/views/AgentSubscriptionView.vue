@@ -53,7 +53,7 @@
             <div v-if="row.hit_count > 0" class="sub-hit-count">共 {{ row.hit_count }} 次</div>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="320" fixed="right">
+        <el-table-column label="操作" width="400" fixed="right">
           <template #default="{ row }">
             <el-button v-if="row.status === 'DRAFT'" type="primary" size="small" @click="onConfirm(row)">确认编译</el-button>
             <el-button v-if="canSample(row)" size="small" @click="openSample(row)">采样</el-button>
@@ -61,7 +61,10 @@
             <el-button v-if="row.status === 'ACTIVE'" size="small" @click="onAction(row, 'pause')">暂停</el-button>
             <el-button v-if="row.status === 'PAUSED'" type="success" size="small" @click="onAction(row, 'resume')">恢复</el-button>
             <el-button size="small" link @click="openDetail(row)">详情</el-button>
-            <el-button v-if="row.status === 'DRAFT'" type="danger" size="small" link @click="onDelete(row)">删除</el-button>
+            <!-- [P1-2 2026-09-25 配置可改] 名称/通知方式/通知对象/通道范围编辑入口 -->
+            <el-button size="small" link @click="openEdit(row)">编辑</el-button>
+            <!-- [P1-1 2026-09-25 删除死角] 扩展 DRAFT/SANDBOX/PAUSED 可删 (ACTIVE 先暂停) -->
+            <el-button v-if="canDelete(row)" type="danger" size="small" link @click="onDelete(row)">删除</el-button>
           </template>
         </el-table-column>
         <template #empty>
@@ -142,6 +145,50 @@
         <el-button type="primary" :loading="creating" :disabled="!previewRes" @click="onCreate">
           确认创建 (进入影子观察)
         </el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 编辑弹层: 名称 + 通知方式 + 通知对象 + 监控通道 (P1-2 配置可改) -->
+    <!-- [P1-2 2026-09-25 配置可改] 原「创建后关键配置锁死」(检查报告 P1-2):
+         通知方式/通道范围/通知对象均为编译期烘焙进载体规则的字段 — 保存后
+         后端以现有编译产物原地重建规则 (零 LLM), 激活态自动恢复启用 -->
+    <el-dialog v-model="editVisible" title="编辑订阅配置" width="620px" :close-on-click-modal="false">
+      <el-form label-width="90px">
+        <el-form-item label="订阅名称">
+          <el-input v-model="editName" maxlength="30" placeholder="订阅名称" />
+        </el-form-item>
+        <el-form-item label="通知方式">
+          <el-checkbox-group v-model="editChannels">
+            <el-checkbox label="ws" disabled>站内推送</el-checkbox>
+            <el-checkbox label="email">邮件</el-checkbox>
+            <el-checkbox label="phone">电话提醒</el-checkbox>
+            <el-checkbox label="sms">短信</el-checkbox>
+            <el-checkbox label="tts_broadcast">语音播报</el-checkbox>
+          </el-checkbox-group>
+          <div class="notify-tip">保存后立即生效 — 已激活订阅的联动规则自动重建 (命中时按新方式通知)</div>
+        </el-form-item>
+        <el-form-item label="通知对象">
+          <el-select
+            v-model="editUserIds" multiple clearable collapse-tags
+            :loading="userOptsLoading" placeholder="默认仅自己 (创建者)" style="width: 100%"
+          >
+            <el-option v-for="u in userOpts" :key="u.id" :label="u.label" :value="u.id" />
+          </el-select>
+          <div class="notify-tip">不选 = 仅通知创建者本人；电话/短信/邮件将发送给所选成员</div>
+        </el-form-item>
+        <el-form-item label="监控通道">
+          <el-select
+            v-model="editScope" multiple clearable collapse-tags
+            :loading="channelOptsLoading" placeholder="默认全部通道" style="width: 100%"
+          >
+            <el-option v-for="c in channelOpts" :key="c.id" :label="`${c.id} · ${c.name}`" :value="c.id" />
+          </el-select>
+          <div class="notify-tip">不选 = 订阅全部通道；限定后仅所选通道的命中会通知</div>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="editVisible = false">取消</el-button>
+        <el-button type="primary" :loading="editing" @click="onSaveEdit">保存</el-button>
       </template>
     </el-dialog>
 
@@ -244,6 +291,8 @@
           <el-descriptions-item label="最近命中">{{ fmtTime(detailRow.last_hit_at) || '—' }}</el-descriptions-item>
           <el-descriptions-item v-if="detailRow.last_error" label="最近错误">
             <span class="sub-error">{{ detailRow.last_error }}</span>
+            <!-- [P1-3 2026-09-25 last_error 清除] 重验达标后端自动清; 此手动清兜底 -->
+            <el-button size="small" link type="primary" class="err-clear-btn" @click="onClearError">清除</el-button>
           </el-descriptions-item>
         </el-descriptions>
         <div class="detail-json-title">编译产物 (只读)</div>
@@ -260,8 +309,13 @@
  *   创建流 = NL 输入 → compile-preview (AI 编译) → 用户确认产物 → 创建 (DRAFT)
  *   → confirm (落动作载体规则, SANDBOX 影子观察) → verify 达标 → ACTIVE
  *   状态机操作按钮可见性与后端 SubscriptionStore 迁移表严格对齐
- *   (DRAFT 才 confirm/删除; SANDBOX/ACTIVE 才采样; pause 仅 ACTIVE —
+ *   (DRAFT 才 confirm; SANDBOX/ACTIVE 才采样; pause 仅 ACTIVE —
  *    SANDBOX 态 pause 会被后端 1409 拒绝, 属设计行为)
+ *   [P1-1 2026-09-25 删除死角] 删除扩展 DRAFT/SANDBOX/PAUSED (原仅 DRAFT,
+ *    非 DRAFT 永久不可删); ACTIVE 拒 → 先暂停 (后端级联清载体规则)
+ *   [P1-2 2026-09-25 配置可改] 名称/通知方式/通知对象/通道范围经编辑弹层
+ *    局部更新 — 通知类字段变更由后端以现有产物原地重建载体规则 (零 LLM)
+ *   [P1-3 2026-09-25 last_error 清除] 详情抽屉手动清错兜底 (重验达标自动清)
  */
 import { ref, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -420,7 +474,7 @@ async function onAction(row: AgentSubscription, action: 'pause' | 'resume') {
 
 async function onDelete(row: AgentSubscription) {
   try {
-    await ElMessageBox.confirm(`确定删除订阅「${row.name}」吗？`, '删除订阅', { type: 'warning' })
+    await ElMessageBox.confirm(`确定删除订阅「${row.name}」吗？其载体联动规则将一并删除。`, '删除订阅', { type: 'warning' })
   } catch {
     return
   }
@@ -429,7 +483,72 @@ async function onDelete(row: AgentSubscription) {
     ElMessage.success('已删除')
     await load()
   } catch (e) {
-    handleErr(e, '删除失败 (仅草稿态可删除)')
+    // 1409 SUB_ACTIVE_DELETE_DENIED (活跃订阅先暂停) / SUB_INVALID_TRANSITION
+    handleErr(e, '删除失败 (已激活订阅请先暂停)')
+  }
+}
+
+/** 删除按钮可见性 (P1-1): ACTIVE 需先暂停 — 与后端两级确认同口径 */
+const canDelete = (row: AgentSubscription) =>
+  row.status === 'DRAFT' || row.status === 'SANDBOX' || row.status === 'PAUSED'
+
+// ── 编辑 (P1-2 2026-09-25 配置可改) ──
+//   名称 + 通知方式 + 通知对象 + 监控通道局部更新; 保存后端原地重建载体规则
+//   (激活态自动恢复启用), 1500 SUB_RULE_REBUILD_FAILED 时行零变化可重试
+const editVisible = ref(false)
+const editing = ref(false)
+const editTarget = ref<AgentSubscription | null>(null)
+const editName = ref('')
+const editChannels = ref<string[]>(['ws'])
+const editUserIds = ref<string[]>([])
+const editScope = ref<string[]>([])
+
+function openEdit(row: AgentSubscription) {
+  editTarget.value = row
+  editName.value = row.name
+  // 站内推送恒选不可关 (§3.4 兜底); 空值回退 [ws] 与展示口径一致
+  editChannels.value = row.notify_channels?.length ? [...row.notify_channels] : ['ws']
+  if (!editChannels.value.includes('ws')) editChannels.value.unshift('ws')
+  editUserIds.value = [...(row.notify_user_ids ?? [])]
+  editScope.value = [...(row.channels ?? [])]
+  editVisible.value = true
+  ensureChannelOpts()  // 通道下拉 (异步, 不阻塞弹层)
+  ensureUserOpts()     // 通知对象下拉 (异步, 不阻塞弹层)
+}
+
+async function onSaveEdit() {
+  if (!editTarget.value) return
+  editing.value = true
+  try {
+    await updateSubscription(editTarget.value.id, {
+      name: editName.value.trim() || editTarget.value.name,
+      notify_channels: editChannels.value,
+      notify_user_ids: editUserIds.value,
+      channels: editScope.value,
+    })
+    ElMessage.success('已保存 — 联动规则已同步更新 (激活订阅已恢复启用)')
+    editVisible.value = false
+    await load()
+  } catch (e) {
+    // 1500 SUB_RULE_REBUILD_FAILED (规则重建失败, 变更未保存) / 400 参数错误
+    handleErr(e, '保存失败')
+  } finally {
+    editing.value = false
+  }
+}
+
+// [P1-3 2026-09-25 last_error 清除] 详情抽屉清除按钮 — 重验达标后端自动清,
+//   此手动清兜底 (编译失败已修复但无重验动作等场景)
+async function onClearError() {
+  if (!detailRow.value) return
+  const id = detailRow.value.id
+  try {
+    await updateSubscription(id, { action: 'clear_error' })
+    ElMessage.success('错误记录已清除')
+    await load()
+    detailRow.value = list.value.find(s => s.id === id) ?? detailRow.value
+  } catch (e) {
+    handleErr(e, '清除失败')
   }
 }
 
@@ -592,6 +711,7 @@ function handleErr(e: unknown, fallback: string) {
 .sub-name { font-weight: 600; }
 .sub-nl { color: var(--el-text-color-secondary); font-size: 12px; margin-top: 2px; }
 .sub-error { color: var(--el-color-danger); font-size: 12px; }
+.err-clear-btn { margin-left: 8px; }
 .preview-hint { margin-left: 10px; color: var(--el-text-color-secondary); font-size: 12px; }
 
 /* [P3 2026-09-24] 订阅聚合命中计数; [P1-1 2026-09-25] 通知方式/通道副文案 */

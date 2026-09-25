@@ -49,6 +49,9 @@ export const WS_TOPICS = {
   SYSTEM_VERSION: 'system.version',
   SYSTEM_NOTIFICATION: 'system.notification',
   SYSTEM_ALARM_MAP_MARKER: 'system.alarm_map_marker',  // [Audit-Add] pushSystemEvent 路径
+  // [P1-4 2026-09-25 摘要帧消费] 每日订阅动态摘要 (BoxService digest 线程
+  //   pushSystemEvent("subscription_digest") — 全局弹窗消费: useGlobalAlarm)
+  SUBSCRIPTION_DIGEST: 'system.subscription_digest',
 
   // 通配
   WILDCARD: '*',

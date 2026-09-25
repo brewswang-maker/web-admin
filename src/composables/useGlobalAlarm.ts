@@ -8,6 +8,7 @@
  *   3. 弹出海康风格报警弹窗（通过 useAlarmPopup，防抖 10 秒/同类型同通道）
  */
 import { ref, reactive } from 'vue'
+import { ElNotification } from 'element-plus'
 import { useAlarmStore } from '@/stores/alarm'
 import { settingsApi } from '@/api/settings'
 import { alarmApi } from '@/api/alarm'
@@ -17,6 +18,9 @@ import { useUserStore } from '@/stores/user'
 import { usePassTipStore, PASS_TIP_TYPES } from '@/stores/passTip'
 import { http } from '@/api/http'
 import type { AlarmEvent } from '@/types/alarm'
+// [P1-4 2026-09-25 摘要帧消费] 每日订阅动态摘要点击跳转智能订阅页
+//   (静态导入 router 有 stores/permission.ts 先例; 回调内使用无求值时序问题)
+import router from '@/router'
 // [FIX dev-col-leak 2026-09-19] 通行提示条通道名走显示口径 SSOT
 import { alarmChLabel } from './useAlarmTableHelpers'
 
@@ -222,6 +226,14 @@ function doConnect() {
         window.dispatchEvent(new CustomEvent('rules-changed', { detail: payload }))
         console.log('[useGlobalAlarm] rules.changed:', payload.reason,
           'source:', payload.source, 'version:', payload.rules_version)
+      }
+
+      // [P1-4 2026-09-25 摘要帧消费] 每日订阅动态摘要: 后端 digest 线程到点推
+      //   pushSystemEvent("subscription_digest") → WS type = system.subscription_digest
+      //   (兼容裸类型)。原前端无消费者 → 到点通知被静默丢弃 (检查报告 P1-4);
+      //   现由 ElNotification 横幅消费, 点击跳转智能订阅页。后端 total>0 才推。
+      if ((msg.type === 'subscription_digest' || msg.type === 'system.subscription_digest') && payload) {
+        handleSubscriptionDigest(payload)
       }
 
       // [P1-CO2] 推理检测结果实时分发: 供 LiveView Canvas 叠加检测框
@@ -573,6 +585,43 @@ async function handleAlarm(alarm: any) {
   } catch (e) {
     console.error('[useGlobalAlarm] handleAlarm exception:', e)
   }
+}
+
+// ── [P1-4 2026-09-25 摘要帧消费] 每日订阅动态摘要 (对标萤石「今日动态」) ──
+//   载荷: {date, window_hours, total, subscriptions:[{id,name,status,hit_count,
+//   last_hit_at,notify_channels}], generated_at} (BoxService::collectSubscriptionDigest)。
+//   后端仅 total>0 推送, 前端仍防御性判空; ElNotification 横幅 (bottom-right,
+//   12s) 消费 — 点击跳转智能订阅页。独立于告警主链 (不弹告警窗/不 TTS)。
+function handleSubscriptionDigest(payload: any) {
+  try {
+    // 与告警同红线: 未登录不打扰 (登录页收到摘要帧忽略)
+    if (!useUserStore().isLoggedIn) return
+  } catch { /* pinia 未就绪时保守放行 */ }
+  const subs: any[] = Array.isArray(payload?.subscriptions) ? payload.subscriptions : []
+  const total = Number(payload?.total) || 0
+  if (total <= 0 && subs.length === 0) return
+  const windowH = Number(payload?.window_hours) || 24
+  // 摘要行: 「名称(累计N次)」× 前 3 + 总数省略 (名称缺省回退 id)
+  const parts = subs.slice(0, 3).map((s: any) => {
+    const label = String(s?.name || s?.id || '订阅')
+    const n = Number(s?.hit_count) || 0
+    return n > 0 ? `${label} (累计${n}次)` : label
+  })
+  const more = subs.length > 3 ? ` 等 ${subs.length} 个订阅` : ''
+  const message = parts.length > 0
+    ? `近 ${windowH} 小时 ${subs.length} 个订阅有动态：${parts.join('、')}${more}`
+    : `近 ${windowH} 小时有 ${total} 条订阅命中`
+  ElNotification({
+    title: '订阅动态摘要',
+    message,
+    type: 'info',
+    duration: 12000,
+    position: 'bottom-right',
+    onClick: () => {
+      try { router.push('/agent-subscriptions') } catch { /* 路由未就绪忽略 */ }
+    },
+  })
+  console.log('[useGlobalAlarm] subscription_digest:', subs.length, 'subscription(s) shown')
 }
 
 // ── [P0-4-d 2026-08-20] WS 断线重连后补拉缺失告警 ──
