@@ -179,6 +179,11 @@ export interface VerifyReport {
   /** 真实跑通判定链的帧 (status=ok) */
   backend_ok_frames: number
   backend_failures: number
+  /** [P2-2 B3] 超时重试消耗次数 (观测用) */
+  timeout_retries?: number
+  /** [P2-3 C1/C2] 异通道样本数: 订阅通道 24h 无样本时第二遍放开取证 —
+   *  计入链路可执行性但命中不计 hits (场景无关噪声); 0 = 全部来自订阅通道 */
+  off_channel_samples?: number
   /** 规则类: 24h 匹配事件记录数 */
   rule_events_24h: number
   evidence_frames: string[]
@@ -187,20 +192,52 @@ export interface VerifyReport {
   error_message: string
 }
 
-/** [8] POST /agent/subscriptions/:id/verify SANDBOX 历史回放验证 (仅 SANDBOX 态)
+/** [8] POST /agent/subscriptions/:id/verify wait=true 同步模式 (仅 SANDBOX 态)
  *  next: confirm_activate = 达标可人工激活; shadow_observe = 继续影子观察
  *  [FIX verify-timeout 2026-09-25 真机] 历史回放 = 逐帧 VLM 云推理, 实测
  *  89.5s (8 帧 × 5~14s), 最坏 ~112s; 默认 30s 必超时 (nginx /api/ 已同步放宽
  *  300s)。POST 本不在重试白名单, skipRetry 显式声明防未来白名单变化导致
- *  超时后白跑第二轮 VLM 重放。 */
+ *  超时后白跑第二轮 VLM 重放。
+ *  [P2-3 C3 2026-09-26] 已非前端主路径 — 默认走 startVerifyTask 异步轮询;
+ *  本函数保留为兼容口径 (后端默认 wait=true 同步响应, 设备二进制/前端
+ *  非同批更新时旧页面仍可用)。 */
 export function verifySubscription(id: string) {
-  return http.post<ApiResponse<{
-    report: VerifyReport
-    meets_threshold: boolean
-    next: 'confirm_activate' | 'shadow_observe'
-  }>>(
+  return http.post<ApiResponse<VerifyTaskDone>>(
     `/agent/subscriptions/${id}/verify`,
     {},
     { timeoutMs: 300_000, skipRetry: true }
+  )
+}
+
+/** [P2-3 C3] verify 异步任务协议: done 态与同步响应同构
+ *  (report/meets_threshold/next 三字段同一来源, 副作用已在后端完成回调发生) */
+export interface VerifyTaskDone {
+  report: VerifyReport
+  meets_threshold: boolean
+  next: 'confirm_activate' | 'shadow_observe'
+}
+
+export interface VerifyTaskPoll extends Partial<VerifyTaskDone> {
+  status: 'running' | 'done'
+  sub_id?: string
+}
+
+/** [P2-3 C3] POST /agent/subscriptions/:id/verify wait=false 异步启动 —
+ *  立返 {task_id} 不占 REST 线程 90s+; 同订阅已有运行中任务 → 1409
+ *  SUB_VERIFY_RUNNING (防重复点击重复烧 VLM) */
+export function startVerifyTask(id: string) {
+  return http.post<ApiResponse<{ task_id: string; status: string }>>(
+    `/agent/subscriptions/${id}/verify`,
+    { wait: false },
+    { skipRetry: true }
+  )
+}
+
+/** [P2-3 C3] GET /agent/verify-tasks/:task_id 轮询任务 — running → 状态;
+ *  done → 同步响应同构协议; 任务内存态 (30min 过期/上限 32 条),
+ *  不存在 → 1404 VERIFY_TASK_NOT_FOUND */
+export function getVerifyTask(taskId: string) {
+  return http.get<ApiResponse<VerifyTaskPoll>>(
+    `/agent/verify-tasks/${taskId}`
   )
 }

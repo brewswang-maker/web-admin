@@ -251,6 +251,11 @@
           <el-descriptions-item label="无效画面 (拦截)">{{ verifyRes.report.invalid_frames }}</el-descriptions-item>
           <el-descriptions-item label="判定链跑通">{{ verifyRes.report.backend_ok_frames }} 帧</el-descriptions-item>
           <el-descriptions-item label="链路失败">{{ verifyRes.report.backend_failures }} 帧</el-descriptions-item>
+          <!-- [P2-3 C1] 异通道取证显性化: 订阅通道 24h 无样本时第二遍放开取证,
+               异通道命中不计 hits — 报告必须让用户知道样本与订阅场景无关 -->
+          <el-descriptions-item v-if="(verifyRes.report.off_channel_samples ?? 0) > 0" label="异通道样本">
+            {{ verifyRes.report.off_channel_samples }} — 订阅通道无样本, 已放开取证 (命中未计入)
+          </el-descriptions-item>
         </el-descriptions>
         <div v-if="verifyRes.report.evidence_frames.length" class="verify-evidence">
           <div class="detail-json-title">证据帧 (近 24h 回放抽样)</div>
@@ -325,7 +330,8 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Refresh } from '@element-plus/icons-vue'
 import {
   compilePreview, createSubscription, listSubscriptions,
-  updateSubscription, sampleSubscription, deleteSubscription, verifySubscription,
+  updateSubscription, sampleSubscription, deleteSubscription,
+  startVerifyTask, getVerifyTask,
   type AgentSubscription, type CompilePreviewResult, type SubscriptionSampleResult,
   type VerifyReport,
 } from '@/api/agentSubscriptions'
@@ -559,6 +565,11 @@ async function onClearError() {
 // [subscribe-verify 2026-09-24] verify 端点已实现 (此前恒 1501 契约占位):
 //   报告弹层展示回放统计 + 证据帧; meets_threshold 时人工点击激活 —
 //   后端 PUT activate 会对存档报告二次校验, 双保险绕不过红线 #2
+// [P2-3 C3 2026-09-26] 同步 POST 改异步任务 + 轮询: 实测回放 89.5~112s
+//   占死 REST worker 且前端 300s 硬扛是补丁; 改 startVerifyTask 立返
+//   task_id + getVerifyTask 轮询 (done 协议与同步响应同构, 展示层零适配)。
+//   轮询上限 150×2s=5min > 后端最坏 ~95s+余量; 1404 (任务过期/重启丢失)
+//   与 1409 (重复点击) 走 handleErr 统一提示。
 const verifyVisible = ref(false)
 const verifying = ref(false)
 const activating = ref(false)
@@ -572,8 +583,23 @@ async function onVerify(row: AgentSubscription) {
   verifying.value = true
   verifyVisible.value = true
   try {
-    const res = await verifySubscription(row.id)
-    verifyRes.value = res.data?.data ?? null
+    const start = await startVerifyTask(row.id)
+    const taskId = start.data?.data?.task_id
+    if (!taskId) throw new Error('未获得验证任务 ID')
+    for (let i = 0; i < 150; ++i) {
+      const t = await getVerifyTask(taskId)
+      const d = t.data?.data
+      if (d?.status === 'done' && d.report) {
+        verifyRes.value = {
+          report: d.report,
+          meets_threshold: d.meets_threshold ?? false,
+          next: d.next ?? 'shadow_observe'
+        }
+        return
+      }
+      await new Promise((r) => setTimeout(r, 2000))
+    }
+    throw new Error('验证任务轮询超时')
   } catch (e) {
     verifyVisible.value = false
     handleErr(e, '验证未完成 (仅影子观察态可验证)')
