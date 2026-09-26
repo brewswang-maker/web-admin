@@ -88,6 +88,10 @@
         </el-radio-group>
         <div class="tier-preview">
           <div class="tier-desc">{{ selectedTierPreset.desc }}</div>
+          <!-- [P0-3 2026-09-26] 档位取舍说明 (对标宇视「档位含义公开」): desc 讲参数
+            动什么, tradeoff 讲误/漏报代价 — 让用户切换前可见风险, 与通用档位卡
+            (ParameterFormRenderer TIER_TRADEOFF) 同口径维护 -->
+          <div class="tier-tradeoff">{{ selectedTierPreset.tradeoff }}</div>
           <div class="tier-params">
             <span v-for="(v, k) in selectedTierPreset.params" :key="k" class="tier-param">
               <span class="tp-key">{{ k }}</span><span class="tp-val">{{ v }}</span>
@@ -344,6 +348,8 @@ interface TierPreset {
   value: PersonalItemTier
   label: string
   desc: string
+  // [P0-3 2026-09-26] 档位取舍说明: 灵敏度↔目标尺寸↔误报率代价 (与通用档位卡同口径)
+  tradeoff: string
   params: Record<string, number | boolean>
 }
 
@@ -351,6 +357,7 @@ const TIER_PRESETS: TierPreset[] = [
   {
     value: 'high', label: '高灵敏',
     desc: '快走/短停留不漏报: IoU 放宽 + 预测匹配 + 运动轨 1hit + hold 2s + 属性闸放宽',
+    tradeoff: '检出优先：置信度/属性闸放宽，小背包与远距离目标可检出；深色衣物、座椅等相似色块误报风险升高',
     params: {
       iou_track_match: 0.15, track_match_predict_enabled: true,
       min_continous_frames: 2, min_continous_frames_moving: 1,
@@ -361,6 +368,7 @@ const TIER_PRESETS: TierPreset[] = [
   {
     value: 'balanced', label: '平衡',
     desc: '两侧均衡 (P0/P1 部署现状档): 预测匹配开 + 运动轨 2hit + hold 3s',
+    tradeoff: '两侧均衡：中等尺寸背包即可稳定检出，漏报与误报折中（部署默认档）',
     params: {
       iou_track_match: 0.3, track_match_predict_enabled: true,
       min_continous_frames: 2, min_continous_frames_moving: 2,
@@ -371,6 +379,7 @@ const TIER_PRESETS: TierPreset[] = [
   {
     value: 'low', label: '低误报',
     desc: '误报治理优先: 关预测匹配 + 3 hits + hold 5s + 属性闸收紧',
+    tradeoff: '误报优先：帧数/时长/置信度闸收紧，过滤小目标与瞬时干扰；远距离小背包可能漏检',
     params: {
       iou_track_match: 0.3, track_match_predict_enabled: false,
       min_continous_frames: 3, min_continous_frames_moving: 3,
@@ -569,7 +578,9 @@ onMounted(async () => {
 .tier-card { margin-bottom: 16px; }
 .tier-body { display: flex; flex-direction: column; gap: 10px; }
 .tier-preview { background: #fafbfc; border-radius: 6px; padding: 10px 12px; }
-.tier-desc { font-size: 13px; color: #303133; margin-bottom: 8px; }
+.tier-desc { font-size: 13px; color: #303133; margin-bottom: 4px; }
+/* [P0-3 2026-09-26] 档位取舍说明行 */
+.tier-tradeoff { font-size: 12px; color: #909399; margin-bottom: 8px; line-height: 1.5; }
 .tier-params { display: flex; flex-wrap: wrap; gap: 8px; }
 .tier-param {
   display: inline-flex; align-items: center; gap: 6px;

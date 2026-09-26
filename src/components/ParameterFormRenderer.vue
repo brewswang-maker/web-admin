@@ -14,6 +14,17 @@
           {{ tierLabel(t) }}
         </el-radio-button>
       </el-radio-group>
+      <!-- [P0-3 2026-09-26] 三档取舍说明 (对标宇视「档位含义公开」; 灵敏度档位专属,
+        生成风格三档已有自身语义提示不重复展示): 灵敏度↔目标尺寸↔预期误报率 对照,
+        当前生效档高亮 — 让用户在切换前就能看到误报/漏报代价, 而非事后试错 -->
+      <div v-if="!isStyleTier" class="pfr-tier-tradeoffs">
+        <div v-for="t in tierNames" :key="t" class="pfr-tier-tradeoff"
+          :class="{ 'is-current': t === tier.current }">
+          <span class="ptt-name">{{ tierLabel(t) }}</span>
+          <span class="ptt-desc">{{ TIER_TRADEOFF[t] ?? '' }}</span>
+          <span v-if="t === tier.current" class="ptt-current">当前</span>
+        </div>
+      </div>
       <p class="pfr-tier-hint">
         {{ isStyleTier
           ? '风格切换整组覆盖检测阈值（严格=高门槛低误报 / 标准=默认 / 创意=低门槛高召回），写入设备配置, 重启服务后生效。'
@@ -191,6 +202,14 @@ const tierKeys = computed(() =>
 
 // ── 档位卡 ───────────────────────────────────────────────────────────────────
 const TIER_LABEL: Record<string, string> = { high: '高灵敏', balanced: '平衡', low: '低误报' }
+// [P0-3 2026-09-26] 三档取舍口径: 灵敏度↔最小目标尺寸↔预期误报率 (与
+//   ScreeningPersonalItem.vue personal_item 专用页文案同口径维护; 仅覆盖通用
+//   语义, 各算法特定参数细节仍由后端 tier presets 下发的 params 行展示)
+const TIER_TRADEOFF: Record<string, string> = {
+  high: '检出优先：置信度/帧数闸放宽，更小更远的目标可检出；小物件与相似干扰的误报风险升高',
+  balanced: '两侧均衡：中等尺寸目标即可稳定检出，漏报与误报折中（部署默认档）',
+  low: '误报优先：帧数/时长/置信度闸收紧，过滤小目标与瞬时干扰；远距离小目标可能漏检',
+}
 // [M4-4 2026-09-21] 生成风格三档 (开放词汇): 键名 = CosmoEdge 对标计划原文,
 //   卡片标题与按钮标签切换为「生成风格 / 严格·标准·创意」(presets 键集合判定)
 const STYLE_TIERS = ['strict', 'standard', 'creative']
@@ -284,6 +303,13 @@ async function onSubmit() {
 .pfr-tier-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
 .pfr-tier-title { font-weight: 600; font-size: 13px; }
 .pfr-tier-hint { margin: 8px 0 0; font-size: 12px; color: var(--el-text-color-secondary); line-height: 1.5; }
+/* [P0-3 2026-09-26] 三档取舍对照行 (当前生效档浅底高亮) */
+.pfr-tier-tradeoffs { margin: 8px 0 0; display: flex; flex-direction: column; gap: 3px; }
+.pfr-tier-tradeoff { display: flex; align-items: baseline; gap: 8px; font-size: 12px; color: var(--el-text-color-secondary); line-height: 1.5; padding: 3px 8px; border-radius: 4px; }
+.pfr-tier-tradeoff.is-current { background: var(--el-color-warning-light-9); }
+.ptt-name { font-weight: 600; color: var(--el-text-color-primary); flex-shrink: 0; }
+.ptt-desc { flex: 1; }
+.ptt-current { font-size: 11px; color: var(--el-color-warning); flex-shrink: 0; }
 .pfr-tier-alert { margin-top: 8px; }
 .pfr-adv { border: none; margin-top: 4px; }
 .pfr-adv :deep(.el-collapse-item__header) { font-size: 13px; color: var(--el-text-color-secondary); }
