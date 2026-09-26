@@ -660,6 +660,30 @@ const LABEL_ZH: Record<string, string> = {
   toothbrush: '牙刷',
   // 安防扩展类 (非 COCO: 插件自定义/内置链实际出现值域)
   face: '人脸', motor: '电动车', helmet: '头盔', fire: '火焰', smoke: '烟雾',
+  // [FIX label-zh-lpr 2026-09-26] 插件类名全量补全 (图 19:20 车牌告警弹窗
+  //   叠加层裸显 "license_plate 98%" 根因: 原表未收录 LPR 插件类名,
+  //   zhLabel 未命中原样直出)。口径 = 全仓 plugins/*.cpp 的 class_name 赋值
+  //   与 src/ 引擎比对表实际值域聚合去重后逐一映射:
+  license_plate: '车牌', plate: '车牌', vehicle: '车辆', vehicle_struct: '车辆结构化',
+  // OCR / 安全 / 环境 / 指标类插件
+  text: '文本', text_region: '文本区域', safety_sign: '安全标识',
+  rider_overload: '违规载人', anomaly_sound: '异常声音', drowsy: '打瞌睡', yawn: '打哈欠',
+  glare: '强光', image_freeze: '画面冻结', camera_tamper: '镜头遮挡',
+  brightness_anomaly: '亮度异常', parking_change: '车位状态变化',
+  removed_item: '消失物品', object_removal_metric: '物品消失指标',
+  people_count_metric: '人数统计', queue_metric: '排队长度',
+  density_heatmap_metric: '密度热力', sleep_on_duty_metric: '睡岗指标',
+  multiframe_fusion_no_single_frame_output: '多帧融合', rodent: '鼠类',
+  // 引擎直报链/别名回退值域 (InferenceScheduler class_name 比对表)
+  crowd: '人群', gathering: '聚集', intruder: '入侵者', intrusion: '入侵',
+  illegal_parking: '违停', loitering: '徘徊', wandering: '徘徊',
+  run: '奔跑', running: '奔跑', fall: '摔倒', falling: '摔倒',
+  fight: '打斗', fighting: '打斗', gun: '枪支', weapon: '武器',
+  hard_hat: '安全帽', no_hard_hat: '未戴安全帽', no_helmet: '未戴头盔',
+  reflective_vest: '反光衣', vest: '反光衣', no_vest: '未穿反光衣',
+  phone_call: '打电话', cell_phone: '手机', animal: '动物', flame: '火焰',
+  // 无标签兜底值 (parseDetections fallback 'target' / bbox 单框链)
+  target: '目标',
 }
 export function zhLabel(label: string): string {
   return LABEL_ZH[label] || label

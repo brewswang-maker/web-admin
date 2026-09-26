@@ -222,14 +222,17 @@
                     </el-image>
                     <div v-else class="traj-snap traj-snap-fallback">无快照</div>
                     <div class="traj-meta">
-                    <div class="traj-ch">{{ n.channel_name || n.channel_id_str || `camera ${n.camera_id}` }}</div>
+                    <!-- [FIX zh-audit 2026-09-26] 裸英文中文化: camera→摄像头 /
+                         alarm_type canonical key→中文 (useEventTypeZh) /
+                         class_name 检测类名→中文 (zhLabel 共享映射) -->
+                    <div class="traj-ch">{{ n.channel_name || n.channel_id_str || `摄像头 ${n.camera_id}` }}</div>
                     <div class="traj-line">
-                        track {{ n.track_id }}
+                        轨迹 {{ n.track_id }}
                         <el-tag v-if="n.alarm_type" size="small" type="danger" class="ml">
-                        {{ n.alarm_type }} (Δ{{ n.delta_ms }}ms)
+                        {{ zh(n.alarm_type) }} (Δ{{ n.delta_ms }}ms)
                         </el-tag>
                     </div>
-                    <div class="traj-line hint">命中 {{ n.hit_count ?? 1 }} 次 · {{ n.class_name || 'person' }}</div>
+                    <div class="traj-line hint">命中 {{ n.hit_count ?? 1 }} 次 · {{ zhLabel(n.class_name || 'person') }}</div>
                     </div>
                 </div>
                 </el-timeline-item>
@@ -334,11 +337,16 @@ import { allowedOps, getAttributeKeyDef, valueControlKind } from '@/api/attribut
 import { ApiError } from '@/api/http'
 // [UX 2026-08-31] 1d: 检索结果 → 告警详情弹窗 (不再跳页报警中心)
 import { openAlarmDetailById } from '@/composables/useAlarmPopup'
+// [FIX zh-audit 2026-09-26] 裸英文中文化: 事件类型 canonical key → 中文
+//   (useEventTypeZh SSOT) + 检测类名 → 中文 (zhLabel 共享映射)
+import { useEventTypeZh } from '@/composables/useEventTypeZh'
+import { zhLabel } from '@/composables/useAlarmShapes'
 
 const router = useRouter()
 const activeTab = ref<'hybrid' | 'nl' | 'image' | 'trajectory'>('hybrid')
 const loading = ref(false)
 const searched = ref(false)
+const { zh, ensure: ensureEventTypesZh } = useEventTypeZh()
 
 // ── [P1-1 2026-09-15] 能力状态面板 (G4/RA-3) ───────────────
 // 面板加载失败静默 (null → 状态条隐藏), 核心检索不受影响。
@@ -347,6 +355,7 @@ const vlm = ref<VlmStatus | null>(null)
 const vlmEnabled = computed(() => vlm.value?.effective_enabled === true)
 const degraded = computed(() => panel.value?.embed_mode === 'hash_fallback')
 onMounted(async () => {
+  ensureEventTypesZh()  // [FIX zh-audit 2026-09-26] 预热事件类型中文名 (非阻塞)
   const [s, v] = await Promise.allSettled([retrievalApi.getStats(), retrievalApi.getVlmStatus()])
   if (s.status === 'fulfilled') panel.value = s.value.data ?? null
   if (v.status === 'fulfilled') vlm.value = v.value.data ?? null

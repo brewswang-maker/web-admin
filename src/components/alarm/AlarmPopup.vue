@@ -423,6 +423,30 @@
                         </div>
                       </div>
                     </div>
+                    <!-- [FEAT lpr-crop 2026-09-26] 车牌特写: LPR 最优帧车牌裁剪
+                         证据图 (插件 attachBestPlateEvidence 产出, 已落盘 evidence
+                         目录独立成图), 点击可预览大图 — 与「人脸比对」同位置语义
+                         (放告警图片前便于先核对号码) -->
+                    <div v-if="plateCrop" class="alarm-popup__detail-section">
+                      <div class="alarm-popup__detail-section-title alarm-popup__accent-title">车牌特写</div>
+                      <div class="alarm-popup__plate-crop">
+                        <el-image
+                          :src="plateCrop.url"
+                          fit="contain"
+                          class="alarm-popup__plate-crop-img"
+                          :preview-src-list="[plateCrop.url]"
+                          :preview-teleported="true"
+                          :z-index="10020"
+                        />
+                        <div class="alarm-popup__plate-crop-side">
+                          <div class="alarm-popup__plate-crop-no">{{ plateCrop.no || '—' }}</div>
+                          <div class="alarm-popup__plate-crop-tags">
+                            <span v-if="plateCrop.colorZh" class="alarm-popup__plate-crop-color">{{ plateCrop.colorZh }}</span>
+                            <span v-if="plateCrop.hits > 1" class="alarm-popup__plate-crop-hits">多帧命中 {{ plateCrop.hits }} 次</span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
                     <!-- 告警图片: 本次事件的快照, 多张可翻页, 点击跳转「图片」Tab -->
                     <div class="alarm-popup__detail-images">
                       <div class="alarm-popup__detail-images-header">
@@ -903,6 +927,32 @@ const faceCompare = computed(() => {
   const known = !!pid && pid !== 'unknown'
   const verdict = known ? `${groupZh || '已识别'}${name ? ' · ' + name : ''}` : '未命中名单'
   return { snapshot: snap, enroll, similarityPct: sim > 0 ? `${(sim * 100).toFixed(1)}%` : '-', verdict, known }
+})
+// ── [FEAT lpr-crop 2026-09-26] 车牌特写卡 (LPR 最优帧车牌裁剪小图) ──
+//   数据源: 插件 attachBestPlateEvidence 写入 metadata.target_snapshot_url
+//   (最优帧 15% 边距裁剪 ≤320 宽; AlarmDispatcher.persistEvidenceUris 白名单
+//   已落盘 /snapshots/evidence/... + 7d 锁 — 与告警同源存档的独立车牌小图,
+//   对标海康全景+车牌裁切双文件)。仅车牌系告警 (plate*/lpr*) 展示 — 其余
+//   算法同字段语义为通用目标裁剪, 不在此卡呈现避免误标。
+//   plate_color 为模型机器值 (LPR_COLORS 英文), 展示层映射中文, 数据不变。
+const PLATE_COLOR_ZH: Record<string, string> = {
+  blue: '蓝牌', yellow: '黄牌', green: '绿牌(新能源)', white: '白牌', black: '黑牌',
+}
+const plateCrop = computed(() => {
+  const alarm = currentAlarm.value
+  if (!alarm) return null
+  const t = String(alarm.type || '')
+  if (!(t.startsWith('plate') || t.startsWith('lpr'))) return null
+  const meta = popupMetaSrc()
+  const url = typeof meta.target_snapshot_url === 'string' ? meta.target_snapshot_url : ''
+  if (!url) return null
+  const colorRaw = String(meta.plate_color || '').toLowerCase()
+  return {
+    url,
+    no: String(meta.plate_no || ''),
+    colorZh: PLATE_COLOR_ZH[colorRaw] || '',
+    hits: Number(meta.plate_hits ?? 0) || 0,
+  }
 })
 const currentSnapshotUrl = computed(() => alarmImageList.value[imageIndex.value]?.url || snapshotImageUrl.value)
 watch(totalImageCount, (n) => { if (imageIndex.value >= n) imageIndex.value = Math.max(0, n - 1) })
@@ -3266,6 +3316,60 @@ void jumpToPlayback; void openImageTab
   /*color: #00d4aa;*/
   color:#333;
   font-weight: 600;
+}
+/* [FEAT lpr-crop 2026-09-26] 车牌特写卡: 左侧裁剪小图 (车牌 ≈3.4:1 宽幅) +
+   右侧号码大字/颜色徽章/多帧命中角标; 深底与快照一致 (#0a0e1c) */
+.alarm-popup__plate-crop {
+  display: flex;
+  gap: 10px;
+  margin-top: 8px;
+  align-items: center;
+}
+.alarm-popup__plate-crop-img {
+  flex: 0 0 168px;
+  width: 168px;
+  height: 52px;
+  border: 1px solid #ebeef5;
+  border-radius: 4px;
+  background: #0a0e1c;
+  cursor: zoom-in;
+}
+.alarm-popup__plate-crop-side {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.alarm-popup__plate-crop-no {
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  color: #303133;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.alarm-popup__plate-crop-tags {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.alarm-popup__plate-crop-color {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 10px;
+  font-size: 12px;
+  color: #67c23a;
+  border: 1px solid rgba(103, 194, 58, 0.6);
+}
+.alarm-popup__plate-crop-hits {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 10px;
+  font-size: 12px;
+  color: #909399;
+  border: 1px solid rgba(144, 147, 153, 0.5);
 }
 
 /* [POPUP-DISPOSE-ENTRY 2026-09-03] 详情面板底部「处警」粉红色入口按钮 */
