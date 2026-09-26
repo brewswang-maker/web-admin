@@ -356,8 +356,12 @@
                       <span class="alarm-popup__detail-val">{{ formatTime(currentAlarm.createdAt) }}</span>
                     </div>
                     <div class="alarm-popup__detail-row">
+                      <!-- [P0-1 2026-09-26] 结束时间链路修复: 原读 (any).endedAt — 全前端
+                           无写入点 → 永远 fallback createdAt (真机实测: 已解决告警详情
+                           「结束时间」= 发生时间, 误导用户); 改读 eventEndMs
+                           (types/alarm.ts 归一双源: WS end 帧 / REST event_end_ms)。 -->
                       <span class="alarm-popup__detail-key">结束时间:</span>
-                      <span class="alarm-popup__detail-val">{{ formatTime(((currentAlarm as any)?.endedAt as string | undefined) || currentAlarm.createdAt) }}</span>
+                      <span class="alarm-popup__detail-val">{{ endTimeText }}</span>
                     </div>
                     <div class="alarm-popup__detail-row">
                       <span class="alarm-popup__detail-key">所属区域/位置:</span>
@@ -2451,6 +2455,14 @@ function formatTime(isoStr?: string): string {
   if (!isoStr) return '-'
   try { return new Date(isoStr).toLocaleString('zh-CN', { hour12: false }) } catch { return isoStr }
 }
+// [P0-1 2026-09-26] 事件结束时间文案 (修复 template 详情行 endedAt 死字段):
+//   eventEndMs > 0 (WS end 帧 event_end_ms / REST event_end_ms 归一) → 格式化;
+//   已结束但值为空 → '-'; 未结束 (eventEnded 未置) → 「进行中」。
+const endTimeText = computed<string>(() => {
+  const ms = currentAlarm.value?.eventEndMs
+  if (typeof ms === 'number' && ms > 0) return formatTime(new Date(ms).toISOString())
+  return currentAlarm.value?.eventEnded ? '-' : '进行中'
+})
 // [FIX status-cn-complete 2026-09-21] 补全处置主状态键: confirmed/handled/resolved
 //   此前缺 confirmed (弹窗处警「真实告警」提交的主状态) → 弹窗「状态:」裸显
 //   英文 "confirmed" (真机 22:22 用户实测); handled/resolved 同理补齐。

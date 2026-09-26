@@ -325,6 +325,19 @@
               </el-form-item>
             </el-col>
           </el-row>
+          <!-- [P0-1 2026-09-26] 规则级解除延时 (对标 ONVIF AlarmOffDelay):
+               事件最后一次活动后维持该时长再无活动即自动解除 (resolved);
+               0=继承全局 (默认 30000ms); 与冷却语义正交 (解除≠抑制) -->
+          <el-row :gutter="16">
+            <el-col :span="12">
+              <el-form-item label="解除延时(ms)" prop="offDelayMs">
+                <el-input-number v-model="form.offDelayMs" :min="0" :max="600000" :step="1000" style="width: 100%" />
+              </el-form-item>
+            </el-col>
+            <el-col :span="12">
+              <p class="cond-hint" style="margin: 6px 0 0">0 = 继承全局解除延时（默认 30000ms）；事件静默超过该时长后自动标记为已解决</p>
+            </el-col>
+          </el-row>
           <!-- [M2-2 2026-09-21] 告警次数上限 (对标 CosmoEdge targetAlarmCount 0~100):
                0=不限; 达到上限当日停报, 次日零点自动恢复; 与冷却语义正交
                (冷却期内被抑制的事件不消耗额度 — 额度只按真实触发扣除) -->
@@ -3302,6 +3315,8 @@ const form = reactive({
   description: '',
   priority: 50,
   cooldownMs: 5000,
+  // [P0-1 2026-09-26] 规则级解除延时 (ms): 0=继承全局 (默认 30000); 0-600000 步长 1000
+  offDelayMs: 0,
   // [M2-2 2026-09-21] 告警次数上限 (次/日): 0=不限; 1-100=达上限当日停报, 次日自动恢复
   maxTriggers: 0,
   enabled: true,
@@ -4194,6 +4209,8 @@ function resetEditorState(rule: LinkageRule | null) {
   form.description = rule?.description || ''
   form.priority = rule?.priority ?? 50
   form.cooldownMs = rule?.cooldown_ms ?? 5000
+  // [P0-1 2026-09-26] 解除延时回显 (0=继承全局)
+  form.offDelayMs = rule?.off_delay_ms ?? 0
   // [M2-2 2026-09-21] 次数上限回显 (0=不限)
   form.maxTriggers = rule?.max_triggers ?? 0
   form.enabled = rule?.enabled ?? true
@@ -4628,6 +4645,8 @@ async function handleSave(): Promise<boolean> {
   if (!form.name.trim()) { ElMessage.warning('请输入规则名称'); return false }
   if (form.priority < 1 || form.priority > 100) { ElMessage.warning('优先级范围 1-100'); return false }
   if (form.cooldownMs < 1000) { ElMessage.warning('冷却时间最小 1000ms'); return false }
+  // [P0-1 2026-09-26] 解除延时范围校验 (0=继承全局; 与后端 clamp 同口径)
+  if (form.offDelayMs < 0 || form.offDelayMs > 600000) { ElMessage.warning('解除延时范围 0-600000ms (0=继承全局)'); return false }
   // [M2-2 2026-09-21] 次数上限范围校验 (0=不限; 与后端 clamp 同口径)
   if (form.maxTriggers < 0 || form.maxTriggers > 100) { ElMessage.warning('告警次数上限范围 0-100 (0=不限)'); return false }
 
@@ -5281,6 +5300,8 @@ async function handleSave(): Promise<boolean> {
       description: form.description.trim(),
       priority: form.priority,
       cooldown_ms: form.cooldownMs,
+      // [P0-1 2026-09-26] 规则级解除延时 (0=继承全局)
+      off_delay_ms: form.offDelayMs,
       // [M2-2 2026-09-21] 告警次数上限 (0=不限)
       max_triggers: form.maxTriggers,
       enabled: form.enabled,

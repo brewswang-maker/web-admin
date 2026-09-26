@@ -268,6 +268,10 @@ export interface LinkageRule {
   enabled: boolean
   priority: number
   cooldown_ms: number
+  // [P0-1 2026-09-26] 规则级解除延时 (对标 ONVIF AlarmOffDelay): 事件最后
+  //   一次活动后维持 off_delay_ms 再无活动即自动解除 (resolved); 0=继承全局
+  //   (alarm.event_contract.event_idle_timeout_ms, 默认 30000); 0-600000
+  off_delay_ms?: number
   // [M2-2 2026-09-21] 告警次数上限: 0=不限; 1-100=每规则当日报警次数上限
   //   (达上限当日停报, 次日自动恢复; 与 cooldown_ms 正交 — 冷却不消耗额度)
   max_triggers?: number
