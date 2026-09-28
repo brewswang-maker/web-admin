@@ -130,19 +130,42 @@ export function useChannelHealth(pollMs = 10000) {
       //   inference 端点直接给 channel_id 字段 (无 _ch0 后缀), 二者对齐键。
       // [NOTE 2026-09-28] 后端实际返回字段在 data.items / data.streams 同列表都常见,
       //   都接受 (以 any narrow 后按需取数据)。
+      // [FIX stream-offline-filter 2026-09-28] 离线上传虚拟通道过滤:
+      //   streams 端点同时列出了 "gb_offline_upload_ch98XX" 这一路 (属默认占位
+      //   文件/录像上传通道, deviceId="offline_upload", enabled=false),
+      //   本卡仅显示真实业务摄像头 (GB28181 推流通道)。判定:
+      //     1) deviceId === 'offline_upload' → 虚拟占位, 跳过
+      //     2) streamId 以 'gb_offline_upload_' 开头 → 虚拟占位, 兜底跳过
+      //     3) streamId 不匹配 'gb_' GB28181 前缀但 len<18 → 不是真实摄像头, 跳过
+      // [REF 2026-09-28] memory "离线任务与虚拟通道陷阱" — 虚拟通道应从业务看板排除,
+      //   避免非实际部署项混于同一面板误导运维。
       const rawStreams: any = streamsRes?.data?.data
       const items: any[] = rawStreams?.items ?? rawStreams?.streams ?? []
       const streamMap = new Map<string, { bitrate: number; aliveSecond: number; viewers: number; status: string }>()
+      let skippedOffline = 0
       for (const s of items) {
+        // (1) deviceId 明确标记的虚拟通道
+        if (s.deviceId === 'offline_upload') { skippedOffline += 1; continue }
+        // (2) stream_id 前缀明示
         const sid: string = s.stream_id ?? s.streamId ?? ''
+        if (sid.startsWith('gb_offline_upload_')) { skippedOffline += 1; continue }
+        // (3) 非 GB28181 标准 + 短 id = 非业务摄像头 (如本机离线上传占位)
+        if (!sid.startsWith('gb_')) { skippedOffline += 1; continue }
         const m = /_(\d{20})$/.exec(sid)
-        const chKey = m ? m[1] : sid
+        if (!m) { skippedOffline += 1; continue }   // 20 位 GB28181 通道 id 才是真实摄像头
+
+        const chKey = m[1]  // channel_id_str (20 位)
         streamMap.set(chKey, {
           bitrate: s.bitrate ?? 0,
           aliveSecond: s.aliveSecond ?? 0,
           viewers: s.viewerCount ?? 0,
           status: s.status ?? '',
         })
+      }
+      // 诊断上记: 被过滤的虚拟通道数, 可调试误过滤
+      if (skippedOffline > 0) {
+        // eslint-disable-next-line no-console
+        console.debug(`[useChannelHealth] 过滤 ${skippedOffline} 路离线/虚拟通道 (offline_upload)`)
       }
 
       const infRaw: any = infRes?.data?.data
