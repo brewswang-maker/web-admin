@@ -108,6 +108,41 @@ export interface PaginatedRecords {
  */
 export type FaceGroupSwitches = Record<FaceGroupTypeStr, boolean>
 
+/**
+ * [FEAT face-recog-process 2026-09-28] 识别过程调试数据 (REST /face/recognition-process/latest)
+ *   与后端 face_detector.cpp getRecognitionProcessJSON 输出 + stages_desc 元数据对齐.
+ *   调试面板 (RecognitionProcessDebugPanel) 消费; 实时面板 (RecognitionProcessLivePanel)
+ *   走 WS, 不依赖此接口.
+ */
+export interface RecognitionProcessDebugData {
+  channel_id: number
+  frame_id: number
+  timestamp_ms: number
+  // 六段时间 (毫秒)
+  preprocess_ms: number
+  detection_ms: number
+  nms_ms: number
+  quality_ms: number
+  recognition_ms: number
+  alarm_ms: number
+  // 总耗时 (毫秒)
+  total_ms: number
+  // 计数指标
+  faces_detected: number
+  faces_after_nms: number
+  faces_passed: number
+  faces_recognized: number
+  alarms_triggered: number
+  // 匹配详情
+  matched_person_ids: string[]
+  similarities: number[]
+  alarm_types: string[]
+  // 状态
+  success: boolean
+  // 阶段元数据 (后端 L34166-L34173 补入, 6 项数组 [{name, desc}])
+  stages_desc: Array<{ name: string; desc: string }>
+}
+
 /** 六分组开关接口响应 (GET: switches+description / PUT: switches+updated+message) */
 export interface FaceGroupSwitchesResponse {
   switches: FaceGroupSwitches
@@ -292,6 +327,23 @@ const faceApi = {
   cleanupExpired() {
     return http.post<FaceDatabaseResponse<{ disabled: number; message: string }>>(
       '/face/database/cleanup'
+    )
+  },
+
+  /**
+   * [FEAT face-recog-process 2026-09-28] 获取最近一帧人脸识别过程 (调试面板 C 用)
+   *   后端 GET /api/v1/face/recognition-process/latest (RestApiHandlers L34148 真实化端点):
+   *     - PluginManager 拿 face_detector AlgoPluginBase 实例
+   *     - 调 getRecognitionProcessJSON() (face_detector override, 加锁读 g_rp_committed)
+   *     - 补 stages_desc 元数据 (前端面板卡片标题)
+   *     - ?channel_id 过滤 (调试面板 per-channel 过滤)
+   *   返回 503 = 插件未加载, 204 = 插件加载但未推理, 200 = 正常.
+   *   仅调试面板 (手动/2Hz 轮询) 使用; 实时面板 B 走 WS face.recognition.process.
+   */
+  getRecognitionProcessLatest(params: { channel_id?: number } = {}) {
+    return http.get<FaceDatabaseResponse<RecognitionProcessDebugData>>(
+      '/face/recognition-process/latest',
+      { params }
     )
   }
 }

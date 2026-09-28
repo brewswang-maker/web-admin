@@ -110,6 +110,27 @@
       </div>
     </el-card>
 
+    <!-- ===== [FEAT face-recog-process 2026-09-28 C 形态] 识别过程调试面板 (可折叠) ===== -->
+    <!-- REST GET /api/v1/face/recognition-process/latest → 后端 PluginManager 拿 face_detector 实例
+         + getRecognitionProcessJSON (加锁读 g_rp_committed) + stages_desc 元数据 + ?channel_id 过滤.
+         与告警漏斗并列 (同款 el-card 可折叠), 默认折叠以避免抢占告警列表空间.
+         点击展开可看六阶段详情 + 命中结果表 + 计数指标 + 告警类型. -->
+    <el-card shadow="never" class="recog-debug-card" :body-style="{ padding: '0' }">
+      <div class="recog-debug-head" @click="recogDebugExpanded = !recogDebugExpanded">
+        <el-icon class="recog-debug-title-icon" :size="16"><DataBoard /></el-icon>
+        <span class="recog-debug-title">识别过程调试</span>
+        <span class="recog-debug-hint">最近一帧六阶段耗时 + 命中详情 (REST 拉取, 默认 手动刷新)</span>
+        <span class="recog-debug-head-right">
+          <el-icon class="recog-debug-toggle-icon" :class="{ 'is-expanded': recogDebugExpanded }">
+            <ArrowDown />
+          </el-icon>
+        </span>
+      </div>
+      <div v-if="recogDebugExpanded" class="recog-debug-body">
+        <RecognitionProcessDebugPanel />
+      </div>
+    </el-card>
+
     <!-- ===== 工具栏 ===== -->
     <el-card shadow="never" class="toolbar-card">
       <div class="toolbar">
@@ -974,6 +995,7 @@ import {
   Bell, Warning, CircleCheck, Clock,
   Search, Refresh, Download, WarningFilled,
   Picture, VideoPlay, Position, ArrowDown, TrendCharts,
+  DataBoard,  // [FEAT face-recog-process 2026-09-28] 识别过程调试面板标题图标
 } from '@element-plus/icons-vue'
 import { alarmApi, fetchVlmQueueSnapshot } from '@/api/alarm'
 // [P1-1 2026-09-20] 告警漏斗五环节快照 (GET /stats/alarm-funnel)
@@ -991,6 +1013,8 @@ import type { AlarmHandleForm, AlarmEvidence, AlarmEvent } from '@/types/alarm'
 import { normalizeAlarmCore, aiReviewVerdictLabel, aiReviewVerifierLabel, aiReviewReasonText, type AiReviewInfo } from '@/types/alarm'
 import { useAuthStore } from '@/stores/auth'
 import { useWebSocket } from '@/composables/useWebSocket'
+// [FEAT face-recog-process 2026-09-28 C 形态] 识别过程调试面板 (REST 拉取, 仅调试时不拦截人)
+import RecognitionProcessDebugPanel from '@/views/RecognitionProcessDebugPanel.vue'
 // [P0-9/6/10 2026-09-04] canonical zh SSOT + 规范处警对话框
 import { useEventTypeZh } from '@/composables/useEventTypeZh'
 // [FIX dev-name-num 2026-09-11] 设备名称数字形态治理 (共享目录反查)
@@ -1906,6 +1930,11 @@ const rqText = computed(() => {
 const funnelExpanded = ref(false)
 const funnelLoading = ref(false)
 const funnelData = ref<AlarmFunnelResponse | null>(null)
+
+// ── [FEAT face-recog-process 2026-09-28 C 形态] 识别过程调试面板 (可折叠, 默认折叠避免抢占告警列表空间)
+//   内嵌 <RecognitionProcessDebugPanel> 走 REST 拉取 (GET /api/v1/face/recognition-process/latest),
+//   默认手动刷新; 用户可点面板内自动开关切 2Hz 轮询. 面板独立状态机不影响告警列表. ──
+const recogDebugExpanded = ref(false)
 
 async function fetchAlarmFunnel() {
   funnelLoading.value = true
