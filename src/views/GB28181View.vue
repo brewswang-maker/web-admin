@@ -538,7 +538,12 @@ async function saveConfig() {
 async function queryDeviceCatalog(row: RegisteredDevice) {
   try {
     await http.post(`/system/gb28181/devices/${row.deviceId}/catalog`)
-    ElMessage.success('目录查询指令已发送')
+    ElMessage.success('目录查询指令已发送，监控点数将随后自动刷新')
+    // [FIX nvr-catalog-stale 2026-09-28] 目录回包在盒子侧异步落库 (Catalog 处理链
+    //   event_cb 同步, 多分页场景可能跨数秒), 延时两轮刷新设备列表, 让「监控点数」
+    //   及时反映 NVR 侧增删改; 原实现提示完即止, 用户须手动刷新页面才能看到变化。
+    setTimeout(fetchDevices, 1500)
+    setTimeout(fetchDevices, 4500)
   } catch {
     ElMessage.error('目录查询失败')
   }
