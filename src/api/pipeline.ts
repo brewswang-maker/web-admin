@@ -246,3 +246,47 @@ export function getSLMStats() {
 export function getPluginTypes() {
   return pipelineHttp.get<ApiResponse<{ plugins: PluginTypeInfo[]; total: number }>>('/plugin-factory/types')
 }
+
+// ============================================================================
+// [ADR-0007 pipeline-dag 2026-09-28] 全局 Pipeline 健康聚合 — 避免前端 N+1
+//   调用; 端点 REST /api/v1/pipelines/health (RestApiHandlers.cpp L7184 后新增)。
+//   返回所有已部署 pipeline 的 节点健康聚合 + 总体计数 — 供 PipelineHealthView
+//   顶部展示与 a4_gray_watch T2 灰度触发器同口径 (与 PO::listPipelines/getDeployState
+//   /getRuntimeStatus 同源, 后端单循环)。
+// ============================================================================
+
+export interface PipelineHealthEntry {
+  pipeline_id: string
+  deploy_state: string          // DRAFT/VALIDATING/.../STOPPED/ERROR (参见 PipelineDeployState)
+  node_count: number
+  healthy: number               // 节点非 ERROR 且 fps > 0
+  degraded: number              // 帧计数 > 0 但 fps = 0 或含错误
+  unhealthy: number             // state == ERROR
+  unknown: number               // 0 frame / 0 fps 状态不明
+}
+
+export interface PipelineHealthSummary {
+  total_pipelines: number
+  deployed_pipelines: number    // deploy_state == RUNNING
+  total_nodes: number
+  healthy_nodes: number
+  degraded_nodes: number
+  unhealthy_nodes: number
+  unknown_nodes: number
+  pipelines: PipelineHealthEntry[]
+  timestamp_ms: number          // 服务端响应时刻 (e2e 观测用)
+}
+
+/** 获取所有 pipeline 健康聚合 (a4_gray_watch T2 口径 — 避免 N+1 调用) */
+export function getPipelinesHealth() {
+  return pipelineHttp.get<ApiResponse<PipelineHealthSummary>>('/health')
+}
+
+/**
+ * [ADR-0007 2026-09-28] 获取单 pipeline 节点级健康详情 — 复用 getPipelineRuntime
+ *   的 PO::getRuntimeStatus 数据源 (返回 NodeRuntimeStatus[])，名称语义化便于前端
+ *   调用方阅读 (“NodeHealth” 而不是 “Runtime”)。
+ */
+export function getPipelineNodeHealth(id: string) {
+  return getPipelineRuntime(id)
+}

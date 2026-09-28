@@ -156,8 +156,9 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { getIRMStats, getSLMStats, getPluginTypes, getPipelines,
-         getPipelineMetricsHistory,
-         type IRMStats, type SLMStats, type PluginTypeInfo } from '@/api/pipeline'
+         getPipelineMetricsHistory, getPipelinesHealth,
+         type IRMStats, type SLMStats, type PluginTypeInfo,
+         type PipelineHealthSummary } from '@/api/pipeline'
 
 // ── [PERF 2026-09-14 R8] echarts 按需加载 (原静态 import 使 437KB gzip 的 vendor-echarts
 //   成为本页 chunk 静态依赖 → 路由懒加载 + Suspense 语义下页面 mount (首屏多个统计/
@@ -200,6 +201,11 @@ const slmStats = ref<SLMStats>({
 const plugins = ref<PluginTypeInfo[]>([])
 let refreshTimer: ReturnType<typeof setInterval> | null = null
 
+// [ADR-0007 pipeline-dag 2026-09-28] 全局 Pipeline 健康聚合 (–api/pipeline.ts getPipelinesHealth)
+const pipelineHealth = ref<PipelineHealthSummary | null>(null)
+const HEALTH_RATIO_THRESHOLD = 0.9  // 与 a4_gray_watch T2 阈值一致 (< 90% 红)
+const lastHealthRatio = ref(1.0)
+
 // P2-3: Pipeline metrics history
 const metricsChartEl = ref<HTMLElement>()
 let metricsChart: import('echarts/core').ECharts | null = null
@@ -227,8 +233,10 @@ function addEvent(message: string, severity: 'danger' | 'warning' | 'primary') {
 
 async function fetchStats() {
   try {
-    const [irmRes, slmRes, pluginRes] = await Promise.allSettled([
-      getIRMStats(), getSLMStats(), getPluginTypes(),
+    // [ADR-0007 2026-09-28] 补加 getPipelinesHealth — 与 a4 T2 同口径, 避免
+    //   pipeline_list + 逐个 getPipelineRuntime 的 N+1 调用。
+    const [irmRes, slmRes, pluginRes, healthRes] = await Promise.allSettled([
+      getIRMStats(), getSLMStats(), getPluginTypes(), getPipelinesHealth(),
     ])
     if (irmRes.status === 'fulfilled') {
       const d = irmRes.value.data?.data
@@ -255,6 +263,19 @@ async function fetchStats() {
     if (pluginRes.status === 'fulfilled') {
       const d = pluginRes.value.data?.data
       if (d?.plugins) plugins.value = d.plugins
+    }
+    // [ADR-0007 pipeline-dag 2026-09-28] getPipelinesHealth — 与 a4 T2 同口径;
+    //   健康度跨门下降 (healthy/total < 90%) 才报事件, 避免反复出仓。
+    if (healthRes.status === 'fulfilled') {
+      const d = healthRes.value.data?.data
+      if (d) {
+        pipelineHealth.value = d
+        const ratio = d.total_nodes > 0 ? d.healthy_nodes / d.total_nodes : 1
+        if (ratio < HEALTH_RATIO_THRESHOLD && lastHealthRatio.value >= HEALTH_RATIO_THRESHOLD) {
+          addEvent(`Pipeline 健康度 ${(ratio * 100).toFixed(1)}% < 90% (${d.healthy_nodes}/${d.total_nodes})`, 'danger')
+        }
+        lastHealthRatio.value = ratio
+      }
     }
   } catch { /* ignore */ }
   loading.value = false
