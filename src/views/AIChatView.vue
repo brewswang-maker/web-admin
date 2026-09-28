@@ -263,11 +263,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted, nextTick, onUnmounted } from 'vue'
+import { ref, reactive, computed, watch, onMounted, nextTick, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { aiHttp } from '@/api/http'
 import { createSubscription, type CompilePreviewResult } from '@/api/agentSubscriptions'
 import { ElMessage } from 'element-plus'
+// [FEAT voice-input 2026-09-28] 语音输入 (双通道 ASR) 与播报队列管理器
+import { useVoiceInput } from '@/composables/useVoiceInput'
+import { useAlarmTts } from '@/composables/useAlarmTts'
 import { Promotion } from '@element-plus/icons-vue'
 import type { ApiResponse } from '@/types/common'
 import aiWelcomeGif from '@/assets/ai1.gif'
@@ -306,11 +309,31 @@ const agentOnline = ref(true)
 const msgContainer = ref<HTMLElement>()
 const pendingImages = ref<string[]>([])
 
-// [P2-2] 语音输入/TTS
-const isRecording = ref(false)
-const ttsEnabled = ref(false)
-let recognition: any = null
-let speechSynthesis: SpeechSynthesis | null = null
+// [FEAT voice-input 2026-09-28] 语音输入/TTS 由 P2-2 骨架 (裸 SpeechRecognition
+//   + 无队列 speakText) 升级为 composable: 双通道 ASR (webspeech 流式 / edge
+//   录音+VAD+盒子离线识别) + 播报队列 (节流/优先级抢占/打断/白名单/音量语速
+//   持久化), 设计取舍见各 composable 头注。
+const voiceInput = useVoiceInput({
+  // 流式中间文本上屏 (边说边出字, 与骨架版 interim 行为一致)
+  onPartial: (t) => { if (t) inputText.value = t },
+  onFinal: (t) => {
+    if (!t) return
+    // final 追加语义: 输入框仍停留在刚才的中间文本时直接替换, 否则空格拼接
+    inputText.value = (inputText.value && inputText.value !== voiceInput.partial.value)
+      ? inputText.value + ' ' + t
+      : t
+  },
+})
+const tts = useAlarmTts()
+const isRecording = voiceInput.listening
+const ttsEnabled = computed({
+  get: () => tts.config.value.enabled,
+  set: (v: boolean) => { tts.config.value.enabled = v; if (!v) tts.bargeIn() },
+})
+// 识别错误浮出 (权限被拒/降级失败等异步路径统一经 watch 弹出后清零防重)
+watch(() => voiceInput.error.value, (e) => {
+  if (e) { ElMessage.warning(e); voiceInput.error.value = '' }
+})
 
 interface QuickAction { icon: string; text: string; prompt: string; special?: 'smart_subscribe' }
 // [FEAT quick-cmd 2026-09-25] 快捷命令扩展: 用户点名 4 条 (今日报告/设备巡警/策略优化/
@@ -550,81 +573,26 @@ function goSubscriptionPage() {
   router.push({ name: 'AgentSubscription' })
 }
 
-// [P2-2] 语音输入 (Web Speech API SpeechRecognition)
+// [FEAT voice-input 2026-09-28] 语音输入委托 useVoiceInput: 开始录音同时
+//   打断播报 (需求 1.2 可打断); webspeech 不可用或断网自动降级 edge 通道。
 function toggleVoiceInput() {
-  const SpeechRecognitionClass = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
-  if (!SpeechRecognitionClass) {
-    ElMessage.warning('当前浏览器不支持语音识别，请使用 Chrome/Edge')
+  if (voiceInput.listening.value) {
+    voiceInput.stop()
     return
   }
-
-  if (isRecording.value) {
-    // 停止录音
-    if (recognition) recognition.stop()
-    isRecording.value = false
-    return
+  tts.bargeIn()
+  voiceInput.start()
+  if (!voiceInput.error.value) {
+    ElMessage.info(voiceInput.engine.value === 'webspeech'
+      ? '🎤 正在聆听... 说完自动识别'
+      : '🎤 离线录音中... 停顿后自动识别')
   }
-
-  recognition = new SpeechRecognitionClass()
-  recognition.lang = 'zh-CN'
-  recognition.continuous = false
-  recognition.interimResults = true
-
-  recognition.onresult = (event: any) => {
-    let interim = ''
-    let final = ''
-    for (let i = event.resultIndex; i < event.results.length; i++) {
-      const transcript = event.results[i][0].transcript
-      if (event.results[i].isFinal) {
-        final += transcript
-      } else {
-        interim += transcript
-      }
-    }
-    if (final) {
-      inputText.value += final
-    } else if (interim) {
-      inputText.value = interim
-    }
-  }
-
-  recognition.onerror = (event: any) => {
-    ElMessage.error('语音识别错误: ' + event.error)
-    isRecording.value = false
-  }
-
-  recognition.onend = () => {
-    isRecording.value = false
-  }
-
-  recognition.start()
-  isRecording.value = true
-  ElMessage.info('🎤 正在录音... 请说话')
 }
 
-// [P2-2] TTS 语音播报 (Web Speech API SpeechSynthesis)
+// [FEAT voice-input 2026-09-28] AI 回复播报走 useAlarmTts 队列 (节流/抢占/
+//   打断/音量语速持久化见 composable); 保留原函数名, SSE final 调用点不变。
 function speakText(text: string) {
-  if (!ttsEnabled.value) return
-  if (!('speechSynthesis' in window)) return
-
-  // 取消之前的播报
-  window.speechSynthesis.cancel()
-
-  // 清理HTML标签, 只播报纯文本
-  const plainText = text.replace(/<[^>]+>/g, '').replace(/[#*`_~]/g, '').substring(0, 500)
-  if (!plainText.trim()) return
-
-  const utterance = new SpeechSynthesisUtterance(plainText)
-  utterance.lang = 'zh-CN'
-  utterance.rate = 1.0
-  utterance.pitch = 1.0
-
-  // 尝试选择中文语音
-  const voices = window.speechSynthesis.getVoices()
-  const zhVoice = voices.find(v => v.lang.startsWith('zh'))
-  if (zhVoice) utterance.voice = zhVoice
-
-  window.speechSynthesis.speak(utterance)
+  tts.enqueue({ id: `chat_${Date.now()}`, text, priority: 'normal' })
 }
 
 function onImageSelected(file: any) {
@@ -850,9 +818,11 @@ function handleSSEEvent(evt: any, thinkSteps: ThinkStep[]) {
 onMounted(loadConversations)
 onUnmounted(() => {
   if (abortCtrl) abortCtrl.abort()
-  // [P2-2] 清理语音资源
-  if (recognition) { try { recognition.stop() } catch {} }
-  if ('speechSynthesis' in window) window.speechSynthesis.cancel()
+  // [FEAT voice-input 2026-09-28] 语音资源清理已内聚到两个 composable 的
+  //   onUnmounted (识别 abort / 录音流停止 / 播报 cancel+resume 定时器),
+  //   此处仅做打断联动。
+  voiceInput.bargeIn()
+  tts.bargeIn()
 })
 </script>
 
