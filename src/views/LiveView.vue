@@ -73,13 +73,13 @@
               <video v-if="slot.playing"
                      :ref="el => setVideoRef(el, idx)"
                      class="video-player"
-                     :style="{ filter: videoFilterStyle.filter, transform: idx === activeSlotIdx ? activeSlotTransform : otherSlotTransform }"
+                     :style="{ filter: filterForChannel(slot.channelId), transform: transformForChannel(slot.channelId, idx === activeSlotIdx) }"
                      muted autoplay playsinline />
               <!-- [P1-CO2] AI 推理检测框 Canvas 叠加层 -->
               <canvas v-if="slot.playing && detectionOverlay.enabled"
                       :ref="(el: any) => setDetectionCanvasRef(el, idx)"
                       class="detection-canvas"
-                      :style="{ transform: idx === activeSlotIdx ? activeSlotTransform : otherSlotTransform }" />
+                      :style="{ transform: transformForChannel(slot.channelId, idx === activeSlotIdx) }" />
               <div v-if="slot.loading" class="video-loading">
                 <el-icon class="spin"><Loading /></el-icon>
                 <span>连接中...</span>
@@ -350,6 +350,17 @@
     <!-- P2-2: 图像调节弹窗 (亮度/对比度/饱和度/色温 + 镜像/旋转 + 电子放大) -->
     <el-dialog v-model="imageDialogVisible" title="图像调节" width="480px" :append-to-body="true">
       <div class="image-adjust">
+        <!-- [FIX img-scope 2026-09-28] 作用范围: 全部通道=历史行为; 仅当前通道=按通道独立记忆参数 -->
+        <div class="adj-row" style="margin-bottom:10px">
+          <span>作用范围</span>
+          <el-radio-group v-model="imageAdjustScope" size="small">
+            <el-radio-button label="all">全部通道</el-radio-button>
+            <el-radio-button label="current">仅当前通道</el-radio-button>
+          </el-radio-group>
+        </div>
+        <p v-if="imageAdjustScope === 'current'" style="color:#9AA0A6;font-size:12px;margin:0 0 10px">
+          仅影响选中格「{{ activeChannelName }}」，各通道独立记忆
+        </p>
         <div class="adj-row"><span>亮度</span><el-slider v-model="imageAdjust.brightness" :min="0" :max="100" /></div>
         <div class="adj-row"><span>对比度</span><el-slider v-model="imageAdjust.contrast" :min="0" :max="100" /></div>
         <div class="adj-row"><span>饱和度</span><el-slider v-model="imageAdjust.saturation" :min="0" :max="100" /></div>
@@ -601,7 +612,21 @@ interface DetectionBox {
   confidence: number
   x1: number; y1: number; x2: number; y2: number
 }
-const latestDetections = ref<Record<string, { boxes: DetectionBox[]; ts: number; imgW?: number; imgH?: number }>>({})
+// [P2-B 2026-09-28] 人脸专属标注框: face 独立 pipeline 的检测结果
+//   (InferenceScheduler Step4.5/4.5c → pushDetectionResult 同消息 face_dets),
+//   attributes 携带识别结论 (person_id_hash/similarity/group_type/should_alarm)
+interface FaceDetBox extends DetectionBox {
+  attributes?: Record<string, number>
+  name?: string       // [P2-B] 后端人名反查命中时携带 (底库 FaceRecord.name)
+  group_name?: string // 自定义分组显示名 (FaceRecord.group_id)
+}
+const latestDetections = ref<Record<string, {
+  boxes: DetectionBox[]
+  ts: number
+  imgW?: number; imgH?: number
+  faceDets?: FaceDetBox[]          // [P2-B] 人脸框 (face 喂帧像素坐标系)
+  faceFrameW?: number; faceFrameH?: number
+}>>({})
 let detectionRafId = 0
 
 function setDetectionCanvasRef(el: any, idx: number) {
@@ -622,6 +647,20 @@ function onInferenceDetection(e: Event) {
       x1: d.x1, y1: d.y1, x2: d.x2, y2: d.y2,
     })),
     ts: detail.timestamp_ms || Date.now(),
+    // [P2-B 2026-09-28] 同消息 face_dets: 人脸框 + 识别 attributes
+    //   (后端 face 独立 pipeline 暂存快照并入本消息, 坐标系见 face_frame_w/h)
+    faceDets: Array.isArray(detail.face_dets)
+      ? detail.face_dets.map((d: any) => ({
+          class_name: d.class_name || 'face',
+          confidence: d.confidence || 0,
+          x1: d.x1, y1: d.y1, x2: d.x2, y2: d.y2,
+          attributes: d.attributes,
+          name: d.name,
+          group_name: d.group_name,
+        }))
+      : undefined,
+    faceFrameW: detail.face_frame_w,
+    faceFrameH: detail.face_frame_h,
   }
   // 后端 detections 的 bbox 是相对于模型输入分辨率 (640x640)，
   // 由 drawDetections 根据 video 实际分辨率缩放
@@ -638,6 +677,20 @@ const DETECTION_COLORS: Record<string, string> = {
   gun: '#D500F9',
 }
 const DEFAULT_DET_COLOR = '#00B0FF'
+
+// [P2-B 2026-09-28] 人脸分组标注 (FaceGroupType 枚举 → 中文/配色):
+//   0=黑名单 1=白名单 2=访客 3=内部员工 4=VIP 5=陌生人 6=自定义
+//   配色语义: 黑名单红(危险)/白名单绿(放行)/VIP金/员工青/访客蓝/自定义紫,
+//   与 DETECTION_COLORS.face 黄 (未识别默认) 区分, 对标海康人脸抓拍标注。
+const FACE_GROUP_META: Record<number, { zh: string; color: string }> = {
+  0: { zh: '黑名单', color: '#FF1744' },
+  1: { zh: '白名单', color: '#00E676' },
+  2: { zh: '访客', color: '#00B0FF' },
+  3: { zh: '员工', color: '#1DE9B6' },
+  4: { zh: 'VIP', color: '#FFC400' },
+  5: { zh: '陌生人', color: '#B0BEC5' },
+  6: { zh: '自定义', color: '#D500F9' },
+}
 
 function drawDetections() {
   detectionRafId = requestAnimationFrame(drawDetections)
@@ -710,6 +763,49 @@ function drawDetections() {
       // 标签文字
       ctx.fillStyle = '#000'
       ctx.fillText(label, x + 4, y - 4)
+    }
+
+    // [P2-B 2026-09-28] 人脸专属标注分支: face_dets 坐标系 = face 喂帧像素
+    //   (continuous 640x360 / 快照原尺寸), 与主检测 640 模型空间不同源,
+    //   按 faceFrameW/H 归一化映射; 已识别显示分组+相似度, 未识别显示人脸+检出率。
+    //   识别结论从 attributes 读 (person_id_hash>0 = 已识别; group_type 枚举;
+    //   similarity 0~1; should_alarm 1.0 = 告警级命中如黑名单/白名单闸门)。
+    if (detData.faceDets?.length && detData.faceFrameW && detData.faceFrameH) {
+      const fx = canvas.width / detData.faceFrameW
+      const fy = canvas.height / detData.faceFrameH
+      for (const f of detData.faceDets) {
+        const x = f.x1 * fx
+        const y = f.y1 * fy
+        const w = (f.x2 - f.x1) * fx
+        const h = (f.y2 - f.y1) * fy
+        const attrs = f.attributes || {}
+        const recognized = attrs.person_id_hash !== undefined && attrs.person_id_hash > 0
+        const group = recognized ? FACE_GROUP_META[attrs.group_type] : undefined
+        const color = group?.color || DETECTION_COLORS.face
+        // 标签优先级: 人名 (反查命中) > 分组枚举名 > 人脸检出率。
+        // 自定义组 (枚举 6) 追加组名后缀, 内置组语义由框色表达 (海康抓拍墙风格)。
+        const simPct = (Math.min(1, attrs.similarity ?? 0) * 100).toFixed(0)
+        const warn = attrs.should_alarm ? ' ⚠' : ''
+        const groupSuffix = attrs.group_type === 6 && f.group_name ? `·${f.group_name}` : ''
+        const label = f.name
+          ? `${f.name}${groupSuffix} ${simPct}%${warn}`
+          : group
+            ? `${group.zh} ${simPct}%${warn}`
+            : `${zhLabel('face')} ${(f.confidence * 100).toFixed(0)}%`
+
+        ctx.fillStyle = color + '22'
+        ctx.fillRect(x, y, w, h)
+        ctx.strokeStyle = color
+        ctx.lineWidth = Math.max(2, canvas.width / 300)
+        ctx.strokeRect(x, y, w, h)
+
+        const textW = ctx.measureText(label).width
+        const labelH = Math.max(16, canvas.width / 40)
+        ctx.fillStyle = color
+        ctx.fillRect(x, y - labelH, textW + 8, labelH)
+        ctx.fillStyle = '#000'
+        ctx.fillText(label, x + 4, y - 4)
+      }
     }
   }
 }
@@ -1152,39 +1248,71 @@ const isRecording = computed(() => gridSlots[activeSlotIdx.value]?.recording)
 
 // 图像调节 (P2-2: CSS filter 绑定到 video 元素)
 const imageDialogVisible = ref(false)
-const imageAdjust = reactive({ brightness: 50, contrast: 50, saturation: 50, hue: 50, mirrorH: false, mirrorV: false, rotate: 0 })
-// 构建 CSS filter 字符串
-const videoFilterStyle = computed(() => {
-  const brightness = imageAdjust.brightness / 50  // 50=normal
-  const contrast = imageAdjust.contrast / 50
-  const saturate = imageAdjust.saturation / 50
-  const hueRotate = (imageAdjust.hue - 50) * 1.8  // -90~90deg
-  // [FIX] 画面变换 transform 由 activeSlotTransform/otherSlotTransform 统一构建
-  return {
-    filter: `brightness(${brightness}) contrast(${contrast}) saturate(${saturate}) hue-rotate(${hueRotate}deg)`
+// [FIX img-scope 2026-09-28] 图像调节作用范围: 'all'=全部通道(历史行为, 默认) | 'current'=仅当前选中通道。
+//   背景: 镜像/翻转/旋转/亮度等此前无条件作用于视频墙全部格, 倒装摄像头场景会误伤正常通道。
+//   scope=current 按 channelId 各自记忆参数 (对标海康 iVMS 按通道图像参数); imageAdjust
+//   退化为"编辑缓冲"——弹窗打开/切换选中格/切换作用范围时载入目标既有设置, 修改后写回。
+interface ImageAdjustState { brightness: number; contrast: number; saturation: number; hue: number; mirrorH: boolean; mirrorV: boolean; rotate: number }
+const DEFAULT_IMAGE_ADJUST: ImageAdjustState = { brightness: 50, contrast: 50, saturation: 50, hue: 50, mirrorH: false, mirrorV: false, rotate: 0 }
+const imageAdjustScope = ref<string>('all')
+const imageAdjust = reactive<ImageAdjustState>({ ...DEFAULT_IMAGE_ADJUST })
+const channelAdjustMap = reactive<Record<string, ImageAdjustState>>({})
+const editingChannelId = computed(() => gridSlots[activeSlotIdx.value]?.channelId || '')
+
+function isDefaultAdjust(a: ImageAdjustState): boolean {
+  return (Object.keys(DEFAULT_IMAGE_ADJUST) as Array<keyof ImageAdjustState>).every(
+    k => a[k] === DEFAULT_IMAGE_ADJUST[k],
+  )
+}
+// 载入编辑缓冲: scope=all 缓冲即全局参数无需载入; scope=current 载入选中通道既有设置(无则默认)
+function loadAdjustBuffer() {
+  if (imageAdjustScope.value !== 'current') return
+  Object.assign(imageAdjust, channelAdjustMap[editingChannelId.value] || DEFAULT_IMAGE_ADJUST)
+}
+watch(imageDialogVisible, v => { if (v) loadAdjustBuffer() })
+watch([editingChannelId, imageAdjustScope], () => { if (imageDialogVisible.value) loadAdjustBuffer() })
+// 编辑缓冲变化写回: scope=all 时各格直接引用 imageAdjust (无需存储); scope=current 落到当前通道条目
+watch(imageAdjust, () => {
+  if (imageAdjustScope.value !== 'current') return
+  const cid = editingChannelId.value
+  if (!cid) return
+  if (isDefaultAdjust(imageAdjust)) delete channelAdjustMap[cid]
+  else channelAdjustMap[cid] = { ...imageAdjust }
+}, { deep: true })
+
+// 渲染期逐格求值有效参数: scope=current 时非选中格回落默认值 (原始画面)
+function effectiveAdjust(channelId: string | undefined): ImageAdjustState {
+  if (imageAdjustScope.value === 'current') {
+    const activeCid = gridSlots[activeSlotIdx.value]?.channelId || ''
+    return (channelId && channelId === activeCid && channelAdjustMap[channelId]) || DEFAULT_IMAGE_ADJUST
   }
-})
+  return imageAdjust
+}
+// 构建 CSS filter 字符串 (50=中性值)
+function filterForChannel(channelId: string | undefined): string {
+  const a = effectiveAdjust(channelId)
+  const brightness = a.brightness / 50
+  const contrast = a.contrast / 50
+  const saturate = a.saturation / 50
+  const hueRotate = (a.hue - 50) * 1.8  // -90~90deg
+  return `brightness(${brightness}) contrast(${contrast}) saturate(${saturate}) hue-rotate(${hueRotate}deg)`
+}
 // [FIX] 统一构建 transform 字符串，避免模板内字符串拼接产生无效 CSS
 // 修复：镜像/翻转/旋转单独使用时无效（旧代码拼接出 ' scaleX(-1)' 裸值被浏览器忽略）
-const activeSlotTransform = computed(() => {
+// [FIX img-scope 2026-09-28] 电子放大仍仅作用于选中格; 镜像/翻转/旋转按作用范围逐格求值
+function transformForChannel(channelId: string | undefined, isActive: boolean): string {
   const parts: string[] = []
-  if (eZoomActive.value && eZoomScale.value > 1) {
+  if (isActive && eZoomActive.value && eZoomScale.value > 1) {
     const tx = 50 - eZoomX.value
     const ty = 50 - eZoomY.value
     parts.push(`scale(${eZoomScale.value}) translate(${tx}%, ${ty}%)`)
   }
-  if (imageAdjust.mirrorH) parts.push('scaleX(-1)')
-  if (imageAdjust.mirrorV) parts.push('scaleY(-1)')
-  if (imageAdjust.rotate !== 0) parts.push(`rotate(${imageAdjust.rotate}deg)`)
+  const adj = effectiveAdjust(channelId)
+  if (adj.mirrorH) parts.push('scaleX(-1)')
+  if (adj.mirrorV) parts.push('scaleY(-1)')
+  if (adj.rotate !== 0) parts.push(`rotate(${adj.rotate}deg)`)
   return parts.length ? parts.join(' ') : 'none'
-})
-const otherSlotTransform = computed(() => {
-  const parts: string[] = []
-  if (imageAdjust.mirrorH) parts.push('scaleX(-1)')
-  if (imageAdjust.mirrorV) parts.push('scaleY(-1)')
-  if (imageAdjust.rotate !== 0) parts.push(`rotate(${imageAdjust.rotate}deg)`)
-  return parts.length ? parts.join(' ') : 'none'
-})
+}
 
 // P1-3: WebCodecs 硬件解码检测
 const webCodecsSupported = ref(false)
@@ -3014,9 +3142,9 @@ function toggleRecordActive() { toggleRecordSlot(activeSlotIdx.value) }
 // 图像调节
 function openImageAdjust() { imageDialogVisible.value = true }
 function resetImageAdjust() {
-  imageAdjust.brightness = 50; imageAdjust.contrast = 50
-  imageAdjust.saturation = 50; imageAdjust.hue = 50
-  imageAdjust.mirrorH = false; imageAdjust.mirrorV = false; imageAdjust.rotate = 0
+  // [FIX img-scope 2026-09-28] 恢复默认按当前作用范围生效: all=清全局参数; current=清当前通道
+  //   (deep watch 的 isDefaultAdjust 分支同步删除 channelAdjustMap 条目, 无需在此重复处理)
+  Object.assign(imageAdjust, DEFAULT_IMAGE_ADJUST)
 }
 
 // 时钟
