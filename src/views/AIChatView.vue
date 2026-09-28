@@ -239,7 +239,7 @@
               {{ isRecording ? '🔴' : '🎤' }}
             </el-button>
             <el-input ref="inputRef" v-model="inputText" type="textarea" :rows="2"
-              placeholder="输入您的问题，如：帮我检查3号厂区的安全状况..."
+              placeholder="输入您的问题，如：帮我检查3号厂区的安全状况；订阅告警用「订阅：有人闯入仓库就提醒我」"
               @keydown.enter.exact.prevent="sendMessage"
               :disabled="isStreaming" resize="none" />
             <el-button type="primary" :icon="Promotion" circle
