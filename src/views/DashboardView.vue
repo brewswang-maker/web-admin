@@ -191,6 +191,65 @@
       </el-col>
     </el-row>
 
+    <!-- [FIX stream-health 2026-09-28] 通道流健康监控卡 (聚合 streams + inference, 通道不健康时置红) -->
+    <el-row :gutter="16" class="stream-health-row" style="margin-bottom: 16px">
+      <el-col :span="24">
+        <el-card shadow="hover">
+          <template #header>
+            <div class="card-header">
+              <span class="card-header-title">
+                {{ t('dashboard.streamHealth') }}
+                <el-tag
+                  v-if="streamHealth.stats.value.total"
+                  :type="streamHealthTagType"
+                  size="small"
+                  effect="plain"
+                  style="margin-left: 8px"
+                >
+                  {{ streamHealthLabel }}
+                </el-tag>
+              </span>
+              <span class="card-header-extra">
+                10s 自动刷新 · 上次 {{ streamHealthAgeSec }}s 前
+              </span>
+            </div>
+          </template>
+          <div v-if="streamHealth.channels.value.length" class="stream-health-grid">
+            <div
+              v-for="ch in streamHealth.channels.value"
+              :key="ch.channelId"
+              class="stream-health-row-item"
+              :class="`level-${ch.level}`"
+              :title="ch.remedy"
+            >
+              <div class="sh-id">
+                <span class="sh-dot" :class="`level-${ch.level}`"></span>
+                <span class="sh-chaname">{{ formatChanName(ch.channelId) }}</span>
+              </div>
+              <div class="sh-metric" :title="`媒体流码率 ${ch.bitrate} bps / 存活 ${ch.aliveSecond}s / 观看 ${ch.viewers}`">
+                <span v-if="ch.bitrate > 0">{{ formatBitrate(ch.bitrate) }}</span>
+                <span v-else class="gray-text">0 bps</span>
+              </div>
+              <div class="sh-metric">
+                <span :class="ch.inferenceRunning ? 'green-text' : 'gray-text'">
+                  <template v-if="ch.inferenceRunning">
+                    推理 {{ ch.inferenceAgeSec }}s 前
+                  </template>
+                  <template v-else>推理未启</template>
+                </span>
+              </div>
+              <div class="sh-remedy">
+                <template v-if="ch.level === 'red'">🔴 {{ ch.remedy }}</template>
+                <template v-else-if="ch.level === 'yellow'">🟡 {{ ch.remedy }}</template>
+                <template v-else>🟢 正常</template>
+              </div>
+            </div>
+          </div>
+          <el-empty v-else :description="t('dashboard.streamHealthEmpty')" :image-size="60" />
+        </el-card>
+      </el-col>
+    </el-row>
+
     <!-- ===== 底部行: 告警趋势图 + 项目热力图 ===== -->
     <el-row :gutter="16" class="bottom-row">
       <!-- 告警趋势 -->
@@ -273,6 +332,7 @@ import {
 import { statsHttp } from '@/api/http'
 import { federationApi } from '@/api/federation'
 import { useWebSocket } from '@/composables/useWebSocket'
+import { useChannelHealth } from '@/composables/useChannelHealth'
 import LazyChart from '@/components/LazyChart.vue'
 import type { EChartsOption } from 'echarts'
 
@@ -477,6 +537,44 @@ function onProjectChange() {
 }
 
 // ── 顶部统计卡片 ──
+const streamHealth = useChannelHealth(10000)
+const streamHealthTagType = computed(() => {
+  const s = streamHealth.stats.value
+  if (s.red > 0) return 'danger'
+  if (s.yellow > 0) return 'warning'
+  if (s.green > 0) return 'success'
+  return 'info'
+})
+const streamHealthLabel = computed(() => {
+  const s = streamHealth.stats.value
+  if (!s.total) return t('dashboard.streamHealthLoading')
+  return `${s.green}绿 / ${s.yellow}黄 / ${s.red}红`
+})
+const streamHealthAgeSec = computed(() => {
+  if (!streamHealth.lastUpdate.value) return 0
+  return Math.max(0, Math.floor((Date.now() - streamHealth.lastUpdate.value) / 1000))
+})
+
+/**
+ * [FIX stream-health 2026-09-28] 格式化码率 bps→人类可读
+ *  <1Mbps 显示 Kbps, ≥1Mbps 显示 Mbps
+ */
+function formatBitrate(bps: number): string {
+  if (bps <= 0) return '0 bps'
+  if (bps < 1_000_000) return `${Math.round(bps / 1000)} Kbps`
+  return `${(bps / 1_000_000).toFixed(2)} Mbps`
+}
+
+/**
+ * [FIX stream-health 2026-09-28] 渲染友好通道名。
+ * GB28181 20位 channel_id_str 在画布上太长, 抽尾号后四位做 alias.
+ *   34020000001320002001 → 2001 → ch2001 (与设备/告警页一致)
+ */
+function formatChanName(channelId: string): string {
+  const tail = channelId.slice(-4)
+  return `ch${tail}`
+}
+
 const topStats = computed(() => [
   {
     label: t('dashboard.securityScore'),
@@ -1145,4 +1243,83 @@ const projectHeatmap = ref<Array<{ name: string; rate: number }>>([])
   flex-shrink: 0;
   color: #F59E0B;
 }
+
+/* ── [FIX stream-health 2026-09-28] 通道流健康卡 ── */
+.stream-health-grid {
+  display: grid;
+  /* 三列自适应: 1=名称 + 1=码率 + 1=推理 + 1=处置。 */
+  grid-template-columns: minmax(110px, 0.7fr) minmax(120px, 1fr) minmax(140px, 1fr) minmax(220px, 2fr);
+  gap: 8px 16px;
+  align-items: center;
+  font-size: 13px;
+}
+
+.stream-health-row-item {
+  display: contents;
+}
+
+.stream-health-row-item > div {
+  padding: 8px 12px;
+  border-radius: var(--radius-md, 6px);
+  background: var(--app-surface-hover);
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* [FIX stream-health 2026-09-28] 三色背景 — 与告警页 / 设备列表的语义色一致 */
+.stream-health-row-item.level-red > div {
+  background: rgba(239, 68, 68, 0.10);
+  color: #EF4444;
+}
+.stream-health-row-item.level-yellow > div {
+  background: rgba(245, 158, 11, 0.10);
+  color: #D97706;
+}
+.stream-health-row-item.level-green > div {
+  background: rgba(16, 185, 129, 0.05);
+}
+
+.sh-id {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sh-chaname {
+  font-weight: var(--font-medium, 500);
+  font-family: var(--font-number);
+}
+
+.sh-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.06);
+}
+.sh-dot.level-red {
+  background: #EF4444;
+  animation: shPulse 1.2s ease-in-out infinite;
+}
+.sh-dot.level-yellow { background: #F59E0B; }
+.sh-dot.level-green { background: #10B981; }
+
+@keyframes shPulse {
+  0%, 100% { box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.18); }
+  50% { box-shadow: 0 0 0 6px rgba(239, 68, 68, 0.05); }
+}
+
+.sh-metric {
+  font-family: var(--font-number);
+}
+
+.sh-remedy {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.green-text { color: #10B981; }
+.gray-text { color: var(--app-text-secondary); }
 </style>

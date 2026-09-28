@@ -606,6 +606,10 @@ const enUS: MessageSchema = {
     retry: 'Retry',
     alarmCount: 'Alarms',
     noData: 'No data',
+    // [FIX stream-health 2026-09-28] Channel stream health monitor card i18n
+    streamHealth: 'Channel Stream Health',
+    streamHealthLoading: 'Checking…',
+    streamHealthEmpty: 'No channels available',
     trendToday: 'Today',
     trend7d: '7d',
     trend30d: '30d',

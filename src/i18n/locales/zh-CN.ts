@@ -603,6 +603,10 @@ const zhCN = {
     retry: '重试',
     alarmCount: '告警数',
     noData: '暂无数据',
+    // [FIX stream-health 2026-09-28] 通道流健康监控卡文案
+    streamHealth: '通道流健康',
+    streamHealthLoading: '检测中…',
+    streamHealthEmpty: '暂无可用通道',
     trendToday: '今日',
     trend7d: '7天',
     trend30d: '30天',
