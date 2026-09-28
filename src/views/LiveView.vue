@@ -313,6 +313,17 @@
           </div>
           </div>
         </el-card>
+
+        <!-- [FEAT face-recog-process 2026-09-28] 实时识别过程面板 (B 形态)
+             显示当前通道 (activeSlotChannelId) 的六段时间折线 + 命中结果.
+             默认折叠避免抢占通道树/PTZ 视觉空间, 用户主动展开时实时滚动.
+             后端 WS topic: face.recognition.process (见 wsTopics.ts + useRealtimeRecognitionProcess). -->
+        <el-card class="recog-process-card" :body-style="{ padding: '0' }">
+          <RecognitionProcessLivePanel
+            :channel-id="activeSlotChannelId"
+            :default-collapsed="true"
+          />
+        </el-card>
       </el-col>
     </el-row>
 
@@ -463,6 +474,9 @@ import { useAdaptiveBitrate } from '@/composables/useAdaptiveBitrate'
 //   此前直接裸显后端 canonical 英文 key (图 18 同源问题在实时页的投影)
 import { zhLabel } from '@/composables/useAlarmShapes'
 import StreamStatsPanel from '@/components/StreamStatsPanel.vue'
+// [FEAT face-recog-process 2026-09-28] 实时识别过程面板 (B 形态, 订阅 WS face.recognition.process,
+//   显示六段时间折线 + 命中结果). 详见 composables/useRealtimeRecognitionProcess + views/RecognitionProcessLivePanel.
+import RecognitionProcessLivePanel from '@/views/RecognitionProcessLivePanel.vue'
 import { normalizeStreamUrl, normalizeWsFlvUrl } from '@/utils/streamUrl'
 // [FIX live-rec 2026-09-21] 录像按钮真链路: 直播录像 API + 下载公共体 (同回放页 mark 链)
 import { fetchAndDownload, liveRecordStart, liveRecordStop } from '@/api/recording'
@@ -564,6 +578,17 @@ const gridSlots = reactive<GridSlot[]>(
 const preferredFormat = ref<PlayerFormat>('flv')
 const videoRefs = ref<Record<number, HTMLVideoElement>>({})
 const gridRef = ref<HTMLElement>()
+
+// [FEAT face-recog-process 2026-09-28] 当前激活 slot 的 channel_id (number 类型, 与后端
+//   face_detector.cpp g_rp_committed.channel_id int32 对齐). gridSlots[].channelId 是 string
+//   (与 Channel.channelId 类型一致), 需要 Number() 转换. 空 channelId → undefined → 面板不缓存任何帧.
+//   切换 slot 时 reactive 自动驱动 RecognitionProcessLivePanel 切换 channelId prop.
+const activeSlotChannelId = computed<number | undefined>(() => {
+  const cid = gridSlots[activeSlotIdx.value]?.channelId
+  if (!cid) return undefined
+  const n = Number(cid)
+  return Number.isFinite(n) ? n : undefined
+})
 
 // [P1-CO2] AI 推理检测框 Canvas 叠加层
 const detectionOverlay = reactive({

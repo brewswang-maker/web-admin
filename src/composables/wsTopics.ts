@@ -53,6 +53,12 @@ export const WS_TOPICS = {
   //   pushSystemEvent("subscription_digest") — 全局弹窗消费: useGlobalAlarm)
   SUBSCRIPTION_DIGEST: 'system.subscription_digest',
 
+  // [FEAT face-recog-process 2026-09-28] 实时识别过程面板 (B 形态)
+  //   后端 face_detector 推理末尾每帧调 pushSystemEvent("face.recognition.process", rp_msg),
+  //   推送 g_rp_committed 紧凑 JSON (matched_person_ids/similarities 限长 5).
+  //   前端 useRealtimeRecognitionProcess 订阅 → RecognitionProcessLivePanel 实时折线.
+  RECOGNITION_PROCESS: 'face.recognition.process',
+
   // 通配
   WILDCARD: '*',
 } as const
