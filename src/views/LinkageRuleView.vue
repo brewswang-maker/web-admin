@@ -2304,17 +2304,28 @@ const boundChannelTreeData = computed<BoundTreeNode[]>(() => {
   const childrenOf = (n: { area: SecurityArea }): BoundTreeNode[] => {
     const devNodes: BoundTreeNode[] = []
     const claimed = new Set<string>()
+    // [FIX stale-ref-filter 2026-09-29] 设备层 SSOT 收口 (对齐 ChannelView/LiveView
+    //   「无通道设备不入目录」模式): 只为监控点池 (GET /api/v1/channels, 与监控点
+    //   管理同源) 中存在监控点的设备建节点 — 区域 device_ids 中已注销设备的悬空
+    //   引用不再渲染「无在线监控点」空节点 (用户裁决: 树节点必须来自真实监控
+    //   点, 区域绑定只决定勾选归属; 悬空引用如华盾展厅区域残留的
+    //   34020000001320000002)。
     for (const devId of n.area.device_ids || []) {
       const chs = cascadeChannelsByDevice.value.get(devId) || []
+      if (!chs.length) continue  // [FIX stale-ref-filter] 悬空设备引用不上树
       for (const c of chs) claimed.add(c.value)
       devNodes.push({
         key: `dev:${devId}`, type: 'device',
-        label: `${cascadeDeviceName(devId)}${chs.length ? ` (${chs.length} 监控点)` : ' (无在线监控点)'}`,
+        label: `${cascadeDeviceName(devId)} (${chs.length} 监控点)`,
         children: chs.map(c => ({ key: c.value, label: c.label, type: 'channel' as const, children: [] })),
       })
     }
+    // [FIX stale-ref-filter 2026-09-29] 直绑层同口径: resolved_channel_ids 含
+    //   历史解析固化值 (含已注销设备的 _ch0 占位), 仅保留监控点池中真实存在
+    //   的 ID — 虚拟占位不再上树。
+    const poolIds = new Set(channelOptionsDynamic.value.map(c => c.value))
     const direct = [...new Set([...(n.area.channel_ids || []), ...(n.area.resolved_channel_ids || [])])]
-      .filter(id => !claimed.has(id))
+      .filter(id => !claimed.has(id) && poolIds.has(id))
     if (direct.length) {
       devNodes.push({
         key: `areadirect:${n.area.id}`, type: 'device', label: `区域直绑通道 (${direct.length})`,

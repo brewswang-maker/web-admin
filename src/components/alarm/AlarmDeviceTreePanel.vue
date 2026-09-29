@@ -127,17 +127,23 @@ watch(dirReady, () => { treeKey.value++ })
 
 const treeData = computed<TreeRow[]>(() =>
   areaTreeToElTreeData(areaRoots.value, (n) =>
-    (n.area.device_ids || []).map((d) => ({
-      key: `dev:${d}`,
-      label: devNameOf(d) || d,
-      deviceId: d,
-      children: devChannelsOf(d).map((c) => ({
-        key: `ch:${c.raw}`,
-        label: c.name || `监控点${c.raw}`,
-        channelId: c.raw,
-        children: [],
-      })) as TreeRow[],
-    })) as TreeRow[]
+    // [FIX stale-ref-filter 2026-09-29] 设备层 SSOT 收口 (对齐 ChannelView/LiveView
+    //   「无通道设备不入目录」模式): 只渲染告警目录中存在监控点的设备 — 区域
+    //   device_ids 中已注销设备的悬空引用不再产生空设备节点 (用户裁决: 树节点
+    //   必须来自真实监控点, 区域绑定只决定勾选归属)。
+    (n.area.device_ids || [])
+      .filter((d) => devChannelsOf(d).length > 0)
+      .map((d) => ({
+        key: `dev:${d}`,
+        label: devNameOf(d) || d,
+        deviceId: d,
+        children: devChannelsOf(d).map((c) => ({
+          key: `ch:${c.raw}`,
+          label: c.name || `监控点${c.raw}`,
+          channelId: c.raw,
+          children: [],
+        })) as TreeRow[],
+      })) as TreeRow[]
   ) as TreeRow[]
 )
 
