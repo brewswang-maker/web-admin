@@ -17,6 +17,9 @@ import { useChannelStore } from '@/stores/channel'
 import { useUserStore } from '@/stores/user'
 import { usePassTipStore, PASS_TIP_TYPES } from '@/stores/passTip'
 import { http } from '@/api/http'
+// [SCENE-ISOLATION 2026-09-29] 场景隔离纵深防御 (服务端 WS 广播已按连接场景过滤)
+import { ensureSceneEventSet, alarmInScenes, sceneParam } from '@/utils/sceneIsolation'
+import { getAuthToken } from '@/utils/auth'
 import type { AlarmEvent } from '@/types/alarm'
 // [P1-4 2026-09-25 摘要帧消费] 每日订阅动态摘要点击跳转智能订阅页
 //   (静态导入 router 有 stores/permission.ts 先例; 回调内使用无求值时序问题)
@@ -181,7 +184,11 @@ function onVisibilityChange() {
 
 function doConnect() {
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-  const url = `${protocol}//${window.location.host}/ws`
+  // [SCENE-ISOLATION 2026-09-29] WS URL 携带 token → 服务端连接级场景归属解析
+  //   (DrogonWsAdapter handleNewConnection): scenario_* 场景用户的连接只接收
+  //   isEventInScene 命中的告警帧 (跨场景不推送); 无 token/无效/admin 全量广播兼容
+  const tk = getAuthToken()
+  const url = `${protocol}//${window.location.host}/ws${tk ? `?token=${encodeURIComponent(tk)}` : ''}`
 
   ws = new WebSocket(url)
 
@@ -238,7 +245,11 @@ function doConnect() {
 
       // [P1-CO2] 推理检测结果实时分发: 供 LiveView Canvas 叠加检测框
       // [P3-CO3] 端到端延迟监控: 计算后端推理 → 前端接收的传输延迟
-      if (msg.type === 'detection_result' && payload) {
+      // [FIX ws-type-prefix 2026-09-29] 后端 pushSystemEvent 实推 system.detection_result
+      //   (WS 抓包实测), 原精确匹配裸类型永远 miss → inference-detection 事件
+      //   从不派发 → LiveView 检测框叠加 (含 face_dets 人脸标注) 整体失效。
+      //   补 system. 前缀兼容 (同上方 system.dashboard_alert 模式), 裸类型保留防回退。
+      if ((msg.type === 'detection_result' || msg.type === 'system.detection_result') && payload) {
         // 计算推理结果传输延迟
         const detectTs = payload.timestamp_ms || 0
         if (detectTs > 0) {
@@ -398,6 +409,22 @@ async function handleAlarm(alarm: any) {
       return
     }
   } catch { /* pinia 未就绪时保守放行 (与原行为一致) */ }
+  // [SCENE-ISOLATION 2026-09-29] 场景纵深过滤: 场景用户 (sceneTags 非空) 只接收
+  //   本场景事件键集内的告警 (集合从 /event-types/metadata?scene= 动态拉取,
+  //   SSOT 随 EventTypeAliases scene_tags 变更自动跟随; 未就绪/失败放行 —
+  //   服务端 WS 广播已是硬闸, 此层仅防非预期帧)。跨场景告警不入队/不弹窗/不 TTS。
+  try {
+    const ustore = useUserStore()
+    const tags = (ustore as any).sceneTags as string[] | undefined
+    if (tags?.length) {
+      const rawType = String((alarm as any)?.alarm_type || (alarm as any)?.type || '')
+      const set = await ensureSceneEventSet(tags)
+      if (!alarmInScenes(rawType, tags, set)) {
+        console.log('[useGlobalAlarm] 跨场景告警丢弃 (scene isolation):', rawType)
+        return
+      }
+    }
+  } catch { /* 场景过滤失败不阻断主链 (服务端硬闸兜底) */ }
   try {
     console.log('[useGlobalAlarm] handleAlarm type:', alarm.alarm_type || alarm.type, 'ch:', alarm.channel_id || alarm.channelId)
 
@@ -443,6 +470,8 @@ async function handleAlarm(alarm: any) {
       const enqueued = usePassTipStore().push({
         type: normalized.type,
         personName: String((meta as any).enroll_name || (meta as any).enrollName || ''),
+        // [FEAT gender-tts 2026-09-29] 底库登记性别透传 (face_detector metadata.gender)
+        gender: String((meta as any).gender || ''),
         channelName: tipChLb === '-' ? '' : tipChLb,
         createdAt: Date.parse(normalized.createdAt) || Date.now(),
       })
@@ -634,7 +663,13 @@ async function backfillMissedAlarms() {
   try {
     // [LIST-UNMERGED-DEFAULT 2026-09-13] REST 端点默认已改逐条; 补拉进弹窗池
     //   必须显式滤明细行, 否则同窗事件会连弹 N 次 (刷屏回归)
-    const res: any = await alarmApi.getList({ since: lastAlarmTs, count: 20, include_merged: 0 })
+    //   [SCENE-ISOLATION 2026-09-29] 补拉同样按用户场景隔离 (服务端过滤)
+    const params: Record<string, unknown> = { since: lastAlarmTs, count: 20, include_merged: 0 }
+    try {
+      const tags2 = (useUserStore() as any).sceneTags as string[] | undefined
+      if (tags2?.length) params.scene = sceneParam(tags2)
+    } catch { /* store 未就绪时无参 (服务端无场景=全量, 原行为) */ }
+    const res: any = await alarmApi.getList(params)
     const d: any = res?.data?.data ?? res?.data
     const list: any[] = Array.isArray(d?.alarms) ? d.alarms : (Array.isArray(d?.items) ? d.items : [])
     if (!list.length) return

@@ -1746,6 +1746,8 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import type { FormInstance, FormRules } from 'element-plus'
 import { Search, Plus, Document, Link, Bell, Setting, ArrowDown, Download, Upload, Refresh, WarningFilled, DataLine, Lock, CopyDocument } from '@element-plus/icons-vue'
 import { linkageApi, ACTION_TYPE_MAP, ACTION_TYPE_REVERSE_MAP, getTargetForActionType, unwrapRuleTemplates } from '@/api/linkage'
+// [SCENE-ISOLATION 2026-09-29] 场景隔离: 规则列表按用户场景过滤 + 新建/编辑强制绑定场景标签
+import { useUserStore } from '@/stores/user'
 import { regionApi } from '@/api/region'  // [FIX 2026-08-28] 画板绊线自动创建 (createTripwireWithMirror)
 import type { LinkageRule, LinkageAction, LinkageLog, ActionLogEntry, TimeTemplate, LinkagePlan, CEPPattern, ConditionNode, RuleConflict, RuleTriggerStat } from '@/api/linkage'
 import { useLinkageOptions, type ChannelOption } from '@/composables/useLinkageOptions'
@@ -4185,7 +4187,15 @@ async function fetchRules() {
     //   前 100 条之外的规则在列表页不可见也无法禁用，用户"全部停用"
     //   后弹窗依旧（溢出的 30 条启用规则仍在匹配告警）。/all 无分页钳
     //   制，与页面无分页表格的展示形态一致。
-    const res = await linkageApi.getAllRules()
+    // [SCENE-ISOLATION 2026-09-29] 场景用户 (scenario_*) 只拉本场景规则
+    //   (服务端 filterRulesByScenes 强制过滤: 传参越权取交集, 无参按归属);
+    //   admin/普通用户 sceneTags 空 → 全量, 行为不回归。
+    let sceneArg: string | undefined
+    try {
+      const stags = (useUserStore() as any).sceneTags as string[] | undefined
+      if (stags?.length) sceneArg = stags.join(',')
+    } catch { /* store 未就绪时无参 (原行为) */ }
+    const res = await linkageApi.getAllRules(sceneArg ? { scene: sceneArg } : undefined)
     const d = (res.data as any)?.data ?? res.data
     rules.value = d?.items ?? (Array.isArray(d) ? d : [])
   } catch (e: any) {
@@ -5338,6 +5348,18 @@ async function handleSave(): Promise<boolean> {
       merge_cond,
       actions,
     }
+
+    // [SCENE-ISOLATION 2026-09-29] 新建/编辑强制绑定场景标签 (用户裁决:
+    //   编辑器强制绑定场景, 禁止跨场景): 场景用户的规则 tags 并入其场景 tag
+    //   (幂等合并, 编辑保留原 tags 防止丢失场景包打点); 服务端另有硬闸
+    //   (create 自动并入 / update 对非本场景规则 403)。admin/普通用户不变。
+    try {
+      const stags = (useUserStore() as any).sceneTags as string[] | undefined
+      if (stags?.length) {
+        const originTags: string[] = (editingRule.value as any)?.tags ?? []
+        payload.tags = Array.from(new Set([...originTags, ...stags]))
+      }
+    } catch { /* store 未就绪时不改写 (原行为) */ }
 
     if (editingRule.value) {
       await linkageApi.updateRule(editingRule.value.id, payload)

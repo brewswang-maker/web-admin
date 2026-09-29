@@ -35,6 +35,9 @@ import { alarmApi } from '@/api/alarm'
 import type { LinkageRule, LinkageAction } from '@/api/linkage'
 import type { AlarmEvent, AlarmAppendLog } from '@/types/alarm'
 import { normalizeAlarmCore, ALARM_CATEGORY } from '@/types/alarm'
+// [SCENE-ISOLATION 2026-09-29] 弹窗触发门槛场景校验 (纵深层; 主链在 useGlobalAlarm)
+import { ensureSceneEventSet, alarmInScenes } from '@/utils/sceneIsolation'
+import { useUserStore } from '@/stores/user'
 // [FIX 2026-09-05 弹窗不显示回归] 通道 hash 契约: 与后端 LinkageEngine.cpp/
 //   AlgoConfigView.loadRuleCounts 同源 (FNV-1a int32), GB 双流 _ch0 双形态参命中
 import { safeChannelHash } from '@/utils/channelHash'
@@ -647,6 +650,24 @@ export async function showAlarmPopup(
   options?: { autoCloseSeconds?: number; origin?: AlarmPopupOrigin; force?: boolean },
 ): Promise<boolean> {
   if (!rawAlarm) return false
+
+  // [SCENE-ISOLATION 2026-09-29] 弹窗触发门槛场景校验 (用户裁决: 报警不属于
+  //   当前用户场景时不弹窗): 仅拦自动弹窗 (origin=auto/linkage, WS 推送链);
+  //   手动入口 (origin=manual, 详情/列表点行) 为用户显式操作不拦。
+  //   服务端 WS 广播已按连接场景硬过滤, 此层纵深防御 (前端事件集未就绪/失败放行)。
+  if (options?.origin === 'auto' || options?.origin === 'linkage') {
+    try {
+      const tags = (useUserStore() as any).sceneTags as string[] | undefined
+      if (tags?.length) {
+        const rawType = String(rawAlarm?.type || rawAlarm?.alarm_type || '')
+        const set = await ensureSceneEventSet(tags)
+        if (!alarmInScenes(rawType, tags, set)) {
+          console.log('[useAlarmPopup] 跨场景告警不弹窗 (scene isolation):', rawType)
+          return false
+        }
+      }
+    } catch { /* 场景校验失败不阻断主链 (服务端硬闸兜底) */ }
+  }
 
   // 取消待执行的关闭定时器，防止新告警被旧 300ms 定时器清除
   if (closeTimer) {

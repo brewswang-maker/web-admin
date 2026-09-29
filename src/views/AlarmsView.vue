@@ -1012,6 +1012,7 @@ import { alarmLevelTagType, alarmLevelTagEffect } from '@/utils/alarmLevel' // [
 import type { AlarmHandleForm, AlarmEvidence, AlarmEvent } from '@/types/alarm'
 import { normalizeAlarmCore, aiReviewVerdictLabel, aiReviewVerifierLabel, aiReviewReasonText, type AiReviewInfo } from '@/types/alarm'
 import { useAuthStore } from '@/stores/auth'
+import { useUserStore } from '@/stores/user'  // [SCENE-ISOLATION 2026-09-29] 场景归属读用
 import { useWebSocket } from '@/composables/useWebSocket'
 // [FEAT face-recog-process 2026-09-28 C 形态] 识别过程调试面板 (REST 拉取, 仅调试时不拦截人)
 import RecognitionProcessDebugPanel from '@/views/RecognitionProcessDebugPanel.vue'
@@ -1578,6 +1579,13 @@ async function fetchAlarms() {
       include_merged: 1,
     }
 
+    // [SCENE-ISOLATION 2026-09-29] 场景隔离: 场景用户 (scenario_*) 只拉本场景告警
+    //   (服务端 effectiveScenes 强制合并 — 传参越权取交集/无参按归属);
+    //   admin/普通用户 sceneTags 空 → 不带参数全量, 行为不回归。
+    try {
+      const stags = (useUserStore() as any).sceneTags as string[] | undefined
+      if (stags?.length) params.scene = stags.join(',')
+    } catch { /* store 未就绪时无参 (原行为) */ }
     if (levelFilter.value) {
       params.severity = levelFilter.value
       params.level = levelFilter.value  // 后端用 level 字段

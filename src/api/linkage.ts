@@ -543,7 +543,13 @@ export const linkageApi = {
   /** 获取联动规则全量列表 (后端 /all 端点无分页钳制; 分页端点 page_size 上限 100,
    *  规则数超 100 时前端用 getRules({page_size:500}) 只能拿到前 100 条,
    *  溢出规则在列表页不可见也无法禁用 → 2026-08-31 '规则全禁仍有弹窗' 事故根因) */
-  getAllRules(params?: { enabled_only?: boolean | string }) {
+  /**
+   * 全量规则端点 (无分页钳制)。
+   *  [SCENE-ISOLATION 2026-09-29] scene?: 场景过滤 (逗号多值) — 场景用户
+   *   传本场景 tag 只拉本场景规则; 服务端另对 scenario_* 用户强制与其归属
+   *   取交集 (硬闸), admin 无场景全量。
+   */
+  getAllRules(params?: { enabled_only?: boolean | string; scene?: string }) {
     return http.get<ApiResponse<{ items: LinkageRule[]; total: number }>>('/linkage/rules/all', { params })
   },
 

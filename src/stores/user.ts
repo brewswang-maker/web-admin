@@ -9,6 +9,8 @@ import type { UserInfo, LoginForm, AuthResponse } from '@/types/user'
 import { userApi } from '@/api/user'
 import { setAuthToken, removeAuthToken as clearAuthToken } from '@/utils/auth'
 import Cookies from 'js-cookie'
+// [SCENE-ISOLATION 2026-09-29] 场景归属推导 (存量会话 localStorage 无 sceneTags 时兜底)
+import { sceneTagsFromRoles } from '@/utils/sceneIsolation'
 
 const TOKEN_KEY = 'shieldai_token'
 const USER_KEY = 'shieldai_user'
@@ -26,6 +28,13 @@ export const useUserStore = defineStore('user', () => {
   const userInfo = ref<UserInfo | null>(savedUser)
   const roles = ref<string[]>(savedUser?.roles || savedUser?.roleIds || [])
   const permissions = ref<string[]>(savedUser?.permissions || [])
+  // [SCENE-ISOLATION 2026-09-29] 用户场景归属: 后端 sceneTags 优先, 旧会话从角色推导;
+  //   非空 = scenario_* 场景用户 → 报警列表/WS/弹窗/联动规则全链路按此隔离
+  const sceneTags = ref<string[]>(
+    (savedUser?.sceneTags as string[] | undefined)?.length
+      ? savedUser.sceneTags
+      : sceneTagsFromRoles(savedUser?.roles || savedUser?.roleIds || []),
+  )
   const isLoading = ref(false)
 
   // 计算属性
@@ -69,6 +78,10 @@ export const useUserStore = defineStore('user', () => {
       // 后端返回 roleIds，前端统一为 roles
       roles.value = user.roles || (user as any).roleIds || []
       permissions.value = user.permissions || []
+      // [SCENE-ISOLATION 2026-09-29] 场景归属: 后端显式字段优先, 旧后端角色推导兜底
+      sceneTags.value = ((user as any).sceneTags as string[] | undefined)?.length
+        ? (user as any).sceneTags
+        : sceneTagsFromRoles(roles.value)
       localStorage.setItem(USER_KEY, JSON.stringify(user))
 
       return { success: true, message: '登录成功' }
@@ -91,6 +104,7 @@ export const useUserStore = defineStore('user', () => {
     userInfo.value = null
     roles.value = []
     permissions.value = []
+    sceneTags.value = []   // [SCENE-ISOLATION 2026-09-29] 场景归属随登出清空
     clearAuthToken()
     Cookies.remove(TOKEN_KEY)
     localStorage.removeItem(USER_KEY)
@@ -110,6 +124,10 @@ export const useUserStore = defineStore('user', () => {
       userInfo.value = info
       roles.value = info.roles || (info as any).roleIds || []
       permissions.value = info.permissions || []
+      // [SCENE-ISOLATION 2026-09-29] 刷新后 /auth/me 同步场景归属 (同登录口径)
+      sceneTags.value = ((info as any).sceneTags as string[] | undefined)?.length
+        ? (info as any).sceneTags
+        : sceneTagsFromRoles(roles.value)
       return userInfo.value
     } catch (error) {
       console.error('[UserStore] 获取用户信息失败:', error)
@@ -130,7 +148,7 @@ export const useUserStore = defineStore('user', () => {
   }
 
   return {
-    token, userInfo, roles, permissions, isLoading,
+    token, userInfo, roles, permissions, sceneTags, isLoading,
     isLoggedIn, isAdmin, userName, userAvatar,
     login, logout, fetchUserInfo, hasPermission, hasRole,
   }
