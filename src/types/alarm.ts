@@ -594,6 +594,15 @@ export const ALARM_TYPE_CN: Record<string, string> = {
   //    EventTypeAliases.h meta_table vlm_anomaly 同步; 此前未登记时弹窗
   //    标题/告警类型/识别算法三处裸显 "vlm_anomaly") ──
   vlm_anomaly: '智能巡视异常',
+  // ── [FEAT algo-expansion 2026-09-30] 算法资产扩充 6 新事件镜像 (双注册
+  //    铁律: 与 EventTypeAliases.h meta_table 同步; 中文名取
+  //    display_name_cn SSOT, CI AlarmTsMirror 校验 keys ⊆ 本表) ──
+  goggles_violation: '护目镜违规',
+  boots_violation: '安全鞋违规',
+  yield_violation: '不礼让行人',
+  dust_abnormal: '扬尘异常',
+  forklift_violation: '叉车作业违规',
+  outlier_group: '人员离群',
 }
 
 /**
