@@ -3327,7 +3327,7 @@ const form = reactive({
   name: '',
   description: '',
   priority: 50,
-  cooldownMs: 5000,
+  cooldownMs: 30000,  // [P3-9 对齐 2026-09-29] 新建默认与引擎解析/模板 seed 同刻度 (原 5000)
   // [P0-1 2026-09-26] 规则级解除延时 (ms): 0=继承全局 (默认 30000); 0-600000 步长 1000
   offDelayMs: 0,
   // [M2-2 2026-09-21] 告警次数上限 (次/日): 0=不限; 1-100=达上限当日停报, 次日自动恢复
@@ -4229,7 +4229,7 @@ function resetEditorState(rule: LinkageRule | null) {
   form.name = rule?.name || ''
   form.description = rule?.description || ''
   form.priority = rule?.priority ?? 50
-  form.cooldownMs = rule?.cooldown_ms ?? 5000
+  form.cooldownMs = rule?.cooldown_ms ?? 30000  // [P3-9 对齐 2026-09-29] 与引擎解析默认同刻度 (原 5000)
   // [P0-1 2026-09-26] 解除延时回显 (0=继承全局)
   form.offDelayMs = rule?.off_delay_ms ?? 0
   // [M2-2 2026-09-21] 次数上限回显 (0=不限)
@@ -4329,7 +4329,7 @@ function resetEditorState(rule: LinkageRule | null) {
         if (!raw) return empty
         const parsed = JSON.parse(raw)
         const arr = (Array.isArray(parsed) ? parsed
-          : Array.isArray(parsed?.shapes) ? parsed.shapes : []) as Array<{ shape: string; name?: string; active?: boolean; direction?: string; pid?: string; points: number[] }>
+          : Array.isArray(parsed?.shapes) ? parsed.shapes : []) as Array<{ shape: string; name?: string; active?: boolean; direction?: string; pid?: string; points: number[]; region_id?: number; tripwire_id?: number }>
         const combine: 'union' | 'intersection' =
           (!Array.isArray(parsed) && parsed?.combine === 'intersection') ? 'intersection' : 'union'
         const list = arr.filter(s => s && Array.isArray(s.points)).map((s, i) => ({
@@ -4341,6 +4341,9 @@ function resetEditorState(rule: LinkageRule | null) {
           polygon: s.points.map((v, k) => Math.round(k % 2 === 0 ? v * 1920 : v * 1080)),
           is_active: s.active !== false,
           direction: (s.direction || undefined) as RoiData['direction'],
+          // [ROI-ID-BIND 2026-09-29] 恢复算法库持久绑定 (0 = 存量形状待认领)
+          region_id: Number(s.region_id) || 0,
+          tripwire_id: Number(s.tripwire_id) || 0,
         }))
         return { list, combine }
       } catch { return empty }
@@ -4358,7 +4361,7 @@ function resetEditorState(rule: LinkageRule | null) {
             for (const k of Object.keys(m)) {
               const e = (m as any)[k]
               if (!e || typeof e !== 'object') continue
-              const arr = (Array.isArray(e.shapes) ? e.shapes : []) as Array<{ shape: string; name?: string; active?: boolean; direction?: string; pid?: string; points: number[] }>
+              const arr = (Array.isArray(e.shapes) ? e.shapes : []) as Array<{ shape: string; name?: string; active?: boolean; direction?: string; pid?: string; points: number[]; region_id?: number; tripwire_id?: number }>
               const list = arr.filter(s => s && Array.isArray(s.points)).map((s, i) => ({
                 // [ROI-IDS 2026-09-17 P2] pid 稳定性: 同通用模式回显保留原值
                 roi_id: s.pid || `roi_ch_${Date.now()}_${i}`,
@@ -4367,6 +4370,9 @@ function resetEditorState(rule: LinkageRule | null) {
                 polygon: s.points.map((v, k2) => Math.round(k2 % 2 === 0 ? v * 1920 : v * 1080)),
                 is_active: s.active !== false,
                 direction: (s.direction || undefined) as RoiData['direction'],
+                // [ROI-ID-BIND 2026-09-29] 恢复算法库持久绑定 (0 = 存量形状待认领)
+                region_id: Number(s.region_id) || 0,
+                tripwire_id: Number(s.tripwire_id) || 0,
               }))
               const refs = Array.isArray(e.tripwire_refs)
                 ? e.tripwire_refs.filter((r: any) => r && r.id !== undefined && r.id !== null)
@@ -4850,11 +4856,24 @@ async function handleSave(): Promise<boolean> {
             const pb: [number, number] = [p[2] / 1920, p[3] / 1080]
             const dirLower = String(r.direction || '').toLowerCase()
             const direction = dirLower === 'a_to_b' ? 'a_to_b' : dirLower === 'b_to_a' ? 'b_to_a' : 'both'
-            // name 防重: 老形态首条无序号, 新形态带序号 (画板列表顺序稳定)
-            const cand = allTw.find((t: any) => !String(t.channel_id_str || '').endsWith('_ch0')
-              && String(t.channel_id_str || '').replace(/_ch\d+$/, '') === chStr
-              && String(t.algo_id || '') === twAlgoId
-              && (t.name === (i === 0 ? namePrefix : `${namePrefix}_${i + 1}`) || t.name === `${namePrefix}_${i + 1}`))
+            // [ROI-ID-BIND 2026-09-29] 三级定位 (与区域镜像同口径): ① 形状携带
+            //   tripwire_id → 按 ID 直连 (唯一运行期路径); ② 存量形状无 ID → 按
+            //   (algo, channel, name) 一次性迁移认领并回填 (名字匹配仅此一次);
+            //   ③ 均未命中 → 新建回填。防同名规则互认 (旧按名 find 会把同名规则的
+            //   绊线认作自己的, upsert 互写 + 清理互删)。
+            //   ID 直连命中但算法身份不符 → 视为绑定失效走认领/新建 (防改写他算法记录)。
+            let cand = (Number(r.tripwire_id) || 0) > 0
+              ? allTw.find((t: any) => String(t.id) === String(r.tripwire_id))
+              : undefined
+            if (cand && String(cand.algo_id || '') !== twAlgoId) cand = undefined
+            if (!cand) {
+              const expectName = i === 0 ? namePrefix : `${namePrefix}_${i + 1}`
+              const claimed = allTw.find((t: any) => !String(t.channel_id_str || '').endsWith('_ch0')
+                && String(t.channel_id_str || '').replace(/_ch\d+$/, '') === chStr
+                && String(t.algo_id || '') === twAlgoId
+                && t.name === expectName)
+              if (claimed) { r.tripwire_id = Number(claimed.id); cand = claimed }
+            }
             if (cand) {
               const oldA = normPt1920(Array.isArray(cand.point_a) ? cand.point_a : [0, 0])
               const oldB = normPt1920(Array.isArray(cand.point_b) ? cand.point_b : [0, 0])
@@ -4884,6 +4903,9 @@ async function handleSave(): Promise<boolean> {
                   direction,
                   enabled: true,
                 })
+                // [ROI-ID-BIND 2026-09-29] 新建回填持久 ID (随快照落库, 下次保存 ID 直连)
+                const twId = Number(newId)
+                if (twId > 0) r.tripwire_id = twId
                 synced++; idByIndex[i] = String(newId)
               } catch (e: any) {
                 ElMessage.error(`绊线创建失败 (监控点 ${chStr}): ${e?.message ?? e} (规则仍会保存)`)
@@ -5011,31 +5033,56 @@ async function handleSave(): Promise<boolean> {
             for (let i = 0; i + 1 < raw.length; i += 2) polygon.push([raw[i], raw[i + 1]])
             if (polygon.length < 3) continue
             const regionType = area.roi_type === 'exclusion_zone' ? 'exclusion_zone' : 'detection_zone'
-            const hit = existing.find(e => e.name === area.roi_name)
+            // [ROI-ID-BIND 2026-09-29] 画板形状 ↔ 区域库按持久 ID 绑定 (用户决策:
+            //   事件/算法与区域按 ID 绑定, 名字仅展示不参与匹配)。三级定位:
+            //   ① 形状携带 region_id → 按 ID 直连 (唯一运行期路径, 快照持久携带);
+            //   ② 存量形状无 ID → 按 (algo_id, name) 一次性迁移认领并回填;
+            //   ③ 均未命中 → 新建并回填响应 ID。
+            //   [FIX roi-sync-crossalgo 2026-09-29] ID 直连命中但 algo 身份不符
+            //   (算法页手工区域/规则改绑事件类型) → 视为绑定失效走认领/新建, 绝不
+            //   改写他算法记录 (事故实锚: 入侵画板与 fall 存量区域同名「多边形 1」,
+            //   旧按名防重沿用 hit.algo_id 把入侵形状覆盖写进 fall 库 → intrusion
+            //   插件按自身算法查区域恒空 → 不布防不告警, 真机 19:05 三次保存均复现)。
+            let hit = (Number(area.region_id) || 0) > 0
+              ? existing.find(e => Number(e.id) === Number(area.region_id))
+              : undefined
+            if (hit && areaAlgoId && String(hit.algo_id || '') !== areaAlgoId) hit = undefined
+            if (!hit && areaAlgoId) {
+              const claimed = existing.find(e => e.name === area.roi_name && e.algo_id === areaAlgoId)
+              if (claimed) { area.region_id = Number(claimed.id); hit = claimed }
+            }
             const sameGeom = !!hit && Array.isArray(hit.polygon) && hit.polygon.length === polygon.length &&
               hit.polygon.every((p: any, i2: number) =>
                 Math.abs(Number(p[0]) - polygon[i2][0]) < 0.001 && Math.abs(Number(p[1]) - polygon[i2][1]) < 0.001)
             if (sameGeom && hit.region_type === regionType) continue
-            await regionApi.createRegion({
+            const created = await regionApi.createRegion({
               id: hit?.id ?? 0,
               channel_id: hit?.channel_id ?? 0,
               channel_id_str: hit?.channel_id_str || areaChStr,
-              algo_id: hit?.algo_id || areaAlgoId,
+              algo_id: areaAlgoId,
               name: area.roi_name,
               region_type: regionType,
               polygon,
               enabled: true,
             })
+            // 回填持久 ID (响应双形态兼容: {data:{data:{id}}} | {data:{id}});
+            //   area 是 roiSyncUnits 的 pack/workcopy 对象, 回填随后续快照序列化落库
+            const newRegionId = Number((created as any)?.data?.data?.id ?? (created as any)?.data?.id ?? 0)
+            if (newRegionId > 0) area.region_id = newRegionId
             synced++
           }
           // [FIX roi-sync-delete 2026-09-11] diff 清理: 画板名单外的同形态孤儿区域
           //   (含空画板全清路径 — 用户删掉最后 1 个后保存即真删, 跨页不再复活)
-          const drawnNames = new Set(drawnAreas.map(a => a.roi_name))
+          // [ROI-ID-BIND 2026-09-29] diff 清理按持久 ID: 画板在用 region_id 集之外的
+          //   本算法库记录即孤儿 (画板 SSOT)。upsert 循环已保证画板每个形状全部携带
+          //   ID (直连/认领/新建), 名字不再参与保留判定; 算法身份门控保留 —
+          //   其他算法库记录 (如 fall「多边形 1」) 永不受本规则保存影响。
+          const drawnRegionIds = new Set(drawnAreas.map(a => Number(a.region_id) || 0).filter(v => v > 0))
           let cleaned = 0
           if (areaAlgoId) {
             for (const e of existing) {
-              if (drawnNames.has(e.name)) continue
               if (e.algo_id !== areaAlgoId) continue
+              if (drawnRegionIds.has(Number(e.id))) continue
               try {
                 await regionApi.deleteRegion(e.id)
                 cleaned++
@@ -5086,6 +5133,9 @@ async function handleSave(): Promise<boolean> {
         shape: r.roi_type, name: r.roi_name, active: r.is_active,
         // [ROI-IDS 2026-09-17 P2] 二级锚点: 形状级 pid (引擎命中提取进 verdict)
         pid: r.roi_id,
+        // [ROI-ID-BIND 2026-09-29] 算法库持久绑定随快照落库 (0 = 待认领/新建回填;
+        //   后端 matchRoiShapes 按字段名取值, 未知字段无害)
+        region_id: r.region_id ?? 0, tripwire_id: r.tripwire_id ?? 0,
         direction: r.direction || '', points: buildNormPoints(r.polygon),
       })),
     })
@@ -5112,6 +5162,8 @@ async function handleSave(): Promise<boolean> {
             shape: r.roi_type, name: r.roi_name, active: r.is_active,
             // [ROI-IDS 2026-09-17 P2] 二级锚点: 同通用模式 (逐通道条目)
             pid: r.roi_id,
+            // [ROI-ID-BIND 2026-09-29] 算法库持久绑定随快照落库 (同通用模式)
+            region_id: r.region_id ?? 0, tripwire_id: r.tripwire_id ?? 0,
             direction: r.direction || '', points: buildNormPoints(r.polygon),
           })),
           tripwire_refs: isTripwireRule.value

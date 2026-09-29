@@ -153,6 +153,11 @@ export interface RoiData {
   polygon: number[]         // 归一化坐标 [x1,y1,x2,y2,...]
   is_active: boolean
   direction?: RoiDirection
+  // [ROI-ID-BIND 2026-09-29] 画板形状 ↔ 算法库记录持久绑定 (用户决策: 事件/算法
+  //   与区域按 ID 绑定, 名字仅展示不参与匹配)。首次同步由后端响应回填, 经快照
+  //   (roi_shapes_json / roi_shapes_by_channel) 持久化; 后续保存按 ID 直连 upsert。
+  region_id?: number
+  tripwire_id?: number
 }
 
 /** 在 Canvas 上绘制绊线 (线段)

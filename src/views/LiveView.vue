@@ -247,13 +247,25 @@
           <div class="ptz-panel-wrapper">
           <div class="ptz-panel">
             <div class="ptz-dpad">
-              <div class="ptz-row"><el-button circle @mousedown="ptzStart('up')" @mouseup="ptzStop"><el-icon><ArrowUp /></el-icon></el-button></div>
+              <!-- [FEAT ptz-8dir 2026-09-29] 米字 8 方向: 国标指令码位组合 (后端
+                   ptzBuildStandardCmd 已支持 up_left/up_right/down_left/down_right)。
+                   交互 = 步进/连续双模: 轻点固定步进 400ms (补偿 GB28181 链路延迟,
+                   点一下动一下), 按住 400ms 后转连续转动直到松开 (摇杆手感)。 -->
               <div class="ptz-row">
-                <el-button circle @mousedown="ptzStart('left')" @mouseup="ptzStop"><el-icon><ArrowLeft /></el-icon></el-button>
-                <el-button circle type="primary" @click="ptzHome"><el-icon><Aim /></el-icon></el-button>
-                <el-button circle @mousedown="ptzStart('right')" @mouseup="ptzStop"><el-icon><ArrowRight /></el-icon></el-button>
+                <el-button circle @mousedown="ptzPress('up_left')" @mouseup="ptzRelease" @mouseleave="ptzRelease"><el-icon><TopLeft /></el-icon></el-button>
+                <el-button circle @mousedown="ptzPress('up')" @mouseup="ptzRelease" @mouseleave="ptzRelease"><el-icon><ArrowUp /></el-icon></el-button>
+                <el-button circle @mousedown="ptzPress('up_right')" @mouseup="ptzRelease" @mouseleave="ptzRelease"><el-icon><TopRight /></el-icon></el-button>
               </div>
-              <div class="ptz-row"><el-button circle @mousedown="ptzStart('down')" @mouseup="ptzStop"><el-icon><ArrowDown /></el-icon></el-button></div>
+              <div class="ptz-row">
+                <el-button circle @mousedown="ptzPress('left')" @mouseup="ptzRelease" @mouseleave="ptzRelease"><el-icon><ArrowLeft /></el-icon></el-button>
+                <el-button circle type="primary" @click="ptzHome"><el-icon><Aim /></el-icon></el-button>
+                <el-button circle @mousedown="ptzPress('right')" @mouseup="ptzRelease" @mouseleave="ptzRelease"><el-icon><ArrowRight /></el-icon></el-button>
+              </div>
+              <div class="ptz-row">
+                <el-button circle @mousedown="ptzPress('down_left')" @mouseup="ptzRelease" @mouseleave="ptzRelease"><el-icon><BottomLeft /></el-icon></el-button>
+                <el-button circle @mousedown="ptzPress('down')" @mouseup="ptzRelease" @mouseleave="ptzRelease"><el-icon><ArrowDown /></el-icon></el-button>
+                <el-button circle @mousedown="ptzPress('down_right')" @mouseup="ptzRelease" @mouseleave="ptzRelease"><el-icon><BottomRight /></el-icon></el-button>
+              </div>
             </div>
             <div class="ptz-zoom-row">
               <el-button @mousedown="ptzStart('zoom_in')" @mouseup="ptzStop">变倍 +</el-button>
@@ -277,6 +289,14 @@
             <div class="ptz-speed">
               <span>速度</span>
               <el-slider v-model="ptzSpeed" :min="1" :max="255" :show-tooltip="false" size="small" />
+            </div>
+            <!-- [FEAT ptz-fisheye 2026-09-29] 鱼眼/全景通道: 先放大后方向才生效;
+                 zoom 反转开关兼容位序相反的鱼眼固件 (56mf Camera04 实测) -->
+            <div class="ptz-fisheye">
+              <el-tooltip content="全景/鱼眼通道: 请先变倍放大, 方向键在放大视图下才生效; 若放大/缩小与预期相反请开启" placement="top">
+                <span>鱼眼反转</span>
+              </el-tooltip>
+              <el-switch v-model="ptzZoomInvert" size="small" @change="onPtzZoomInvertChange" />
             </div>
             <div class="ptz-presets">
               <span>预置位</span>
@@ -602,8 +622,15 @@ const activeSlotChannelId = computed<number | undefined>(() => {
 })
 
 // [P1-CO2] AI 推理检测框 Canvas 叠加层
+//   [FEAT overlay-persist 2026-09-29] 开关状态 localStorage 持久化 (刷新恢复):
+//   仅控制叠加层渲染 (绘制入口 detectionOverlay.enabled 早退), WS 数据接收、
+//   录像、告警链均不受影响。
+const OVERLAY_ENABLED_KEY = 'liveDetectionOverlayEnabled'
 const detectionOverlay = reactive({
-  enabled: true,  // 默认开启
+  enabled: localStorage.getItem(OVERLAY_ENABLED_KEY) !== '0',  // 默认开启
+})
+watch(() => detectionOverlay.enabled, (v) => {
+  try { localStorage.setItem(OVERLAY_ENABLED_KEY, v ? '1' : '0') } catch { /* 隐私模式等存不了则仅内存态 */ }
 })
 const detectionCanvasRefs = ref<Record<number, HTMLCanvasElement>>({})
 // channelId → 最新检测结果（后端 pushDetectionResult 推送）
@@ -634,6 +661,22 @@ function setDetectionCanvasRef(el: any, idx: number) {
   else delete detectionCanvasRefs.value[idx]
 }
 
+// [P2-TRACK 2026-09-29] 显示跟踪器 per-channel 实例: 业界同构架构
+//   (低频检测 + 客户端插值/生命周期清理, 依据见 useDetectionTracker.ts 头注)。
+//   后端检测中位 550ms/帧 → tracker 在 rAF 内逐帧外推, 框连续跟人;
+//   minHits=2 过滤单帧误检; 丢失 1s 外推 + 0.4s 渐隐, 告别 5s 残影。
+import { DisplayTracker, type TrackedDet } from '@/composables/useDetectionTracker'
+const detectionTrackers = new Map<string, DisplayTracker>()
+
+function getTracker(ch: string): DisplayTracker {
+  let t = detectionTrackers.get(ch)
+  if (!t) {
+    t = new DisplayTracker()
+    detectionTrackers.set(ch, t)
+  }
+  return t
+}
+
 // [P1-CO2] 推理检测结果事件处理
 function onInferenceDetection(e: Event) {
   const detail = (e as CustomEvent).detail
@@ -662,6 +705,57 @@ function onInferenceDetection(e: Event) {
     faceFrameW: detail.face_frame_w,
     faceFrameH: detail.face_frame_h,
   }
+  // [P2-TRACK 2026-09-29] 检测结果喂入显示跟踪器:
+  //   person 框坐标系 = 模型输入 640×640; face 框双态自适应
+  //   (归一化直用 / 像素态按 face_frame_w/h 归一, 见下方 face-dual-scale)。
+  //   两者各自归一化到 [0,1] 后统一跟踪, 渲染时再乘 canvas 实际尺寸
+  //   (与原缩放逻辑等价, 参见 drawDetections)。
+  // [FIX overlay-class-whitelist 2026-09-29] 类别白名单: 主检测是 COCO80 全类
+  //   输出, 真机 90s WS 取证 (2026-09-29) 418 帧里 tv×240/potted plant×224/
+  //   refrigerator×29/chair×2 全部被画到画面上 = 用户视角的「凭空误标框」
+  //   最大来源 (对标海康/大华: 智能标注只画人/车关注目标)。白名单 = 人 +
+  //   车 + 已有配色的告警类 (fire/smoke/weapon 系), 其余不画不跟。
+  const now = Date.now()
+  const feed: TrackedDet[] = []
+  const WHITELIST = DETECT_DRAW_CLASS_WHITELIST
+  for (const d of latestDetections.value[detail.channel_id].boxes) {
+    if (!WHITELIST.has(d.class_name)) continue
+    feed.push({ cls: d.class_name, conf: d.confidence,
+      x1: d.x1 / 640, y1: d.y1 / 640, x2: d.x2 / 640, y2: d.y2 / 640 })
+  }
+  const lid = latestDetections.value[detail.channel_id]
+  const fw = lid.faceFrameW, fh = lid.faceFrameH
+  if (lid.faceDets?.length && fw && fh) {
+    for (const f of lid.faceDets) {
+      const attrs = (f.attributes || {}) as Record<string, number>
+      const recognized = attrs.person_id_hash !== undefined && attrs.person_id_hash > 0
+      // [FIX face-dual-scale 2026-09-29] face 框双态自适应 (值域判别刻度):
+      //   face_detector 内部已统一归一化 [0,1] (face_detector.cpp L974-995:
+      //   SCRFD TPU 路径天然归一化直通 / OpenCV DNN 像素路径除 width/height,
+      //   两态输出同值域), infer() 实际输出归一化坐标 — 与 AlgoPlugin.h
+      //   bbox-contract「infer() 返回喂帧像素」声明不符, 而本链按「像素 +
+      //   face_frame_w/h 刻度」假设设计 → 前端再除 frameW 构成双重归一化
+      //   (真机 WS 实测 x1=0.33 再除 640 ≈ 0.0005): 框宽 <1px 不可见,
+      //   标签文字挤在画面左上角 (用户实锚 2026-09-29)。按值域判别刻度
+      //   (与插件内部 need_normalize 同款 1.5 阈值): 像素态 (>1.5) 除以
+      //   帧尺寸, 归一态直用。告警链按归一化口径消费历来正常, 故只修本
+      //   显示链, 不动后端契约 (改插件输出口径会波及告警链消费者)。
+      const pixelScale = f.x2 > 1.5 || f.y2 > 1.5
+      const dw = pixelScale ? fw : 1
+      const dh = pixelScale ? fh : 1
+      feed.push({
+        cls: 'face', conf: f.confidence,
+        x1: f.x1 / dw, y1: f.y1 / dh,
+        x2: f.x2 / dw, y2: f.y2 / dh,
+        name: f.name,
+        groupName: f.group_name,
+        groupType: recognized ? attrs.group_type : undefined,
+        sim: recognized ? attrs.similarity : undefined,
+        warn: !!attrs.should_alarm,
+      })
+    }
+  }
+  getTracker(detail.channel_id).update(feed, now)
   // 后端 detections 的 bbox 是相对于模型输入分辨率 (640x640)，
   // 由 drawDetections 根据 video 实际分辨率缩放
 }
@@ -675,8 +769,25 @@ const DETECTION_COLORS: Record<string, string> = {
   weapon: '#D500F9',
   knife: '#D500F9',
   gun: '#D500F9',
+  // [FIX label-offcanvas 2026-09-29] 车类配色 (白名单放行后进入叠加层):
+  //   与 useAlarmShapes CLASS_COLORS 对齐, 避免全部落入默认蓝。
+  car: '#00D4AA',
+  truck: '#FFB800',
+  bus: '#6C5CE7',
+  motorcycle: '#FF7043',
+  bicycle: '#4DD0E1',
 }
 const DEFAULT_DET_COLOR = '#00B0FF'
+
+// [FIX overlay-class-whitelist 2026-09-29] 叠加层绘制类别白名单 (SSOT):
+//   只画安防关注目标 (人/车/火烟/武器), COCO 其余类别 (tv/potted plant/
+//   chair/refrigerator/cup/book...) 一律不画。真机取证见 onInferenceDetection
+//   处注释。新增关注类别在此扩展 (与 DETECTION_COLORS 配色表对齐)。
+const DETECT_DRAW_CLASS_WHITELIST = new Set([
+  'person', 'face',
+  'car', 'truck', 'bus', 'motorcycle', 'bicycle',
+  'fire', 'smoke', 'weapon', 'knife', 'gun',
+])
 
 // [P2-B 2026-09-28] 人脸分组标注 (FaceGroupType 枚举 → 中文/配色):
 //   0=黑名单 1=白名单 2=访客 3=内部员工 4=VIP 5=陌生人 6=自定义
@@ -705,8 +816,12 @@ function drawDetections() {
     if (!slot?.channelId) continue
 
     const detData = latestDetections.value[slot.channelId]
-    // 3秒内无新检测 → 清空 canvas
-    if (!detData || Date.now() - detData.ts > 5000) {
+    // [P2-TRACK 2026-09-29] 断流兕底窗口 5000 → 1500ms: 跟踪器自身已负责
+    //   丢失外推+渐隐 (1.4s 生命周期), 推送真正断流时快速停画。
+    //   原注释「3秒内无新检测→清空」与 5000 实值不符, 一并修正。
+    const tracker = getTracker(slot.channelId)
+    const rendered = tracker.render(Date.now())
+    if ((!detData || Date.now() - detData.ts > 1500) && rendered.length === 0) {
       const ctx = canvas.getContext('2d')
       if (ctx && (canvas.width > 0 || canvas.height > 0)) ctx.clearRect(0, 0, canvas.width, canvas.height)
       continue
@@ -725,24 +840,23 @@ function drawDetections() {
     if (!ctx) continue
     ctx.clearRect(0, 0, canvas.width, canvas.height)
 
-    // 后端 bbox 坐标系 = 模型输入 (通常 640x640)
-    // 需缩放到 video 原始分辨率
-    // 但 pushDetectionResult 里的坐标已经是模型输入坐标 (0~model_input_size)
-    // 假设模型输入为 640x640（YOLOv8 默认），按比例缩放
-    const MODEL_INPUT = 640
-    const scaleX = canvas.width / MODEL_INPUT
-    const scaleY = canvas.height / MODEL_INPUT
+    // [P2-TRACK 2026-09-29] 绘制源 = 跟踪器渲染帧 (归一化坐标 + 丢失期外推
+    //   + 渐隐 alpha), 替代原「直接画最后一次检测快照」: 原实现框在两次检测
+    //   (中位 550ms, p90 1.8s, 长尾 4.3s, 2026-09-29 WS 实测) 间完全静止,
+    //   移动目标严重滞后; tracker 逐帧外推后视觉连续跟人。
+    for (const box of rendered) {
+      const x = box.x1 * canvas.width
+      const y = box.y1 * canvas.height
+      const w = (box.x2 - box.x1) * canvas.width
+      const h = (box.y2 - box.y1) * canvas.height
+      const isFace = box.cls === 'face'
+      const color = isFace
+        ? (box.groupType !== undefined
+            ? (FACE_GROUP_META[box.groupType]?.color || DETECTION_COLORS.face)
+            : DETECTION_COLORS.face)
+        : (DETECTION_COLORS[box.cls] || DEFAULT_DET_COLOR)
 
-    ctx.lineWidth = Math.max(2, canvas.width / 320)
-    ctx.font = `${Math.max(12, canvas.width / 50)}px sans-serif`
-
-    for (const box of detData.boxes) {
-      const x = box.x1 * scaleX
-      const y = box.y1 * scaleY
-      const w = (box.x2 - box.x1) * scaleX
-      const h = (box.y2 - box.y1) * scaleY
-      const color = DETECTION_COLORS[box.class_name] || DEFAULT_DET_COLOR
-
+      ctx.globalAlpha = box.alpha
       // 半透明填充
       ctx.fillStyle = color + '22'
       ctx.fillRect(x, y, w, h)
@@ -751,61 +865,39 @@ function drawDetections() {
       ctx.strokeStyle = color
       ctx.strokeRect(x, y, w, h)
 
-      // 标签背景
+      // 标签文本: person 与 face 各自保留原语义
       // [FIX label-zh-coco 2026-09-22] zhLabel SSOT: canonical key 保留在
       //   DETECTION_COLORS 配色查表 (国际惯例英文 key), 仅展示层中文化
-      const label = `${zhLabel(box.class_name)} ${(box.confidence * 100).toFixed(0)}%`
-      const textW = ctx.measureText(label).width
-      const labelH = Math.max(16, canvas.width / 40)
-      ctx.fillStyle = color
-      ctx.fillRect(x, y - labelH, textW + 8, labelH)
-
-      // 标签文字
-      ctx.fillStyle = '#000'
-      ctx.fillText(label, x + 4, y - 4)
-    }
-
-    // [P2-B 2026-09-28] 人脸专属标注分支: face_dets 坐标系 = face 喂帧像素
-    //   (continuous 640x360 / 快照原尺寸), 与主检测 640 模型空间不同源,
-    //   按 faceFrameW/H 归一化映射; 已识别显示分组+相似度, 未识别显示人脸+检出率。
-    //   识别结论从 attributes 读 (person_id_hash>0 = 已识别; group_type 枚举;
-    //   similarity 0~1; should_alarm 1.0 = 告警级命中如黑名单/白名单闸门)。
-    if (detData.faceDets?.length && detData.faceFrameW && detData.faceFrameH) {
-      const fx = canvas.width / detData.faceFrameW
-      const fy = canvas.height / detData.faceFrameH
-      for (const f of detData.faceDets) {
-        const x = f.x1 * fx
-        const y = f.y1 * fy
-        const w = (f.x2 - f.x1) * fx
-        const h = (f.y2 - f.y1) * fy
-        const attrs = f.attributes || {}
-        const recognized = attrs.person_id_hash !== undefined && attrs.person_id_hash > 0
-        const group = recognized ? FACE_GROUP_META[attrs.group_type] : undefined
-        const color = group?.color || DETECTION_COLORS.face
-        // 标签优先级: 人名 (反查命中) > 分组枚举名 > 人脸检出率。
-        // 自定义组 (枚举 6) 追加组名后缀, 内置组语义由框色表达 (海康抓拍墙风格)。
-        const simPct = (Math.min(1, attrs.similarity ?? 0) * 100).toFixed(0)
-        const warn = attrs.should_alarm ? ' ⚠' : ''
-        const groupSuffix = attrs.group_type === 6 && f.group_name ? `·${f.group_name}` : ''
-        const label = f.name
-          ? `${f.name}${groupSuffix} ${simPct}%${warn}`
+      let label: string
+      if (isFace) {
+        // 标签优先级: 人名 (反查命中) > 分组枚举名 > 人脸检出率
+        //   (海康抓拍墙风格); name 在 tracker 内 sticky, 识别抖动不闪名。
+        const group = box.groupType !== undefined ? FACE_GROUP_META[box.groupType] : undefined
+        const simPct = (Math.min(1, box.sim ?? 0) * 100).toFixed(0)
+        const warn = box.warn ? ' ⚠' : ''
+        const groupSuffix = box.groupType === 6 && box.groupName ? `·${box.groupName}` : ''
+        label = box.name
+          ? `${box.name}${groupSuffix} ${simPct}%${warn}`
           : group
             ? `${group.zh} ${simPct}%${warn}`
-            : `${zhLabel('face')} ${(f.confidence * 100).toFixed(0)}%`
-
-        ctx.fillStyle = color + '22'
-        ctx.fillRect(x, y, w, h)
-        ctx.strokeStyle = color
-        ctx.lineWidth = Math.max(2, canvas.width / 300)
-        ctx.strokeRect(x, y, w, h)
-
-        const textW = ctx.measureText(label).width
-        const labelH = Math.max(16, canvas.width / 40)
-        ctx.fillStyle = color
-        ctx.fillRect(x, y - labelH, textW + 8, labelH)
-        ctx.fillStyle = '#000'
-        ctx.fillText(label, x + 4, y - 4)
+            : `${zhLabel('face')} ${(box.conf * 100).toFixed(0)}%`
+      } else {
+        label = `${zhLabel(box.cls)} ${(box.conf * 100).toFixed(0)}%`
       }
+      ctx.lineWidth = Math.max(2, canvas.width / (isFace ? 300 : 320))
+      ctx.font = `${Math.max(12, canvas.width / 50)}px sans-serif`
+      const textW = ctx.measureText(label).width
+      const labelH = Math.max(16, canvas.width / 40)
+      // [FIX label-offcanvas 2026-09-29] 框贴近画面顶部时标签画到框内,
+      //   防出画布: 原 y-labelH 恒在框正上方, 顶部框的标签整体画出
+      //   canvas 外 → 用户视角「有框无标签 (空白)」。回退策略与
+      //   useAlarmShapes.drawDetsOnCtx 候选位 (框下方) 对齐。
+      const labelY = y - labelH < 0 ? y + 2 : y - labelH
+      ctx.fillStyle = color
+      ctx.fillRect(x, labelY, textW + 8, labelH)
+      ctx.fillStyle = '#000'
+      ctx.fillText(label, x + 4, labelY + labelH - 4)
+      ctx.globalAlpha = 1
     }
   }
 }
@@ -1242,6 +1334,21 @@ const isCruising = ref(false)
 const isTracking = ref(false)
 const ptzSpeed = ref(128)
 const currentTime = ref('')
+
+// [FEAT ptz-fisheye 2026-09-29] 鱼眼 zoom 位序反转开关: 按通道 localStorage 记忆。
+//   全景/鱼眼通道 ePTZ 需先放大方向键才生效 (56mf Camera04 矩阵实测: 广角全景下
+//   方向无着力点); 部分鱼眼 zoom 指令位序与国标相反 (0x10=放大), 开启后后端对调
+//   zoom_in/zoom_out 指令码。
+const PTZ_ZOOM_INVERT_KEY = 'smartgateway.liveview.ptzZoomInvert.v1'
+const ptzZoomInvert = ref(false)
+watch(activeSlotChannelId, (id) => {
+  ptzZoomInvert.value = id != null && localStorage.getItem(`${PTZ_ZOOM_INVERT_KEY}.${id}`) === '1'
+}, { immediate: true })
+
+function onPtzZoomInvertChange(v: string | number | boolean) {
+  const id = activeSlotChannelId.value
+  if (id != null) localStorage.setItem(`${PTZ_ZOOM_INVERT_KEY}.${id}`, v ? '1' : '0')
+}
 
 // 录像
 const isRecording = computed(() => gridSlots[activeSlotIdx.value]?.recording)
@@ -2744,22 +2851,60 @@ function maximizeSlot(idx: number, event?: MouseEvent) {
   toggleFullscreen()
 }
 
+// [FEAT ptz-8dir 2026-09-29] PTZ 方向 union: 4 正向 + 4 斜向 (国标指令码位组合)
+type PTZDirection = 'left' | 'right' | 'up' | 'down'
+  | 'up_left' | 'up_right' | 'down_left' | 'down_right'
+  | 'zoom_in' | 'zoom_out' | 'focus_near' | 'focus_far' | 'iris_open' | 'iris_close'
 // PTZ控制
-function ptzStart(direction: 'left' | 'right' | 'up' | 'down' | 'zoom_in' | 'zoom_out'
-  | 'focus_near' | 'focus_far' | 'iris_open' | 'iris_close') {
+function ptzStart(direction: PTZDirection) {
   const slot = gridSlots[activeSlotIdx.value]
   if (!slot.channelId) return
   ptzApi({
     deviceId: slot.deviceId,
     channelId: slot.channelId,
     direction,
-    speed: ptzSpeed.value
-  }).catch(() => {})
+    speed: ptzSpeed.value,
+    zoomInvert: ptzZoomInvert.value
+  }).catch((e: unknown) => {
+    // [FIX ptz-8byte 2026-09-29] 原静默吞错: 后端拒绝/失败时用户无任何提示, 体验=按了没反应
+    const msg = (e as { response?: { data?: { message?: string } } })?.response?.data?.message
+    ElMessage.error(msg ? `云台控制失败: ${msg}` : '云台控制失败')
+  })
 }
 function ptzStop() {
   const slot = gridSlots[activeSlotIdx.value]
   if (!slot.deviceId) return
   ptzStopApi(slot.deviceId, slot.channelId).catch(() => {})
+}
+
+// [FEAT ptz-8dir 2026-09-29] 步进/连续双模: GB28181 PTZ 是「持续转动」语义, 而链路
+//   (REST→SIP→NVR 转发→IPC 执行) 有数百 ms 延迟——纯 mousedown/mouseup 模式下轻点
+//   (按下抬起间隔 <150ms) 的 stop 与 control 几乎同时发出, 实际转动时长完全取决于
+//   链路抖动 = 「不灵敏/点了乱转」。改为: 轻点固定步进 PTZ_STEP_MS (点一下动一下,
+//   转动量一致可控); 按住超过 PTZ_STEP_MS 转连续模式, 松开立即停 (摇杆手感)。
+const PTZ_STEP_MS = 400
+let ptzStepTimer: number | null = null
+let ptzPressed = false
+function ptzPress(direction: PTZDirection) {
+  // 快速切换方向: 上一次步进未完成则先停, 避免旧方向残留转动
+  if (ptzStepTimer != null) {
+    window.clearTimeout(ptzStepTimer)
+    ptzStepTimer = null
+    ptzStop()
+  }
+  ptzPressed = true
+  ptzStart(direction)
+  ptzStepTimer = window.setTimeout(() => {
+    ptzStepTimer = null
+    if (!ptzPressed) ptzStop()   // 轻点已松开: 步进时长到 → 停 (固定步进量)
+    // 长按中: 保持转动, 直到松开
+  }, PTZ_STEP_MS)
+}
+function ptzRelease() {
+  if (!ptzPressed) return            // mouseup/mouseleave 双绑: 幂等
+  ptzPressed = false
+  if (ptzStepTimer != null) return   // 轻点: 等 timer 到点停 (保证固定步进量)
+  ptzStop()                          // 长按: 立即停
 }
 function ptzHome() {
   const slot = gridSlots[activeSlotIdx.value]
@@ -3499,6 +3644,7 @@ onUnmounted(() => {
 .ptz-aux-row .el-button { flex: 1; }
 .ptz-speed { display: flex; align-items: center; gap: 8px; width: 100%; font-size: 12px; color: #9AA0A6; }
 .ptz-speed .el-slider { flex: 1; }
+.ptz-fisheye { display: flex; align-items: center; justify-content: space-between; width: 100%; font-size: 12px; color: #9AA0A6; }
 .ptz-presets { display: flex; align-items: center; gap: 8px; width: 100%; font-size: 12px; color: #9AA0A6; }
 
 /* 暗色主题覆盖 */

@@ -341,7 +341,7 @@ async function removeRule(row: LinkageRuleInfo) {
 const editVisible = ref(false)
 const editing = ref<LinkageRuleInfo | null>(null)
 const editForm = reactive({
-  name: '', enabled: true, priority: 50, cooldown_ms: 5000,
+  name: '', enabled: true, priority: 50, cooldown_ms: 30000,  // [P3-9 对齐] 原 5000
   min_severity: 0, event_types: [] as string[],
 })
 

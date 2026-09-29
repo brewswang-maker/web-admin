@@ -89,7 +89,7 @@ export const usePassTipStore = defineStore('passTip', () => {
    * 同类型+同人员 DUPE_WINDOW_MS 内去重; 入队即按类型节流播报。
    * @returns 是否实际入队 (false = 去重窗口内被丢弃)
    */
-  function push(item: { type: string; personName?: string; channelName?: string; createdAt?: number }): boolean {
+  function push(item: { type: string; personName?: string; channelName?: string; gender?: string; createdAt?: number }): boolean {
     if (!PASS_TIP_TYPES.has(item.type)) return false
     // [FIX face-pass-称谓 2026-09-20] 展示名按类型兜底; TTS 用原始名 (空则模板词自足)
     const rawName = (item.personName || '').trim()
@@ -114,10 +114,20 @@ export const usePassTipStore = defineStore('passTip', () => {
     if (queue.value.length > MAX_QUEUE) queue.value.splice(0, queue.value.length - MAX_QUEUE)
 
     // 播报 (类型级节流; 高峰同类型 30s 播一次, 滚动条仍逐条展示)
+    //   [FEAT gender-tts 2026-09-29] 底库登记性别 (metadata.gender, male/男/女/female)
+    //   → 「{name}先生/女士，欢迎您来到华盾」; gender 未登记或姓名空时回退原类型
+    //   模板, 不臆测性别。多人同帧: TTS 类型级节流只播一条, 滚动条逐条展示。
+    const g = (item.gender || '').trim().toLowerCase()
+    let ttsText = (PASS_TIP_TTS[item.type] || '{name}通行').replace('{name}', rawName)
+    if (rawName && ['男', 'male', 'm'].includes(g)) {
+      ttsText = `${rawName}先生，欢迎您来到华盾`
+    } else if (rawName && ['女', 'female', 'f'].includes(g)) {
+      ttsText = `${rawName}女士，欢迎您来到华盾`
+    }
     const ttsAt = lastTtsAt.get(item.type)
     if (!ttsAt || now - ttsAt >= TTS_WINDOW_MS) {
       lastTtsAt.set(item.type, now)
-      speak((PASS_TIP_TTS[item.type] || '{name}通行').replace('{name}', rawName))
+      speak(ttsText)
     }
     return true
   }

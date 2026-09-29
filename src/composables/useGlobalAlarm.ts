@@ -464,12 +464,23 @@ async function handleAlarm(alarm: any) {
     //   历史补拉帧不在分流点之前早退, 但去重窗口内会被 store 丢弃; 静音开关见 PassTipBar。
     if (PASS_TIP_TYPES.has(normalized.type)) {
       const meta = normalized.metadata || {}
+      const personName = String((meta as any).enroll_name || (meta as any).enrollName || '')
+      // [FIX passtip-dup 2026-09-29] WEB_POPUP(linkage_alarm) 帧设计上不带 metadata
+      //   (LinkageEvent 无 metadata 字段, 实测 16:30:45 linkage_alarm 帧无 enroll_name),
+      //   与 alarm.new 帧 (告警主推送, 含全量 metadata) 同事件双到 → 30s 窗内
+      //   personName 不同不去重, 滚动条出现「一条有姓名 + 一条空姓名」双条。
+      //   订阅闸门在 reportAlarm 顶层, 能产出通行事件的帧必然伴随 alarm.new —
+      //   空姓名帧直接丢弃, 避免冗余提示。
+      if (!personName) {
+        console.log('[useGlobalAlarm] face pass w/o enroll_name (linkage_alarm frame), skip PassTip:', normalized.type)
+        return
+      }
       // [FIX dev-col-leak 2026-09-19] 通道名走显示口径 SSOT (原裸显 raw channelName:
       //   未命名通道可达 20 位国标编码 / 合成「监控点<id>」占位, PassTipBar 滚动条可见)
       const tipChLb = alarmChLabel(normalized)
       const enqueued = usePassTipStore().push({
         type: normalized.type,
-        personName: String((meta as any).enroll_name || (meta as any).enrollName || ''),
+        personName,
         // [FEAT gender-tts 2026-09-29] 底库登记性别透传 (face_detector metadata.gender)
         gender: String((meta as any).gender || ''),
         channelName: tipChLb === '-' ? '' : tipChLb,

@@ -11,7 +11,11 @@ import type { ApiResponse } from '@/types/common'
 export interface PTZParams {
   deviceId: string
   channelId?: string
-  direction?: 'up' | 'down' | 'left' | 'right' | 'home' | 'zoom_in' | 'zoom_out' | 'goto_preset'
+  direction?: 'up' | 'down' | 'left' | 'right'
+    // [FEAT ptz-8dir 2026-09-29] 斜向 = 国标指令码位组合 (up_right=0x09/up_left=0x0A/
+    //   down_right=0x05/down_left=0x06, 后端 ptzBuildStandardCmd 位组合分支)
+    | 'up_left' | 'up_right' | 'down_left' | 'down_right'
+    | 'home' | 'zoom_in' | 'zoom_out' | 'goto_preset'
     | 'cruise_start' | 'cruise_stop' | 'track_start' | 'track_stop' | 'set_preset' | 'clear_preset'
     // [P0-3] GB28181 PTZ扩展: 聚焦/光圈/辅助开关
     | 'focus_near' | 'focus_far' | 'iris_open' | 'iris_close' | 'aux_on' | 'aux_off' | 'wiper_on' | 'wiper_off'
@@ -21,6 +25,8 @@ export interface PTZParams {
   pan?: number
   tilt?: number
   zoom?: number
+  /** [FEAT ptz-fisheye 2026-09-29] 鱼眼 zoom 位序反转: 部分鱼眼 IPC 的 0x10/0x20 语义与国标相反 */
+  zoomInvert?: boolean
   /** 巡航路径编号 */
   cruisePath?: number
   /** 轨迹编号 */

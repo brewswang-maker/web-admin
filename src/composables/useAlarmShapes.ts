@@ -638,7 +638,12 @@ const LABEL_ZH: Record<string, string> = {
   //   COCO_CLASSES (小写+空格, 见 YOLOv8Postprocessor.cpp), 中文口径对齐
   //   MiniCPMAdapter::cnClassNames; 未注册类回退原样输出不变。
   bicycle: '自行车', car: '汽车', motorcycle: '摩托车', airplane: '飞机',
-  bus: '公交车', train: '火车', truck: '卡车', boat: '船',
+  bus: '公交车', train: '火车',
+  // [FIX tricycle-ambiguity 2026-09-29] COCO80 无 tricycle 类, 三轮车 (尤其
+  //   带货斗) 在 COCO 标注惯例中被归入 truck — 真机用户实测确认误判
+  //   (三轮车标为「卡车」)。用户选定方案: 展示层如实标注类系歧义,
+  //   非真误报; 真正修复需专用 tricycle 微调模型 (后续可选)。
+  truck: '卡车(三轮车?)', boat: '船',
   'traffic light': '交通灯', 'fire hydrant': '消防栓', 'stop sign': '停止标志',
   'parking meter': '停车计时器', bench: '长椅',
   bird: '鸟', cat: '猫', dog: '狗', horse: '马', sheep: '羊', cow: '牛',

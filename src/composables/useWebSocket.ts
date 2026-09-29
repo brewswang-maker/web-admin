@@ -28,6 +28,11 @@ const TYPE_ALIASES: Record<string, string> = {
   'dashboard_alert': 'alarm',
   'system.dashboard_alert': 'alarm',
   'system.device_status': 'device_status',
+  // [FIX ws-type-prefix 2026-09-29] pushSystemEvent 实推带 system. 前缀的 type
+  //   (WS 抓包实测 system.detection_result / system.face.recognition.process),
+  //   订阅方按 wsTopics 裸类型注册 → 精确匹配 miss 后走这里的归一化别名命中。
+  'system.detection_result': 'detection_result',
+  'system.face.recognition.process': 'face.recognition.process',
 }
 
 type MessageHandler = (data: any) => void
