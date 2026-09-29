@@ -2729,6 +2729,9 @@ void jumpToPlayback; void openImageTab
   background: #FFFFFF;
   color: #1a1a1a;
   display: flex; flex-direction: column;
+  overflow: hidden; /* [FIX side-footer-clip 2026-09-29] 详情内容过长时 el-scrollbar 撑高
+    side-body 导致 footer(处警按钮) 被挤出 popup 可视区; overflow:hidden 强制
+    flex 容器裁剪溢出, footer(flex:0 0 auto) 始终钉在侧栏底部可见 */
   /* border-left: 1px solid #e4e7ed; */
 }
 
