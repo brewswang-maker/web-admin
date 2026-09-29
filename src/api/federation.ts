@@ -64,6 +64,27 @@ export interface BoxContribution {
   lastActiveRound: number
 }
 
+/** [P0-2 2026-09-29] 影子评估状态 (GET /api/v1/federation/shadow/status)。
+ *  注意后端 caveat 字段: new_detected 计量当前为基线等价 (候选模型推理通道未建),
+ *  metrics 不反映真实新模型行为 — 展示时必须透出 caveat, 禁止渲染"新模型提升 X%"类结论 */
+export interface ShadowEvaluationStatus {
+  state: 'IDLE' | 'SHADOW_RUNNING' | 'PROMOTED' | 'ROLLED_BACK'
+  oldModelVersion: string
+  newModelVersion: string
+  evaluationStartedMs: number
+  evaluationCompletedMs: number
+  improvement: number
+  message: string
+  metrics: {
+    totalEvalSamples: number
+    oldFalsePositiveRate: number
+    newFalsePositiveRate: number
+    oldDetectionRate: number
+    newDetectionRate: number
+  }
+  caveat: string
+}
+
 /** 创建训练任务请求 */
 export interface CreateFederationTaskRequest {
   name: string
@@ -82,6 +103,11 @@ export const federationApi = {
   /** 获取联邦学习状态 */
   getStatus() {
     return federationHttp.get<ApiResponse<FederationStatus>>('/status')
+  },
+
+  /** [P0-2 2026-09-29] 获取影子评估状态 (展示时必须透出返回中的 caveat 字段) */
+  getShadowStatus() {
+    return federationHttp.get<ApiResponse<ShadowEvaluationStatus>>('/shadow/status')
   },
 
   /** 获取训练任务列表 */
