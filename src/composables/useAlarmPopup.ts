@@ -722,6 +722,14 @@ export async function showAlarmPopup(
       // [FIX ticket-backfill 2026-09-21] 接警单号不因后到精简帧丢失
       //   (先富化/处置后有帧 — 已有值优先)
       ticketId: cur.ticketId || alarm.ticketId,
+      // [FIX alarm-detail-gov 2026-09-29] 治理字段已有值优先: 弹窗开着期间
+      //   告警被处置 (另一端/告警中心) 后到精简帧 status=unhandled 会把
+      //   currentAlarm 拉回未处置 → 只读态回退处警表单。处置态与时间锚同理
+      //   不可回退 (后到帧只补稀疏字段, 不覆盖已有治理结论)。
+      status: (cur as any).status || alarm.status,
+      handledBy: (cur as any).handledBy || (alarm as any).handledBy,
+      handleNote: (cur as any).handleNote || (alarm as any).handleNote,
+      appendLogs: (cur as any).appendLogs ?? (alarm as any).appendLogs,
       metadata: mergedMeta,
       // [A3 2026-09-14 时间语义治理 P0-C] 时间锚不可回退: 同 id 后到帧
       //   (富化/精简/补推) 不刷新显示时间 — 保留首帧 createdAt
@@ -858,6 +866,15 @@ export async function openAlarmDetailById(id: string) {
       ElMessage.warning('未找到该告警的详情数据')
       return
     }
+    // [FIX alarm-detail-gov 2026-09-29] 详情响应治理字段 snake→camel 兜底:
+    //   详情端点透出 handled_by/handle_note/ticket_id/append_logs (snake),
+    //   弹窗只读回显与 isDisposed 治理证据兜底读 camel (handledBy/handleNote/
+    //   ticketId/appendLogs) — 原无映射, 处置人/备注/单号重开恒空。
+    const d = detail as any
+    d.handledBy = d.handledBy || d.handled_by || ''
+    d.handleNote = d.handleNote || d.handle_note || ''
+    d.ticketId = d.ticketId || d.ticket_id || ''
+    if (!d.appendLogs && Array.isArray(d.append_logs)) d.appendLogs = d.append_logs
     // [FIX situation-status 2026-09-14] force: 手动入口显式切换 (跳过防覆盖守卫),
     //   保证弹窗最终显示本次点击的告警 — 见 showAlarmPopup options.force 注释。
     await showAlarmPopup(detail, { force: true })
