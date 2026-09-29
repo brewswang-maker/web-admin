@@ -3,7 +3,7 @@
     <!-- ===== 顶部说明 ===== -->
     <el-alert
       type="info" :title="'安检联动模板包 — 一键应用'" :closable="false" show-icon class="hint-alert"
-      :description="`内置 ${templates.length} 个安检分类模板 (入口核验/通道秩序/判图员合规/人包核验)。点击卡片 [应用] 或 [全部应用] 调 POST /linkage/rule-templates/:id/apply 以所选名称创建规则并写入 DB, 重启后生效。应用后请到「规则管理」页启停/编辑。`">
+      :description="`内置 ${templates.length} 个安检分类模板 (入口核验/通道秩序/判图员合规/人包核验)。点击卡片 [应用] 或 [全部应用] 调 POST /linkage/rule-templates/:id/apply 以所选名称创建规则并写入 DB, 重启后生效。应用后请到「联动规则」页启停/编辑。`">
       <div class="hint-actions">
         <el-button size="small" type="primary" plain :loading="applyingAll"
                    :disabled="templates.length === 0" @click="applyAllTemplates">
@@ -222,7 +222,7 @@ async function loadAppliedNames() {
 async function applyAllTemplates() {
   const pending = templates.value.filter(t => !appliedNames.value.has(t.name))
   if (pending.length === 0) {
-    ElMessage.info('全部模板均已应用 — 到「规则管理」页查看/启停')
+    ElMessage.info('全部模板均已应用 — 到「联动规则」页查看/启停')
     return
   }
   try {
@@ -249,7 +249,7 @@ async function applyAllTemplates() {
   }
   applyingAll.value = false
   if (fail === 0) {
-    ElMessage.success(`已应用 ${ok} 个模板, 重启后生效; 到「规则管理」页可启停/编辑`)
+    ElMessage.success(`已应用 ${ok} 个模板, 重启后生效; 到「联动规则」页可启停/编辑`)
   } else {
     ElMessage.warning(`应用完成: 成功 ${ok} / 失败 ${fail} (失败项见控制台)`)
   }

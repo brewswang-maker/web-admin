@@ -193,7 +193,7 @@
     </el-card>
 
     <!-- 配置抽屉 -->
-    <el-drawer v-model="showConfigDrawer" title="设备配置（算法已收敛到事件规则）" size="480px">
+    <el-drawer v-model="showConfigDrawer" title="设备配置（算法已收敛到联动规则）" size="480px">
       <el-form :model="configForm" label-width="110px">
         <!-- [algo-rule-ssot 2026-09-19] 算法插件多选控件下线:
              唯一业务真值 = 联动规则 enabled (R6 P1-3 算法页只读化完成)。
@@ -202,9 +202,9 @@
           <el-tag v-if="(device as any)?.algoPlugins?.length" type="warning" size="small">
             {{ (device as any).algoPlugins.join('、') }}
           </el-tag>
-          <span v-else style="color:#8c8c8c">未配置 (请前往「事件规则」页创建/启用规则后由 AlgoDeploymentReconciler 自动收敛)</span>
+          <span v-else style="color:#8c8c8c">未配置 (请前往「联动规则」页创建/启用规则后由 AlgoDeploymentReconciler 自动收敛)</span>
           <el-button size="small" type="primary" plain style="margin-left:8px" @click="$router.push('/linkage/rules')">
-            <el-icon><Setting /></el-icon>前往事件规则
+            <el-icon><Setting /></el-icon>前往联动规则
           </el-button>
         </el-form-item>
         <el-form-item label="录像留存天数">

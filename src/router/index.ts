@@ -501,7 +501,7 @@ export const asyncRoutes: RouteRecordRaw[] = [
         path: 'large-event/rules',
         name: 'LargeEventRules',
         component: LargeEventRulesView,
-        meta: { title: '事件规则', icon: 'List', roles: ['admin', 'user', 'viewer'] }
+        meta: { title: '联动规则', icon: 'List', roles: ['admin', 'user', 'viewer'] }
       },
       // ── 酒店员工无人值守 (t8f 2026-08-30) ──
       {
@@ -552,7 +552,7 @@ export const asyncRoutes: RouteRecordRaw[] = [
         path: 'video-perimeter/rules',
         name: 'PerimeterRules',
         component: PerimeterRulesView,
-        meta: { title: '周界事件规则', icon: 'List', roles: ['admin', 'user', 'viewer'] }
+        meta: { title: '联动规则', icon: 'List', roles: ['admin', 'user', 'viewer'] }
       },
       // ── 安检场景 (Phase 2 S1-3/S1-4) ──
       {
@@ -597,7 +597,7 @@ export const asyncRoutes: RouteRecordRaw[] = [
         path: 'screening/rule-manager',
         name: 'ScreeningRuleManager',
         component: ScreeningRuleManagerView,
-        meta: { title: '规则管理', icon: 'Setting', roles: ['admin', 'user'] }
+        meta: { title: '联动规则', icon: 'Setting', roles: ['admin', 'user'] }
       },
       {
         // [UI-4b 2026-09-10] 安检事件列表 (SSOT scene=security_screening)
@@ -672,7 +672,7 @@ export const asyncRoutes: RouteRecordRaw[] = [
         path: 'school/rules',
         name: 'SchoolRules',
         component: SchoolRulesView,
-        meta: { title: '校园事件规则', icon: 'List', roles: ['admin', 'user', 'viewer'] }
+        meta: { title: '联动规则', icon: 'List', roles: ['admin', 'user', 'viewer'] }
       },
       {
         // [UI-4b 2026-09-10] 校园事件列表 (SSOT scene=school_campus)
@@ -693,7 +693,7 @@ export const asyncRoutes: RouteRecordRaw[] = [
         path: 'gas-station/rules',
         name: 'GasRules',
         component: GasRulesView,
-        meta: { title: '加油站事件规则', icon: 'List', roles: ['admin', 'user', 'viewer'] }
+        meta: { title: '联动规则', icon: 'List', roles: ['admin', 'user', 'viewer'] }
       },
       {
         // [UI-4b 2026-09-10] 加油站事件列表 (SSOT scene=gas_station)

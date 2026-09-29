@@ -78,7 +78,7 @@ const zhCN = {
     largeEventDensity: '密度热力大屏',
     largeEventEvents: '事件告警',
     largeEventPacks: '场景包',
-    largeEventRules: '事件规则',
+    largeEventRules: '联动规则',
     // [酒店员工无人值守 2026-08-30] 一级菜单四视图 (t8f)
     hotelOverview: '值守总览',
     hotelCorridorEvents: '走廊事件', // [FIX channel-monitor-point 2026-09-17] corridor=走廊(物理位置)非视频通道, 海康口径不归"监控点"; 修正历史误译
@@ -88,13 +88,13 @@ const zhCN = {
     perimeterOverview: '周界总览',
     perimeterEvents: '周界事件',
     perimeterPacks: '周界布防',
-    perimeterRules: '事件规则',
+    perimeterRules: '联动规则',
     screeningOverview: '安检总览',
     screeningChannelOrder: '通道秩序',
     screeningPersonalItem: '人包核验',
     screeningXray: '判图辅助',
     screeningRules: '安检模板',
-    screeningRuleManager: '规则管理',
+    screeningRuleManager: '联动规则',
     schoolOverview: '校园总览',
     schoolAccess: '门禁管理',
     schoolPerimeter: '周界防范',
@@ -105,7 +105,7 @@ const zhCN = {
     campusDashboard: '校园态势大屏',
     campus3d: '3D 校园',
     schoolScenePacks: '校园场景包',
-    schoolRules: '事件规则',
+    schoolRules: '联动规则',
     // [加油站方案 2026-08-30] 一级菜单加油站 (T6 硬红线 + EHS 闭环)
     gasStationOverview: '加油站总览',
     gasStationFueling: '加油区',
@@ -115,7 +115,7 @@ const zhCN = {
     gasStationDashboard: '加油站态势大屏',
     gasStationGas3D: '3D 加油站',
     gasStationScenePacks: '加油站场景包',
-    gasStationRules: '事件规则',
+    gasStationRules: '联动规则',
     devices: '设备管理',
     securityAreas: '安保区域',
     channels: '监控点管理',
@@ -126,7 +126,7 @@ const zhCN = {
     algorithms: '算法商城',
     models: '模型管理',
     algoConfig: '算法查看',
-    algoConfigDesc: '查看各监控点已绑定的推理算法、调度状态与 ROI 资源 — 本页 仅供查看, 全部配置与绘制请前往「事件规则」',
+    algoConfigDesc: '查看各监控点已绑定的推理算法、调度状态与 ROI 资源 — 本页 仅供查看, 全部配置与绘制请前往「联动规则」',
     algoQuality: '算法质量',
     annotation: '标注平台',
     aiChat: 'AI 助手',
@@ -978,7 +978,7 @@ const zhCN = {
     },
     // [vp4 2026-09-01] 事件规则聚合页 (范式对齐 hotel.rules)
     rules: {
-      title: '事件规则',
+      title: '联动规则',
       subtitle: '周界联动规则实例 — VP-* 模板落地对照 / 监控点绑定 / 触发统计; 由场景包「校验并布防」幂等实例化生成',
       loadFailed: '规则加载失败',
       statRules: '规则实例',
@@ -1022,7 +1022,7 @@ const zhCN = {
   // [vp4 2026-09-01] 校园/加油站事件规则页文案 (范式对齐 hotel.rules)
   school: {
     rules: {
-      title: '校园事件规则',
+      title: '联动规则',
       subtitle: '校园联动规则实例 — SC-* 模板落地对照 / 监控点绑定 / 触发统计; 由场景包「校验并布防」幂等实例化生成',
       loadFailed: '规则加载失败',
       statRules: '规则实例',
@@ -1064,7 +1064,7 @@ const zhCN = {
   },
   gas: {
     rules: {
-      title: '加油站事件规则',
+      title: '联动规则',
       subtitle: '加油站联动规则实例 — GS-* 模板落地对照 / 监控点绑定 / 触发统计; 由场景包「校验并布防」幂等实例化生成',
       loadFailed: '规则加载失败',
       statRules: '规则实例',

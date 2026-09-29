@@ -2,7 +2,7 @@
   <div class="rule-manager">
     <!-- ===== 顶部说明 ===== -->
     <el-alert
-      type="info" :title="'安检生效规则管理'" :closable="false" show-icon class="hint-alert"
+      type="info" :title="'安检生效联动规则'" :closable="false" show-icon class="hint-alert"
       :description="`已生效联动规则 (区别于模板库): 启停/编辑/删除走 PUT/DELETE /linkage/rules/:id, 实时生效 (无需重启)。dry-run 为本地匹配预演 (对照规则 event_types/min_severity), 不触发真实联动。`" />
 
     <!-- ===== 筛选栏 + dry-run ===== -->

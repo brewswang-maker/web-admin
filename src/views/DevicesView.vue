@@ -484,10 +484,10 @@
         </el-form-item>
         <!-- [algo-rule-ssot 2026-09-19] 算法插件多选控件下线:
              唯一业务真值 = 联动规则 enabled (R6 P1-3 算法页只读化完成)。
-             新增设备阶段不预设算法，后续在「事件规则」页创建/启用规则后
+             新增设备阶段不预设算法，后续在「联动规则」页创建/启用规则后
              由 AlgoDeploymentReconciler 自动收敛 -->
         <el-form-item label="算法插件">
-          <span style="color:#8c8c8c">新增设备阶段不预设算法; 请在「事件规则」页创建/启用规则后自动收敛</span>
+          <span style="color:#8c8c8c">新增设备阶段不预设算法; 请在「联动规则」页创建/启用规则后自动收敛</span>
         </el-form-item>
         <el-form-item label="配置模板">
           <el-select v-model="addForm.templateId" style="width:100%" clearable placeholder="可选">
@@ -550,7 +550,7 @@
           </el-tag>
           <span v-else style="color:#8c8c8c">未配置</span>
           <el-button size="small" type="primary" plain style="margin-left:8px" @click="$router.push('/linkage/rules')">
-            <el-icon><Setting /></el-icon>前往事件规则
+            <el-icon><Setting /></el-icon>前往联动规则
           </el-button>
         </el-form-item>
       </el-form>

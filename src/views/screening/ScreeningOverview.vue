@@ -17,7 +17,7 @@
           <el-icon><Search /></el-icon>智能检索
         </el-button>
         <el-button size="default" @click="$router.push('/screening/rule-manager')">
-          <el-icon><Setting /></el-icon>规则管理
+          <el-icon><Setting /></el-icon>联动规则
         </el-button>
         <el-button size="default" type="primary" @click="$router.push('/screening/dashboard')">
           <el-icon><TrendCharts /></el-icon>运行大屏

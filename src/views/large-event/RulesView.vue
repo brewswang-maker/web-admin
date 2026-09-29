@@ -3,7 +3,7 @@
     <!-- ===== 页头 ===== -->
     <div class="rules-header">
       <div>
-        <h2 class="rules-title">事件规则</h2>
+        <h2 class="rules-title">联动规则</h2>
         <div class="rules-sub">
           大型活动联动规则实例 — 启用状态 / 事件类型 / 监控点绑定 / 触发条件; 由场景包「校验并布防」实例化 LE 模板生成
         </div>

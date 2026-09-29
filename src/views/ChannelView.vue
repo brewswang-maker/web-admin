@@ -388,7 +388,7 @@
          「配置插件」改为只读展示 + 跳转提示。脚本部分保留 showAlgoDialog
          / algoForm / saveAlgoConfig 三处引用仅供废弃期回填 (过渡期内若被
          调用仍可输出 deprecation 提示), 后续 R7 整体清除 -->
-    <el-dialog v-model="showAlgoDialog" title="算法插件设置（已收敛到事件规则）" width="520px">
+    <el-dialog v-model="showAlgoDialog" title="算法插件设置（已收敛到联动规则）" width="520px">
       <el-form v-if="currentChannel" label-width="100px">
         <el-form-item label="当前算法">
           <el-tag v-if="currentChannel.algoPlugin && currentChannel.algoPlugin !== '无'" type="warning" size="small">
@@ -397,12 +397,12 @@
           <span v-else style="color:#8c8c8c">未配置</span>
         </el-form-item>
         <el-alert type="info" :closable="false" style="margin-top:12px">
-          模板与启停已收敛到「事件规则」页；本页仅供查看当前已绑定的算法
+          模板与启停已收敛到「联动规则」页；本页仅供查看当前已绑定的算法
           （来源 = 联动规则 × AlgoDeploymentReconciler 自动收敛）。
         </el-alert>
         <el-form-item label="" style="margin-top:16px">
           <el-button type="primary" plain @click="$router.push('/linkage/rules')">
-            <el-icon><Setting /></el-icon>前往事件规则
+            <el-icon><Setting /></el-icon>前往联动规则
           </el-button>
         </el-form-item>
       </el-form>
@@ -964,7 +964,7 @@ async function saveChannelConfig() {
 //   违反「事件规则单一真值源」架构。保留函数仅为过渡期错调用告警，
 //   不再向后端发送 algo_plugin 写入请求。后续 R7 整体清除。
 async function saveAlgoConfig() {
-  ElMessage.warning('算法配置已收敛到「事件规则」页, 请前往/LinkageRules 创建/启用规则后由 AlgoDeploymentReconciler 自动收敛。')
+  ElMessage.warning('算法配置已收敛到「联动规则」页, 请前往/LinkageRules 创建/启用规则后由 AlgoDeploymentReconciler 自动收敛。')
   showAlgoDialog.value = false
 }
 

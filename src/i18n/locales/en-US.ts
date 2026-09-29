@@ -80,7 +80,7 @@ const enUS: MessageSchema = {
     largeEventDensity: 'Density Screen',
     largeEventEvents: 'Event Alerts',
     largeEventPacks: 'Scene Packs',
-    largeEventRules: 'Event Rules',
+    largeEventRules: 'Linkage Rules',
     // [Hotel unattended 2026-08-30] primary menu four views (t8f)
     hotelOverview: 'Duty Overview',
     hotelCorridorEvents: 'Corridor Events',
@@ -90,13 +90,13 @@ const enUS: MessageSchema = {
     perimeterOverview: 'Perimeter Overview',
     perimeterEvents: 'Perimeter Events',
     perimeterPacks: 'Perimeter Deployment',
-    perimeterRules: 'Event Rules',
+    perimeterRules: 'Linkage Rules',
     screeningOverview: 'Screening Overview',
     screeningChannelOrder: 'Channel Order',
     screeningPersonalItem: 'Personal Item',
     screeningXray: 'X-ray Assist',
     screeningRules: 'Screening Templates',
-    screeningRuleManager: 'Rule Manager',
+    screeningRuleManager: 'Linkage Rules',
     schoolOverview: 'Campus Overview',
     schoolAccess: 'Access Control',
     schoolPerimeter: 'Perimeter Defense',
@@ -107,7 +107,7 @@ const enUS: MessageSchema = {
     campusDashboard: 'Campus Dashboard',
     campus3d: '3D Campus',
     schoolScenePacks: 'Scene Packs',
-    schoolRules: 'Event Rules',
+    schoolRules: 'Linkage Rules',
     // [加油站方案 2026-08-30] 一级菜单加油站
     gasStationOverview: 'Gas Station Overview',
     gasStationFueling: 'Fueling Area',
@@ -117,7 +117,7 @@ const enUS: MessageSchema = {
     gasStationDashboard: 'Gas Station Dashboard',
     gasStationGas3D: '3D Gas Station',
     gasStationScenePacks: 'Gas Station Scene Packs',
-    gasStationRules: 'Event Rules',
+    gasStationRules: 'Linkage Rules',
     devices: 'Devices',
     securityAreas: 'Security Areas',
     channels: 'Monitoring Points', // [FIX channel-monitor-point 2026-09-17] Hikvision-style terminology: channel -> monitoring point
@@ -128,7 +128,7 @@ const enUS: MessageSchema = {
     algorithms: 'Algorithm Store',
     models: 'Models',
     algoConfig: 'Algo View',
-    algoConfigDesc: 'View inference algorithms, scheduling status and ROI resources bound to each monitoring point — read-only page; all configuration and drawing is done in Event Rules',
+    algoConfigDesc: 'View inference algorithms, scheduling status and ROI resources bound to each monitoring point — read-only page; all configuration and drawing is done in Linkage Rules',
     algoQuality: 'Algo Quality',
     annotation: 'Annotation',
     aiChat: 'AI Assistant',
@@ -982,7 +982,7 @@ const enUS: MessageSchema = {
     },
     // [vp4 2026-09-01] Event rules aggregation page (aligned with hotel.rules)
     rules: {
-      title: 'Event Rules',
+      title: 'Linkage Rules',
       subtitle: 'Perimeter linkage rule instances — VP-* template landing map / monitoring point binding / trigger stats; idempotently instantiated via "Check && Deploy" on Scene Packs',
       loadFailed: 'Failed to load rules',
       statRules: 'Rule Instances',
@@ -1023,7 +1023,7 @@ const enUS: MessageSchema = {
   // [vp4 2026-09-01] school/gas event rules page texts (aligned with hotel.rules)
   school: {
     rules: {
-      title: 'School Event Rules',
+      title: 'Linkage Rules',
       subtitle: 'School linkage rule instances — SC-* template landing map / monitoring point binding / trigger stats; idempotently instantiated via "Check && Deploy" on Scene Packs',
       loadFailed: 'Failed to load rules',
       statRules: 'Rule Instances',
@@ -1062,7 +1062,7 @@ const enUS: MessageSchema = {
   },
   gas: {
     rules: {
-      title: 'Gas Station Event Rules',
+      title: 'Linkage Rules',
       subtitle: 'Gas station linkage rule instances — GS-* template landing map / monitoring point binding / trigger stats; idempotently instantiated via "Check && Deploy" on Scene Packs',
       loadFailed: 'Failed to load rules',
       statRules: 'Rule Instances',

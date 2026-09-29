@@ -89,7 +89,7 @@ const entries = [
     desc: '6 KPI 真实聚合 / 24h 态势 / 监控点排行 / 门面工程' },
   { path: '/screening/xray', name: 'X 光判图辅助', tone: 'purple', icon: Aim,
     desc: '包裹快照判图 + 人包追溯 (以图搜图同通道 ±10min)' },
-  { path: '/screening/rule-manager', name: '安检规则管理', tone: 'green', icon: DocumentChecked,
+  { path: '/screening/rule-manager', name: '安检联动规则', tone: 'green', icon: DocumentChecked,
     desc: '35 类安检事件过滤 / 启停 / dry-run 模拟 / 63 条生效规则' },
 ]
 

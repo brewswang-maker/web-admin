@@ -2,7 +2,7 @@
   <div class="algo-config-view">
     <div class="page-header">
       <h2 class="page-title">{{ $t('algoConfig', '算法查看') }}</h2>
-      <span class="page-desc">{{ $t('algoConfigDesc', '查看各监控点已绑定的推理 算法、调度状态与 ROI 资源 — 本页仅供查看, 全部配置与绘制请前往「事件规则」') }}</span>
+      <span class="page-desc">{{ $t('algoConfigDesc', '查看各监控点已绑定的推理 算法、调度状态与 ROI 资源 — 本页仅供查看, 全部配置与绘制请前往「联动规则」') }}</span>
     </div>
 
     <div class="layout-body">
@@ -65,14 +65,14 @@
           </div>
         </template>
         <el-table v-if="selected" :data="algoRows" size="small" class="algo-table" height="100%"
-          row-key="algoId" empty-text="该监控点尚未绑定算法 — 新建事件规则后将自动绑定">
+          row-key="algoId" empty-text="该监控点尚未绑定算法 — 新建联动规则后将自动绑定">
           <el-table-column label="算法" min-width="110">
             <template #default="{ row }">
               <div class="algo-name-cell">
                 <div class="algo-name-line">
                   <el-tag size="small" type="primary" :title="isAlgoFallback(row.algoId) ? '该算法未注册中文名' : ''">{{ row.algoName }}</el-tag>
                   <el-tooltip v-if="row.enabled && row.ruleCount === 0" placement="top"
-                    content="未绑定事件规则: 告警不触发弹窗/联动 — 请在「事件规则」中新建或启用规则">
+                    content="未绑定联动规则: 告警不触发弹窗/联动 — 请在「联动规则」中新建或启用规则">
                     <el-icon class="algo-norule-warn"><WarningFilled /></el-icon>
                   </el-tooltip>
                   <el-tag v-else-if="row.ruleCount > 0" size="small" type="info" effect="plain" class="algo-rule-count">规则×{{ row.ruleCount }}</el-tag>
@@ -96,7 +96,7 @@
           <el-table-column label="ROI" width="76" align="center">
             <template #default="{ row }">
               <el-button v-if="algoHasRoi(row.algoId)" size="small" type="primary" link
-                title="查看该算法已保存的 ROI (只读; 绘制请前往事件规则)" @click.stop="openRoiViewer(row)">查看</el-button>
+                title="查看该算法已保存的 ROI (只读; 绘制请前往联动规则)" @click.stop="openRoiViewer(row)">查看</el-button>
               <span v-else class="text-muted">—</span>
             </template>
           </el-table-column>
@@ -158,7 +158,7 @@
         </el-tabs>
       </div>
       <template #footer>
-        <span class="roi-viewer-hint">本页仅供查看 — ROI 绘制 / 修改请前往「事件规则」</span>
+        <span class="roi-viewer-hint">本页仅供查看 — ROI 绘制 / 修改请前往「联动规则」</span>
         <el-button size="small" @click="roiViewerVisible = false">关闭</el-button>
         <el-button size="small" type="primary" :loading="roiViewerLoading" @click="loadRoiViewerData">刷新</el-button>
       </template>
@@ -437,10 +437,10 @@ async function loadRuleCounts() {
 // [FIX algo-bind-roi2 2026-09-09] 绊线判定消费方全仓 4 插件 (grep 实锚) + 尾随通道
 //   (tripwire/boundary/people_count 按己 id 查 + parking_violation 空 id 容差)
 const ALGO_EXCLUSIVE_RES: Record<string, { tab: 'tripwire' | 'passageway'; key: string; fallback: string; desc: string }> = {
-  'shield.algo.perimeter.tripwire': { tab: 'tripwire', key: 'tripwire', fallback: '绊线', desc: '绊线由本算法判定生效；在事件规则页画的越线绊线也会自动同步到这里。' },
+  'shield.algo.perimeter.tripwire': { tab: 'tripwire', key: 'tripwire', fallback: '绊线', desc: '绊线由本算法判定生效；在联动规则页画的越线绊线也会自动同步到这里。' },
   'shield.algo.perimeter.boundary': { tab: 'tripwire', key: 'tripwire', fallback: '绊线', desc: '绊线由本算法（边界判定）消费生效，独立于越线算法的绊线库。' },
   'shield.algo.metric.people_count': { tab: 'tripwire', key: 'tripwire', fallback: '绊线', desc: '绊线作为本算法的计数线（目标穿越即计数）。' },
-  'shield.algo.traffic.parking_violation': { tab: 'tripwire', key: 'tripwire', fallback: '绊线', desc: '车辆停在通道内任意绊线附近即触发本算法；此处查看本算法的绊线 (绘制请前往事件规则页)。' },
+  'shield.algo.traffic.parking_violation': { tab: 'tripwire', key: 'tripwire', fallback: '绊线', desc: '车辆停在通道内任意绊线附近即触发本算法；此处查看本算法的绊线 (绘制请前往联动规则页)。' },
   'shield.algo.perimeter.tailgating': { tab: 'passageway', key: 'passageway', fallback: '通道 (尾随 v5)', desc: '矩形通道由本算法（尾随判定）消费生效。' },
 }
 // [FIX algo-roi-effective 2026-09-09] 检测区域视图按算法能力门控: 仅 8 个

@@ -109,7 +109,7 @@
             <el-tag v-if="(lastResult.rules_failed?.length ?? 0) > 0" type="danger">
               失败 {{ lastResult.rules_failed?.length }}
             </el-tag>
-            <el-button size="small" link type="primary" @click="goRules">去事件规则页查看</el-button>
+            <el-button size="small" link type="primary" @click="goRules">去联动规则页查看</el-button>
           </div>
           <el-table v-if="(lastResult.instantiate_detail ?? []).length > 0"
                     :data="lastResult.instantiate_detail" size="small" max-height="200">
@@ -151,7 +151,7 @@
           <el-tag v-if="(importResult.rules_failed?.length ?? 0) > 0" type="danger">
             失败 {{ importResult.rules_failed?.length }}
           </el-tag>
-          <el-button size="small" link type="primary" @click="goRulesFromImport">去事件规则页查看</el-button>
+          <el-button size="small" link type="primary" @click="goRulesFromImport">去联动规则页查看</el-button>
         </div>
         <el-alert v-if="(importResult.capabilities?.missing_algos?.length ?? 0) > 0"
                   type="warning" :closable="false" class="import-alert"
@@ -391,7 +391,7 @@ async function confirmApply(p: ScenePack, deploy: boolean) {
   try {
     await ElMessageBox.confirm(
       deploy
-        ? `将按场景包「${p.display_name}」校验算法可用性, 并把 ${p.linkage_templates?.length ?? 0} 个 LE 联动模板实例化为规则 (幂等, 已存在跳过; 可在「事件规则」页查看)。继续?`
+        ? `将按场景包「${p.display_name}」校验算法可用性, 并把 ${p.linkage_templates?.length ?? 0} 个 LE 联动模板实例化为规则 (幂等, 已存在跳过; 可在「联动规则」页查看)。继续?`
         : `将按场景包「${p.display_name}」校验算法可用性并输出部署清单 (不写配置)。继续?`,
       deploy ? '校验并布防' : '仅校验',
       { confirmButtonText: deploy ? '布防' : '校验', cancelButtonText: '取消', type: 'info' }
