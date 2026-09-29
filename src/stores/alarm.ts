@@ -252,9 +252,10 @@ export const useAlarmStore = defineStore('alarm', () => {
           if (norm.lastSeenMs) cur.lastSeenMs = norm.lastSeenMs
           if (norm.eventEndMs) cur.eventEndMs = norm.eventEndMs
           cur.eventEnded = true
-          // [P0-1 2026-09-26] 自动解除态同步: 后端收尾已把 new 性行置
-          //   status='resolved' (AlarmService closeEventLocked), end 帧携带
-          //   同值 — 本地行状态标签同步 (待处理→已解决), 与下次 REST 拉取一致;
+          // [FIX manual-close-only 2026-09-29] 后端已下线自动解除
+          //   (closeEventLocked 仅落 event_end_ms, 所有告警必须人工处置),
+          //   end 帧不再携带 status='resolved' — 本分支保留做向后兼容
+          //   防御 (旧后端/异常帧到达时仍同步, 行为幂等无害):
           //   不改已有人工终态 (false_alarm/confirmed 等) 行的展示语义。
           //   注: 存量行经 normalizeAlarmCore 归一, 'new' 已转 'unhandled'
           //   (types/alarm.ts status 归一口径), 故判初始态集合而非字面 'new'。
