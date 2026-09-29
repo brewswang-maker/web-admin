@@ -590,6 +590,10 @@ export const ALARM_TYPE_CN: Record<string, string> = {
   //    EventTypeAliases.h meta_table agent_subscription_hit 同步; CI
   //    AlarmTsMirror 校验 meta_table keys ⊆ 本表) ──
   agent_subscription_hit: '智能订阅命中',
+  // ── [FIX vlm-zh 2026-09-30] VLM 智能巡视异常镜像 (双注册铁律: 与
+  //    EventTypeAliases.h meta_table vlm_anomaly 同步; 此前未登记时弹窗
+  //    标题/告警类型/识别算法三处裸显 "vlm_anomaly") ──
+  vlm_anomaly: '智能巡视异常',
 }
 
 /**
