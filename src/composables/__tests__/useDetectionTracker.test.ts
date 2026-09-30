@@ -73,6 +73,38 @@ describe('DisplayTracker', () => {
     expect(r[0].name).toBe('张三')
   })
 
+  // [FIX stranger-overlay 2026-09-30] 陌生人显式化 (groupType=5) 的三个行为锁定
+  it('陌生人分组兑底: 未识别脸携带 groupType=5 直出灰色「陌生人」标注', () => {
+    const t = new DisplayTracker()
+    // LiveView 解析层兑底后: 陌生人无 name/sim, 仅 groupType=5
+    t.update([det({ cls: 'face', groupType: 5 })], 1000)
+    const r = t.render(1100)
+    expect(r[0].groupType).toBe(5)
+    expect(r[0].name).toBeUndefined()
+    expect(r[0].sim).toBeUndefined()
+  })
+
+  it('名单 sticky 保护: 已识别 track 的陌生人帧不冲掉分组与姓名', () => {
+    const t = new DisplayTracker()
+    t.update([det({ cls: 'face', name: '张三', groupType: 3 })], 1000)
+    // 偶发识别失败帧 (sim 低于阈值): 后端显式携带 groupType=5,
+    //   若直接覆盖会把名单脸闪成「陌生人」(白↔陌生抖动)
+    t.update([det({ cls: 'face', groupType: 5 })], 1550)
+    const r = t.render(1600)
+    expect(r[0].groupType).toBe(3)
+    expect(r[0].name).toBe('张三')
+  })
+
+  it('陌生→名单正常翻转: sticky 只护名单结论, 不卡死陌生人 track', () => {
+    const t = new DisplayTracker()
+    t.update([det({ cls: 'face', groupType: 5 })], 1000)
+    // 随后识别命中: 必须翻转, 不能被 sticky 卡死在陌生人
+    t.update([det({ cls: 'face', name: '李四', groupType: 1, sim: 0.83 })], 1550)
+    const r = t.render(1600)
+    expect(r[0].groupType).toBe(1)
+    expect(r[0].name).toBe('李四')
+  })
+
   it('reset 清空所有 track', () => {
     const t = new DisplayTracker()
     t.update([det()], 1000)

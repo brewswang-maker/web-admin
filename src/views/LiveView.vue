@@ -76,7 +76,9 @@
                      :style="{ filter: filterForChannel(slot.channelId), transform: transformForChannel(slot.channelId, idx === activeSlotIdx) }"
                      muted autoplay playsinline />
               <!-- [P1-CO2] AI 推理检测框 Canvas 叠加层 -->
-              <canvas v-if="slot.playing && detectionOverlay.enabled"
+              <!-- [FEAT overlay-per-channel 2026-09-30] 逐通道标注分闸: 总闸 &&
+                   通道开关, 关闭后 canvas 卸载 → ref 置空 → 绘制循环自然跳过 -->
+              <canvas v-if="slot.playing && detectionOverlay.enabled && isChannelOverlayOn(slot.channelId)"
                       :ref="(el: any) => setDetectionCanvasRef(el, idx)"
                       class="detection-canvas"
                       :style="{ transform: transformForChannel(slot.channelId, idx === activeSlotIdx) }" />
@@ -118,6 +120,14 @@
                   <span class="bl-time">{{ currentTime }}</span>
                 </div>
                 <div class="bottom-actions">
+                  <!-- [FEAT overlay-per-channel 2026-09-30] 本窗实时标注开关:
+                       图标与顶部全局总闸 (Aim 准星) 同形, 开启态绿色与总闸
+                       success 同色 — 用户认知一致。仅切换分闸, 不碰总闸。 -->
+                  <el-tooltip :content="isChannelOverlayOn(slot.channelId) ? '关闭本窗实时标注' : '开启本窗实时标注'" placement="top">
+                    <button class="va-btn" :class="{ 'va-overlay-on': isChannelOverlayOn(slot.channelId) }" @click.stop="toggleChannelOverlay(slot.channelId)" :title="isChannelOverlayOn(slot.channelId) ? '关闭本窗实时标注' : '开启本窗实时标注'">
+                      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="22" y1="12" x2="18" y2="12"/><line x1="6" y1="12" x2="2" y2="12"/><line x1="12" y1="6" x2="12" y2="2"/><line x1="12" y1="22" x2="12" y2="18"/></svg>
+                    </button>
+                  </el-tooltip>
                   <el-tooltip content="截图" placement="top">
                     <button class="va-btn" @click.stop="snapshotSlot(idx)" title="截图">
                       <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/></svg>
@@ -632,6 +642,27 @@ const detectionOverlay = reactive({
 watch(() => detectionOverlay.enabled, (v) => {
   try { localStorage.setItem(OVERLAY_ENABLED_KEY, v ? '1' : '0') } catch { /* 隐私模式等存不了则仅内存态 */ }
 })
+
+// [FEAT overlay-per-channel 2026-09-30] 逐通道实时标注开关 (分闸):
+//   全局 detectionOverlay.enabled 是总闸, 本表按 channelId 记忆被用户关掉的
+//   通道 — 通道拖拽换格/刷新后状态跟随通道而非格子。只记「关」不记「开」:
+//   新通道默认开, 免初始化。持久化口径与总闸一致; 仅控制渲染 (canvas v-if
+//   卸载即清画面), WS 接收/告警/录像链不受影响 (总闸同语义)。
+const OVERLAY_PER_CHANNEL_KEY = 'liveDetectionOverlayPerChannel'
+function loadOverlayPerChannel(): Record<string, boolean> {
+  try { return JSON.parse(localStorage.getItem(OVERLAY_PER_CHANNEL_KEY) || '{}') || {} }
+  catch { return {} }
+}
+const channelOverlayOff = ref<Record<string, boolean>>(loadOverlayPerChannel())
+/** 通道标注是否开启 (未入表 = 开; 无通道格子恒 false, 但调用处已有 channelId 守卫) */
+function isChannelOverlayOn(chId?: string | null): boolean {
+  return !!chId && !channelOverlayOff.value[chId]
+}
+function toggleChannelOverlay(chId: string) {
+  channelOverlayOff.value[chId] = !channelOverlayOff.value[chId]
+  try { localStorage.setItem(OVERLAY_PER_CHANNEL_KEY, JSON.stringify(channelOverlayOff.value)) }
+  catch { /* 隐私模式等存不了则仅内存态 */ }
+}
 const detectionCanvasRefs = ref<Record<number, HTMLCanvasElement>>({})
 // channelId → 最新检测结果（后端 pushDetectionResult 推送）
 interface DetectionBox {
@@ -681,8 +712,6 @@ function getTracker(ch: string): DisplayTracker {
 function onInferenceDetection(e: Event) {
   const detail = (e as CustomEvent).detail
   if (!detail?.channel_id || !detail?.detections) return
-  // 从 gridSlots 查找对应的 channel 以获取原始推理分辨率
-  const slot = gridSlots.find(s => s.channelId === detail.channel_id)
   latestDetections.value[detail.channel_id] = {
     boxes: detail.detections.map((d: any) => ({
       class_name: d.class_name || d.class || '',
@@ -706,10 +735,14 @@ function onInferenceDetection(e: Event) {
     faceFrameH: detail.face_frame_h,
   }
   // [P2-TRACK 2026-09-29] 检测结果喂入显示跟踪器:
-  //   person 框坐标系 = 模型输入 640×640; face 框双态自适应
-  //   (归一化直用 / 像素态按 face_frame_w/h 归一, 见下方 face-dual-scale)。
-  //   两者各自归一化到 [0,1] 后统一跟踪, 渲染时再乘 canvas 实际尺寸
-  //   (与原缩放逻辑等价, 参见 drawDetections)。
+  //   [FIX det-bbox-scale 2026-09-30] 主检测框坐标系勘误: 原注释认定
+  //   「person 框 = 模型输入 640×640」有误——真机 WS 实测 (2026-09-30,
+  //   ch...2002 五帧) bbox 全部 x≤640 / y≤360 且 y/360 与真实目标位置
+  //   吻合 = 实际处于 640×360 喂帧像素空间 (后端 pushDetectionResult 仅
+  //   透传像素值无 frame_w/h 字段, InferenceScheduler.cpp L7508)。
+  //   face 框双态自适应维持不变 (归一化直用 / 像素态按 face_frame_w/h
+  //   归一, 见下方 face-dual-scale)。各自归一化到 [0,1] 后统一跟踪,
+  //   渲染时再乘 canvas 实际尺寸 (参见 drawDetections)。
   // [FIX overlay-class-whitelist 2026-09-29] 类别白名单: 主检测是 COCO80 全类
   //   输出, 真机 90s WS 取证 (2026-09-29) 418 帧里 tv×240/potted plant×224/
   //   refrigerator×29/chair×2 全部被画到画面上 = 用户视角的「凭空误标框」
@@ -718,10 +751,21 @@ function onInferenceDetection(e: Event) {
   const now = Date.now()
   const feed: TrackedDet[] = []
   const WHITELIST = DETECT_DRAW_CLASS_WHITELIST
-  for (const d of latestDetections.value[detail.channel_id].boxes) {
+  // [FIX det-bbox-scale 2026-09-30] 归一化刻度纠偏 (用户实锚: 办公室后院
+  //   bicycle 框整体上移到画面中上部): 统一 /640 把 y 轴压扁 ×0.5625
+  //   (360/640)。bbox 实际刻度 = 喂帧像素空间 640×360 (WS 实测证据见上),
+  //   修复 = y 轴按 /360。兼容 CDecode 720p 恢复守护的喂帧升级态
+  //   (640×360→1280×720): 整帧任一 bbox 超出低刻度值域时切换高刻度,
+  //   判别模式与 face-dual-scale 值域判别同款。根治路径 = 后端
+  //   detection_result 消息附 frame_w/h (需重编主程序二进制, 列为后续项)。
+  const boxes = latestDetections.value[detail.channel_id].boxes
+  const hiScale = boxes.some(b => b.x2 > 640.5 || b.y2 > 360.5)
+  const dw = hiScale ? 1280 : 640
+  const dh = hiScale ? 720 : 360
+  for (const d of boxes) {
     if (!WHITELIST.has(d.class_name)) continue
     feed.push({ cls: d.class_name, conf: d.confidence,
-      x1: d.x1 / 640, y1: d.y1 / 640, x2: d.x2 / 640, y2: d.y2 / 640 })
+      x1: d.x1 / dw, y1: d.y1 / dh, x2: d.x2 / dw, y2: d.y2 / dh })
   }
   const lid = latestDetections.value[detail.channel_id]
   const fw = lid.faceFrameW, fh = lid.faceFrameH
@@ -749,15 +793,22 @@ function onInferenceDetection(e: Event) {
         x2: f.x2 / dw, y2: f.y2 / dh,
         name: f.name,
         groupName: f.group_name,
-        groupType: recognized ? attrs.group_type : undefined,
+        // [FIX stranger-overlay 2026-09-30] 陌生人分组标注兑底: 后端 2026-09-30
+        //   起未识别脸显式携带 group_type=5 (UNKNOWN); 兼容旧后端 (face_dets
+        //   无该键) 时未识别脸同样兑底 5 → 灰色「陌生人」标签。名单命中仍以
+        //   后端 group_type 为准。
+        groupType: attrs.group_type !== undefined
+          ? attrs.group_type
+          : (recognized ? undefined : 5),
         sim: recognized ? attrs.similarity : undefined,
         warn: !!attrs.should_alarm,
       })
     }
   }
   getTracker(detail.channel_id).update(feed, now)
-  // 后端 detections 的 bbox 是相对于模型输入分辨率 (640x640)，
-  // 由 drawDetections 根据 video 实际分辨率缩放
+  // [FIX det-bbox-scale 2026-09-30] 后端 detections 的 bbox 处于喂帧像素
+  //   空间 (默认 640×360, 见上方刻度纠偏注释), 归一化后由 drawDetections
+  //   按 video 实际分辨率缩放 (喂帧与流等比时几何无损)。
 }
 
 // [P1-CO2] Canvas 绘制检测框
@@ -872,14 +923,19 @@ function drawDetections() {
       if (isFace) {
         // 标签优先级: 人名 (反查命中) > 分组枚举名 > 人脸检出率
         //   (海康抓拍墙风格); name 在 tracker 内 sticky, 识别抖动不闪名。
+        // [FIX stranger-overlay 2026-09-30] sim 段按需显示: 陌生人 (未命中
+        //   名单) 无 similarity, 旧实现 sim??0 恒拼 "陌生人 0%" 误导; 改为
+        //   有 sim 才拼百分比段。
         const group = box.groupType !== undefined ? FACE_GROUP_META[box.groupType] : undefined
-        const simPct = (Math.min(1, box.sim ?? 0) * 100).toFixed(0)
         const warn = box.warn ? ' ⚠' : ''
         const groupSuffix = box.groupType === 6 && box.groupName ? `·${box.groupName}` : ''
+        const simSeg = box.sim !== undefined
+          ? ` ${(Math.min(1, box.sim) * 100).toFixed(0)}%`
+          : ''
         label = box.name
-          ? `${box.name}${groupSuffix} ${simPct}%${warn}`
+          ? `${box.name}${groupSuffix}${simSeg}${warn}`
           : group
-            ? `${group.zh} ${simPct}%${warn}`
+            ? `${group.zh}${simSeg}${warn}`
             : `${zhLabel('face')} ${(box.conf * 100).toFixed(0)}%`
       } else {
         label = `${zhLabel(box.cls)} ${(box.conf * 100).toFixed(0)}%`
@@ -3579,6 +3635,9 @@ onUnmounted(() => {
 .va-btn:hover { background: rgba(26,115,232,0.7); color: #fff; }
 .va-btn.va-rec { background: rgba(239,68,68,0.7); color: #fff; animation: pulse-rec 1.5s ease infinite; }
 .va-btn.va-talk { background: rgba(15,157,88,0.7); color: #fff; }
+/* [FEAT overlay-per-channel 2026-09-30] 本窗标注开启态: 绿色与顶部全局总闸
+     (el-button type=success) 同色, 总/分闸视觉语言统一 */
+.va-btn.va-overlay-on { background: rgba(103,194,58,0.75); color: #fff; }
 .va-btn-close:hover { background: rgba(219,68,55,0.7); }
 .rec-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: #ef4444; margin-left: 2px; }
 @keyframes pulse-rec { 0%,100% { opacity: 1; } 50% { opacity: 0.6; } }

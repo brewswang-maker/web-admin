@@ -162,7 +162,15 @@ export class DisplayTracker {
         // name/分组 sticky: 识别结论一旦命中即保留, 无名帧不冲掉
         name: d.name || prev.name,
         groupName: d.groupName || prev.groupName,
-        groupType: d.groupType ?? prev.groupType,
+        // [FIX stranger-overlay 2026-09-30] 名单 sticky 保护: 陌生人显式化后
+        //   (groupType=5), 已识别 track 的偶发识别失败帧 (d.groupType=5) 若
+        //   直接覆盖会把名单脸闪成「陌生人」(白↔陌生抖动)。约定: track 已有
+        //   名单结论 (prev 0-4/6) 时, 陌生人帧不冲掉; 陌生→名单正常翻转。
+        //   name/groupName 的 sticky (上行) 语义一致: 陌生人帧两者为空,
+        //   自动保 prev; sim 同理 (下行)。
+        groupType: d.groupType === 5 && prev.groupType !== undefined && prev.groupType !== 5
+          ? prev.groupType
+          : (d.groupType ?? prev.groupType),
         sim: d.sim ?? prev.sim,
         warn: d.warn || prev.warn,
       }

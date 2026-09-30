@@ -84,7 +84,9 @@
             <el-input v-model="tune.name" placeholder="例: 大门周界入侵-夜间联动" />
           </el-form-item>
           <el-form-item label="触发事件类型" required>
-            <el-select v-model="tune.eventTypes" multiple filterable placeholder="选择触发事件" style="width: 100%">
+            <!-- [FIX algo-1v1 2026-09-30] multiple 保留 (兼容多值存量回显), 单值语义由
+                 @change clamp 落实 (新勾选时收敛为最后勾选项, 与引擎 EnforceAlgo1v1 同口径) -->
+            <el-select v-model="tune.eventTypes" multiple filterable placeholder="选择触发事件" style="width: 100%" @change="onTuneEventTypesChanged">
               <!-- [R6 P1-4 2026-09-12] 事件选项三档标注 (doc §5.4): B=VLM 兜底 / C=预留位 (仍可选);
                    A 档不标注 (正常选项); tier 由 useLinkageOptions 合并 event-coverage 下发 -->
               <el-option v-for="o in eventTypeOptions" :key="o.value" :label="o.label" :value="o.value">
@@ -309,8 +311,21 @@ const tuneScope = computed({
 
 function validateCommon(f: TuneForm): boolean {
   if (!f.name.trim()) { ElMessage.warning('请输入规则名称'); return false }
-  if (f.eventTypes.length === 0) { ElMessage.warning('请至少选择一个触发事件类型'); return false }
+  // [FIX algo-1v1 2026-09-30] 1:1 口径文案: 一条规则只绑定一个算法 (事件类型即算法订阅键)
+  if (f.eventTypes.length === 0) { ElMessage.warning('请选择一个触发事件类型 (一条规则只绑定一个算法)'); return false }
   return true
+}
+
+// [FIX algo-1v1 2026-09-30] 1 规则 1 算法: tune 表单事件类型交互 clamp (仅用户勾选
+//   触发, 回显赋值不进 handler; 多值存量回显仍完整显示)。超选时保留最后勾选项 —
+//   与引擎 EnforceAlgo1v1 / 高级表单 onEventTypesChanged 同口径; 多算法诉求走
+//   「复制为新规则」拆分, 不靠单规则多算法订阅。
+function onTuneEventTypesChanged(v: string[]) {
+  if (v.length <= 1) return
+  const keep = v[v.length - 1]
+  const keepLabel = eventTypeOptions.value.find(o => o.value === keep)?.label || keep
+  tune.eventTypes = [keep]
+  ElMessage.info(`一条规则只绑定一个算法 (1:1 口径), 已切换为「${keepLabel}」; 多算法请复制为新规则`)
 }
 
 /** tune 当前值 → 高频字段 patch (tune 保存 / 编辑态切高级携带草稿 复用) */

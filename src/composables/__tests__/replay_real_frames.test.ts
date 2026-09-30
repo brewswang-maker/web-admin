@@ -54,11 +54,17 @@ describe('真实帧序列重演 (90s 418帧)', () => {
       for (let now = start; now <= end; now += 16) {
         while (fi < frames.length && frames[fi].recv_ms <= now) {
           const f = frames[fi]
-          const feed: TrackedDet[] = f.dets
-            .filter(d => d.cls && d.x1 !== null)
+          // [FIX det-bbox-scale 2026-09-30] 与 LiveView.onInferenceDetection
+          //   同款刻度 (fixture = 真机 640×360 喂帧空间 bbox): 归一化必须
+          //   y/360, 旧 /640 使 TrackedDet 违反 [0,1] 契约 (y≤0.56)。
+          const dets = f.dets.filter(d => d.cls && d.x1 !== null)
+          const hi = dets.some(
+            d => (d.x2 as number) > 640.5 || (d.y2 as number) > 360.5)
+          const dw = hi ? 1280 : 640, dh = hi ? 720 : 360
+          const feed: TrackedDet[] = dets
             .map(d => ({ cls: d.cls, conf: d.conf,
-              x1: (d.x1 as number) / 640, y1: (d.y1 as number) / 640,
-              x2: (d.x2 as number) / 640, y2: (d.y2 as number) / 640 }))
+              x1: (d.x1 as number) / dw, y1: (d.y1 as number) / dh,
+              x2: (d.x2 as number) / dw, y2: (d.y2 as number) / dh }))
           t.update(feed, f.recv_ms)
           fi++
         }
