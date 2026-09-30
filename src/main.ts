@@ -55,7 +55,7 @@ app.mount('#app')
 // 开发环境热更新
 if (import.meta.env.DEV) {
   console.log('[华盾AI] 开发模式已启动')
-  console.log('[华盾AI] 版本: v7.0.0 (灵犀架构)')
+  console.log('[华盾AI] 版本: v7.0.0 (灵麒架构)')
 }
 
 // 生产环境性能监控

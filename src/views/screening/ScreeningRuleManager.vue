@@ -108,10 +108,14 @@
           <el-tag v-else size="small" type="success" effect="plain">全部监控点</el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="状态" width="70">
+      <el-table-column label="状态" width="100">
         <template #default="{ row }">
-          <el-switch :model-value="row.enabled" :loading="toggling[row.id]"
-                     @change="(v: any) => toggleRule(row, v)" />
+          <div class="status-cell">
+            <el-switch :model-value="row.enabled" :loading="toggling[row.id]"
+                       @change="(v: any) => toggleRule(row, v)" />
+            <!-- [FEAT rule-diagnose 2026-09-30] 开关右侧失效徽章 (与平台联动规则页同款) -->
+            <RuleHealthBadge :rule-id="row.id" :enabled="row.enabled" />
+          </div>
         </template>
       </el-table-column>
       <el-table-column label="触发条件" min-width="200">
@@ -200,6 +204,8 @@ import { displayRuleBoundChannels, type BoundChannelDisplay } from '@/composable
 import { loadAlarmNameDirectory } from '@/composables/useAlarmDeviceLabel'
 // [UX-ZH 2026-09-16] 事件类型中文名展示 (SSOT canonical 单例缓存; 对齐周界/酒店/加油站/校园 RulesView)
 import { useEventTypeZh } from '@/composables/useEventTypeZh'
+// [FEAT rule-diagnose 2026-09-30] 状态列失效徽章 (enabled 但存在 critical/warning 级诊断 → 红色感叹号)
+import RuleHealthBadge from '@/components/RuleHealthBadge.vue'
 
 /** 安检场景事件集 (与 EventTypeAliases.h scene_tags security_screening 对齐) */
 const SCREENING_EVENTS: Array<{ key: string; name: string }> = [
@@ -414,6 +420,14 @@ onMounted(() => {
 </script>
 
 <style scoped>
+/* [FEAT rule-diagnose 2026-09-30] 状态列: 开关 + 失效徽章并排居中 */
+.status-cell {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+}
+
 /*.rule-manager { padding: 16px; }*/
 .hint-alert { margin-bottom: 16px; }
 .filter-card { margin-bottom: 16px; }

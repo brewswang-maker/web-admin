@@ -54,18 +54,23 @@ export const regionApi = {
    *  背景: GB28181 主/子码流是两个推理实例, 插件分别以不带/带 _ch0 的
    *  channel_id_str 精确查询绊线 (RegionStore 无后缀归一) → 单条记录必有一半
    *  实例 miss (日志表现 GATE-MISS)。镜像创建失败不阻塞 (主形态仍可用)。 */
-  async createTripwireWithMirror(body: Omit<TripwireDef, 'id' | 'created_at' | 'updated_at'>): Promise<number> {
+  async createTripwireWithMirror(body: Omit<TripwireDef, 'id' | 'created_at' | 'updated_at'>): Promise<{ mainId: number; mirrorId: number }> {
     // [FIX tsc 2026-09-07] 泛型改为实际响应壳形态 (拦截器不剥业务壳, id 在
     //   res.data.data.id; 原单层 {id} 泛型使 .data?.data 访问报 TS2339)
     const res = await http.post<{ data?: { id?: number }; id?: number }>('/algos/tripwires', body)
     // [FIX 2026-08-28] http 拦截器不剥业务壳: id 在 res.data.data.id
     const mainId = res.data?.data?.id ?? res.data?.id ?? 0
+    // [FIX id-binding 2026-09-30] 镜像 id 不再丢弃: 原 mainId 之外第二 POST 响应
+    //   被弃 → 前端只能按「同名+同算法+_ch0」约定反查镜像 (同名堆积时归属混淆,
+    //   与 id-binding 红线相悖)。现镜像 id 随响应回填, 由形状快照持久携带。
+    let mirrorId = 0
     if (body.channel_id_str) {
       try {
-        await http.post('/algos/tripwires', { ...body, channel_id_str: `${body.channel_id_str}_ch0` })
-      } catch { /* 镜像失败不阻塞 */ }
+        const mres = await http.post<{ data?: { id?: number }; id?: number }>('/algos/tripwires', { ...body, channel_id_str: `${body.channel_id_str}_ch0` })
+        mirrorId = mres.data?.data?.id ?? mres.data?.id ?? 0
+      } catch { /* 镜像失败不阻塞 (主形态仍可用) */ }
     }
-    return mainId
+    return { mainId, mirrorId }
   },
   deleteTripwire(id: number) {
     return http.delete<{ ok: boolean }>(`/algos/tripwires/${id}`)

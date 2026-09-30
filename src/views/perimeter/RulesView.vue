@@ -139,13 +139,17 @@
               <el-tag v-else size="small" type="success" effect="plain">{{ t('perimeter.rules.allChannels') }}</el-tag>
             </template>
           </el-table-column>
-          <el-table-column :label="t('perimeter.rules.colStatus')" width="90" align="center">
+          <el-table-column :label="t('perimeter.rules.colStatus')" width="120" align="center">
             <template #default="{ row }">
-              <!-- [UX 2026-09-02 对齐效果图] 行内启停开关 (PUT /linkage/rules/{id}; loading 防连点, 失败回滚) -->
-              <el-switch size="small" :model-value="row.enabled"
-                :loading="togglingId === row.id" :disabled="togglingId === row.id"
-                :style="togglingId === row.id ? 'opacity: 0.7' : ''"
-                @change="toggleRule(row)" />
+              <div class="status-cell">
+                  <!-- [UX 2026-09-02 对齐效果图] 行内启停开关 (PUT /linkage/rules/{id}; loading 防连点, 失败回滚) -->
+                  <el-switch size="small" :model-value="row.enabled"
+                    :loading="togglingId === row.id" :disabled="togglingId === row.id"
+                    :style="togglingId === row.id ? 'opacity: 0.7' : ''"
+                    @change="toggleRule(row)" />
+              <!-- [FEAT rule-diagnose 2026-09-30] 开关右侧失效徽章 (与平台联动规则页同款) -->
+              <RuleHealthBadge :rule-id="row.id" :enabled="row.enabled" />
+              </div>
             </template>
           </el-table-column>
           <el-table-column :label="t('perimeter.rules.colTriggerCond')" min-width="200">
@@ -230,6 +234,8 @@ import { displayRuleBoundChannels, type BoundChannelDisplay } from '@/composable
 // [TRIGGER-DETAIL 2026-09-14] 触发条件标签 + 报警级别渲染 (平台页同款 SSOT)
 import { ruleTriggerTags, ruleLevelInfo } from '@/composables/useRuleTriggerTags'
 import { loadAlarmNameDirectory } from '@/composables/useAlarmDeviceLabel'
+// [FEAT rule-diagnose 2026-09-30] 状态列失效徽章 (enabled 但存在 critical/warning 级诊断 → 红色感叹号)
+import RuleHealthBadge from '@/components/RuleHealthBadge.vue'
 import type { ScenePack } from '@/types/largeEvent'
 // [SCENE-EDIT-INPLACE 2026-09-03] 就地编辑: 内嵌平台编辑器 (嵌入模式, 编辑器单一来源)
 import LinkageRuleView from '@/views/LinkageRuleView.vue'
@@ -371,6 +377,14 @@ onMounted(() => {
 </script>
 
 <style scoped>
+/* [FEAT rule-diagnose 2026-09-30] 状态列: 开关 + 失效徽章并排居中 */
+.status-cell {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+}
+
 .vp-rules-page { padding: 4px 0; }
 .rules-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; gap: 12px; flex-wrap: wrap; }
 .rules-toolbar { display: flex; gap: 8px; align-items: center; }

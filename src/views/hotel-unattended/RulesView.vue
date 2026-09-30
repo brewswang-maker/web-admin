@@ -140,14 +140,18 @@
               <el-tag v-else size="small" type="success" effect="plain">{{ t('hotel.rules.allChannels') }}</el-tag>
             </template>
           </el-table-column>
-          <el-table-column :label="t('hotel.rules.colStatus')" width="90" align="center">
+          <el-table-column :label="t('hotel.rules.colStatus')" width="120" align="center">
             <template #default="{ row }">
-              <!-- [SCENE-RULE-TOGGLE 2026-09-08] 行内启停开关 (对齐 perimeter 范式:
-                   PUT /linkage/rules/{id} 只传 enabled; loading 防连点, 失败不落库) -->
-              <el-switch size="small" :model-value="row.enabled"
-                :loading="togglingId === row.id" :disabled="togglingId === row.id"
-                :style="togglingId === row.id ? 'opacity: 0.7' : ''"
-                @change="toggleRule(row)" />
+              <div class="status-cell">
+                  <!-- [SCENE-RULE-TOGGLE 2026-09-08] 行内启停开关 (对齐 perimeter 范式:
+                       PUT /linkage/rules/{id} 只传 enabled; loading 防连点, 失败不落库) -->
+                  <el-switch size="small" :model-value="row.enabled"
+                    :loading="togglingId === row.id" :disabled="togglingId === row.id"
+                    :style="togglingId === row.id ? 'opacity: 0.7' : ''"
+                    @change="toggleRule(row)" />
+              <!-- [FEAT rule-diagnose 2026-09-30] 开关右侧失效徽章 (与平台联动规则页同款) -->
+              <RuleHealthBadge :rule-id="row.id" :enabled="row.enabled" />
+              </div>
             </template>
           </el-table-column>
           <el-table-column :label="t('hotel.rules.colTriggerCond')" min-width="200">
@@ -233,6 +237,8 @@ import { ruleTriggerTags, ruleLevelInfo } from '@/composables/useRuleTriggerTags
 import { useEventTypeZh } from '@/composables/useEventTypeZh'
 const { zh, zhAll, ensure: ensureEventTypesZh } = useEventTypeZh()
 import { loadAlarmNameDirectory } from '@/composables/useAlarmDeviceLabel'
+// [FEAT rule-diagnose 2026-09-30] 状态列失效徽章 (enabled 但存在 critical/warning 级诊断 → 红色感叹号)
+import RuleHealthBadge from '@/components/RuleHealthBadge.vue'
 // [SCENE-EDIT-INPLACE 2026-09-03] 就地编辑: 内嵌平台编辑器 (嵌入模式, 编辑器单一来源)
 import LinkageRuleView from '@/views/LinkageRuleView.vue'
 import type { ScenePack } from '@/types/largeEvent'
@@ -368,6 +374,14 @@ onMounted(() => {
 </script>
 
 <style scoped>
+/* [FEAT rule-diagnose 2026-09-30] 状态列: 开关 + 失效徽章并排居中 */
+.status-cell {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+}
+
 .hu-rules-page { padding: 4px 0; }
 .rules-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
 .rules-title { margin: 0; font-size: 18px; font-weight: 600; }

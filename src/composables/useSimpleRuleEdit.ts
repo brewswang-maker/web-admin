@@ -66,8 +66,12 @@ export function buildTuneForm(rule: LinkageRule): TuneForm {
  */
 export function buildRuleUpdatePatch(rule: LinkageRule, p: SimpleCommitPatch): Partial<LinkageRule> {
   const src: any = { ...((rule.source_cond || {}) as any) }
-  src.event_types = p.eventTypes.map((id) => id.split('.').pop() || id)
-  src.algorithm_ids = [...p.eventTypes]
+  // [FIX algo-1v1 2026-09-30] 1 规则 1 算法防御收敛: 简易编辑 PATCH 双轨写入前 clamp
+  //   单值 (与引擎 EnforceAlgo1v1 同口径兜底) — 迁移期多值存量经简易编辑保存即按
+  //   [0] 收敛 (迁移脚本同口径); 被收敛事件由拆分后的独立模板重建。
+  const evts1v1 = p.eventTypes.slice(0, 1)
+  src.event_types = evts1v1.map((id) => id.split('.').pop() || id)
+  src.algorithm_ids = [...evts1v1]
   src.channel_ids = [...p.channelIds]
   src.device_ids = [...p.deviceIds]
   const monthdays: number[] = ((rule.time_cond || {}) as any).monthdays ?? []

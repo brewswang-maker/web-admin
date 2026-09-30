@@ -174,16 +174,21 @@
         @sort-change="handleSortChange"
         @selection-change="handleSelectionChange">
         <el-table-column type="selection" width="45" />
-        <el-table-column prop="enabled" label="状态" width="60" align="center">
+        <el-table-column prop="enabled" label="状态" width="90" align="center">
           <template #default="{ row }">
-            <!-- [P2 D1 2026-09-25 载体防护] agent-sub 载体规则启停由订阅状态驱动,
-                 禁用开关 (手工切换会被对账 60s 内压回 — 避免开关「一跳一跳」的困惑) -->
-            <el-tooltip v-if="isCarrierRule(row)"
-                        content="智能订阅载体规则: 启停由订阅状态驱动 (到「智能订阅」暂停/恢复), 手工切换会在 60s 内被自动压回"
-                        placement="top">
-              <el-switch v-model="row.enabled" size="small" inline-prompt active-text="开" inactive-text="关" disabled />
-            </el-tooltip>
-            <el-switch v-else v-model="row.enabled" size="small" inline-prompt active-text="开" inactive-text="关" @change="toggleRule(row)" />
+            <div class="status-cell">
+              <!-- [P2 D1 2026-09-25 载体防护] agent-sub 载体规则启停由订阅状态驱动,
+                   禁用开关 (手工切换会被对账 60s 内压回 — 避免开关「一跳一跳」的困惑) -->
+              <el-tooltip v-if="isCarrierRule(row)"
+                          content="智能订阅载体规则: 启停由订阅状态驱动 (到「智能订阅」暂停/恢复), 手工切换会在 60s 内被自动压回"
+                          placement="top">
+                <el-switch v-model="row.enabled" size="small" inline-prompt active-text="开" inactive-text="关" disabled />
+              </el-tooltip>
+              <el-switch v-else v-model="row.enabled" size="small" inline-prompt active-text="开" inactive-text="关" @change="toggleRule(row)" />
+              <!-- [FEAT rule-diagnose 2026-09-30] 开关右侧失效徽章 (组件内自判:
+                   停用/健康不渲染, 诊断不可达灰色占位) -->
+              <RuleHealthBadge :rule-id="row.id" :enabled="row.enabled" />
+            </div>
           </template>
         </el-table-column>
         <el-table-column prop="name" label="规则名称" min-width="180">
@@ -944,7 +949,7 @@
                   :title="`含 ${selectedReservedEventLabels.length} 个预留位事件（当前无算法支撑，规则将在算法可用后生效）：${selectedReservedEventLabels.join('、')}`" />
                 <!-- [FIX 2026-09-02] 空类型语义修正: 未选择 = 不匹配任何事件 (对齐引擎新语义),
                      匹配所有事件的通配规则会放大 TPU/联动动作资源开销 → 必选阻断 (与简易模式 L237 一致) -->
-                <p v-if="form.conditions.eventType.config.types.length === 0" class="cond-hint" style="color: #E6A23C; margin-top: 4px">⚠ 事件类型为必选项，未选择 = 不匹配任何事件（无法保存）</p>
+                <p v-if="form.conditions.eventType.config.types.length === 0" class="cond-hint" style="color: #E6A23C; margin-top: 4px">⚠ 事件类型为必选项，未选择 = 不匹配任何事件（无法保存）。一条规则只绑定一个算法（1:1），多算法请复制为新规则</p>
                 <el-row :gutter="16" style="margin-top: 12px">
                   <el-col :span="12">
                     <el-form-item label="最低严重度" label-position="top" class="cond-form-item">
@@ -1783,6 +1788,9 @@ import CEPPatternEditor from '@/components/CEPPatternEditor.vue'
 // [UI-CONVERGE 2026-09-12 P6] ConditionTreeEditor 入口下线 (condition_tree 0/89), 组件文件保留
 // [vp7 向导 2026-09-01] 新建事件规则向导子组件 (设备通道多选/NLG/模板库/AI 增强/确认预览)
 import DeviceChannelPicker from '@/components/linkage/DeviceChannelPicker.vue'
+// [FEAT rule-diagnose 2026-09-30] 状态列失效徽章: enabled 但存在 critical/warning
+//   级诊断 (区域缺失/通道冻结/安保区域被删等) → 红色感叹号 + tooltip 结构化原因
+import RuleHealthBadge from '@/components/RuleHealthBadge.vue'
 // [M2-1 2026-09-21] 参数元数据驱动表单 (param_meta; 规格 docs/plans/算法参数元数据模型_规格_v1.0.md §5)
 import ParameterFormRenderer from '@/components/ParameterFormRenderer.vue'
 import algorithmsApi from '@/api/algorithms'
@@ -3601,6 +3609,17 @@ const regionUserToggled = ref(false)
 const spatialAutoExpandNotice = ref(false)
 /** 事件类型用户变更 (el-checkbox-group change 仅用户交互触发, 回显赋值不触发) */
 function onEventTypesChanged() {
+  // [FIX algo-1v1 2026-09-30] 1 规则 1 算法强制口径: 新建态勾选第 2 个事件类型时
+  //   替换而非累加 (checkbox-group 保留网格交互形态, 单选语义由本 clamp 落实;
+  //   @change 仅用户交互触发 — 回显赋值/编辑态 disabled 均不进本函数, 存量多值
+  //   回显零影响)。多算法诉求走「复制为新规则」另建独立规则 (EVENT-TYPE-LOCK 同源)。
+  const picked = form.conditions.eventType.config.types as string[]
+  if (picked.length > 1) {
+    const keep = picked[picked.length - 1]
+    form.conditions.eventType.config.types = [keep]
+    const keepLabel = eventTypeOptions.value.find((o) => o.value === keep)?.label || keep
+    ElMessage.info(`一条规则只绑定一个算法 (1:1 口径), 已切换为「${keepLabel}」; 多算法请复制为新规则`)
+  }
   if (!simpleEntryMode.value || regionUserToggled.value) return
   if (form.conditions.region.enabled) return
   void loadEventCoverage()
@@ -4329,7 +4348,7 @@ function resetEditorState(rule: LinkageRule | null) {
         if (!raw) return empty
         const parsed = JSON.parse(raw)
         const arr = (Array.isArray(parsed) ? parsed
-          : Array.isArray(parsed?.shapes) ? parsed.shapes : []) as Array<{ shape: string; name?: string; active?: boolean; direction?: string; pid?: string; points: number[]; region_id?: number; tripwire_id?: number }>
+          : Array.isArray(parsed?.shapes) ? parsed.shapes : []) as Array<{ shape: string; name?: string; active?: boolean; direction?: string; pid?: string; points: number[]; region_id?: number; tripwire_id?: number; mirror_tripwire_id?: number }>
         const combine: 'union' | 'intersection' =
           (!Array.isArray(parsed) && parsed?.combine === 'intersection') ? 'intersection' : 'union'
         const list = arr.filter(s => s && Array.isArray(s.points)).map((s, i) => ({
@@ -4342,8 +4361,11 @@ function resetEditorState(rule: LinkageRule | null) {
           is_active: s.active !== false,
           direction: (s.direction || undefined) as RoiData['direction'],
           // [ROI-ID-BIND 2026-09-29] 恢复算法库持久绑定 (0 = 存量形状待认领)
+          // [FIX id-binding 2026-09-30] 镜像 ID 同步恢复 (否则保存→回显一轮即丢,
+          //   mirrorOf 退化为每次按名迁移)
           region_id: Number(s.region_id) || 0,
           tripwire_id: Number(s.tripwire_id) || 0,
+          mirror_tripwire_id: Number(s.mirror_tripwire_id) || 0,
         }))
         return { list, combine }
       } catch { return empty }
@@ -4361,7 +4383,7 @@ function resetEditorState(rule: LinkageRule | null) {
             for (const k of Object.keys(m)) {
               const e = (m as any)[k]
               if (!e || typeof e !== 'object') continue
-              const arr = (Array.isArray(e.shapes) ? e.shapes : []) as Array<{ shape: string; name?: string; active?: boolean; direction?: string; pid?: string; points: number[]; region_id?: number; tripwire_id?: number }>
+              const arr = (Array.isArray(e.shapes) ? e.shapes : []) as Array<{ shape: string; name?: string; active?: boolean; direction?: string; pid?: string; points: number[]; region_id?: number; tripwire_id?: number; mirror_tripwire_id?: number }>
               const list = arr.filter(s => s && Array.isArray(s.points)).map((s, i) => ({
                 // [ROI-IDS 2026-09-17 P2] pid 稳定性: 同通用模式回显保留原值
                 roi_id: s.pid || `roi_ch_${Date.now()}_${i}`,
@@ -4371,8 +4393,10 @@ function resetEditorState(rule: LinkageRule | null) {
                 is_active: s.active !== false,
                 direction: (s.direction || undefined) as RoiData['direction'],
                 // [ROI-ID-BIND 2026-09-29] 恢复算法库持久绑定 (0 = 存量形状待认领)
+                // [FIX id-binding 2026-09-30] 镜像 ID 同步恢复 (同通用模式)
                 region_id: Number(s.region_id) || 0,
                 tripwire_id: Number(s.tripwire_id) || 0,
+                mirror_tripwire_id: Number(s.mirror_tripwire_id) || 0,
               }))
               const refs = Array.isArray(e.tripwire_refs)
                 ? e.tripwire_refs.filter((r: any) => r && r.id !== undefined && r.id !== null)
@@ -4773,40 +4797,70 @@ async function handleSave(): Promise<boolean> {
           list: k === activeRoiChannel.value ? rc.config.roiPolygon : (roiByChannel.value[k]?.list || []),
         }))
       : [{ ch: roiBaseOf(rc.config.channelId), list: rc.config.roiPolygon }]
+    // [FIX id-binding 2026-09-30] 上次快照绊线 ID 集收集 (diff 清理候选域, ID 对 ID):
+    //   lastEditSource.spatial_cond 的 roi_shapes_json + roi_shapes_by_channel 两处
+    //   形状快照持久携带 tripwire_id / mirror_tripwire_id (ROI-ID-BIND 回填), 即
+    //   「本规则名下」的持久 ID 口径。字符串/对象双形态兼容 (老固件裸对象)。
+    const collectPrevSnapshotTwIds = (): Set<string> => {
+      const ids = new Set<string>()
+      const sc: any = (lastEditSource as any)?.spatial_cond || {}
+      const grab = (pack: any) => {
+        let shapes: any
+        if (typeof pack === 'string') { try { shapes = JSON.parse(pack)?.shapes } catch { return } }
+        else shapes = pack?.shapes
+        if (!Array.isArray(shapes)) return
+        for (const s of shapes) {
+          if (Number(s?.tripwire_id) > 0) ids.add(String(s.tripwire_id))
+          if (Number(s?.mirror_tripwire_id) > 0) ids.add(String(s.mirror_tripwire_id))
+        }
+      }
+      try { grab(sc.roi_shapes_json) } catch { /* 脏数据跳过 */ }
+      try {
+        const byCh = sc.roi_shapes_by_channel
+        if (byCh && typeof byCh === 'object') {
+          if (typeof byCh === 'string') { grab(byCh) }
+          else for (const k of Object.keys(byCh)) grab(byCh[k])
+        }
+      } catch { /* 脏数据跳过 */ }
+      return ids
+    }
     let effectiveTripwireId = isTripwireRule.value ? (rc.config.tripwireId || '') : ''
     // [FIX tw-route 2026-09-12] 非绊线消费事件: 不写库 + 全库清理历史残留
     //   (namePrefix 匹配, 含本规则旧名; 删除级联镜像对)。设备实锚: 「周界禁区
     //   闯入」(intrusion) 画板残留 2 条绊线形状被旧 fallback 写进越界库 →
     //   越界检测持续报警 (系统未启用任何越界规则)。
     if (!isTripwireRule.value) {
-      const prefixes = new Set<string>([`${form.name || '规则'}_绊线`])
-      // 编辑态且已改名: 清旧名残留 (新建态 lastEditSource 可能残留上次编辑值, 需 editRuleId 门控)
-      if (editRuleId.value && lastEditSource?.name && String(lastEditSource.name) !== form.name) {
-        prefixes.add(`${String(lastEditSource.name)}_绊线`)
+      // [FIX id-binding 2026-09-30] 残留绊线清理候选域改持久 ID 集 (用户红线:
+      //   名字不参与删除判定): 「本规则名下」= 上次快照持久携带的 tripwire_id /
+      //   mirror_tripwire_id 全集, 本规则已不消费绊线 → 候选全删 (含 _ch0 镜像,
+      //   防越界误报)。旧「规则名前缀匹配」两类事故路径根除: 同名词规则前缀
+      //   相同互删对方的线、规则改名后旧名线漏删。迁移期: 2026-09-29 前保存的
+      //   存量快照形状无持久 ID → 候选空 → 历史残留不自动清理 (一次性存量, 可经
+      //   算法配置页手工清理; 本规则重新保存认领回填 ID 后恢复自动清理能力)。
+      const prevTwIds = collectPrevSnapshotTwIds()
+      if (prevTwIds.size > 0) {
+        try {
+          const res = await regionApi.listTripwires({})
+          const allTw: any[] = ((res.data as any)?.data?.tripwires ?? (res.data as any)?.tripwires ?? [])
+          let cleaned = 0
+          for (const t of allTw) {
+            if (!prevTwIds.has(String(t.id))) continue
+            try { await regionApi.deleteTripwire(Number(t.id)); cleaned++ } catch { /* 单条失败不阻断保存主链 */ }
+          }
+          if (cleaned > 0) {
+            ElMessage.info(`已清理 ${cleaned} 条本规则历史绊线 (含镜像, 按持久 ID 定位)`)
+          }
+        } catch { /* 清理失败不阻断保存主链 */ }
       }
-      try {
-        const res = await regionApi.listTripwires({})
-        const allTw: any[] = ((res.data as any)?.data?.tripwires ?? (res.data as any)?.tripwires ?? [])
-        const seen = new Set<string>()
-        let cleaned = 0
-        for (const t of allTw) {
-          const nm = String(t.name || '')
-          if (![...prefixes].some(p => nm === p || nm.startsWith(p + '_'))) continue
-          const key = `${nm}|${String(t.algo_id || '')}|${String(t.channel_id_str || '').replace(/_ch\d+$/, '')}`
-          if (seen.has(key)) continue
-          seen.add(key)
-          try { await regionApi.deleteTripwire(Number(t.id)); cleaned++ } catch { /* 单条失败不阻断保存主链 */ }
-        }
-        if (cleaned > 0) {
-          ElMessage.info(`已清理 ${cleaned} 条历史残留绊线 (本规则事件类型不使用绊线, 防越界误报)`)
-        }
-      } catch { /* 清理失败不阻断保存主链 */ }
     }
     // [ROI-PER-CHANNEL 2026-09-12] 逐通道绊线同步 (原单通道链路按 roiSyncUnits
     //   展开): 严格模式 → 各已绘通道分别同步并回写 tripwire_refs (引擎白名单);
     //   通用模式 → 单 unit (关联通道), 行为与旧版一致。
     let totSynced = 0, totSkipped = 0, totDrawn = 0
     const twUsedIds = new Set<string>()
+    // [FIX id-binding 2026-09-30] 本次画板在用镜像行 ID 集 (diff 清理保留判定;
+    //   主/镜像成对收集, 防在用镜像被当孤儿误删)
+    const twUsedMirrorIds = new Set<string>()
     const twRefsByChannel: Record<string, Array<{ id: string; direction: string }>> = {}
     if (isTripwireRule.value) {
         // [FIX tw-route 2026-09-12] 写库 algo_id 按本规则事件消费算法推导 (与区域
@@ -4822,11 +4876,25 @@ async function handleSave(): Promise<boolean> {
           const res = await regionApi.listTripwires({})
           allTw = ((res.data as any)?.data?.tripwires ?? (res.data as any)?.tripwires ?? [])
         } catch { /* 查询失败按全新建 */ }
-        const mirrorOf = (mainId: any, ch: string) => allTw.find((t: any) =>
-          String(t.channel_id_str || '').endsWith('_ch0')
-          && String(t.channel_id_str || '').replace(/_ch\d+$/, '') === ch
-          && String(t.algo_id || '') === twAlgoId
-          && String(t.name) === String(allTw.find((m: any) => String(m.id) === String(mainId))?.name ?? '###'))
+        // [FIX id-binding 2026-09-30] _ch0 镜像定位 ID 直连优先 (用户红线: 名字
+        //   仅展示不参与匹配): ① 形状持久携带 mirror_tripwire_id → 按 ID 直连
+        //   (唯一运行期路径, 建线/迁移时回填随快照落库); ② 存量形状无 ID → 按
+        //   建线约定 (ch_ch0, algo, name) 一次性迁移认领, 命中即由调用方回填。
+        //   旧「每次按主行名反查」在库内同名堆积时归属混淆 (tripwires 表无唯一
+        //   约束, 同名行可堆积)。
+        const mirrorOf = (mainId: any, ch: string, shape?: { mirror_tripwire_id?: number }) => {
+          if (shape && (Number(shape.mirror_tripwire_id) || 0) > 0) {
+            const byId = allTw.find((t: any) => String(t.id) === String(shape!.mirror_tripwire_id))
+            if (byId) return byId
+          }
+          const main = allTw.find((m: any) => String(m.id) === String(mainId))
+          if (!main) return undefined
+          return allTw.find((t: any) =>
+            String(t.channel_id_str || '').endsWith('_ch0')
+            && String(t.channel_id_str || '').replace(/_ch\d+$/, '') === ch
+            && String(t.algo_id || '') === twAlgoId
+            && String(t.name) === String(main.name ?? '###'))
+        }
         const normPt1920 = (arr: number[]): [number, number] =>
           [arr[0] > 1.5 ? arr[0] / 1920 : arr[0], arr[1] > 1.5 ? arr[1] / 1080 : arr[1]]
         const namePrefix = `${form.name || '规则'}_绊线`
@@ -4875,6 +4943,11 @@ async function handleSave(): Promise<boolean> {
               if (claimed) { r.tripwire_id = Number(claimed.id); cand = claimed }
             }
             if (cand) {
+              // [FIX id-binding 2026-09-30] 镜像定位前置到 cand 确定处: skipped
+              //   分支同样需要镜像在用集收集 (否则 diff 清理误删在用镜像行);
+              //   命中即回填 mirror_tripwire_id (幂等, 随快照落库)。
+              const mir = mirrorOf(cand.id, chStr, r)
+              if (mir) { r.mirror_tripwire_id = Number(mir.id); twUsedMirrorIds.add(String(mir.id)) }
               const oldA = normPt1920(Array.isArray(cand.point_a) ? cand.point_a : [0, 0])
               const oldB = normPt1920(Array.isArray(cand.point_b) ? cand.point_b : [0, 0])
               const drift = Math.abs(oldA[0] - pa[0]) > 0.002 || Math.abs(oldA[1] - pa[1]) > 0.002
@@ -4884,7 +4957,6 @@ async function handleSave(): Promise<boolean> {
               // 漂移更新: 主形态 + 镜像同步 (插件按 _ch0 查询, 只改主不生效)
               try {
                 await regionApi.upsertTripwire({ ...cand, point_a: pa, point_b: pb, direction, enabled: r.is_active !== false } as any)
-                const mir = mirrorOf(cand.id, chStr)
                 if (mir) await regionApi.upsertTripwire({ ...mir, point_a: pa, point_b: pb, direction, enabled: r.is_active !== false } as any)
                 synced++; idByIndex[i] = String(cand.id)
               } catch (e: any) {
@@ -4893,7 +4965,7 @@ async function handleSave(): Promise<boolean> {
               }
             } else {
               try {
-                const newId = await regionApi.createTripwireWithMirror({
+                const { mainId: newId, mirrorId: newMirrorId } = await regionApi.createTripwireWithMirror({
                   channel_id: 0,
                   channel_id_str: chStr,
                   algo_id: twAlgoId,
@@ -4904,8 +4976,10 @@ async function handleSave(): Promise<boolean> {
                   enabled: true,
                 })
                 // [ROI-ID-BIND 2026-09-29] 新建回填持久 ID (随快照落库, 下次保存 ID 直连)
+                // [FIX id-binding 2026-09-30] 镜像 id 同步回填 (响应不再丢弃)
                 const twId = Number(newId)
                 if (twId > 0) r.tripwire_id = twId
+                if (Number(newMirrorId) > 0) { r.mirror_tripwire_id = Number(newMirrorId); twUsedMirrorIds.add(String(newMirrorId)) }
                 synced++; idByIndex[i] = String(newId)
               } catch (e: any) {
                 ElMessage.error(`绊线创建失败 (监控点 ${chStr}): ${e?.message ?? e} (规则仍会保存)`)
@@ -4945,33 +5019,21 @@ async function handleSave(): Promise<boolean> {
             if (pack) pack.tripwireRefs = refs
           }
         }
-        // [FIX tw-route 2026-09-12] 画板 → 库 diff 清理 (跨通道): 本规则 namePrefix
-        //   名下未出现在本次同步集合的残留删除 (画板删线/改名旧名/改绑通道旧通道),
-        //   级联镜像对。算法页手工线名字不带规则名前缀, 不受影响。
+        // [FIX id-binding 2026-09-30] 画板 → 库 diff 清理改 ID 口径 (用户红线:
+        //   名字不参与保留/删除判定): 候选 = 上次快照持久携带的 tripwire_id /
+        //   mirror_tripwire_id 全集 (本规则名下的唯一权威口径); 保留 = 本次画板
+        //   在用 (twUsedIds 主 + twUsedMirrorIds 镜像); 待删 = 候选 − 保留 (画板
+        //   删线/改绑通道, 级联镜像对随 ID 同删)。旧「规则名前缀圈域」同名词规则
+        //   互删 + 改名漏删两类事故路径根除; 算法页手工线天然不在候选域不动。
         {
-          const usedIds = twUsedIds
-          const stalePfxs = new Set<string>([namePrefix])
-          if (editRuleId.value && lastEditSource?.name && String(lastEditSource.name) !== form.name) {
-            stalePfxs.add(`${String(lastEditSource.name)}_绊线`)
-          }
-          const mainByName = new Map<string, any>()
-          for (const t of allTw) {
-            if (String(t.channel_id_str || '').endsWith('_ch0')) continue
-            mainByName.set(`${String(t.name)}|${String(t.algo_id || '')}|${String(t.channel_id_str || '').replace(/_ch\d+$/, '')}`, t)
-          }
-          const seen = new Set<string>()
+          const prevTwIds = collectPrevSnapshotTwIds()
           let cleanedTw = 0
           for (const t of allTw) {
-            const nm = String(t.name || '')
-            if (![...stalePfxs].some(p => nm === p || nm.startsWith(p + '_'))) continue
-            const key = `${nm}|${String(t.algo_id || '')}|${String(t.channel_id_str || '').replace(/_ch\d+$/, '')}`
-            if (seen.has(key)) continue
-            const main = mainByName.get(key)
-            if (main && usedIds.has(String(main.id))) continue  // 画板在用, 保留
-            seen.add(key)
+            if (!prevTwIds.has(String(t.id))) continue
+            if (twUsedIds.has(String(t.id)) || twUsedMirrorIds.has(String(t.id))) continue  // 画板在用, 保留
             try { await regionApi.deleteTripwire(Number(t.id)); cleanedTw++ } catch { /* 单条失败不阻断 */ }
           }
-          if (cleanedTw > 0) ElMessage.info(`已清理 ${cleanedTw} 条画板外残留绊线`)
+          if (cleanedTw > 0) ElMessage.info(`已清理 ${cleanedTw} 条画板外残留绊线 (按持久 ID 定位, 含镜像)`)
         }
         if (totSynced > 0) {
           ElMessage.success('绊线已同步到算法库 (插件最多 5 分钟自动加载)')
@@ -5135,7 +5197,10 @@ async function handleSave(): Promise<boolean> {
         pid: r.roi_id,
         // [ROI-ID-BIND 2026-09-29] 算法库持久绑定随快照落库 (0 = 待认领/新建回填;
         //   后端 matchRoiShapes 按字段名取值, 未知字段无害)
+        // [FIX id-binding 2026-09-30] 镜像行 ID 随快照持久携带 (mirrorOf ID 直连
+        //   + diff 清理 ID 候选域的持久化载体)
         region_id: r.region_id ?? 0, tripwire_id: r.tripwire_id ?? 0,
+        mirror_tripwire_id: r.mirror_tripwire_id ?? 0,
         direction: r.direction || '', points: buildNormPoints(r.polygon),
       })),
     })
@@ -5163,7 +5228,9 @@ async function handleSave(): Promise<boolean> {
             // [ROI-IDS 2026-09-17 P2] 二级锚点: 同通用模式 (逐通道条目)
             pid: r.roi_id,
             // [ROI-ID-BIND 2026-09-29] 算法库持久绑定随快照落库 (同通用模式)
+            // [FIX id-binding 2026-09-30] 镜像行 ID 同步携带 (同通用模式载体)
             region_id: r.region_id ?? 0, tripwire_id: r.tripwire_id ?? 0,
+            mirror_tripwire_id: r.mirror_tripwire_id ?? 0,
             direction: r.direction || '', points: buildNormPoints(r.polygon),
           })),
           tripwire_refs: isTripwireRule.value
@@ -5254,8 +5321,13 @@ async function handleSave(): Promise<boolean> {
 
     const etc = form.conditions.eventType
     const esc = form.conditions.eventSource
+    // [FIX algo-1v1 2026-09-30] 1 规则 1 算法防御收敛: 序列化前 clamp 单值 (与引擎
+    //   EnforceAlgo1v1 同口径双保险)。正常路径新建态已被 onEventTypesChanged clamp、
+    //   编辑态被 EVENT-TYPE-LOCK 锁定 — 此处兜底迁移期多值存量经高级编辑保存的
+    //   窗口: 按 [0] 收敛 (迁移脚本同口径); 被收敛事件由拆分后的独立模板重建。
+    const algo1v1Types = (etc.config.types as string[]).slice(0, 1)
     // 提取 alarm type (从算法 ID 最后一部分)
-    const event_types = etc.config.types.map(id => { const p = id.split('.'); return p[p.length - 1] || id })
+    const event_types = algo1v1Types.map(id => { const p = id.split('.'); return p[p.length - 1] || id })
     // [SRC-CONVERGE 2026-09-12 P1] 绑定通道双写 source_cond: 空间/位置条件启用时
     //   picker 隐藏 (通道圈定唯一入口 = 绑定∪级联勾选集), 引擎入口闸门
     //   (hasAnyEnabledRuleForChannel 未启用规则通道不启动推理) 与空间收窄同源;
@@ -5293,7 +5365,7 @@ async function handleSave(): Promise<boolean> {
       // [FEAT loiter-dwell-cfg 2026-09-20] 徘徊时长 (秒): 仅徘徊类规则写配置值
       //   (默认 30s), 非徘徊类恒 0 (引擎按 loitering 类型查询时才消费)
       loiter_sec: isLoiteringRule.value ? (Number(etc.config.loiterSec ?? 30) || 30) : 0,
-      algorithm_ids: etc.config.types,
+      algorithm_ids: algo1v1Types,
       // [FLOOR-MAP 2026-09-03] 适用平面图透传 (纯可视化, 引擎匹配零改动;
       //   后端 PUT contains 守卫 — toggleRule 只传 enabled 不丢绑定)
       map_ids: (form.mapIds || []).map(Number),
@@ -6155,6 +6227,14 @@ watch(mainTab, (tab) => {
 </script>
 
 <style scoped>
+/* [FEAT rule-diagnose 2026-09-30] 状态列: 开关 + 失效徽章并排居中 */
+.status-cell {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+}
+
 /* ═══ [FLOOR-MAP 2026-09-04] 联动平面图位置动作面板 (华为 iVMS 楼层联动配置对标) ═══ */
 .map-action-panel {
   margin-top: 12px;

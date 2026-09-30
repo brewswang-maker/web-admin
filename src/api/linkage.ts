@@ -375,6 +375,24 @@ export interface DryRunResult {
   simulated_actions: string[]
 }
 
+/** [FEAT rule-diagnose 2026-09-30] 单条诊断: code+severity+message+fix_hint+受影响通道 */
+export interface RuleDiagnosis {
+  code: string
+  severity: 'critical' | 'warning' | 'info' | string
+  message: string
+  fix_hint: string
+  affected_channels: string[]
+}
+
+/** GET /linkage/rules/{id}/diagnose 响应 data */
+export interface RuleDiagnoseResult {
+  rule_id: string
+  name: string
+  enabled: boolean
+  healthy: boolean
+  diagnoses: RuleDiagnosis[]
+}
+
 /** [P2-LR2] 规则冲突报告 */
 export interface RuleConflict {
   type: 'overlapping_trigger' | 'action_redundancy' | 'wildcard_shadowing' | 'cooldown_violation' | 'time_window_conflict'
@@ -556,6 +574,13 @@ export const linkageApi = {
   /** 获取联动规则详情 */
   getRule(id: string) {
     return http.get<ApiResponse<LinkageRule>>(`/linkage/rules/${id}`)
+  },
+
+  /** [FEAT rule-diagnose 2026-09-30] 单规则失效原因诊断 (后端复用存量检测,
+   *  单规则 O(通道×算法) 内存查表, 5s 内返回)。404/异常由调用方归一为
+   *  占位文案, 不阻塞规则列表渲染 */
+  getRuleDiagnose(id: string) {
+    return http.get<ApiResponse<RuleDiagnoseResult>>(`/linkage/rules/${id}/diagnose`)
   },
 
   /** 创建联动规则 */

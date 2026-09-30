@@ -34,7 +34,7 @@
         <div class="chat-toolbar">
           <span class="toolbar-label">
             <el-icon><ChatDotRound /></el-icon>
-            华盾AI安全助手 · 灵犀Agent
+            华盾AI安全助手 · 灵麒Agent
           </span>
           <el-dropdown @command="onToolbarAction">
             <el-button size="small" text><el-icon><MoreFilled /></el-icon></el-button>

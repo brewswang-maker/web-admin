@@ -158,6 +158,10 @@ export interface RoiData {
   //   (roi_shapes_json / roi_shapes_by_channel) 持久化; 后续保存按 ID 直连 upsert。
   region_id?: number
   tripwire_id?: number
+  // [FIX id-binding 2026-09-30] 绊线 _ch0 镜像行持久 ID: createTripwireWithMirror
+  //   建线时回填 (响应携带镜像 id), 随快照落库。镜像更新/在用集判定按 ID 直连,
+  //   铲除旧「按主行名反查镜像」在同库同名堆积时的归属混淆。
+  mirror_tripwire_id?: number
 }
 
 /** 在 Canvas 上绘制绊线 (线段)

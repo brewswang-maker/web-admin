@@ -149,6 +149,7 @@ declare module 'vue' {
     RoiViewer: typeof import('./components/RoiViewer.vue')['default']
     RouterLink: typeof import('vue-router')['RouterLink']
     RouterView: typeof import('vue-router')['RouterView']
+    RuleHealthBadge: typeof import('./components/RuleHealthBadge.vue')['default']
     Scene3D: typeof import('./components/Scene3D.vue')['default']
     SceneEditPanel: typeof import('./components/SceneEditPanel.vue')['default']
     SchoolEventSection: typeof import('./components/school/SchoolEventSection.vue')['default']
