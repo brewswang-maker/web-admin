@@ -5492,7 +5492,28 @@ async function handleSave(): Promise<boolean> {
       const id = crypto.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
       await linkageApi.createRule({ id, ...payload })
     }
-    ElMessage.success(editingRule.value ? '规则已更新' : '规则已创建')
+    // [FIX save-enable 2026-09-30] 保存即生效闭环 (56mf 事故实锚: 编辑对话框以
+    //   stale/既有禁用态回显, 用户改完条件保存误以为规则已按新配置生效 → 规则
+    //   静默不触发数小时, journal 双 PUT 实锚「保存禁用→列表重开」循环)。保存
+    //   提交 enabled=false 时立即确认兜底: 一键启用, 保证「保存=按预期起作用」。
+    //   仅编辑态弹确认 (新建默认 enabled=true 不触发; 复制副本默认禁用是显式设计
+    //   「防误联动」[EVENT-TYPE-LOCK], 且其 editingRule 已清空走新建分支, 同不触发)。
+    if (editingRule.value && !form.enabled) {
+      try {
+        await ElMessageBox.confirm(
+          '规则已保存，但当前处于「停用」状态，不会产生任何告警与联动。是否立即启用？',
+          '规则已保存但未启用',
+          { type: 'warning', confirmButtonText: '立即启用', cancelButtonText: '保持停用' },
+        )
+        await linkageApi.updateRule(editingRule.value.id, { enabled: true })
+        ElMessage.success('规则已保存并启用，立即生效')
+      } catch {
+        // 保持停用: 用户显式选择, 不阻断保存结果
+        ElMessage.success('规则已更新（保持停用状态）')
+      }
+    } else {
+      ElMessage.success(editingRule.value ? '规则已更新' : '规则已创建')
+    }
     // [R6 P1-3 2026-09-12] 保存后反向联动已废除 (同 toggleRule): enabled 翻转即
     //   期望态变化, 算法行状态交 AlgoDeploymentReconciler 收敛
     drawerVisible.value = false
