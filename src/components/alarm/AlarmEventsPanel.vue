@@ -298,7 +298,7 @@
     <!-- ===== 快照预览 (标注 overlay + 取证帧, 与 AlarmsView 同款) ===== -->
     <el-dialog v-model="previewVisible" title="告警快照" width="760px" destroy-on-close align-center>
       <SnapshotAnnotated :src="previewImageUrl" :metadata="previewMeta ?? undefined"
-        :channel-id="previewChannelId" :alarm-key="previewAlarmKey" />
+        :channel-id="previewChannelId" :algo-id="previewAlgoId" :alarm-key="previewAlarmKey" />
       <EvidenceFrames :metadata="(previewMeta ?? undefined) as Record<string, unknown> | undefined" />
     </el-dialog>
 
@@ -515,6 +515,8 @@ import AlarmCard from '@/components/alarm/AlarmCard.vue'
 import DisposeDialog from '@/components/alarm/DisposeDialog.vue'
 import SnapshotAnnotated from '@/views/perimeter/SnapshotAnnotated.vue'
 import { alarmShapeKey } from '@/composables/useAlarmShapes' // [FIX p1-shape-cache-key 2026-10-02] 12-2: 形状缓存归属身份口径 (与弹窗/列表同源)
+// [FIX p1-alarm-identity 2026-10-02] 12-1: 通道/算法口径单一出处 (委托既有真通道码 SSOT)
+import { resolveAlarmIdentity } from '@/utils/alarmIdentity'
 import EvidenceFrames from '@/components/EvidenceFrames.vue'
 
 const props = withDefaults(defineProps<{
@@ -610,12 +612,16 @@ const previewChannelId = ref('')
 // [FIX p1-shape-cache-key 2026-10-02] 12-2: 形状缓存归属维 (命中规则 id 优先,
 //   缺退告警 id) —— 同通道同算法两条规则的告警交替预览不再复用对方几何。
 const previewAlarmKey = ref('')
+// [FIX p1-alarm-identity 2026-10-02] 12-1: 预览此前**完全不传 algoId** → useAlarmShapes
+//   的 algoHit 因 `!algoId` 恒真, 会命中该通道任意启用规则 (弹窗侧有 popupAlgoId 回退,
+//   故表现为「弹窗有形状 / 预览串画别规则几何或无形状」)。通道侧自建正则也改走同一函数。
+const previewAlgoId = ref('')
 function openSnapshotPreview(row: any) {
   previewImageUrl.value = getSnapshotUrl(row)
   previewAlarmKey.value = alarmShapeKey(row)
-  const mStream = previewImageUrl.value.match(/\/(?:snapshots|record)\/rtp\/([^/]+)\//)?.[1]
-  previewChannelId.value = mStream?.replace(/^gb_/, '')
-    || String(row?.channelId || row?.channel_id || '')
+  const idt = resolveAlarmIdentity(row, { snapshotUrl: previewImageUrl.value })
+  previewChannelId.value = idt.channelId
+  previewAlgoId.value = idt.algoId
   let m = row?.metadata
   if (typeof m === 'string') {
     try { m = JSON.parse(m) } catch { m = null }

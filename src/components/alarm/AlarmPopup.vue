@@ -713,6 +713,10 @@ import FloorMapCanvas from '@/components/map/FloorMapCanvas.vue'
 import { useFloorMap } from '@/composables/useFloorMap'
 // [FIX dev-name-num 2026-09-11] 设备名称数字形态治理 (face 插件 channel_id 截断等历史数据)
 import { resolveAlarmDeviceName, unpackAlarmMeta, alarmChannelIdOf } from '@/composables/useAlarmDeviceLabel'
+// [FIX p1-alarm-identity 2026-10-02] 12-1: 形状身份口径单一出处 (通道侧内部仍委托
+//   alarmChannelIdOf + PREV-CHFIX 的 URL 反解, 算法侧含 type 回退) —— 本文件三处
+//   computed 不再自建推导。
+import { resolveAlarmAlgoId, resolveAlarmChannelId } from '@/utils/alarmIdentity'
 // [FEAT mon-point-popup 2026-09-18] 弹窗详情监控点行: 复用列表 SSOT alarmChLabel
 //   (与实时报警列表「监控点」列完全同口径, 防双实现漂移)
 import { alarmChLabel, carriedItemLabel } from '@/composables/useAlarmTableHelpers' // [FIX carry-display 2026-09-21] 携带类细分显示名 (背包/斜挎包/手提包...)
@@ -1003,10 +1007,11 @@ const previewChannelOverrideLabel = ref('')
 //   REST channel_id==device_id==NVR 码), 直接预览会拉 NVR 主设备码 (无流/错通道),
 //   而联动回放却按快照流名走真实通道 → 预览/回放通道不一致。
 //   快照/切片 URL 内嵌真实告警通道 (gb_<裸码>), 优先反解; 无线索时回退 channelId。
+// [FIX p1-alarm-identity 2026-10-02] 12-1: 改走 resolveAlarmChannelId —— 保留
+//   previewChannelOverride 优先与「URL 反解救回 NVR 归并前真通道」语义, 额外获得
+//   metadata.channel_id_str / int32 哈希反查两级更强证据 (无快照 URL 的告警不再 miss)。
 const previewChannelId = computed(() =>
-  previewChannelOverride.value
-  || alarmStreamName(currentAlarm.value)?.replace(/^gb_/, '')
-  || String(currentAlarm.value?.channelId || ''))
+  resolveAlarmChannelId(currentAlarm.value, { override: previewChannelOverride.value }))
 function onMapDeviceClick(b: CameraMapBinding) {
   if (b.device_type && b.device_type !== 'camera') {
     ElMessage.info(`${camDeviceLabel(b)} · 非视频设备, 无实时预览`)
@@ -2481,18 +2486,17 @@ const popupAlarmKey = computed(() => alarmShapeKey(currentAlarm.value))
  *  区域库 algoMatch 尾段匹配同口径; ②回退的 !algoId 空守卫原本把
  *  「metadata 缺失」误判为「无算法信息」直接不画 (弹窗绊线不画实锚:
  *  002001 14501 绊线 alarm_shapes 在库但全程未渲染) */
-const popupAlgoId = computed(() => {
-  const m = (currentAlarm.value?.metadata || {}) as Record<string, unknown>
-  const src = ((m[0] && typeof m[0] === 'object') ? m[0] : m) as Record<string, unknown>
-  return String(src.algo_id ?? src.algoId ?? currentAlarm.value?.type ?? '')
-})
+// [FIX p1-alarm-identity 2026-10-02] 12-1: 改走 resolveAlarmAlgoId —— 原手写
+//   `m[0] && typeof m[0]==='object'` 解构与 unpackAlarmMeta 重复, 且缺 algorithm_id /
+//   顶层 algoId 两级; type 回退保留 (与弹窗历史口径一致)。
+const popupAlgoId = computed(() => resolveAlarmAlgoId(currentAlarm.value))
 /** [FIX 2026-09-16 P2 叠加层通道反解] 区域/规则 ROI 按「真实告警通道」存储,
  *  而 GB 告警的 channelId 可能被后端归并为父设备码 (NVR, 同 PREV-CHFIX),
  *  按归并键查规则链/区域库必 miss 或串。快照/切片 URL 内嵌真实通道
  *  (gb_<裸码>), 与预览/回放同源反解; 无线索回退 channelId。 */
-const popupOverlayChannelId = computed(() =>
-  alarmStreamName(currentAlarm.value)?.replace(/^gb_/, '')
-  || String(currentAlarm.value?.channelId || ''))
+// [FIX p1-alarm-identity 2026-10-02] 12-1: 与 previewChannelId 同源 (原两者各自写一份
+//   相似正则, 口径可随修改漂移), 额外接入 metadata 真通道码。
+const popupOverlayChannelId = computed(() => resolveAlarmChannelId(currentAlarm.value))
 
 const locationNote = computed(() => {
   // [FIX loc-note 2026-09-18] 两处收口: ① metadata 数组形态解包 (realtime-alarms

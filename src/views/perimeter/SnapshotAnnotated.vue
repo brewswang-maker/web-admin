@@ -2,8 +2,10 @@
   <!-- [FIX p1-shape-cache-key 2026-10-02] 12-2: data-shape-source / data-shape-count /
      data-alarm-key 常驻根节点, 使告警列表侧与弹窗侧可 DOM 文本对照同一告警的形状
      来源与缓存身份维 (alarm-key = 本组件实际传给 load() 的第 4 参) -->
+  <!-- [FIX p1-alarm-identity 2026-10-02] 12-1: data-algo-id = 实际传给 load() 的第 2 参
+       (effAlgoId 而非 props 原值), 供真机对照「同一告警在弹窗/列表两侧算法口径是否一致」 -->
   <div ref="rootRef" class="snap-annotated" :data-shape-source="shapeSource" :data-shape-count="shapes.length"
-       :data-alarm-key="alarmKey || ''">
+       :data-alarm-key="alarmKey || ''" :data-algo-id="effAlgoId" :data-channel-id="channelId || ''">
     <!-- [fix 2026-09-01 真机探针] 融合告警等程序化链路 snapshot_url 为空但
          bbox/target_label 已落库: 空图时渲染网格占位底 + overlay 照常画框,
          标注可视化不再被无快照阻断 (src 由父组件判空传入) -->
@@ -97,6 +99,8 @@ import {
   markTriggerDet, parseDetections, useAlarmShapes, zhLabel, type ShapeSource,
   type OverlayShape, type OverlayShapeType, type ParsedDet,
 } from '@/composables/useAlarmShapes'
+// [FIX p1-alarm-identity 2026-10-02] 12-1: 算法 id 口径单一出处 (与弹窗/列表同源)
+import { resolveAlarmAlgoId } from '@/utils/alarmIdentity'
 
 const { t } = useI18n()
 
@@ -145,8 +149,12 @@ const props = defineProps<{
 const { shapes, load: loadShapes } = useAlarmShapes()
 // [FIX p1-shape-cache-key 2026-10-02] 12-2: 来源标记落存 (DOM 探针可分「拉取失败」与「真没区域」)
 const shapeSource = ref<ShapeSource>('none')
+// [FIX p1-alarm-identity 2026-10-02] 12-1: 本地兑底改委托 resolveAlarmAlgoId —— 原只认
+//   metadata.algo_id 一级 (漏 algorithm_id / 顶层 algoId / type 回退), 与弹窗 popupAlgoId
+//   口径不一致; 现上游三处实例均已显式传 algo-id, 本兑底仅作新增调用方的同源保底,
+//   不再各自造口径。
 const effAlgoId = computed(() => props.algoId
-  || String((props.metadata as Record<string, unknown>)?.algo_id ?? ''))
+  || resolveAlarmAlgoId({ metadata: props.metadata }))
 watch(
   [() => props.channelId, effAlgoId, () => (props.metadata as any)?.alarm_shapes, () => props.alarmKey],
   ([ch, algo, snap, akey]) => {

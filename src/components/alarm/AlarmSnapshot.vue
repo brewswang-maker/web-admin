@@ -4,7 +4,7 @@
      (canvas 是 v-if 元素, 拉取失败时反而不在 DOM 里)——形状两级链「报错降级」
      与「真没配区域」在 DOM 探针上可分: error / none / rule / region / snapshot -->
   <div class="alarm-snapshot" ref="containerRef" :data-shape-source="shapeSource" :data-shape-count="shapes.length"
-       :data-alarm-key="alarmKey || ''">
+       :data-alarm-key="alarmKey || ''" :data-algo-id="algoId || ''" :data-channel-id="channelId || ''">
     <!-- [fix 2026-09-01 vp6 收尾] contain → fill: canvas overlay inset:0 铺满容器,
          contain 留边 (容器宽高比≠图像比) 时归一化坐标画框必然偏移; fill 拉伸铺满
          与 canvas 同形变恒对齐 (对齐 SnapshotAnnotated/LiveView 标注语义) -->

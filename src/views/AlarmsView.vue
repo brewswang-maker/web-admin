@@ -926,7 +926,7 @@
       align-center
     >
       <SnapshotAnnotated :src="previewImageUrl" :metadata="previewMeta ?? undefined"
-        :channel-id="previewChannelId" :alarm-key="previewAlarmKey" />
+        :channel-id="previewChannelId" :algo-id="previewAlgoId" :alarm-key="previewAlarmKey" />
       <!-- [ROI-GAP 2026-09-06] 多帧取证 (预览弹窗同步展示, 字段缺失自动隐藏) -->
       <EvidenceFrames :metadata="(previewMeta ?? undefined) as Record<string, unknown> | undefined" />
     </el-dialog>
@@ -1032,6 +1032,8 @@ import AlarmCard from '@/components/alarm/AlarmCard.vue'
 import { showAlarmPopup } from '@/composables/useAlarmPopup'
 import SnapshotAnnotated from '@/views/perimeter/SnapshotAnnotated.vue'
 import { alarmShapeKey } from '@/composables/useAlarmShapes' // [FIX p1-shape-cache-key 2026-10-02] 12-2: 形状缓存归属身份口径 (与弹窗/检索页同源)
+// [FIX p1-alarm-identity 2026-10-02] 12-1: 通道/算法口径单一出处 (委托既有真通道码 SSOT)
+import { resolveAlarmIdentity } from '@/utils/alarmIdentity'
 import EvidenceFrames from '@/components/EvidenceFrames.vue'
 import { useRoute, useRouter } from 'vue-router'
 // ── [PERF 2026-09-14 R8] flv.js 改动态加载 (原静态 import 使 391KB gzip 的 vendor-players
@@ -1210,17 +1212,24 @@ const previewMeta = ref<Record<string, unknown> | null>(null)
 // [FIX 2026-09-16 P2 叠加层通道反解] 同 AlarmPopup popupOverlayChannelId 口径:
 // 形状叠加按「真实告警通道」查规则/区域 ROI, GB 告警 channelId 可能被后端归并
 // 为父设备码 (NVR, 同 PREV-CHFIX) — 快照 URL 内嵌真实流名 (gb_<裸码>) 优先反解,
-// 无线索兜底 channelId。原未传 → useAlarmShapes 区域库链退化全库拉取 (串扰根因)。
+// 无线索时回退 channelId。原未传 → useAlarmShapes 区域库链退化全库拉取 (串扰根因)。
+// [FIX p1-alarm-identity 2026-10-02] 12-1 订正: 上述自建正则已改走 resolveAlarmIdentity
+//   (内部委托 alarmChannelIdOf: metadata.channel_id_str → int32 哈希反查 → URL 反解 →
+//   顶层码), 本文件不再各自正则 —— 与弹窗/检索页同口径。
 const previewChannelId = ref('')
 // [FIX p1-shape-cache-key 2026-10-02] 12-2: 形状缓存归属维 (命中规则 id 优先,
 //   缺退告警 id) —— 同通道同算法两条规则的告警交替预览不再复用对方几何。
 const previewAlarmKey = ref('')
+// [FIX p1-alarm-identity 2026-10-02] 12-1: 预览此前**完全不传 algoId** → useAlarmShapes
+//   的 algoHit 因 `!algoId` 恒真, 会命中该通道任意启用规则 (弹窗侧有 popupAlgoId 回退,
+//   故表现为「弹窗有形状 / 预览串画别规则几何或无形状」)。
+const previewAlgoId = ref('')
 function openSnapshotPreview(row: any) {
   previewImageUrl.value = getSnapshotUrl(row)
   previewAlarmKey.value = alarmShapeKey(row)
-  const mStream = previewImageUrl.value.match(/\/(?:snapshots|record)\/rtp\/([^/]+)\//)?.[1]
-  previewChannelId.value = mStream?.replace(/^gb_/, '')
-    || String(row?.channelId || row?.channel_id || '')
+  const idt = resolveAlarmIdentity(row, { snapshotUrl: previewImageUrl.value })
+  previewChannelId.value = idt.channelId
+  previewAlgoId.value = idt.algoId
   let m = row?.metadata
   if (typeof m === 'string') {
     try { m = JSON.parse(m) } catch { m = null }
