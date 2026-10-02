@@ -178,6 +178,12 @@ export interface AlarmEvent {
    *  同一类型告警的规则名随命中集变化 (level×规则 min_sev 分层 + prio 冠军
    *  取值) 属联动真实行为, 如实透出不做稳定性处理。 */
   matchedRuleName?: string
+  /** [FIX p1-shape-cache-key 2026-10-02] 12-2: 命中规则 id 集 (后端 matched_rule_ids
+   *  快照 / linkageVerdict.matched_rule_ids, 主命中在最前)。此前归一化层只留
+   *  matchedRuleName 而丢弃 id 集 → 告警列表/事件面板的行拿不到规则身份,
+   *  形状缓存归属维只能退到告警 id (逐告警不串画但同规则不再共享缓存)。
+   *  消费点: useAlarmShapes.alarmShapeKey (形状 30s 缓存的第三维)。 */
+  matchedRuleIds?: string[]
 }
 
 /** [SSOT R1/R2 2026-09-12] 后端判定结果 (LinkageEngine::matchAndVerdict 序列化形态).
@@ -948,6 +954,19 @@ export function normalizeAlarmCore(raw: any): AlarmEvent {
   const matchedRuleNameRaw = raw.matched_rule_name ?? raw.matchedRuleName
   const matchedRuleName = typeof matchedRuleNameRaw === 'string' && matchedRuleNameRaw
     ? matchedRuleNameRaw : undefined
+  // [FIX p1-shape-cache-key 2026-10-02] 12-2: 保留命中规则 id 集 (原本被白名单
+  //   重建丢弃)。链: REST 顶层 matched_rule_ids → camel 形态 → verdict 快照内同名
+  //   字段 (WS 行) → linkageVerdict.rule_id; 非法/空集 → undefined (不造空数组假象,
+  //   由 alarmShapeKey 退回告警 id 口径)。
+  const matchedRuleIdsRaw = raw.matched_rule_ids ?? raw.matchedRuleIds
+    ?? (raw.linkage_verdict ?? raw.linkageVerdict)?.matched_rule_ids
+  const matchedRuleIds = Array.isArray(matchedRuleIdsRaw)
+    ? matchedRuleIdsRaw.map(String).filter((s) => s !== '' && s !== 'undefined')
+    : undefined
+  const verdictForIds = raw.linkage_verdict ?? raw.linkageVerdict
+  const matchedRuleIdsFinal = (matchedRuleIds && matchedRuleIds.length) ? matchedRuleIds
+    : (typeof verdictForIds?.rule_id === 'string' && verdictForIds.rule_id
+      ? [verdictForIds.rule_id] : undefined)
 
   return {
     id: raw.id || raw.alarm_id || `${raw.device_id || ''}_${channelId}_${raw.timestamp_ms || Date.now()}`,
@@ -1093,6 +1112,8 @@ export function normalizeAlarmCore(raw: any): AlarmEvent {
     eventEnded,
     // [EV-RULE 2026-09-18] 命中规则名 (「事件规则名」列数据源)
     matchedRuleName,
+    // [FIX p1-shape-cache-key 2026-10-02] 12-2: 命中规则 id 集 (形状缓存身份维)
+    matchedRuleIds: matchedRuleIdsFinal,
   }
 }
 // [t3-tree-channel 2026-09-11 完成锚点] 三级树通道级服务端下钻(单值直传+多值 fan-out)批次 · 部署产物 entry=index-CvT0U9Nv4f.js tgz md5=07a2e26224ed93a40c47f987c04b7bb5

@@ -1,5 +1,9 @@
 <template>
-  <div ref="rootRef" class="snap-annotated">
+  <!-- [FIX p1-shape-cache-key 2026-10-02] 12-2: data-shape-source / data-shape-count /
+     data-alarm-key 常驻根节点, 使告警列表侧与弹窗侧可 DOM 文本对照同一告警的形状
+     来源与缓存身份维 (alarm-key = 本组件实际传给 load() 的第 4 参) -->
+  <div ref="rootRef" class="snap-annotated" :data-shape-source="shapeSource" :data-shape-count="shapes.length"
+       :data-alarm-key="alarmKey || ''">
     <!-- [fix 2026-09-01 真机探针] 融合告警等程序化链路 snapshot_url 为空但
          bbox/target_label 已落库: 空图时渲染网格占位底 + overlay 照常画框,
          标注可视化不再被无快照阻断 (src 由父组件判空传入) -->
@@ -16,7 +20,7 @@
          data-* 属性供 DOM 探针验证渲染计数 -->
     <svg v-if="shapes.length || detBoxes.length || box" class="ann-overlay" viewBox="0 0 100 100"
          preserveAspectRatio="none" aria-hidden="true"
-         :data-shape-count="shapes.length" :data-det-count="detBoxes.length">
+         :data-shape-count="shapes.length" :data-shape-source="shapeSource" :data-det-count="detBoxes.length">
       <!-- 底层: 原始几何形状 (半透明, 不覆盖检测框) -->
       <template v-for="(s, i) in shapes" :key="`sh-${i}`">
         <polygon v-if="isAreaType(s.type)" :points="svgPoints(s.points)"
@@ -90,7 +94,7 @@ import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
 import {
   CLASS_COLORS, SHAPE_STYLES, drawDetsOnCtx, drawShapesOnCtx, downloadPngWithFallback,
-  markTriggerDet, parseDetections, useAlarmShapes, zhLabel,
+  markTriggerDet, parseDetections, useAlarmShapes, zhLabel, type ShapeSource,
   type OverlayShape, type OverlayShapeType, type ParsedDet,
 } from '@/composables/useAlarmShapes'
 
@@ -131,17 +135,25 @@ const props = defineProps<{
   channelId?: string
   /** [FEAT 2026-09-04] 触发算法 id (区域库回退链匹配) */
   algoId?: string
+  /** [FIX p1-shape-cache-key 2026-10-02] 12-2: 形状归属身份 (联动规则 id, 缺退
+   *  告警 id)——useAlarmShapes 模块级 30s 缓存的第三维, 不传则同 (通道,算法)
+   *  下两条规则几何互相污染。 */
+  alarmKey?: string
 }>()
 
 /** [FEAT 2026-09-04] 原始几何形状叠加: 两级数据源 + 30s 模块级缓存 */
 const { shapes, load: loadShapes } = useAlarmShapes()
+// [FIX p1-shape-cache-key 2026-10-02] 12-2: 来源标记落存 (DOM 探针可分「拉取失败」与「真没区域」)
+const shapeSource = ref<ShapeSource>('none')
 const effAlgoId = computed(() => props.algoId
   || String((props.metadata as Record<string, unknown>)?.algo_id ?? ''))
 watch(
-  [() => props.channelId, effAlgoId, () => (props.metadata as any)?.alarm_shapes],
-  ([ch, algo, snap]) => {
+  [() => props.channelId, effAlgoId, () => (props.metadata as any)?.alarm_shapes, () => props.alarmKey],
+  ([ch, algo, snap, akey]) => {
     // ⓪ alarm_shapes: 告警自包含快照 (插件上报时冻结), 优先于规则链/区域库
-    loadShapes(ch, algo, snap).catch(() => {})
+    // [FIX p1-shape-cache-key 2026-10-02] alarmKey 必须进依赖数组, 否则切换
+    //   同通道同算法的另一条规则告警不触发重载。
+    loadShapes(ch, algo, snap, akey).then((src) => { shapeSource.value = src }).catch(() => {})
   },
   { immediate: true },
 )

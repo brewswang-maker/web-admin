@@ -13,8 +13,15 @@
  *   ⑤ 无 by_channel 键 = 通用模式 → 存量路径回归锁 (不得误伤)。
  *
  * 通道键/告警通道双形态归一: '_chN' 后缀双向剥离 (stripChSuffix)。
+ *
+ * [NOTE mockReset 陷阱 + 断言收紧 2026-10-02] vitest.config.ts 的 mockReset:true 会
+ *   在每个用例前清空 vi.fn() 实现 (包括 vi.mock 工厂里 .mockResolvedValue 设的),
+ *   所以区域库三个 mock 改到 beforeEach 重新装配。此前用例②③ 只断言
+ *   「shapes 为空」—— 区域链因缺实现抛 TypeError 时也会被降级链吞成空数组,
+ *   属空断言 (崩溃与「真没回退」不可区分)。现在 load() 返回数据源标记
+ *   (12-2 降级可见化), ②③ 额外断言 'none' —— 证明两级链跑完且确实为空。
  */
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 vi.mock('@/api/linkage', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/api/linkage')>()
@@ -30,15 +37,23 @@ vi.mock('@/api/region', async (importOriginal) => {
     regionApi: {
       ...actual.regionApi,
       // 区域库回退链置空: 本测试只验证 ① 规则链的逐通道分支
-      listRegions: vi.fn().mockResolvedValue({ data: { code: 0, data: { regions: [] } } }),
-      listTripwires: vi.fn().mockResolvedValue({ data: { code: 0, data: { tripwires: [] } } }),
-      listCountingZones: vi.fn().mockResolvedValue({ data: { code: 0, data: { counting_zones: [] } } }),
+      //   实现体在 beforeEach 装配 (mockReset:true 会清空工厂里的设置)
+      listRegions: vi.fn(),
+      listTripwires: vi.fn(),
+      listCountingZones: vi.fn(),
     },
   }
 })
 
 import { linkageApi } from '@/api/linkage'
+import { regionApi } from '@/api/region'
 import { useAlarmShapes } from '../useAlarmShapes'
+
+beforeEach(() => {
+  vi.mocked(regionApi.listRegions).mockResolvedValue({ data: { code: 0, data: { regions: [] } } } as any)
+  vi.mocked(regionApi.listTripwires).mockResolvedValue({ data: { code: 0, data: { tripwires: [] } } } as any)
+  vi.mocked(regionApi.listCountingZones).mockResolvedValue({ data: { code: 0, data: { counting_zones: [] } } } as any)
+})
 
 const K_A = '13120000001320000009'
 const K_B = '13120000001320000008'
@@ -78,7 +93,7 @@ describe('useAlarmShapes 逐通道严格模式 (ROI-PC)', () => {
       }),
     })])
     const { shapes, load } = useAlarmShapes()
-    await load(`${K_A}_ch0`, 'intrusion')
+    expect(await load(`${K_A}_ch0`, 'intrusion')).toBe('rule')
     expect(shapes.value.map((s) => s.name)).toEqual(['A专属区'])
   })
 
@@ -90,7 +105,8 @@ describe('useAlarmShapes 逐通道严格模式 (ROI-PC)', () => {
       }),
     })])
     const { shapes, load } = useAlarmShapes()
-    await load(K_B, 'intrusion')
+    // 'none' 而非 'error': 本通道未绘 → 规则链空且区域链干净返回空 (不回退通用键)
+    expect(await load(K_B, 'intrusion')).toBe('none')
     expect(shapes.value).toEqual([])
   })
 
@@ -101,7 +117,7 @@ describe('useAlarmShapes 逐通道严格模式 (ROI-PC)', () => {
       }),
     })])
     const { shapes, load } = useAlarmShapes()
-    await load(K_D, 'intrusion')
+    expect(await load(K_D, 'intrusion')).toBe('none')
     expect(shapes.value).toEqual([])
   })
 
@@ -116,7 +132,7 @@ describe('useAlarmShapes 逐通道严格模式 (ROI-PC)', () => {
       }),
     })])
     const { shapes, load } = useAlarmShapes()
-    await load(K_E, 'intrusion')
+    expect(await load(K_E, 'intrusion')).toBe('rule')
     expect(shapes.value.map((s) => s.name)).toEqual(['关注点1'])
   })
 
@@ -125,7 +141,7 @@ describe('useAlarmShapes 逐通道严格模式 (ROI-PC)', () => {
       roi_shapes_json: JSON.stringify({ combine: 'union', shapes: [zone('通用区')] }),
     })])
     const { shapes, load } = useAlarmShapes()
-    await load(K_C, 'intrusion')
+    expect(await load(K_C, 'intrusion')).toBe('rule')
     expect(shapes.value.map((s) => s.name)).toEqual(['通用区'])
   })
 })

@@ -1,5 +1,10 @@
 <template>
-  <div class="alarm-snapshot" ref="containerRef">
+  <!-- [FIX p1-shape-cache-key 2026-10-02] 12-2: data-shape-source / data-shape-count /
+     data-alarm-key 挂在常驻根节点
+     (canvas 是 v-if 元素, 拉取失败时反而不在 DOM 里)——形状两级链「报错降级」
+     与「真没配区域」在 DOM 探针上可分: error / none / rule / region / snapshot -->
+  <div class="alarm-snapshot" ref="containerRef" :data-shape-source="shapeSource" :data-shape-count="shapes.length"
+       :data-alarm-key="alarmKey || ''">
     <!-- [fix 2026-09-01 vp6 收尾] contain → fill: canvas overlay inset:0 铺满容器,
          contain 留边 (容器宽高比≠图像比) 时归一化坐标画框必然偏移; fill 拉伸铺满
          与 canvas 同形变恒对齐 (对齐 SnapshotAnnotated/LiveView 标注语义) -->
@@ -35,6 +40,7 @@
       ref="canvasRef"
       class="alarm-snapshot__canvas"
       :data-shapes="shapes.length"
+      :data-shape-source="shapeSource"
       :data-boxes="normalizedBoxes.length"
     />
     <!-- [FEAT 2026-09-02] 下载标注图: 导出原始分辨率合成图 (快照+检测框标注) PNG -->
@@ -86,7 +92,7 @@ import { ref, computed, nextTick, onMounted, onBeforeUnmount, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import {
   drawDetsOnCtx, drawShapesOnCtx, downloadPngWithFallback,
-  markTriggerDet, parseDetections, useAlarmShapes, type ParsedDet,
+  markTriggerDet, parseDetections, useAlarmShapes, type ParsedDet, type ShapeSource,
 } from '@/composables/useAlarmShapes'
 import { getAlarmSnapshotOverlay, setAlarmSnapshotOverlay } from '@/utils/localStorage'
 
@@ -125,6 +131,10 @@ const props = defineProps<{
    *  当时生效区域几何 (区域库后续增删不影响历史告警取证), 非空时最高
    *  优先级消费, 绕过规则链/区域库回退与共享缓存 */
   alarmShapes?: unknown[]
+  /** [FIX p1-shape-cache-key 2026-10-02] 12-2: 形状归属身份 (联动规则 id,
+   *  缺退告警 id)。useAlarmShapes 模块级 30s 缓存的第三维——不传则同一
+   *  (通道,算法) 下两条规则的几何会互相污染; 传空串时 composable 宁可不缓存。 */
+  alarmKey?: string
 }>()
 
 const containerRef = ref<HTMLElement>()
@@ -135,10 +145,17 @@ const imageSize = ref<{ w: number; h: number }>({ w: 0, h: 0 })
 /** [FEAT 2026-09-04] 原始几何形状叠加 (检测区/排除区/绊线/方向线/计数区):
  *  数据源两级链 (规则 roi_shapes_json → 区域库), 详见 useAlarmShapes.ts */
 const { shapes, fullscreenGuard, load: loadShapes } = useAlarmShapes()
+// [FIX p1-shape-cache-key 2026-10-02] 12-2: 来源标记落存 (DOM 探针 + 排障可读)
+const shapeSource = ref<ShapeSource>('none')
 watch(
-  [() => props.channelId, () => props.algoId, () => props.alarmShapes],
-  ([ch, algo, snap]) => {
-    loadShapes(ch, algo, snap).then(() => nextTick(scheduleDraw)).catch(() => {})
+  [() => props.channelId, () => props.algoId, () => props.alarmShapes, () => props.alarmKey],
+  ([ch, algo, snap, akey]) => {
+    // [FIX p1-shape-cache-key 2026-10-02] 12-2: alarmKey 必须进依赖数组,
+    //   否则切换同通道同算法的另一条规则告警时不触发重载 (缓存修了个空)。
+    loadShapes(ch, algo, snap, akey).then((src) => {
+      shapeSource.value = src
+      nextTick(scheduleDraw)
+    }).catch(() => {})
   },
   { immediate: true },
 )

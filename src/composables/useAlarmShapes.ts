@@ -131,9 +131,37 @@ function algoMatch(a?: string, b?: string): boolean {
 
 // ─────────────────────────── 数据获取 (两级链 + 模块级缓存) ───────────────────────────
 
-interface ShapeCacheEntry { list: OverlayShape[]; fullscreen: boolean; ts: number }
+interface ShapeCacheEntry { list: OverlayShape[]; fullscreen: boolean; ts: number; source: ShapeSource }
 const shapeCache = new Map<string, ShapeCacheEntry>()
 const CACHE_TTL = 30_000
+// [FIX p1-shape-cache-key 2026-10-02] 降级可见化去噪: 同一缓存键的拉取失败只敲
+//   一次 console.warn (告警列表轮询 + 多实例组件会把同一条错刷成满屏)。
+const degradedWarned = new Set<string>()
+
+/** [FIX p1-shape-cache-key 2026-10-02] 12-2: 形状来源标记。
+ *  Spec 原文只枚举 ①② 链的 `'rule' | 'region' | 'none'`; 这里多两个值是 12-2
+ *  第 3 条要求本身导出的: 「使调用方能区分拉取失败与真没画区域」—— 若失败也返
+ *  'none', 两者在调用方仍不可分, 所以补 'error'; ⓪ 告警自包含快照是独立的第四
+ *  个数据源 (不属 ①② 链), 给 'snapshot' 避免被误读为「规则链命中」。 */
+export type ShapeSource = 'snapshot' | 'rule' | 'region' | 'none' | 'error'
+
+/** [FIX p1-shape-cache-key 2026-10-02] 12-2: 从告警对象提取形状归属身份 (三个
+ *  消费点共用一个口径, 避免 popup / 列表 / 检索各自取字段不一致)。
+ *  优先级: 联动规则 id (几何的真正 owner) > 告警 id。后端告警行以
+ *  matched_rule_ids 快照下发命中规则 (RestApiHandlers L8104-8114, 主命中在
+ *  最前); WS 精简帧可能只带 verdict.rule_id / metadata.rule_id; 全缺时退
+ *  告警 id (同一告警自身稳定, 不会跨告警复用几何)。 */
+export function alarmShapeKey(alarm?: unknown): string {
+  if (!alarm || typeof alarm !== 'object') return ''
+  const a = alarm as Record<string, unknown>
+  const ids = a.matched_rule_ids ?? a.matchedRuleIds
+  if (Array.isArray(ids) && ids.length) return String(ids[0] ?? '')
+  const meta = (a.metadata && typeof a.metadata === 'object')
+    ? a.metadata as Record<string, unknown> : {}
+  const direct = a.rule_id ?? a.ruleId ?? meta.rule_id ?? meta.ruleId
+  if (direct) return String(direct)
+  return String(a.id ?? a.alarm_id ?? '')
+}
 
 /** ① 规则链: enabled 规则 roi_shapes_json, 通道交集命中即取 (空间条件本身即通道绑定)
  *  [FIX 2026-09-04] 对齐后端 SSOT + 多规则竞争优先级:
@@ -342,11 +370,24 @@ export function useAlarmShapes() {
     if (out.length !== list.length) fullscreenGuard.value = true
     return out
   }
-  async function load(channelId?: string, algoId?: string, alarmShapes?: unknown) {
+  async function load(
+    channelId?: string,
+    algoId?: string,
+    alarmShapes?: unknown,
+    // [FIX p1-shape-cache-key 2026-10-02] 12-2 第 4 参: 告警形状归属身份
+    //   (调用方传 rule_id, 缺省传告警 id)。旧缓存键只到 `${ch}|${algo}` ——
+    //   同通道同算法的两条不同规则/不同告警在 30s TTL 内复用同一份几何,
+    //   表现为「弹窗有形状、列表无形状」/串画 (缺陷 12-2 实锚)。
+    alarmKey?: string,
+  ): Promise<ShapeSource> {
     fullscreenGuard.value = false
     // ⓪ 告警自包含快照 (metadata.alarm_shapes): 插件上报告警时冻结的当时生效
     //    区域几何 — 区域被删后历史告警仍可核对「当时为什么报警」。
     //    per-alarm 的数据, 绕过模块级共享缓存 (同 key 不同告警不可互相污染)。
+    // [FIX p1-shape-cache-key 2026-10-02] ⓪①② 优先级顺序本批不动: Spec 12-2
+    //    原文里的 `alarm_row < rule_row < region_store` 排序已被 [FIX 2026-09-08]
+    //    / [FIX loiter-tw-overlay 2026-09-09] 的现场纠偏取代 (规则 shapes 优先于
+    //    区域库是当时实锚结果); 本批只修缓存维度, 不改两级链先后。
     if (Array.isArray(alarmShapes) && alarmShapes.length) {
       shapes.value = splitFullscreen(alarmShapes
         // [FIX 2026-09-06] 同规则链: point 单顶点放行 (顶点数组 [[x,y]] ≥1)
@@ -362,27 +403,60 @@ export function useAlarmShapes() {
           // 与区域库回退同色同形, 语义差异仅在于数据已冻结在告警里
           source: 'region' as const,
         })))
-      return
+      return 'snapshot'
     }
     const ch = String(channelId || '')
     const algo = String(algoId || '')
-    const key = `${ch}|${algo}`
-    const cached = shapeCache.get(key)
-    if (cached && Date.now() - cached.ts < CACHE_TTL) {
-      shapes.value = cached.list
-      fullscreenGuard.value = cached.fullscreen
-      return
+    const akey = String(alarmKey || '')
+    // [FIX p1-shape-cache-key 2026-10-02] 12-2 第 1 条: 缓存键前置告警归属维度;
+    //   alarmKey 为空时**不走缓存** (宁可不缓存, 也不返回可能属于另一条规则的
+    //   几何) —— 旧实现同 (ch,algo) 不同规则在 TTL 内互踩。
+    const cacheable = akey !== ''
+    const key = `${ch}|${algo}|${akey}`
+    if (cacheable) {
+      const cached = shapeCache.get(key)
+      if (cached && Date.now() - cached.ts < CACHE_TTL) {
+        shapes.value = cached.list
+        fullscreenGuard.value = cached.fullscreen
+        return cached.source
+      }
     }
     loading.value = true
     try {
       let list: OverlayShape[] = []
-      if (ch) list = await loadFromRules(ch, algo)
-      if (!list.length && (ch || algo)) list = await loadFromRegionStore(ch, algo)
+      let source: ShapeSource = 'none'
+      if (ch) {
+        list = await loadFromRules(ch, algo)
+        if (list.length) source = 'rule'
+      }
+      if (!list.length && (ch || algo)) {
+        list = await loadFromRegionStore(ch, algo)
+        if (list.length) source = 'region'
+      }
       const filtered = splitFullscreen(list)
-      shapeCache.set(key, { list: filtered, fullscreen: fullscreenGuard.value, ts: Date.now() })
+      if (cacheable) {
+        shapeCache.set(key, {
+          list: filtered, fullscreen: fullscreenGuard.value, ts: Date.now(), source,
+        })
+      }
+      degradedWarned.delete(key)
       shapes.value = filtered
-    } catch {
+      return source
+    } catch (e) {
+      // [FIX p1-shape-cache-key 2026-10-02] 12-2 第 3 条: 静默降级可见化。
+      //   原 `catch { shapes.value = [] }` 把「两级链报错」与「真没画区域」
+      //   压成同一形态 (列表区看起来和未配 ROI 一模一样)。现: ① 每键只敲一次
+      //   console.warn (带 ch/algo/key/原始错误); ② 不写缓存 (失败不得被固化
+      //   30s); ③ 返 'error' 供调用方区分; ④ fullscreenGuard 语义保留 (本分支
+      //   未走到 splitFullscreen, 维持入口处的 false, 弹窗角标不会误报「全画面布防」)。
+      if (!degradedWarned.has(key)) {
+        degradedWarned.add(key)
+        console.warn('[useAlarmShapes] 形状两级链拉取失败, 本次降级为空 (不写缓存):', {
+          channel: ch, algo, alarmKey: akey, err: e,
+        })
+      }
       shapes.value = []
+      return 'error'
     } finally {
       loading.value = false
     }

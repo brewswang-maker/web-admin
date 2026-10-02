@@ -298,7 +298,7 @@
     <!-- ===== 快照预览 (标注 overlay + 取证帧, 与 AlarmsView 同款) ===== -->
     <el-dialog v-model="previewVisible" title="告警快照" width="760px" destroy-on-close align-center>
       <SnapshotAnnotated :src="previewImageUrl" :metadata="previewMeta ?? undefined"
-        :channel-id="previewChannelId" />
+        :channel-id="previewChannelId" :alarm-key="previewAlarmKey" />
       <EvidenceFrames :metadata="(previewMeta ?? undefined) as Record<string, unknown> | undefined" />
     </el-dialog>
 
@@ -514,6 +514,7 @@ import { alarmApi, type AlarmOccurrence } from '@/api/alarm'
 import AlarmCard from '@/components/alarm/AlarmCard.vue'
 import DisposeDialog from '@/components/alarm/DisposeDialog.vue'
 import SnapshotAnnotated from '@/views/perimeter/SnapshotAnnotated.vue'
+import { alarmShapeKey } from '@/composables/useAlarmShapes' // [FIX p1-shape-cache-key 2026-10-02] 12-2: 形状缓存归属身份口径 (与弹窗/列表同源)
 import EvidenceFrames from '@/components/EvidenceFrames.vue'
 
 const props = withDefaults(defineProps<{
@@ -606,8 +607,12 @@ const previewMeta = ref<Record<string, unknown> | null>(null)
 // 快照 URL 内嵌真实流名 (gb_<裸码>) 优先反解, 兜底 channelId — 原未传 channelId
 // → useAlarmShapes 区域库链退化全库拉取, 该算法所有通道 ROI 串画到当前告警。
 const previewChannelId = ref('')
+// [FIX p1-shape-cache-key 2026-10-02] 12-2: 形状缓存归属维 (命中规则 id 优先,
+//   缺退告警 id) —— 同通道同算法两条规则的告警交替预览不再复用对方几何。
+const previewAlarmKey = ref('')
 function openSnapshotPreview(row: any) {
   previewImageUrl.value = getSnapshotUrl(row)
+  previewAlarmKey.value = alarmShapeKey(row)
   const mStream = previewImageUrl.value.match(/\/(?:snapshots|record)\/rtp\/([^/]+)\//)?.[1]
   previewChannelId.value = mStream?.replace(/^gb_/, '')
     || String(row?.channelId || row?.channel_id || '')

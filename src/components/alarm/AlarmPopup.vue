@@ -188,6 +188,7 @@
                     :channel-id="popupOverlayChannelId"
                     :algo-id="popupAlgoId"
                     :alarm-shapes="popupAlarmShapes"
+                    :alarm-key="popupAlarmKey"
                   />
                   <!-- [POPUP-EV-MERGE 2026-09-07] 取证帧并入下方缩略图画廊 (pre/mid/post
                        带语义角标, 左右翻页/点击查看) — 原 EvidenceFrames compact
@@ -681,6 +682,7 @@ import { ElMessage } from 'element-plus'
 import { Loading } from '@element-plus/icons-vue'
 import MiniPlayer from '@/components/video/MiniPlayer.vue'
 import AlarmSnapshot from '@/components/alarm/AlarmSnapshot.vue'
+import { alarmShapeKey } from '@/composables/useAlarmShapes' // [FIX p1-shape-cache-key 2026-10-02] 12-2: 形状缓存归属身份口径 (与列表/检索页同源)
 import defaultFacePhoto from '@/assets/photo.jpg'
 import EvidenceFrames from '@/components/EvidenceFrames.vue' // [POPUP-EV-MERGE 2026-09-07] 弹窗内已并入画廊, import 保留给未来复用 (无副作用)
 import { buildEvidenceSlots, hasEvidenceChain, evidenceCompleteness, isEvidencePostPending, evidenceFrameLag, fmtEvidenceLag } from '@/utils/evidenceFrames' // [EV-TRIPLE 2026-09-14] 取证帧语义/时间戳共享模块; [EV-STABLE3 2026-09-19] 三格固定槽位; [FIX ev-frame-lag 2026-09-20] P1-5 帧滞后判定/文案
@@ -2470,6 +2472,9 @@ const popupAlarmShapes = computed<unknown[]>(() => {
   const src = ((m[0] && typeof m[0] === 'object') ? m[0] : m) as Record<string, unknown>
   return Array.isArray(src.alarm_shapes) ? (src.alarm_shapes as unknown[]) : []
 })
+/** [FIX p1-shape-cache-key 2026-10-02] 12-2: 形状缓存归属维 (命中规则 id 优先,
+ *  缺退告警 id) —— 同通道同算法两条规则的告警交替展示时不再复用对方几何。 */
+const popupAlarmKey = computed(() => alarmShapeKey(currentAlarm.value))
 /** [FEAT 2026-09-04] 触发算法 id (形状叠加区域库回退链匹配键)
  *  [FIX popup-algo-fallback 2026-09-17] metadata 空 (WS 精简帧 + 富化失败)
  *  时回退 alarm.type — 事件类型即算法名尾段 (tripwire/loitering/climbing),

@@ -926,7 +926,7 @@
       align-center
     >
       <SnapshotAnnotated :src="previewImageUrl" :metadata="previewMeta ?? undefined"
-        :channel-id="previewChannelId" />
+        :channel-id="previewChannelId" :alarm-key="previewAlarmKey" />
       <!-- [ROI-GAP 2026-09-06] 多帧取证 (预览弹窗同步展示, 字段缺失自动隐藏) -->
       <EvidenceFrames :metadata="(previewMeta ?? undefined) as Record<string, unknown> | undefined" />
     </el-dialog>
@@ -1031,6 +1031,7 @@ import AlarmCard from '@/components/alarm/AlarmCard.vue'
 // [UX 2026-08-31] 1b: 列表行点击 → 全局告警详情弹窗 (与首页同套 AlarmPopup)
 import { showAlarmPopup } from '@/composables/useAlarmPopup'
 import SnapshotAnnotated from '@/views/perimeter/SnapshotAnnotated.vue'
+import { alarmShapeKey } from '@/composables/useAlarmShapes' // [FIX p1-shape-cache-key 2026-10-02] 12-2: 形状缓存归属身份口径 (与弹窗/检索页同源)
 import EvidenceFrames from '@/components/EvidenceFrames.vue'
 import { useRoute, useRouter } from 'vue-router'
 // ── [PERF 2026-09-14 R8] flv.js 改动态加载 (原静态 import 使 391KB gzip 的 vendor-players
@@ -1211,8 +1212,12 @@ const previewMeta = ref<Record<string, unknown> | null>(null)
 // 为父设备码 (NVR, 同 PREV-CHFIX) — 快照 URL 内嵌真实流名 (gb_<裸码>) 优先反解,
 // 无线索兜底 channelId。原未传 → useAlarmShapes 区域库链退化全库拉取 (串扰根因)。
 const previewChannelId = ref('')
+// [FIX p1-shape-cache-key 2026-10-02] 12-2: 形状缓存归属维 (命中规则 id 优先,
+//   缺退告警 id) —— 同通道同算法两条规则的告警交替预览不再复用对方几何。
+const previewAlarmKey = ref('')
 function openSnapshotPreview(row: any) {
   previewImageUrl.value = getSnapshotUrl(row)
+  previewAlarmKey.value = alarmShapeKey(row)
   const mStream = previewImageUrl.value.match(/\/(?:snapshots|record)\/rtp\/([^/]+)\//)?.[1]
   previewChannelId.value = mStream?.replace(/^gb_/, '')
     || String(row?.channelId || row?.channel_id || '')
