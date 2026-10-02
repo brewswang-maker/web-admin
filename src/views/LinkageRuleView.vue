@@ -1820,6 +1820,16 @@ import { isFullscreenPoints } from '@/composables/useAlarmShapes'  // [FEAT guar
 //   box-sdk/include/core/RoiCoordinateSchema.h 镜像, 由 scripts/check_roi_schema_sync.py 对账)。
 //   本页 buildNormPoints 不再复刻 1920/1080 字面量, 改按监控点真实帧尺寸归一。
 import { FALLBACK_WIDTH, FALLBACK_HEIGHT, normalizePoint } from '@/composables/roiSchema'
+// [FIX p1-roi-roundtrip 2026-10-02] 缺陷 14-2: 保存侧 (像素→归一) 与回显侧 (归一→画板像素)
+//   收敛到 roiPointsSerde 纯函数 —— 原两处各自量化 (写入 4 位 + 回显 Math.round 取整到
+//   像素), 使「打开规则直接保存」也会让顶点逐次向整像素靠拢 (亚像素信息丢失)。
+import { buildNormPoints as serdeBuildNormPoints, denormalizePoints } from '@/composables/roiPointsSerde'
+// [FIX p1-axis-region-id-domain 2026-10-02] 缺陷 15-1: 时序条件 region_id 域校验 + 序列化上提纯函数
+import {
+  serializeAxisSequencePure,
+  serializeAxisConditionalPure,
+  type AxisSerializeResult,
+} from '@/composables/axisRegionIds'
 
 // ── 常量 ──
 
@@ -2044,10 +2054,16 @@ const axisPriorRegion = ref('')
 const axisLookbackS = ref(300)
 const axisExclusionPause = ref(false)
 // 区域候选 (当前画板 ROI 形状 pid/名称): 供步骤/目标/前置区域选择 + allow-create
-//   自由输入 (事件 region_id 须与事件携带值同域, 用户有权威来源)
+//   自由输入 (事件 region_id 须与事件携带值同域, 用户有权威来源)。
+// [FIX p1-axis-region-id-domain 2026-10-02] 15-1: allow-create 保留 (手输区域库数字 ID 是
+//   当前唯一可能与引擎对上的形态, 去掉就断这条链), 但下拉展示的是名称而序列化不校验
+//   → 名称被写进 ID 字段后引擎严格直比永不命中 (规则静默不触发)。现由下方两个
+//   serialize* 委托纯函数做形态白名单校验 (画板候选 pid ∪ 纯数字 ID), 非法值在
+//   handleSave 处 ElMessage.error 并拒绝保存。
 const axisRegionOptions = computed(() => (form.conditions.region.config.roiPolygon || [])
   .filter(r => !!r.roi_id)
   .map(r => ({ value: String(r.roi_id), label: r.roi_name || String(r.roi_id) })))
+const axisRegionCandidateIds = computed(() => axisRegionOptions.value.map(o => o.value))
 function addAxisStep() { axisSteps.value = [...axisSteps.value, { region_id: '', gap_s: 60 }] }
 function removeAxisStep(idx: number) {
   const arr = axisSteps.value.slice()
@@ -2056,25 +2072,19 @@ function removeAxisStep(idx: number) {
 }
 // 顺序穿越 → [{region_id, max_gap_ms}]: 间隔钳位 [1s,24h] (与引擎 matchAxisTemporal
 //   同口径); 模式非 sequence = 空串 (切模式即清链); 全空步骤 = 空串 (回普通几何)。
-function serializeAxisSequence(): string {
-  if (axisMode.value !== 'sequence') return ''
-  const arr = axisSteps.value
-    .map(s => ({
-      region_id: String(s.region_id || '').trim(),
-      gap_s: Math.min(86400, Math.max(1, Math.round(Number(s.gap_s) || 60))),
-    }))
-    .filter(s => s.region_id)
-    .map(s => ({ region_id: s.region_id, max_gap_ms: s.gap_s * 1000 }))
-  return arr.length > 0 ? JSON.stringify(arr) : ''
+// [FIX p1-axis-region-id-domain 2026-10-02] 15-1: 实现体上提 axisRegionIds.ts (可脱离组件单测);
+//   返回形态由 string 改为 {json, bad} —— bad 非空时调用方必须拒绝保存 (旧实现会
+//   静默丢掉非法那一步, 规则带着残缺链落库)。
+function serializeAxisSequence(): AxisSerializeResult {
+  return serializeAxisSequencePure(axisMode.value, axisSteps.value, axisRegionCandidateIds.value)
 }
 // 时序条件 → {target_region_id, prior_region_id, lookback_ms}: 回看钳位
-//   [1s,24h] 默认 5min; 目标区域为空 = 不生效 (返回空串)。
-function serializeAxisConditional(): string {
-  if (axisMode.value !== 'conditional') return ''
-  const t = axisTargetRegion.value.trim()
-  if (!t) return ''
-  const lookS = Math.min(86400, Math.max(1, Math.round(Number(axisLookbackS.value) || 300)))
-  return JSON.stringify({ target_region_id: t, prior_region_id: axisPriorRegion.value.trim(), lookback_ms: lookS * 1000 })
+//   [1s,24h] 默认 5min; 目标区域为空 = 不生效 (返回空串)。同 15-1 上提纯函数。
+function serializeAxisConditional(): AxisSerializeResult {
+  return serializeAxisConditionalPure(
+    axisMode.value, axisTargetRegion.value, axisPriorRegion.value, axisLookbackS.value,
+    axisRegionCandidateIds.value,
+  )
 }
 function resetAxisState() {
   axisMode.value = ''
@@ -4422,7 +4432,7 @@ function resetEditorState(rule: LinkageRule | null) {
           //   若仍按 1920×1080 反乘, 4:3 通道 (1280×960) 回显框整体偏大
           //   1.5 倍 → 「打开就错位, 保存即写错」。未知分辨率时取 SSOT
           //   FALLBACK_* (与保存侧 normalizePoint 回退一致)。
-          polygon: s.points.map((v, k) => Math.round(k % 2 === 0 ? v * roiNormWidth.value : v * roiNormHeight.value)),
+          polygon: denormalizePoints(s.points, roiNormWidth.value, roiNormHeight.value),
           is_active: s.active !== false,
           direction: (s.direction || undefined) as RoiData['direction'],
           // [ROI-ID-BIND 2026-09-29] 恢复算法库持久绑定 (0 = 存量形状待认领)
@@ -4463,7 +4473,7 @@ function resetEditorState(rule: LinkageRule | null) {
                   const known = f.w > 0 && f.h > 0
                   const ew = known ? f.w : roiNormWidth.value
                   const eh = known ? f.h : roiNormHeight.value
-                  return s.points.map((v, k2) => Math.round(k2 % 2 === 0 ? v * ew : v * eh))
+                  return denormalizePoints(s.points, ew, eh)
                 })(),
                 is_active: s.active !== false,
                 direction: (s.direction || undefined) as RoiData['direction'],
@@ -5263,14 +5273,11 @@ async function handleSave(): Promise<boolean> {
     //   (0.667, 0.889) / (0.333, 0.333), 引擎侧区域判定整体偏左上。
     //   现改走 roiSchema.ts SSOT normalizePoint, 基准 = 该形状所属通道的
     //   快照真实帧尺寸 (frameW/frameH ≤0 时由 SSOT 内部回退 FALLBACK_*)。
-    const buildNormPoints = (poly: number[], frameW = 0, frameH = 0): number[] => {
-      const out: number[] = []
-      for (let i = 0; i + 1 < poly.length; i += 2) {
-        const [nx, ny] = normalizePoint(poly[i], poly[i + 1], frameW, frameH)
-        out.push(Math.round(nx * 10000) / 10000, Math.round(ny * 10000) / 10000)
-      }
-      return out
-    }
+    // [FIX p1-roi-roundtrip 2026-10-02] 缺陷 14-2: 实现体上提至 roiPointsSerde.buildNormPoints
+    //   (精度 4 位 → 6 位, 且与回显侧 denormalizePoints 成互逆对, 20 次往返幂等);
+    //   本页保留同名别名, 三处调用点 (逐通道 / 通用 / roi_polygon 兼容字段) 口径不变。
+    const buildNormPoints = (poly: number[], frameW = 0, frameH = 0): number[] =>
+      serdeBuildNormPoints(poly, frameW, frameH)
     // [FIX roi-norm-base 2026-10-01] 通用形态 (非逐通道) 的基准: 优先当前
     //   画板页签通道 —— 画板 normalizeWidth/Height (roiNormWidth/Height) 也用
     //   它, 两者同源才能保证「回显后不编辑直接保存」像素坐标原样往返; 其次取
@@ -5384,8 +5391,21 @@ async function handleSave(): Promise<boolean> {
       || (rc.enabled && rc.config.roiPolygon?.some(r => r.is_active)) || roiStrictMode.value)
     // [AXIS-TEMPORAL 2026-09-20] 事件时序序列化 (P2-3): 模式驱动, 两字段均非空时
     //   引擎 sequence 优先 (与后端 LinkageEngine.h [AXIS 2026-09-13] 一致)
-    const axisSeqJson = serializeAxisSequence()
-    const axisCondJson = serializeAxisConditional()
+    // [FIX p1-axis-region-id-domain 2026-10-02] 缺陷 15-1 红线拦截: 穿越链/目标/前置
+    //   区域的 region_id 只能是指向画板 ROI 的 pid 或区域库数字 ID —— 下拉展示的是
+    //   名称, 用户把名称复制回来手输即可落库, 而引擎按 event.region_id 严格字符串直比
+    //   (LinkageEngine.cpp:1656/1731/1900, [R3-2 2026-09-10] 不做多形态回退) → 规则
+    //   保存成功、开关可开、永不触发且零日志。现: 非 ID 形态一律 **拒绝保存** 并指名报错
+    //   (不再静默丢弃那一步让规则带着残缺链落库)。
+    const axisSeqRes = serializeAxisSequence()
+    const axisCondRes = serializeAxisConditional()
+    const axisBadIds = [...new Set([...axisSeqRes.bad, ...axisCondRes.bad])]
+    if (axisBadIds.length > 0) {
+      ElMessage.error(`区域 ID 不能填名称：「${axisBadIds.join('、')}」不在当前画板 ROI 列表且不是合法 ID 形态（应选画板区域或填区域库数字 ID；填名称规则永不触发）`)
+      return false
+    }
+    const axisSeqJson = axisSeqRes.json
+    const axisCondJson = axisCondRes.json
     const spatial_cond = (rc.enabled || lc.enabled || axisMode.value !== '') ? {
       region_id: cleanLocation(rc.config.roi || ''),
       // [UI-CONVERGE 2026-09-12 P2] location_id 唯一管辖 = 位置条件卡 (point):
