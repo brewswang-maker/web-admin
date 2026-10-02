@@ -73,32 +73,46 @@ function stripChSuffix(chId: string): string {
   return String(chId || '').replace(/_ch\d+$/, '')
 }
 
-/** 像素/归一化双形态顶点 → 归一化 [0,1] (写入侧画布基准 1920×1080)
+/** [FIX p1-roi-frame-basis 2026-10-02] 13-1: 证据帧尺寸 = 像素尺度 ROI 的归一除数。
+ *  w/h ≤0 视为未知, 由 roiSchema SSOT 内部回退写入侧基准 1920×1080。 */
+export interface ShapeFrame { w: number; h: number }
+const UNKNOWN_FRAME: ShapeFrame = { w: 0, h: 0 }
+
+/** 像素/归一化双形态顶点 → 归一化 [0,1]
  * [FIX shape-guard 2026-09-10] 防御性归一化 (对齐 parseDetections R3 三重保险
  *   口径, 真机实锚 110105 区域库 climbing 多边形 y=1209 像素 → /1080=1.12
  *   顶点画到快照画布外 — 弹窗"上一条/下一条"切换到攀爬类告警时区域库回退链
  *   喂出越界多边形, 用户感知为"越界的检测框"):
  *   ① 判像素阈值 1→1.5 (1~1.5 视为归一坐标轻微越界噪声, clamp 到 1;
- *     >1.5 判像素按 1920×1080 归一 — 与 parseDetections/normBBox 同口径);
- *   ② 归一后 clamp [0,1] (像素超出写入基准的存量脏数据不再越界画布,
+ *     >1.5 判像素按帧尺寸归一 — 与 parseDetections/normBBox 同口径);
+ *   ② 归一后 clamp [0,1] (像素超出基准的存量脏数据不再越界画布,
  *     位置仍偏但形状完整可见, 数据治理另行收敛);
- *   ③ 非有限值顶点丢弃 (原逻辑保留)。 */
-function normPoints(raw: Array<[number, number]>): Array<[number, number]> {
+ *   ③ 非有限值顶点丢弃 (原逻辑保留)。
+ * [FIX p1-roi-frame-basis 2026-10-02] 13-1: 除数口径与检测框对齐 —— 原无帧尺寸
+ *   入参, 像素尺度顶点恒按 1920×1080 回退归一; 而检测框 (AlarmSnapshot.normBBox /
+ *   parseDetections) 按证据图 naturalWidth/Height 归一 → 同一画面两套基准,
+ *   4:3 通道 (1280×960) 上区域库像素多边形满幅被画成 (0.667, 0.889) 偏左上。
+ *   现接 frame 透传 normalizePoint(x, y, w, h); **仅影响像素尺度顶点**, 已归一
+ *   存量值 (≤1.5) 直通不变 → 14-1 之后写入侧的主流形态零行为变化。 */
+function normPoints(
+  raw: Array<[number, number]>,
+  frame: ShapeFrame = UNKNOWN_FRAME,
+): Array<[number, number]> {
   if (!raw.length) return []
   // [P2-1] 判像素阈值/回退基准收敛至 roiSchema.ts (与后端 RoiCoordinateSchema.h 对账同步)
   return raw
     .map(([x, y]) => {
-      const [nx, ny] = normalizePoint(x, y)  // 无帧尺寸 → 写入侧基准 1920×1080 回退
+      const [nx, ny] = normalizePoint(x, y, frame.w, frame.h)  // 无可用尺寸 → 写入侧基准 1920×1080 回退
       return [clamp01(nx), clamp01(ny)] as [number, number]
     })
     .filter(([x, y]) => Number.isFinite(x) && Number.isFinite(y))
 }
 
 /** flat [x1,y1,x2,y2,...] → [[x,y],...] 再归一化 (roi_shapes_json 形态) */
-function normFlatPoints(flat: number[]): Array<[number, number]> {
+function normFlatPoints(flat: number[], frame: ShapeFrame = UNKNOWN_FRAME): Array<[number, number]> {
   const pts: Array<[number, number]> = []
   for (let i = 0; i + 1 < flat.length; i += 2) pts.push([flat[i], flat[i + 1]])
-  return normPoints(pts)
+  return normPoints(pts, frame)
 }
 
 /** 满屏四边形识别: 4 顶点各距画布角 ≤0.04 容差
@@ -177,8 +191,15 @@ export function alarmShapeKey(alarm?: unknown): string {
  *       (双池全空) 仅在无显式绑定命中时回退 (告警溯源: 显式绑定最相关)。
  *  d. [FIX p1-rule-private-shapes 2026-10-02] 10-5: 新增 ruleId 入参 —— 告警带命中规则
  *       id 且该规则在本次响应中存在时, 几何按「规则私有」取 (只看该规则), 禁用首命中
- *       越界与通配回退; 后端告警由哪条规则产生就画哪条的 ROI。 */
-async function loadFromRules(channelId: string, algoId?: string, ruleId?: string): Promise<OverlayShape[]> {
+ *       越界与通配回退; 后端告警由哪条规则产生就画哪条的 ROI。
+ *  e. [FIX p1-roi-frame-basis 2026-10-02] 13-1: 新增 frame 入参 —— 规则 roi_shapes_json
+ *       中的像素尺度顶点按证据帧真实尺寸归一, 不再一律落 1920×1080 回退。 */
+async function loadFromRules(
+  channelId: string,
+  algoId?: string,
+  ruleId?: string,
+  frame: ShapeFrame = UNKNOWN_FRAME,
+): Promise<OverlayShape[]> {
   const res = await linkageApi.getAllRules()
   // http 封装 TS 类型层不反映运行时双层壳 (res.data={code,data:{...}}),
   // 对齐 AlgoConfigView 惯例 any 双形态解包
@@ -282,7 +303,7 @@ async function loadFromRules(channelId: string, algoId?: string, ruleId?: string
           type: (s.shape || 'detection_zone') as OverlayShapeType,
           name: s.name || '',
           direction: s.direction || '',
-          points: normFlatPoints(s.points as number[]),
+          points: normFlatPoints(s.points as number[], frame),
           source: 'rule' as const,
         }))
         .filter((s) => s.points.length >= (s.type === 'point' ? 1 : 2))
@@ -300,7 +321,11 @@ async function loadFromRules(channelId: string, algoId?: string, ruleId?: string
 }
 
 /** ② 区域库回退: regions/counting-zones 按 algo 匹配; tripwires 按通道字符串匹配 */
-async function loadFromRegionStore(channelId: string, algoId: string): Promise<OverlayShape[]> {
+async function loadFromRegionStore(
+  channelId: string,
+  algoId: string,
+  frame: ShapeFrame = UNKNOWN_FRAME,
+): Promise<OverlayShape[]> {
   const chNorm = stripChSuffix(channelId)
   // [FIX 2026-09-16 P2 通道×算法双守卫] 通道或算法缺一即不画 (宁缺勿串):
   //   原空 chNorm 时 regions/counting-zones 查询退化为 {channel_id:0} 全库拉取,
@@ -333,7 +358,7 @@ async function loadFromRegionStore(channelId: string, algoId: string): Promise<O
   for (const r of regions) {
     if (r?.enabled === false) continue
     if (!algoMatch(r.algo_id, algoId)) continue
-    const pts = normPoints((r.polygon || []) as Array<[number, number]>)
+    const pts = normPoints((r.polygon || []) as Array<[number, number]>, frame)
     if (pts.length >= 3) out.push({ type: r.region_type || 'detection_zone', name: r.name || '', direction: '', points: pts, source: 'region' })
   }
   // 计数区 (同 int32 维度, algo 匹配; 无 algo 时跳过防误画)
@@ -342,7 +367,7 @@ async function loadFromRegionStore(channelId: string, algoId: string): Promise<O
   for (const z of zones) {
     if (z?.enabled === false) continue
     if (!algoMatch(z.algo_id, algoId)) continue
-    const pts = normPoints((z.polygon || []) as Array<[number, number]>)
+    const pts = normPoints((z.polygon || []) as Array<[number, number]>, frame)
     if (pts.length >= 3) out.push({ type: 'counting_zone', name: z.name || '', direction: '', points: pts, source: 'region' })
   }
   // 绊线 (channel_id_str 字符串主键本地过滤; GB 主/子码流镜像双条按几何去重)
@@ -356,7 +381,7 @@ async function loadFromRegionStore(channelId: string, algoId: string): Promise<O
     if (!algoMatch(t.algo_id, algoId)) continue
     const tCh = stripChSuffix(t.channel_id_str || '')
     if (tCh !== chNorm) continue
-    const pts = normPoints([t.point_a, t.point_b].filter(Boolean) as Array<[number, number]>)
+    const pts = normPoints([t.point_a, t.point_b].filter(Boolean) as Array<[number, number]>, frame)
     if (pts.length !== 2) continue
     // [FIX 2026-09-08] 去重 key 去 name 纯几何: 设备实锤主/镜像 name 存在空格
     //   差异 (不同批次保存交叉残留, 如「周界攀爬翻越_绊线」 vs 「周界攀爬翻越_ 绊线")
@@ -395,7 +420,12 @@ export function useAlarmShapes() {
     //   同通道同算法的两条不同规则/不同告警在 30s TTL 内复用同一份几何,
     //   表现为「弹窗有形状、列表无形状」/串画 (缺陷 12-2 实锚)。
     alarmKey?: string,
+    // [FIX p1-roi-frame-basis 2026-10-02] 13-1 第 5 参: 证据帧尺寸 (调用方传
+    //   <img> 的 naturalWidth/Height, 与检测框 normBBox 同源)。像素尺度 ROI
+    //   顶点按它归一; 未知 (0/0) 时落 SSOT 回退基准。
+    frame?: ShapeFrame,
   ): Promise<ShapeSource> {
+    const fr: ShapeFrame = { w: Number(frame?.w) || 0, h: Number(frame?.h) || 0 }
     fullscreenGuard.value = false
     // ⓪ 告警自包含快照 (metadata.alarm_shapes): 插件上报告警时冻结的当时生效
     //    区域几何 — 区域被删后历史告警仍可核对「当时为什么报警」。
@@ -414,7 +444,7 @@ export function useAlarmShapes() {
           name: s.name || '',
           // [FIX region-type 2026-09-06] 冻结链 direction 归一小写 (与渲染判定同口径)
           direction: String(s.direction || '').toLowerCase(),
-          points: normPoints(s.points),
+          points: normPoints(s.points, fr),
           // source 复用 'region' 渲染分支 (绘制按 type 不按 source),
           // 与区域库回退同色同形, 语义差异仅在于数据已冻结在告警里
           source: 'region' as const,
@@ -428,7 +458,10 @@ export function useAlarmShapes() {
     //   alarmKey 为空时**不走缓存** (宁可不缓存, 也不返回可能属于另一条规则的
     //   几何) —— 旧实现同 (ch,algo) 不同规则在 TTL 内互踩。
     const cacheable = akey !== ''
-    const key = `${ch}|${algo}|${akey}`
+    // [FIX p1-roi-frame-basis 2026-10-02] 13-1: 帧基准入缓存键 —— 同一 (ch,algo,key)
+    //   在「尺寸未就绪 (0x0, 回退基准)」与「尺寸就绪 (真基准)」下归一结果不同,
+    //   不入键则首次回退结果会被当真结果复用 30s (像素尺度脏数据永远偏)。
+    const key = `${ch}|${algo}|${akey}|${fr.w}x${fr.h}`
     if (cacheable) {
       const cached = shapeCache.get(key)
       if (cached && Date.now() - cached.ts < CACHE_TTL) {
@@ -444,11 +477,11 @@ export function useAlarmShapes() {
       if (ch) {
         // [FIX p1-rule-private-shapes 2026-10-02] 10-5: akey (命中规则 id 优先, 见
         //   alarmShapeKey) 作为数据选择维下传 —— 确知归属规则时禁越界取他规则几何。
-        list = await loadFromRules(ch, algo, akey)
+        list = await loadFromRules(ch, algo, akey, fr)
         if (list.length) source = 'rule'
       }
       if (!list.length && (ch || algo)) {
-        list = await loadFromRegionStore(ch, algo)
+        list = await loadFromRegionStore(ch, algo, fr)
         if (list.length) source = 'region'
       }
       const filtered = splitFullscreen(list)

@@ -147,15 +147,38 @@ const imageSize = ref<{ w: number; h: number }>({ w: 0, h: 0 })
 const { shapes, fullscreenGuard, load: loadShapes } = useAlarmShapes()
 // [FIX p1-shape-cache-key 2026-10-02] 12-2: 来源标记落存 (DOM 探针 + 排障可读)
 const shapeSource = ref<ShapeSource>('none')
-watch(
-  [() => props.channelId, () => props.algoId, () => props.alarmShapes, () => props.alarmKey],
-  ([ch, algo, snap, akey]) => {
-    // [FIX p1-shape-cache-key 2026-10-02] 12-2: alarmKey 必须进依赖数组,
-    //   否则切换同通道同算法的另一条规则告警时不触发重载 (缓存修了个空)。
-    loadShapes(ch, algo, snap, akey).then((src) => {
+// [FIX p1-roi-frame-basis 2026-10-02] 13-1: ROI 像素尺度顶点的归一除数 = 证据帧真实
+//   尺寸, 与 normBBox (上面 L177 取 imageSize) 同一基准 —— 原形状链不传尺寸,
+//   区域库/存量规则的像素多边形恒按 1920×1080 回退, 4:3 通道上与检测框错位。
+//   尺寸未就绪时先不发请求 (否则以回退基准拉取并按 `…|0x0` 缓存 30s, 尺寸到了
+//   还得再拉一轮 = 每次预览双份请求); 无图 (网格占位底) / 图加载失败 / 1.2s
+//   内 @load 与 @error 都未回调 (el-image 命中浏览器缓存的历史坑, 见上方
+//   [FIX canvas-draw-timing] 注释) 三种情况均直接按回退基准发, 不让形状无限期缺席。
+let frameWaitTimer: ReturnType<typeof setTimeout> | null = null
+function reloadShapes() {
+  loadShapes(props.channelId, props.algoId, props.alarmShapes, props.alarmKey, imageSize.value)
+    .then((src) => {
       shapeSource.value = src
       nextTick(scheduleDraw)
-    }).catch(() => {})
+    })
+    .catch(() => {})
+}
+watch(
+  [() => props.channelId, () => props.algoId, () => props.alarmShapes, () => props.alarmKey, imageSize],
+  () => {
+    // [FIX p1-shape-cache-key 2026-10-02] 12-2: alarmKey 必须进依赖数组,
+    //   否则切换同通道同算法的另一条规则告警时不触发重载 (缓存修了个空)。
+    // [FIX p1-roi-frame-basis 2026-10-02] 13-1: imageSize 同样必须进依赖数组 ——
+    //   它晚于告警身份就绪, 不入键则形状永远停在回退基准。
+    if (frameWaitTimer) { clearTimeout(frameWaitTimer); frameWaitTimer = null }
+    if (props.imageUrl && imageSize.value.w <= 0) {
+      frameWaitTimer = setTimeout(() => {
+        frameWaitTimer = null
+        if (imageSize.value.w <= 0) reloadShapes()
+      }, 1200)
+      return
+    }
+    reloadShapes()
   },
   { immediate: true },
 )
@@ -314,6 +337,9 @@ onMounted(() => {
 })
 onBeforeUnmount(() => {
   clearTimeout(drawTimer)
+  // [FIX p1-roi-frame-basis 2026-10-02] 13-1: 帧基准兑底定时器要在卸载时清,
+  //   否则快速切告警/关弹窗后仍会带旧身份发一轮请求。
+  if (frameWaitTimer) { clearTimeout(frameWaitTimer); frameWaitTimer = null }
   boxResizeObserver?.disconnect()
   boxResizeObserver = null
   boxIntersectObserver?.disconnect()
@@ -322,6 +348,10 @@ onBeforeUnmount(() => {
 
 function onImageError() {
   console.warn('[AlarmSnapshot] Image failed to load:', props.imageUrl)
+  // [FIX p1-roi-frame-basis 2026-10-02] 13-1: 图加载失败 → 尺寸永远不可得,
+  //   立即按回退基准取形状 (不得等 1.2s 兑底, 也不得因等尺寸而丢标注)。
+  if (frameWaitTimer) { clearTimeout(frameWaitTimer); frameWaitTimer = null }
+  reloadShapes()
 }
 
 /** [FEAT 2026-09-02 → 2026-09-04 升级] 下载标注图: 离屏 canvas 按快照原始分辨率

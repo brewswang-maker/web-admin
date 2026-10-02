@@ -11,7 +11,7 @@
          标注可视化不再被无快照阻断 (src 由父组件判空传入) -->
     <!-- [fix 2026-09-02] 补 preview-teleported: 在 el-drawer 内点击放大时,
          预览层不 teleported 会被抽屉 z-index/裁剪遮挡 -->
-    <el-image v-if="src" :src="effSrc" :preview-src-list="[effSrc]" fit="fill" preview-teleported class="snap-img" @load="onImgLoad" />
+    <el-image v-if="src" :src="effSrc" :preview-src-list="[effSrc]" fit="fill" preview-teleported class="snap-img" @load="onImgLoad" @error="onImgError" />
     <div v-else class="snap-placeholder">{{ t('perimeter.events.annotPlaceholder') }}</div>
     <!-- 检测框叠加: bbox 为归一化 [x1,y1,x2,y2], SVG viewBox 0-100 + none 保真映射;
          object-fit:fill 拉伸图像与 SVG 同步形变 → 坐标恒对齐 (标注精确性优先,
@@ -91,7 +91,7 @@
  * fill+preserveAspectRatio="none" 组合保证框与目标像素级对齐;
  * vector-effect: non-scaling-stroke 防非均匀缩放导致的描边粗细变形。
  */
-import { computed, ref, watch } from 'vue'
+import { computed, ref, watch, onBeforeUnmount } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
 import {
@@ -128,6 +128,12 @@ function onImgLoad() {
     imgNat.value = { w: img.naturalWidth, h: img.naturalHeight }
   }
 }
+// [FIX p1-roi-frame-basis 2026-10-02] 13-1: 图加载失败 → 尺寸永远不可得,
+//   立即按回退基准取形状 (不得因等尺寸而丢标注)。
+function onImgError() {
+  if (frameWaitTimer) { clearTimeout(frameWaitTimer); frameWaitTimer = null }
+  reloadShapes()
+}
 
 const props = defineProps<{
   /** 快照图 URL (可空: 空串时渲染网格占位底, overlay 仍画框) */
@@ -155,16 +161,41 @@ const shapeSource = ref<ShapeSource>('none')
 //   不再各自造口径。
 const effAlgoId = computed(() => props.algoId
   || resolveAlarmAlgoId({ metadata: props.metadata }))
+// [FIX p1-roi-frame-basis 2026-10-02] 13-1: 形状链同样接证据帧真实尺寸作像素尺度
+//   顶点的归一除数, 与 detBoxes/box (取 imgNat) 同基准 —— 原不传尺寸时区域库/存量
+//   规则的像素多边形恒按 1920×1080 回退, 4:3 通道上与检测框错位 (本组件是列表
+//   预览/事件面板共用体, 弹窗侧 AlarmSnapshot 同步修)。
+//   imgNat 未就绪时先不发请求 (避免以回退基准拉取并按 `…|0x0` 缓存 30s 后再拉
+//   一轮); 无图占位底 / 图加载失败 / 1.2s 内 @load 不回调 三种情况直接按回退基准发。
+let frameWaitTimer: ReturnType<typeof setTimeout> | null = null
+function reloadShapes() {
+  loadShapes(props.channelId, effAlgoId.value, (props.metadata as any)?.alarm_shapes,
+    props.alarmKey, imgNat.value)
+    .then((src) => { shapeSource.value = src }).catch(() => {})
+}
 watch(
-  [() => props.channelId, effAlgoId, () => (props.metadata as any)?.alarm_shapes, () => props.alarmKey],
-  ([ch, algo, snap, akey]) => {
+  [() => props.channelId, effAlgoId, () => (props.metadata as any)?.alarm_shapes, () => props.alarmKey, imgNat],
+  () => {
     // ⓪ alarm_shapes: 告警自包含快照 (插件上报时冻结), 优先于规则链/区域库
     // [FIX p1-shape-cache-key 2026-10-02] alarmKey 必须进依赖数组, 否则切换
     //   同通道同算法的另一条规则告警不触发重载。
-    loadShapes(ch, algo, snap, akey).then((src) => { shapeSource.value = src }).catch(() => {})
+    // [FIX p1-roi-frame-basis 2026-10-02] imgNat 同样必须进依赖数组 (它晚于告警身份就绪)。
+    if (frameWaitTimer) { clearTimeout(frameWaitTimer); frameWaitTimer = null }
+    if (props.src && imgNat.value.w <= 0) {
+      frameWaitTimer = setTimeout(() => {
+        frameWaitTimer = null
+        if (imgNat.value.w <= 0) reloadShapes()
+      }, 1200)
+      return
+    }
+    reloadShapes()
   },
   { immediate: true },
 )
+onBeforeUnmount(() => {
+  // [FIX p1-roi-frame-basis 2026-10-02] 13-1: 卸载时清掉帧基准兑底定时器
+  if (frameWaitTimer) { clearTimeout(frameWaitTimer); frameWaitTimer = null }
+})
 
 /** 多目标全量标注: metadata.detections 遍历 (触发目标 danger 红, 其余类别色);
  *  像素坐标 (任一 >1) 按图像自然尺寸归一, 未加载完先不显示 (@load 后重算) */
