@@ -172,8 +172,11 @@ import { ElMessage } from 'element-plus'
 import {
   drawPolygon, drawTripwire, drawDirectionalLine, drawRectangle, drawPoint, rectFromDiagonal,
   normalizedToCanvas, canvasToNormalized, pointsToArray,
+  computeFitRect, isPixelInFit, type FitRect,
   RoiType, RoiDirection, type RoiData, type RoiDrawOptions,
 } from '@/composables/useRoiCanvas'
+// [FIX roi-norm-base 2026-10-01] 缺陷 14-1: 默认归一基准取 roiSchema.ts SSOT
+import { FALLBACK_WIDTH, FALLBACK_HEIGHT } from '@/composables/roiSchema'
 
 const props = withDefaults(defineProps<{
   modelValue: RoiData[]
@@ -182,6 +185,10 @@ const props = withDefaults(defineProps<{
   deviceId?: string
   /** 快照获取回调 */
   snapshotFetcher?: (deviceId: string) => Promise<string>
+  // [FIX roi-norm-base 2026-10-01] 缺陷 14-1: 归一空间基准尺寸 (= 通道真实帧
+  //   宽高)。**调用方必须按监控点实际分辨率传入**, 否则画板在 1920×1080 基准里
+  //   画的满幅多边形, 在 1280×960 通道上会被归一成 (0.667, 0.889) 整体偏左上。
+  //   缺省值 = roiSchema.ts 的 FALLBACK_WIDTH/Height (未知分辨率时回退基准)。
   normalizeWidth?: number
   normalizeHeight?: number
   canvasWidth?: number
@@ -194,8 +201,8 @@ const props = withDefaults(defineProps<{
    *  未传 types 的旧调用方工具栏不变 (白名单机制)。 */
   types?: string[]
 }>(), {
-  normalizeWidth: 1920,
-  normalizeHeight: 1080,
+  normalizeWidth: FALLBACK_WIDTH,
+  normalizeHeight: FALLBACK_HEIGHT,
   canvasWidth: 640,
   canvasHeight: 360,
   disabled: false,
@@ -622,6 +629,30 @@ function emitRois() {
   emit('update:modelValue', arr)
 }
 
+/**
+ * [FIX roi-norm-base 2026-10-01] 缺陷 14-1 坐标映射单一事实源:
+ * 底图绘制矩形、顶点绘制 / 命中检测 / 归一化换算**必须用同一个 fit**。
+ *
+ * 背景: 14-1 把底图改成 contain letterbox 后, 4:3 底图在 16:9 画布里只占中段
+ * (640×360 画布上 x=80..560)。若归一化仍按整幅画布算, 会出现「看得对、存错」:
+ * 用户在图像内 x=100 处落点, 画布 px=117.5, 旧换算得 117.5/640×1280=235,
+ * 而真值是 100/1280=100 → 偏差 2.35 倍, 且正确的渲染会**掩盖**这个数据错误。
+ *
+ * 无背景图时 fit 退化为全画布 (画布即全幅缩略), 网格背景与顶点一一对应,
+ * 语义自洽; 此时行为与 14-1 修复前完全一致。
+ */
+function currentFit(): FitRect {
+  const canvas = canvasRef.value
+  const cw = canvas?.width ?? props.canvasWidth
+  const ch = canvas?.height ?? props.canvasHeight
+  const img = bgImage.value
+  if (!img) return { x: 0, y: 0, w: cw, h: ch, scale: 1 }
+  return computeFitRect(cw, ch, img.naturalWidth, img.naturalHeight)
+}
+
+/** 鼠标 → 归一化落点 (含吸附)。
+ *  [FIX roi-norm-base 2026-10-01] 缺陷 14-1: 走 currentFit() 中间层; 落在
+ *  letterbox 黑边区 (图像外) 时返回 null 拒绝落点, 避免存出负/越界坐标。 */
 function getCanvasPoint(e: MouseEvent) {
   const canvas = canvasRef.value
   if (!canvas) return null
@@ -630,10 +661,13 @@ function getCanvasPoint(e: MouseEvent) {
   const scaleY = canvas.height / rect.height
   const px = (e.clientX - rect.left) * scaleX
   const py = (e.clientY - rect.top) * scaleY
+  const fit = currentFit()
+  if (!isPixelInFit({ x: px, y: py }, fit)) return null
   return snapPoint(canvasToNormalized(
     { x: px, y: py },
     canvas.width, canvas.height,
     props.normalizeWidth, props.normalizeHeight,
+    fit,
   ))
 }
 
@@ -654,6 +688,8 @@ function hitVertex(px: number, py: number): { roiIdx: number; vIdx: number } | n
   const canvas = canvasRef.value
   if (!canvas) return null
   const R = 8
+  // [FIX roi-norm-base 2026-10-01] 缺陷 14-1: 顶点绘制位置与底图同源 (走 fit)
+  const fit = currentFit()
   for (let i = 0; i < rois.value.length; i++) {
     // [FIX 2026-09-08] 隐藏类型不参与命中 (同渲染过滤, 防盲选中/盲拖拽)
     if (rois.value[i].roi_type !== currentType.value) continue
@@ -661,7 +697,7 @@ function hitVertex(px: number, py: number): { roiIdx: number; vIdx: number } | n
     for (let v = 0; v * 2 + 1 < poly.length; v++) {
       const c = normalizedToCanvas(
         { x: poly[v * 2], y: poly[v * 2 + 1] },
-        canvas.width, canvas.height, props.normalizeWidth, props.normalizeHeight,
+        canvas.width, canvas.height, props.normalizeWidth, props.normalizeHeight, fit,
       )
       if (Math.hypot(c.x - px, c.y - py) <= R) return { roiIdx: i, vIdx: v }
     }
@@ -740,9 +776,11 @@ function onMouseMove(e: MouseEvent) {
   if (!canvas || !px) return
 
   // [FIX 2026-09-02] 顶点拖动: 更新顶点坐标 (矩形拖角保持矩形)
+  // [FIX roi-norm-base 2026-10-01] 缺陷 14-1: 走 fit 中间层; 拖出图像范围时
+  //   canvasToNormalized 钳制到边界 (吸附在图像边缘), 不存越界坐标。
   if (vertexDrag.value && dragging.value) {
     const p = snapPoint(canvasToNormalized(
-      px, canvas.width, canvas.height, props.normalizeWidth, props.normalizeHeight,
+      px, canvas.width, canvas.height, props.normalizeWidth, props.normalizeHeight, currentFit(),
     ))
     const roi = rois.value[vertexDrag.value.roiIdx]
     if (roi) {
@@ -857,6 +895,19 @@ function onRightClick(e: MouseEvent) {
   renderCanvas()
 }
 
+/**
+ * [FIX roi-norm-base 2026-10-01] 缺陷 14-1 背景等比适配 (letterbox):
+ * 旧实现 `drawImage(img, 0, 0, canvas.width, canvas.height)` 把任意宽高比的
+ * 快照非等比拉伸到画布 —— 4:3 通道 (1280×960) 的底图被压成 16:9, 画面几何
+ * 失真, 用户"照着画"的框与真实场景不对位。现按 contain 等比缩放居中, 溢出
+ * 方向留黑边 (letterbox)。
+ *
+ * **配套改动 (与 letterbox 同批)**: 坐标换算必须经同一个 fit 中间层, 否则
+ * 底图看着对、落库却错 (详见 currentFit() 注释的 2.35 倍偏差反例)。
+ * 底图绘制矩形 = currentFit(), 顶点绘制 / 命中检测 / 归一化同源, 二者永不
+ * 脱节; 背景图加载 / 卸载时 ROI 也不会跳位 (fit 随底图有无平滑切换)。
+ * 网格背景 (无底图) 铺满画布, 此时 fit 退化为全画布, 两者天然对齐。
+ */
 function renderCanvas(previewPoint?: { x: number; y: number }) {
   const canvas = canvasRef.value
   if (!canvas) return
@@ -865,11 +916,14 @@ function renderCanvas(previewPoint?: { x: number; y: number }) {
 
   ctx.clearRect(0, 0, canvas.width, canvas.height)
 
-  // 绘制背景图
+  // 绘制背景图 (等比 contain letterbox, 缺陷 14-1)
+  const fit = currentFit()
   if (bgImage.value) {
-    ctx.drawImage(bgImage.value, 0, 0, canvas.width, canvas.height)
-    ctx.fillStyle = 'rgba(0,0,0,0.25)'
+    ctx.fillStyle = '#000'
     ctx.fillRect(0, 0, canvas.width, canvas.height)
+    ctx.drawImage(bgImage.value, fit.x, fit.y, fit.w, fit.h)
+    ctx.fillStyle = 'rgba(0,0,0,0.25)'
+    ctx.fillRect(fit.x, fit.y, fit.w, fit.h)
   } else {
     // 无背景图时显示网格
     ctx.fillStyle = '#1a1a1a'
@@ -900,9 +954,10 @@ function renderCanvas(previewPoint?: { x: number; y: number }) {
     // [FIX 2026-09-02] 矩形拖拽橡皮筋 (anchor → 鼠标当前点)
     // [FIX 2026-09-03 问题3] 颜色随当前类型: 计数区用自身紫色 (#9C27B0),
     //   不再固定矩形青绿色 → 拖拽中即可辨认所画的是计数区
-    const a = normalizedToCanvas(rectAnchor.value, canvas.width, canvas.height, props.normalizeWidth, props.normalizeHeight)
+    // [FIX roi-norm-base 2026-10-01] 缺陷 14-1: 橡皮筋与底图同源 (走 fit)
+    const a = normalizedToCanvas(rectAnchor.value, canvas.width, canvas.height, props.normalizeWidth, props.normalizeHeight, fit)
     if (previewPoint) {
-      const b = normalizedToCanvas(previewPoint, canvas.width, canvas.height, props.normalizeWidth, props.normalizeHeight)
+      const b = normalizedToCanvas(previewPoint, canvas.width, canvas.height, props.normalizeWidth, props.normalizeHeight, fit)
       ctx.save()
       ctx.setLineDash([5, 4])
       ctx.strokeStyle = typeColor(currentType.value)
@@ -930,10 +985,10 @@ function renderCanvas(previewPoint?: { x: number; y: number }) {
     // 橡皮筋预览线
     if (previewPoint && points.value.length > 0) {
       const canvasPts = points.value.map(p =>
-        normalizedToCanvas(p, canvas.width, canvas.height, props.normalizeWidth, props.normalizeHeight)
+        normalizedToCanvas(p, canvas.width, canvas.height, props.normalizeWidth, props.normalizeHeight, fit)
       )
       const previewCanvas = normalizedToCanvas(
-        previewPoint, canvas.width, canvas.height, props.normalizeWidth, props.normalizeHeight,
+        previewPoint, canvas.width, canvas.height, props.normalizeWidth, props.normalizeHeight, fit,
       )
       ctx.beginPath()
       ctx.moveTo(canvasPts[canvasPts.length - 1].x, canvasPts[canvasPts.length - 1].y)
@@ -955,10 +1010,12 @@ onMounted(() => {
 function drawVertexHandles(ctx: CanvasRenderingContext2D, roi: RoiData) {
   const canvas = canvasRef.value
   if (!canvas) return
+  // [FIX roi-norm-base 2026-10-01] 缺陷 14-1: 控制点与底图同源 (走 fit)
+  const fit = currentFit()
   for (let v = 0; v * 2 + 1 < roi.polygon.length; v++) {
     const c = normalizedToCanvas(
       { x: roi.polygon[v * 2], y: roi.polygon[v * 2 + 1] },
-      canvas.width, canvas.height, props.normalizeWidth, props.normalizeHeight,
+      canvas.width, canvas.height, props.normalizeWidth, props.normalizeHeight, fit,
     )
     ctx.beginPath()
     ctx.arc(c.x, c.y, 5, 0, Math.PI * 2)
@@ -976,11 +1033,18 @@ function renderRoi(ctx: CanvasRenderingContext2D, roi: RoiData, alpha: number) {
 
   ctx.globalAlpha = alpha
 
-  // 归一化坐标转canvas像素
+  // 归一化坐标转canvas像素 ([FIX roi-norm-base 2026-10-01] 缺陷 14-1: 经 fit
+  // 中间层, 与底图 letterbox 矩形同源 —— 否则 4:3 底图下 ROI 顶点会画到
+  // 黑边区, 与用户落点错位)
+  const fit = currentFit()
   const pts: number[] = []
   for (let i = 0; i < roi.polygon.length - 1; i += 2) {
-    pts.push((roi.polygon[i] / props.normalizeWidth) * canvas.width)
-    pts.push((roi.polygon[i + 1] / props.normalizeHeight) * canvas.height)
+    const c = normalizedToCanvas(
+      { x: roi.polygon[i], y: roi.polygon[i + 1] },
+      canvas.width, canvas.height, props.normalizeWidth, props.normalizeHeight, fit,
+    )
+    pts.push(c.x)
+    pts.push(c.y)
   }
 
   const color = typeColor(roi.roi_type)

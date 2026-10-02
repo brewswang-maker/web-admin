@@ -24,6 +24,8 @@ import {
   drawPolygon, drawTripwire,
   RoiDirection, type RoiDrawOptions,
 } from '@/composables/useRoiCanvas'
+// [FIX roi-norm-base 2026-10-01] 缺陷 14-1: 基准尺寸/阈值取 roiSchema.ts SSOT
+import { FALLBACK_WIDTH, FALLBACK_HEIGHT, isPixelScale } from '@/composables/roiSchema'
 
 const props = withDefaults(defineProps<{
   /** 背景图 URL (相机快照; 缺省深色底) */
@@ -66,9 +68,11 @@ watch(() => props.shapes, draw, { deep: true })
 
 onMounted(draw)
 
-/** 坐标域探测归一: >1.5 视为 1920×1080 像素域 → ÷base; 否则本身即 [0,1] */
+/** 坐标域探测归一: 超启发式阈值视为像素域 → ÷base; 否则本身即 [0,1]
+ *  [FIX roi-norm-base 2026-10-01] 缺陷 14-1: 阈值改走 roiSchema.ts SSOT
+ *  (isPixelScale), 基准由调用方传 FALLBACK_WIDTH/Height。 */
 function normCoord(v: number, base: number): number {
-  return v > 1.5 ? v / base : v
+  return isPixelScale(v) ? v / base : v
 }
 
 function toCanvas(points: number[]): number[] {
@@ -77,8 +81,8 @@ function toCanvas(points: number[]): number[] {
   const out: number[] = []
   for (let i = 0; i + 1 < points.length; i += 2) {
     out.push(
-      normCoord(points[i], 1920) * canvas.width,
-      normCoord(points[i + 1], 1080) * canvas.height,
+      normCoord(points[i], FALLBACK_WIDTH) * canvas.width,
+      normCoord(points[i + 1], FALLBACK_HEIGHT) * canvas.height,
     )
   }
   return out

@@ -85,9 +85,11 @@ watch(() => props.saved, draw)
 //   归一化, 像素值 ×画布宽溢出 → 算法配置页看不到事件规则画的绊线
 //   (事件规则链有 normPoints 归一故可见)。同后端判定侧 tw-coord-domain
 //   模板: 任一坐标 >1.5 视为像素 → ÷1920/1080。读侧兼容双形态。
+// [FIX roi-norm-base 2026-10-01] 缺陷 14-1: 阈值/回退基准改走 roiSchema.ts
+//   SSOT (normalizePoint), 本文件不再复刻 1.5 / 1920 / 1080 字面量。
+import { normalizePoint } from '@/composables/roiSchema'
 function normPt(p: [number, number]): [number, number] {
-  if (p[0] > 1.5 || p[1] > 1.5) return [p[0] / 1920, p[1] / 1080]
-  return [p[0], p[1]]
+  return normalizePoint(p[0], p[1])
 }
 // 载入编辑态: 沿用旧两点与方向, 用户可点击重画或微调后确认 (替换保存)
 //   [FIX tw-coord-domain] 像素形态旧线归一后载入 — 确认替换保存后自然

@@ -1,33 +1,103 @@
 /**
  * ROI 多边形绘制工具函数
  * 用于 RoiPolygonEditor 组件和其他需要多边形绘制的场景
+ *
+ * [FIX roi-norm-base 2026-10-01] 缺陷 14-1: 归一空间基准尺寸不再写死
+ * 1920/1080 字面量, 缺省取 roiSchema.ts SSOT (与后端
+ * box-sdk/include/core/RoiCoordinateSchema.h 镜像)。
  */
+import { FALLBACK_WIDTH, FALLBACK_HEIGHT } from './roiSchema'
 
-/** 归一化坐标 → Canvas 像素坐标 */
+/**
+ * [FIX roi-norm-base 2026-10-01] 缺陷 14-1 底图等比适配矩形 (contain letterbox)。
+ *
+ * 为什么必须引入这个中间层: 底图改成 contain 等比绘制后, 图像在画布里**只占
+ * 一块矩形** (4:3 底图进 16:9 画布 → 左右留黑边)。若归一化仍按「整幅画布」
+ * 换算, 渲染与数据流脱节, 表现为**看得对、存错**:
+ *   画布 640×360, 4:3 底图 1280×960, 通道基准 1280×960
+ *   fit = { x: 80, y: 0, w: 480, h: 360, scale: 0.375 }
+ *   用户在图像内 x=100 (真值归一 100/1280 = 0.078) 处落点
+ *     → 画布 px = 80 + 100×0.375 = 117.5
+ *     → 旧换算 117.5/640×1280 = 235 (归一 0.184) → 偏差 2.35 倍
+ * 且**正确的等比渲染会掩盖这个数据错误** (用户照着画面画, 却存到别处),
+ * 比修复前的拉伸失真更隐蔽。故底图绘制矩形与顶点绘制 / 命中检测 / 归一化
+ * 换算必须共用同一个 fit 矩形, 本文件是该映射的唯一事实源。
+ */
+export interface FitRect {
+  /** 适配矩形左上角 (画布局部像素坐标) */
+  x: number
+  y: number
+  /** 渲染宽高 (= 底图原始宽高 × scale) */
+  w: number
+  h: number
+  /** 等比缩放系数 (画布像素 / 底图像素) */
+  scale: number
+}
+
+/**
+ * [FIX roi-norm-base 2026-10-01] 缺陷 14-1: contain letterbox 适配矩形。
+ * scale 取宽高两个约束的较小者, 保证整幅底图可见; 溢出方向居中留黑边。
+ * 底图尺寸未知 (无背景图 / 图片尚未加载) 时退化为全画布 —— 此时「画布即
+ * 全幅缩略」语义自洽, 网格铺满画布仍与顶点坐标一一对应。
+ */
+export function computeFitRect(
+  canvasW: number, canvasH: number, imgW: number, imgH: number,
+): FitRect {
+  if (!(imgW > 0) || !(imgH > 0) || !(canvasW > 0) || !(canvasH > 0)) {
+    return { x: 0, y: 0, w: canvasW, h: canvasH, scale: 1 }
+  }
+  const scale = Math.min(canvasW / imgW, canvasH / imgH)
+  const w = imgW * scale
+  const h = imgH * scale
+  return { x: (canvasW - w) / 2, y: (canvasH - h) / 2, w, h, scale }
+}
+
+/**
+ * [FIX roi-norm-base 2026-10-01] 缺陷 14-1: 画布像素是否落在适配矩形内。
+ * 黑边区不属于底图范围, 绘制落点应拒绝 (返回 null) —— 否则会存出负坐标 /
+ * 越界坐标, 交由后端 pointInPolygon 算出「框跑到画面外」的告警。
+ */
+export function isPixelInFit(pixel: { x: number; y: number }, fit: FitRect): boolean {
+  return pixel.x >= fit.x && pixel.x <= fit.x + fit.w
+    && pixel.y >= fit.y && pixel.y <= fit.y + fit.h
+}
+
+/** 归一化坐标 → Canvas 像素坐标
+ *  [FIX roi-norm-base 2026-10-01] 缺陷 14-1: 新增可选 fit 参数走 letterbox
+ *  中间层; 不传时铺满画布, 等价于修复前的旧行为 (向后兼容)。 */
 export function normalizedToCanvas(
   point: { x: number; y: number },
   canvasW: number,
   canvasH: number,
-  normW = 1920,
-  normH = 1080,
+  normW = FALLBACK_WIDTH,
+  normH = FALLBACK_HEIGHT,
+  fit?: FitRect,
 ): { x: number; y: number } {
+  const f = fit ?? { x: 0, y: 0, w: canvasW, h: canvasH, scale: 1 }
   return {
-    x: (point.x / normW) * canvasW,
-    y: (point.y / normH) * canvasH,
+    x: f.x + (point.x / normW) * f.w,
+    y: f.y + (point.y / normH) * f.h,
   }
 }
 
-/** Canvas 像素坐标 → 归一化坐标 */
+/** Canvas 像素坐标 → 归一化坐标
+ *  [FIX roi-norm-base 2026-10-01] 缺陷 14-1: 同上走 fit 中间层; 越界钳制到
+ *  [0, 基准] —— 顶点被拖出图像范围时吸附在图像边界, 而非存出越界坐标。
+ *  不传 fit 时钳制对画布内坐标是恒等变换, 与修复前行为一致。 */
 export function canvasToNormalized(
   pixel: { x: number; y: number },
   canvasW: number,
   canvasH: number,
-  normW = 1920,
-  normH = 1080,
+  normW = FALLBACK_WIDTH,
+  normH = FALLBACK_HEIGHT,
+  fit?: FitRect,
 ): { x: number; y: number } {
+  const f = fit ?? { x: 0, y: 0, w: canvasW, h: canvasH, scale: 1 }
+  const ratioX = Math.min(Math.max((pixel.x - f.x) / f.w, 0), 1)
+  const ratioY = Math.min(Math.max((pixel.y - f.y) / f.h, 0), 1)
   return {
-    x: Math.round((pixel.x / canvasW) * normW),
-    y: Math.round((pixel.y / canvasH) * normH),
+    x: Math.round(ratioX * normW),
+    y: Math.round(ratioY * normH),
   }
 }
 
@@ -403,8 +473,8 @@ export function drawRoi(
   roi: RoiData,
   canvasW: number,
   canvasH: number,
-  normW = 1920,
-  normH = 1080,
+  normW = FALLBACK_WIDTH,
+  normH = FALLBACK_HEIGHT,
 ): void {
   // 归一化坐标转canvas像素
   const canvasPoints = roi.polygon.flatMap((v, i) => {
