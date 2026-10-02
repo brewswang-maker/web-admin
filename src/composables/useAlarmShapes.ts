@@ -150,7 +150,9 @@ export type ShapeSource = 'snapshot' | 'rule' | 'region' | 'none' | 'error'
  *  优先级: 联动规则 id (几何的真正 owner) > 告警 id。后端告警行以
  *  matched_rule_ids 快照下发命中规则 (RestApiHandlers L8104-8114, 主命中在
  *  最前); WS 精简帧可能只带 verdict.rule_id / metadata.rule_id; 全缺时退
- *  告警 id (同一告警自身稳定, 不会跨告警复用几何)。 */
+ *  告警 id (同一告警自身稳定, 不会跨告警复用几何)。
+ *  [FIX p1-rule-private-shapes 2026-10-02] 10-5 起该 key 兼任 ① 链的**数据选择维**:
+ *  能匹配到 rule_id 时只用该规则的 ROI (不再只是缓存身份维)。 */
 export function alarmShapeKey(alarm?: unknown): string {
   if (!alarm || typeof alarm !== 'object') return ''
   const a = alarm as Record<string, unknown>
@@ -172,12 +174,22 @@ export function alarmShapeKey(alarm?: unknown): string {
  *       bound_channel_ids 是字符串 GB 码 (number 项后端转 to_string)
  *    c. [真机实证] 多条带形状规则并存时 (如通配规则 le-video...-loiter 排序在前)
  *       原首命中即 return 会拿错形状 — 显式绑定本通道的规则优先, 通配规则
- *       (双池全空) 仅在无显式绑定命中时回退 (告警溯源: 显式绑定最相关)。 */
-async function loadFromRules(channelId: string, algoId?: string): Promise<OverlayShape[]> {
+ *       (双池全空) 仅在无显式绑定命中时回退 (告警溯源: 显式绑定最相关)。
+ *  d. [FIX p1-rule-private-shapes 2026-10-02] 10-5: 新增 ruleId 入参 —— 告警带命中规则
+ *       id 且该规则在本次响应中存在时, 几何按「规则私有」取 (只看该规则), 禁用首命中
+ *       越界与通配回退; 后端告警由哪条规则产生就画哪条的 ROI。 */
+async function loadFromRules(channelId: string, algoId?: string, ruleId?: string): Promise<OverlayShape[]> {
   const res = await linkageApi.getAllRules()
   // http 封装 TS 类型层不反映运行时双层壳 (res.data={code,data:{...}}),
   // 对齐 AlgoConfigView 惯例 any 双形态解包
   const items: any[] = (res.data as any)?.data?.items ?? (res.data as any)?.items ?? []
+  // [FIX p1-rule-private-shapes 2026-10-02] 10-5: 原「首个 ch+algo 双命中即 return」在
+  //   告警已携带 rule_id 时仍可能取到别的规则几何 —— 12-2 的 alarmKey 只修了缓存身份维,
+  //   未过滤数据源 (见台账 §5.1.37)。rule_id 在本次响应中查无 (规则已删 / key 为告警 id
+  //   形态) 时**不启用**严格模式, 保持现行链 —— 行为变化面收敛到「确知归属规则」场景,
+  //   以免存量告警形状整体消失。
+  const ridOf = (r: any): string => String(r?.rule_id ?? r?.id ?? r?.ruleId ?? '')
+  const strictRuleMode = !!ruleId && items.some((r) => ridOf(r) === ruleId)
   const chNorm = stripChSuffix(channelId)
   const chHash = safeChannelHash(chNorm)
   // [FIX 2026-09-08] 算法/事件维度匹配 (用户语义: 不同算法的形状不能叠加):
@@ -190,6 +202,10 @@ async function loadFromRules(channelId: string, algoId?: string): Promise<Overla
   let wildcardShapes: OverlayShape[] | null = null
   for (const r of items) {
     if (!r?.enabled) continue
+    // [FIX p1-rule-private-shapes 2026-10-02] 10-5: 严格模式下只看命中规则 (其余规则
+    //   不入候补桶, 通配回退同时失效); 本规则因「严格模式未绘通道」等被 continue 时
+    //   结果为空 —— 未绘即不画, 与引擎 [ROI-PC-UNDRAWN] 同口径。
+    if (strictRuleMode && ridOf(r) !== ruleId) continue
     const sc = r.source_cond || {}
     const sp = r.spatial_cond || {}
     // [ROI-PER-CHANNEL 2026-09-12] 逐通道形状集 (严格模式) 优先: 本通道条目命中 →
@@ -426,7 +442,9 @@ export function useAlarmShapes() {
       let list: OverlayShape[] = []
       let source: ShapeSource = 'none'
       if (ch) {
-        list = await loadFromRules(ch, algo)
+        // [FIX p1-rule-private-shapes 2026-10-02] 10-5: akey (命中规则 id 优先, 见
+        //   alarmShapeKey) 作为数据选择维下传 —— 确知归属规则时禁越界取他规则几何。
+        list = await loadFromRules(ch, algo, akey)
         if (list.length) source = 'rule'
       }
       if (!list.length && (ch || algo)) {
