@@ -94,6 +94,10 @@ import {
   drawDetsOnCtx, drawShapesOnCtx, downloadPngWithFallback,
   markTriggerDet, parseDetections, useAlarmShapes, type ParsedDet, type ShapeSource,
 } from '@/composables/useAlarmShapes'
+// [FIX p1-roi-basis-write 2026-10-02] 缺陷 13-5: ROI 像素顶点的归一除数 = 写入侧
+//   基准 (通道真实帧尺寸), 取共享通道目录 chFrameOf —— 与区域绘制页
+//   LinkageRuleView.frameOfChannel 同一族基准, 不得用证据帧尺寸。
+import { chFrameOf } from '@/composables/useAlarmDeviceLabel'
 import { getAlarmSnapshotOverlay, setAlarmSnapshotOverlay } from '@/utils/localStorage'
 
 /** [FEAT 2026-09-02] 全屏预览开关 (el-image-viewer v-if 挂载) */
@@ -147,16 +151,26 @@ const imageSize = ref<{ w: number; h: number }>({ w: 0, h: 0 })
 const { shapes, fullscreenGuard, load: loadShapes } = useAlarmShapes()
 // [FIX p1-shape-cache-key 2026-10-02] 12-2: 来源标记落存 (DOM 探针 + 排障可读)
 const shapeSource = ref<ShapeSource>('none')
-// [FIX p1-roi-frame-basis 2026-10-02] 13-1: ROI 像素尺度顶点的归一除数 = 证据帧真实
-//   尺寸, 与 normBBox (上面 L177 取 imageSize) 同一基准 —— 原形状链不传尺寸,
-//   区域库/存量规则的像素多边形恒按 1920×1080 回退, 4:3 通道上与检测框错位。
-//   尺寸未就绪时先不发请求 (否则以回退基准拉取并按 `…|0x0` 缓存 30s, 尺寸到了
-//   还得再拉一轮 = 每次预览双份请求); 无图 (网格占位底) / 图加载失败 / 1.2s
-//   内 @load 与 @error 都未回调 (el-image 命中浏览器缓存的历史坑, 见上方
-//   [FIX canvas-draw-timing] 注释) 三种情况均直接按回退基准发, 不让形状无限期缺席。
-let frameWaitTimer: ReturnType<typeof setTimeout> | null = null
+// [FIX p1-roi-basis-write 2026-10-02] 缺陷 13-5 (纠正本批早先的 13-1 接线):
+//   ROI 像素尺度顶点的归一除数 = **写入侧基准** (通道真实帧尺寸), 不是证据帧尺寸。
+//   原 13-1 把除数绑到 <img> naturalWidth/Height, 真机取证发现那是错的 ——
+//   证据图是插件侧 evidenceEncodeAlignedFrame(max_w=kMaxW=1280) 从喂帧降采样而来
+//   (box-sdk/include/plugin/algo/{KeyFrameCapture,EvidenceFrames}.h), 而几何顶点是
+//   画板按通道快照尺寸 (≈ 通道配置分辨率) 写入的 (LinkageRuleView
+//   roiFrameByChannel 注释自述)。真机 4 页×30 条 / 12 条像素形态告警抽样:
+//   **12/12 顶点越出证据帧边界** (max y=1074 > 证据高 720/360, max x=1317 > 1280),
+//   且同一几何 (ch…2003 的 646×1073) 同时配到 1280×720 与 640×360 两种证据帧
+//   —— 以证据帧为除数会把区域放大 1.5× (1280 档) / 3× (640 档) 并 clamp 削顶。
+//   现改取通道目录 resolution (chFrameOf), 未知 → {0,0} → roiSchema SSOT 回退
+//   1920×1080, 与写入侧 frameOfChannel 未命中时的回退同口径。
+//   基准来自 reactive 目录 computed, 就绪即自动重算 → 原「等 @load 拿尺寸」的
+//   1.2s 兑底定时器与 imageSize 入 watch 依赖一并撤除 (形状请求不再被图加载延后)。
+//   注: 检测框链 (normBBox / parseDetections) 仍用 imageSize —— 本缺陷之前的既有
+//   口径, 现网 detections 主流形态已归一 (≤阈值直通, 除数不参与), 不在本批
+//   授权面内改动, 已作为同源遗留登记。
+const shapeFrame = computed(() => chFrameOf(props.channelId))
 function reloadShapes() {
-  loadShapes(props.channelId, props.algoId, props.alarmShapes, props.alarmKey, imageSize.value)
+  loadShapes(props.channelId, props.algoId, props.alarmShapes, props.alarmKey, shapeFrame.value)
     .then((src) => {
       shapeSource.value = src
       nextTick(scheduleDraw)
@@ -164,20 +178,13 @@ function reloadShapes() {
     .catch(() => {})
 }
 watch(
-  [() => props.channelId, () => props.algoId, () => props.alarmShapes, () => props.alarmKey, imageSize],
+  [() => props.channelId, () => props.algoId, () => props.alarmShapes, () => props.alarmKey, shapeFrame],
   () => {
     // [FIX p1-shape-cache-key 2026-10-02] 12-2: alarmKey 必须进依赖数组,
     //   否则切换同通道同算法的另一条规则告警时不触发重载 (缓存修了个空)。
-    // [FIX p1-roi-frame-basis 2026-10-02] 13-1: imageSize 同样必须进依赖数组 ——
-    //   它晚于告警身份就绪, 不入键则形状永远停在回退基准。
-    if (frameWaitTimer) { clearTimeout(frameWaitTimer); frameWaitTimer = null }
-    if (props.imageUrl && imageSize.value.w <= 0) {
-      frameWaitTimer = setTimeout(() => {
-        frameWaitTimer = null
-        if (imageSize.value.w <= 0) reloadShapes()
-      }, 1200)
-      return
-    }
+    // [FIX p1-roi-basis-write 2026-10-02] 13-5: shapeFrame (通道目录基准) 必须进
+    //   依赖数组 —— 目录异步就绪晚于告警身份, 不入键则形状永远停在回退基准。
+    //   证据帧尺寸 (imageSize) **不得**再进本依赖数组/实参 (被降采样污染的派生量)。
     reloadShapes()
   },
   { immediate: true },
@@ -337,9 +344,8 @@ onMounted(() => {
 })
 onBeforeUnmount(() => {
   clearTimeout(drawTimer)
-  // [FIX p1-roi-frame-basis 2026-10-02] 13-1: 帧基准兑底定时器要在卸载时清,
-  //   否则快速切告警/关弹窗后仍会带旧身份发一轮请求。
-  if (frameWaitTimer) { clearTimeout(frameWaitTimer); frameWaitTimer = null }
+  // [FIX p1-roi-basis-write 2026-10-02] 13-5: 原 13-1 的帧基准兑底定时器已随「等
+  //   图尺寸」耦合一并撤除 (形状链除数改取通道目录, 不再由 @load 驱动)。
   boxResizeObserver?.disconnect()
   boxResizeObserver = null
   boxIntersectObserver?.disconnect()
@@ -348,10 +354,9 @@ onBeforeUnmount(() => {
 
 function onImageError() {
   console.warn('[AlarmSnapshot] Image failed to load:', props.imageUrl)
-  // [FIX p1-roi-frame-basis 2026-10-02] 13-1: 图加载失败 → 尺寸永远不可得,
-  //   立即按回退基准取形状 (不得等 1.2s 兑底, 也不得因等尺寸而丢标注)。
-  if (frameWaitTimer) { clearTimeout(frameWaitTimer); frameWaitTimer = null }
-  reloadShapes()
+  // [FIX p1-roi-basis-write 2026-10-02] 13-5: 形状链不再依赖图加载 (除数来自
+  //   通道目录), 图失败时无需重发形状请求 —— 原 13-1 在此调 reloadShapes()
+  //   只为「尺寸永远不可得时至少按回退基准取一次标注」, 该前提已不成立。
 }
 
 /** [FEAT 2026-09-02 → 2026-09-04 升级] 下载标注图: 离屏 canvas 按快照原始分辨率

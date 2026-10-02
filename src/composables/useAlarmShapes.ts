@@ -16,8 +16,12 @@
  *      — tripwires: channel_id_str 字符串主键本地过滤 (对齐 AlgoConfigView)
  *
  * 坐标兼容: 区域库存量数据归一化 [0,1] 与旧版像素坐标并存 (真机实证
- *   region#12 polygon=[[1078,1023],...]), 任一顶点 >1 判像素 → 按写入侧画布
- *   基准 1920×1080 归一 (与 LinkageRuleView buildNormPoints 同基准)。
+ *   region#12 polygon=[[1078,1023],...]), 任一顶点 >1 判像素 → 按**写入侧基准**
+ *   (通道真实帧尺寸, 由调用方经 frame 传入; 未知时 roiSchema 回退 1920×1080)
+ *   归一 —— 与 LinkageRuleView buildNormPoints / frameOfChannel 同基准同源。
+ *   [FIX p1-roi-basis-write 2026-10-02] 13-5 红线: frame **不得**取告警证据图
+ *   naturalWidth/Height —— 证据帧是插件侧 kMaxW=1280 降采样产物 (与几何写入
+ *   基准不同源), 真机 12/12 像素顶点越出证据帧边界。
  */
 import { ref, type Ref } from 'vue'
 import { ElMessage } from 'element-plus'
@@ -73,8 +77,12 @@ function stripChSuffix(chId: string): string {
   return String(chId || '').replace(/_ch\d+$/, '')
 }
 
-/** [FIX p1-roi-frame-basis 2026-10-02] 13-1: 证据帧尺寸 = 像素尺度 ROI 的归一除数。
- *  w/h ≤0 视为未知, 由 roiSchema SSOT 内部回退写入侧基准 1920×1080。 */
+/** [FIX p1-roi-frame-basis 2026-10-02] 13-1 / [FIX p1-roi-basis-write 2026-10-02]
+ *  13-5 纠正: 像素尺度 ROI 顶点的归一除数 = **写入侧基准** (通道真实帧尺寸)。
+ *  w/h ≤0 视为未知, 由 roiSchema SSOT 内部回退 1920×1080 —— 与写入侧
+ *  frameOfChannel 未命中时的回退同口径。调用方必须传 chFrameOf(channelId)
+ *  (通道目录 resolution), **不得**传证据图 naturalWidth/Height (被 kMaxW=1280
+ *  降采样污染, 真机实证会把区域放大 1.5×/3× 并 clamp 削顶)。 */
 export interface ShapeFrame { w: number; h: number }
 const UNKNOWN_FRAME: ShapeFrame = { w: 0, h: 0 }
 
@@ -88,12 +96,15 @@ const UNKNOWN_FRAME: ShapeFrame = { w: 0, h: 0 }
  *   ② 归一后 clamp [0,1] (像素超出基准的存量脏数据不再越界画布,
  *     位置仍偏但形状完整可见, 数据治理另行收敛);
  *   ③ 非有限值顶点丢弃 (原逻辑保留)。
- * [FIX p1-roi-frame-basis 2026-10-02] 13-1: 除数口径与检测框对齐 —— 原无帧尺寸
- *   入参, 像素尺度顶点恒按 1920×1080 回退归一; 而检测框 (AlarmSnapshot.normBBox /
- *   parseDetections) 按证据图 naturalWidth/Height 归一 → 同一画面两套基准,
- *   4:3 通道 (1280×960) 上区域库像素多边形满幅被画成 (0.667, 0.889) 偏左上。
+ * [FIX p1-roi-frame-basis 2026-10-02] 13-1 + [FIX p1-roi-basis-write 2026-10-02]
+ *   13-5: 除数口径收敛为「与写入侧同源」—— 原无帧尺寸入参, 像素尺度顶点恒按
+ *   1920×1080 回退归一 (4:3 通道上区域库像素多边形满幅被画成 (0.667, 0.889)
+ *   偏左上 —— 清单 13-1 实锚)。13-1 首版曾把除数改绑证据图 naturalWidth/Height,
+ *   真机取证证伪: 证据图由插件 evidenceEncodeAlignedFrame(max_w=kMaxW=1280) 从
+ *   喂帧降采样而来, 与几何写入基准不同源 (12/12 像素顶点越出证据帧边界),
+ *   会把区域放大 1.5×/3× 并 clamp 削顶 —— 属净回归, 已改取通道目录 resolution。
  *   现接 frame 透传 normalizePoint(x, y, w, h); **仅影响像素尺度顶点**, 已归一
- *   存量值 (≤1.5) 直通不变 → 14-1 之后写入侧的主流形态零行为变化。 */
+ *   存量值 (≤1.5) 直通不变 → 14-1 之后写入侧的主流形态零行为变化。*/
 function normPoints(
   raw: Array<[number, number]>,
   frame: ShapeFrame = UNKNOWN_FRAME,

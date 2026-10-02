@@ -11,7 +11,7 @@
          标注可视化不再被无快照阻断 (src 由父组件判空传入) -->
     <!-- [fix 2026-09-02] 补 preview-teleported: 在 el-drawer 内点击放大时,
          预览层不 teleported 会被抽屉 z-index/裁剪遮挡 -->
-    <el-image v-if="src" :src="effSrc" :preview-src-list="[effSrc]" fit="fill" preview-teleported class="snap-img" @load="onImgLoad" @error="onImgError" />
+    <el-image v-if="src" :src="effSrc" :preview-src-list="[effSrc]" fit="fill" preview-teleported class="snap-img" @load="onImgLoad" />
     <div v-else class="snap-placeholder">{{ t('perimeter.events.annotPlaceholder') }}</div>
     <!-- 检测框叠加: bbox 为归一化 [x1,y1,x2,y2], SVG viewBox 0-100 + none 保真映射;
          object-fit:fill 拉伸图像与 SVG 同步形变 → 坐标恒对齐 (标注精确性优先,
@@ -91,7 +91,7 @@
  * fill+preserveAspectRatio="none" 组合保证框与目标像素级对齐;
  * vector-effect: non-scaling-stroke 防非均匀缩放导致的描边粗细变形。
  */
-import { computed, ref, watch, onBeforeUnmount } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
 import {
@@ -101,6 +101,9 @@ import {
 } from '@/composables/useAlarmShapes'
 // [FIX p1-alarm-identity 2026-10-02] 12-1: 算法 id 口径单一出处 (与弹窗/列表同源)
 import { resolveAlarmAlgoId } from '@/utils/alarmIdentity'
+// [FIX p1-roi-basis-write 2026-10-02] 缺陷 13-5: 归一除数 = 写入侧基准 (通道真实
+//   帧尺寸), 取共享通道目录, 与区域绘制页 frameOfChannel 同族 —— 非证据帧尺寸。
+import { chFrameOf } from '@/composables/useAlarmDeviceLabel'
 
 const { t } = useI18n()
 
@@ -128,12 +131,9 @@ function onImgLoad() {
     imgNat.value = { w: img.naturalWidth, h: img.naturalHeight }
   }
 }
-// [FIX p1-roi-frame-basis 2026-10-02] 13-1: 图加载失败 → 尺寸永远不可得,
-//   立即按回退基准取形状 (不得因等尺寸而丢标注)。
-function onImgError() {
-  if (frameWaitTimer) { clearTimeout(frameWaitTimer); frameWaitTimer = null }
-  reloadShapes()
-}
+// [FIX p1-roi-basis-write 2026-10-02] 13-5: 形状链除数改取通道目录后, 图加载
+//   失败不再需要重发形状请求 —— 原 13-1 引入的 onImgError/@error 钩子属于
+//   「等图尺寸」耦合的一部分, 已整块回退 (图失败仅影响像素尺度 detections 不出框)。
 
 const props = defineProps<{
   /** 快照图 URL (可空: 空串时渲染网格占位底, overlay 仍画框) */
@@ -161,41 +161,38 @@ const shapeSource = ref<ShapeSource>('none')
 //   不再各自造口径。
 const effAlgoId = computed(() => props.algoId
   || resolveAlarmAlgoId({ metadata: props.metadata }))
-// [FIX p1-roi-frame-basis 2026-10-02] 13-1: 形状链同样接证据帧真实尺寸作像素尺度
-//   顶点的归一除数, 与 detBoxes/box (取 imgNat) 同基准 —— 原不传尺寸时区域库/存量
-//   规则的像素多边形恒按 1920×1080 回退, 4:3 通道上与检测框错位 (本组件是列表
-//   预览/事件面板共用体, 弹窗侧 AlarmSnapshot 同步修)。
-//   imgNat 未就绪时先不发请求 (避免以回退基准拉取并按 `…|0x0` 缓存 30s 后再拉
-//   一轮); 无图占位底 / 图加载失败 / 1.2s 内 @load 不回调 三种情况直接按回退基准发。
-let frameWaitTimer: ReturnType<typeof setTimeout> | null = null
+// [FIX p1-roi-basis-write 2026-10-02] 缺陷 13-5 (纠正本批早先的 13-1 接线,
+//   与弹窗侧 AlarmSnapshot 同口径): 形状链的像素尺度顶点除数 = **写入侧基准**
+//   (通道真实帧尺寸, 取共享通道目录 chFrameOf), 不是证据帧尺寸 —— 证据图由
+//   插件侧 evidenceEncodeAlignedFrame(max_w=kMaxW=1280) 从喂帧降采样而来
+//   (box-sdk/include/plugin/algo/{KeyFrameCapture,EvidenceFrames}.h), 而几何顶点是
+//   画板按通道快照尺寸写入的 (LinkageRuleView roiFrameByChannel)。真机 12 条
+//   像素形态告警抽样 12/12 顶点越出证据帧边界 (max y=1074 > 720/360), 且同一
+//   几何 (ch…2003 的 646×1073) 同时配到 1280×720 与 640×360 两种证据帧 ——
+//   以证据帧为除数会放大 1.5×/3× 并 clamp 削顶 (旧 1920×1080 常量回退反而对)。
+//   未知通道 → {0,0} → roiSchema SSOT 回退 1920×1080, 与写入侧 frameOfChannel
+//   未命中回退同口径。detBoxes/box (取 imgNat) 不动: 那是本缺陷之前的既有
+//   口径且现网 detections 主流已归一, 已作同源遗留登记。
+//   基准为 reactive computed → 目录就绪自动重算, 原「等 @load 拿尺寸」的 1.2s
+//   兑底定时器与 imgNat 入 watch 依赖一并撤除。
+const shapeFrame = computed(() => chFrameOf(props.channelId))
 function reloadShapes() {
   loadShapes(props.channelId, effAlgoId.value, (props.metadata as any)?.alarm_shapes,
-    props.alarmKey, imgNat.value)
+    props.alarmKey, shapeFrame.value)
     .then((src) => { shapeSource.value = src }).catch(() => {})
 }
 watch(
-  [() => props.channelId, effAlgoId, () => (props.metadata as any)?.alarm_shapes, () => props.alarmKey, imgNat],
+  [() => props.channelId, effAlgoId, () => (props.metadata as any)?.alarm_shapes, () => props.alarmKey, shapeFrame],
   () => {
     // ⓪ alarm_shapes: 告警自包含快照 (插件上报时冻结), 优先于规则链/区域库
     // [FIX p1-shape-cache-key 2026-10-02] alarmKey 必须进依赖数组, 否则切换
     //   同通道同算法的另一条规则告警不触发重载。
-    // [FIX p1-roi-frame-basis 2026-10-02] imgNat 同样必须进依赖数组 (它晚于告警身份就绪)。
-    if (frameWaitTimer) { clearTimeout(frameWaitTimer); frameWaitTimer = null }
-    if (props.src && imgNat.value.w <= 0) {
-      frameWaitTimer = setTimeout(() => {
-        frameWaitTimer = null
-        if (imgNat.value.w <= 0) reloadShapes()
-      }, 1200)
-      return
-    }
+    // [FIX p1-roi-basis-write 2026-10-02] 13-5: shapeFrame 必须进依赖数组 (目录
+    //   异步就绪晚于告警身份); imgNat **不得**再进本依赖数组/实参。
     reloadShapes()
   },
   { immediate: true },
 )
-onBeforeUnmount(() => {
-  // [FIX p1-roi-frame-basis 2026-10-02] 13-1: 卸载时清掉帧基准兑底定时器
-  if (frameWaitTimer) { clearTimeout(frameWaitTimer); frameWaitTimer = null }
-})
 
 /** 多目标全量标注: metadata.detections 遍历 (触发目标 danger 红, 其余类别色);
  *  像素坐标 (任一 >1) 按图像自然尺寸归一, 未加载完先不显示 (@load 后重算) */

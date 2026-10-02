@@ -41,8 +41,35 @@ const devNameById = ref<Map<string, string>>(new Map())   // 设备 id → 设�
 //   全局唯一/与监控点列零重复 (原下沉通道名致两列完全重复, 用户「越改越差」投诉)。
 //   用户改名后 devNameById 优先命中, IP 永不遮蔽可读名。
 const devIpById = ref<Map<string, string>>(new Map())
-const chNameById = ref<Map<string, string>>(new Map())    // 通道 id → 通道名 (原值 + 剥 _chN 双形态)
+// [chan-tree 2026-09-11] 通道 id → 通道名 (原值 + 剥 _chN 双形态)
+const chNameById = ref<Map<string, string>>(new Map())
 const chDevById = ref<Map<string, string>>(new Map())     // 通道父码 → 父设备 id
+// [FIX p1-roi-basis-write 2026-10-02] 缺陷 13-5 (13-1 纠正): 通道 id → 真实帧尺寸
+//   (「写入侧基准」的前端可读代理)。区域库/告警冻结快照里的像素尺度 ROI 顶点,
+//   是画板按「通道快照 JPEG 的 naturalWidth/Height」(LinkageRuleView
+//   roiFrameByChannel → frameOfChannel) 归一写入的, 快照即按通道配置分辨率出图
+//   → 读取侧必须用同一族基准。告警弹窗/列表预览此前只能用证据帧尺寸或
+//   1920×1080 常量猜测 (前者被 KeyFrameCapture kMaxW=1280 降采样污染, 见
+//   box-sdk/include/plugin/algo/{KeyFrameCapture,EvidenceFrames}.h), 本目录把
+//   服务端声明的 resolution 变成可读基准源 —— 复用同一份懒加载请求, 零新增开销。
+const chFrameById = ref<Map<string, { w: number; h: number }>>(new Map())
+
+/** [FIX p1-roi-basis-write 2026-10-02] 通道分辨率字符串 → 帧尺寸。
+ *  兼容 "1920x1080" / "1920X1080" / "1920×1080" / "1920*1080" / "1920/1080" /
+ *  "1920-1080" / "1920 1080";
+ *  非法或任一分量 ≤0 → {w:0,h:0} (调用方按未知处理,
+ *  由 roiSchema SSOT 回退 1920×1080 —— 与写入侧 frameOfChannel 未命中时的
+ *  回退口径完全一致, 不引入第三套基准)。 */
+export function parseResolution(v: unknown): { w: number; h: number } {
+  const s = String(v ?? '').trim()
+  if (!s) return { w: 0, h: 0 }
+  const m = s.match(/^(\d+)\s*(?:[xX×*/-]|\s)\s*(\d+)$/)
+  if (!m) return { w: 0, h: 0 }
+  const w = Number(m[1])
+  const h = Number(m[2])
+  if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) return { w: 0, h: 0 }
+  return { w, h }
+}
 // [chan-tree 2026-09-11] 设备 id → 其通道列表 (AlarmDeviceTreePanel 三级树叶子数据源)
 const devChsById = ref<Map<string, ChannelBrief[]>>(new Map())
 /** 目录就绪信号 (异步加载完成; 树面板响应式重建用) */
@@ -76,6 +103,7 @@ export function loadAlarmNameDirectory(): void {
       }
       const cMap = new Map<string, string>()
       const pMap = new Map<string, string>()
+      const fMap = new Map<string, { w: number; h: number }>()
       // [chan-tree 2026-09-11] 设备→通道分组 (同名归并: rawId 与剥后缀 base 同属一组)
       const devChs = new Map<string, ChannelBrief[]>()
       for (const c of channels) {
@@ -83,6 +111,10 @@ export function loadAlarmNameDirectory(): void {
         if (!id) continue
         const nm = String(c?.name ?? '')
         if (nm) { cMap.set(id, nm); cMap.set(baseChannelId(id), nm) }
+        // [FIX p1-roi-basis-write 2026-10-02] 13-5: 帧尺寸目录 (raw + 剥 _chN 双
+        //   形态互认, 与通道名同口径); 非法/缺失不落表 → chFrameOf 返回 {0,0}。
+        const fr = parseResolution(c?.resolution ?? c?.Resolution ?? c?.resolution_str)
+        if (fr.w > 0 && fr.h > 0) { fMap.set(id, fr); fMap.set(baseChannelId(id), fr) }
         const pid = String(c?.device_id ?? c?.deviceId ?? '')
         if (pid) {
           pMap.set(baseChannelId(id), pid)
@@ -97,6 +129,7 @@ export function loadAlarmNameDirectory(): void {
       devIpById.value = ipMap
       chNameById.value = cMap
       chDevById.value = pMap
+      chFrameById.value = fMap
       devChsById.value = devChs
       dirReady.value = true
     } catch { /* 目录服务不可用 → 反查恒空, 显示层走 '-' 兜底 */ }
@@ -168,6 +201,17 @@ export function chNameOf(id: unknown): string {
 export function devChannelsOf(id: unknown): ChannelBrief[] {
   loadAlarmNameDirectory()
   return devChsById.value.get(baseChannelId(id)) ?? []
+}
+/** [FIX p1-roi-basis-write 2026-10-02] 13-5: 通道 → 真实帧尺寸 (同步读, reactive
+ *  Map — 目录异步就绪后调用方 computed 自动重算, 无需轮询/定时器)。
+ *  未命中/离线/非法分辨率 → {w:0,h:0}, 由 roiSchema SSOT 回退 1920×1080;
+ *  **绝不回退证据帧尺寸** (证据图是 kMaxW=1280 降采样产物, 与几何写入基准
+ *  不同源, 真机 12/12 像素顶点越界实证见台账 §5.1.44)。 */
+export function chFrameOf(id: unknown): { w: number; h: number } {
+  loadAlarmNameDirectory()
+  const raw = String(id ?? '').trim()
+  return chFrameById.value.get(raw) ?? chFrameById.value.get(baseChannelId(raw))
+    ?? { w: 0, h: 0 }
 }
 /** [CH-BINDING-DISPLAY 2026-09-14] int32 哈希通道反投影 (规则 source_cond.channel_ids 老口径):
  *   channel_ids 存 FNV-1a &0x7FFFFFFF 投影 (与 safeChannelHash / 后端 safeChannelHash 同源),
