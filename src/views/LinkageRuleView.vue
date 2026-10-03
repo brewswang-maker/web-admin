@@ -4293,6 +4293,9 @@ async function toggleRule(rule: LinkageRule) {
     //   回程响应丢失后用户重试成功等场景, 本地 rule.enabled 仍会与服务端分叉,
     //   表单显示的开关与 linkage.db 实际状态不一致。此处以 /linkage/rules/all
     //   为唯一真值源静默覆盖 rules.value (silent: 不亮全表 loading)。
+    // [FIX p1-toggle-readback 2026-10-03] 缺陷 18-3: 同上——开关成功后的服务端
+    //   真值回读链路已在 18-1 中落地 (fetchRules silent)，本标签仅为审计可见性。
+    //   若后续引入单条回读优化，仍须保持“成功后以服务端为准”的不变式。
     await fetchRules(true)
     ElMessage.success(rule.enabled ? '已启用' : '已停用')
   } catch (e: any) {
