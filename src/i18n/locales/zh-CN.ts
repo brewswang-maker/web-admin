@@ -1376,6 +1376,7 @@ const zhCN = {
     passRecords: {
       title: '通行记录',
       time: '通行时间',
+      snapshot: '取证图',   // [FEAT face-scene-pref 2026-10-02] 通行记录取证图列 (渲染源随设置中心开关)
       type: '类型',
       name: '姓名',
       personId: '人员ID',

@@ -34,6 +34,20 @@
             <el-button @click="resetBasic">{{ $t('settings.reset') }}</el-button>
           </el-form-item>
         </el-form>
+
+        <!-- [FEAT face-scene-pref 2026-10-02] 人脸取证图渲染源开关: 纯前端渲染偏好 (localStorage),
+             即存即生效无需保存按钮; 后端对每条人脸事件始终双路独立落盘 (scene_url + 抓拍小图),
+             此开关仅决定告警中心/详情弹窗/实时卡片/通行记录的默认展示用哪一路 -->
+        <el-divider />
+        <h4 style="margin-bottom:16px;color:#303133">🖼️ 人脸取证图展示</h4>
+        <el-form label-width="120px">
+          <el-form-item label="使用快照原图">
+            <el-switch v-model="faceScenePref" @change="onFaceScenePrefChange" />
+            <span style="margin-left:12px;color:#909399;font-size:12px;line-height:1.5">
+              开启后，人脸告警与通行记录默认展示「现场快照原图」（全帧）；关闭则显示「人脸抓拍小图」。两路取证图始终独立保存，此开关仅影响默认展示源。
+            </span>
+          </el-form-item>
+        </el-form>
       </el-tab-pane>
 
       <el-tab-pane :label="$t('settings.tabNetwork')">
@@ -712,6 +726,8 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { settingsApi, type BasicSettings, type CloudSettings, type AlarmPolicySettings, type SystemInfo, type RecordingSettings } from '@/api/settings'
 import { getModels, activateModel, deactivateModel, type ModelInfo } from '@/api/model'
 import configApi from '@/api/config'
+// [FEAT face-scene-pref 2026-10-02] 人脸取证图渲染源开关 (localStorage 渲染偏好, 即存即生效)
+import { faceScenePreferred, setFaceScenePreferred } from '@/utils/faceEvidence'
 // [REC-SCHEDULE 2026-09-11] 录像计划 + 存储预估 (自录像回放页迁出, 复用现有 API 不重复建)
 import {
   getRecordingSchedules, createRecordingSchedule, updateRecordingSchedule, deleteRecordingSchedule,
@@ -729,6 +745,17 @@ const basicDefaults: BasicSettings = {
   dataRetentionDays: 30, autoRestart: true
 }
 const basic = reactive<BasicSettings>({ ...basicDefaults })
+
+// [FEAT face-scene-pref 2026-10-02] 人脸取证图渲染源开关 (默认开 = 快照原图):
+// 读初始值于挂载前 (localStorage), 切换即写即生效 — 消费方 (getSnapshotUrl/AlarmPopup/
+// FaceRealtimeView) 每次渲染重读偏好, 无需刷新或广播。
+const faceScenePref = ref(faceScenePreferred())
+function onFaceScenePrefChange(v: boolean | string | number) {
+  const on = !!v
+  faceScenePref.value = on
+  setFaceScenePreferred(on)
+  ElMessage.success(on ? '已切换为「快照原图」展示（即时生效）' : '已切换为「抓拍小图」展示（即时生效）')
+}
 
 async function saveBasic() {
   basicSaving.value = true

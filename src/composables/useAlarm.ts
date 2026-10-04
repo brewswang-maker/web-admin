@@ -110,11 +110,14 @@ export function useAlarmLabels() {
   // [v6.2 2026-06-21] AlarmLevel 扩到 5 级 (含 'info'), 对标大华 1 严重 / 2 一般 / 3 轻微 + 状态 / 提示
   //   使用 Partial<Record> + 默认值兜底, 避免联合类型扩位时要补 5 个字段
   function levelTagType(level: AlarmLevel): string {
+    // [FIX level-text-unify 2026-10-02] 对齐 utils/alarmLevel.alarmLevelTagType SSOT
+    //   (原 high=warning / medium='' / low=info 与全站四元组相悖; 本 composable
+    //   当前无活跃消费方, 修正以防未来复用时漂移)
     const map: Partial<Record<AlarmLevel, string>> = {
       critical: 'danger',
-      high: 'warning',
-      medium: '',
-      low: 'info',
+      high: 'danger',
+      medium: 'warning',
+      low: 'success',
       info: 'info'
     }
     return map[level] ?? 'info'

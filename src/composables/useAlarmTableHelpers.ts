@@ -15,6 +15,11 @@ import { normalizeAlarmCore } from '@/types/alarm'
 // [FIX dev-col-ip 2026-09-19] 占位链/设备列治理补依赖: devNameOf/parentDevOfChannel/devChannelsOf/
 //   baseChannelId 目录反查 + alarmChannelIdOf 真通道码解析 (监控点序号链)
 import { resolveAlarmDeviceName, isNumericId, chNameOf, devNameOf, parentDevOfChannel, devChannelsOf, baseChannelId, alarmChannelIdOf } from '@/composables/useAlarmDeviceLabel'
+// [FIX level-text-unify 2026-10-02] 等级四元组 SSOT 委托 (文案表已对齐, tag type/effect
+//   由 utils/alarmLevel 单源产出 — 原本地表 high=warning 与 critical 同系不分档)
+import { alarmLevelTagType, alarmLevelTagEffect } from '@/utils/alarmLevel'
+// [FEAT face-scene-pref 2026-10-02] 人脸取证图渲染源偏好 (设置中心开关, 默认快照原图)
+import { faceScenePreferred, faceSceneUrlOf, isFaceAlarmRow } from '@/utils/faceEvidence'
 
 // ── 归一化 + 旧字段兼容补丁 (与 AlarmsView.normalizeAlarm 同款) ──
 // normalizeAlarmCore 产出 level/aiConclusion/confidence; AlarmsView 模板与筛选
@@ -36,13 +41,17 @@ export function normalizeAlarmCompat(raw: any): AlarmRow {
   }
 }
 
-// ── 严重等级中文映射 (同 AlarmsView SEVERITY_LABELS) ──
+// ── 严重等级中文映射 ──
+// [FIX level-text-unify 2026-10-02] 「高危/中危/低危/信息」→「高/中/低/提示」:
+//   与 utils/alarmLevel.ALARM_LEVEL_TEXT / AlarmPopup / 态势屏 / AlarmCard 同警同文
+//   (用户要求四元组全站对齐, 六场景页共用本表一处改全生效)。表键与 SSOT 同构,
+//   未知值仍原样返回 (与 alarmLevelText 归一语义不同, 保留旧兜底行为)。
 export const SEVERITY_LABELS: Record<string, string> = {
   critical: '严重',
-  high: '高危',
-  medium: '中危',
-  low: '低危',
-  info: '信息',
+  high: '高',
+  medium: '中',
+  low: '低',
+  info: '提示',
 }
 
 export function severityLabel(severity: string) {
@@ -53,9 +62,14 @@ export function levelLabel(level: string) {
   return SEVERITY_LABELS[level] || level
 }
 
-export function levelTagType(level: string): 'primary' | 'success' | 'warning' | 'info' | 'danger' {
-  const map: Record<string, 'primary' | 'success' | 'warning' | 'info' | 'danger'> = { critical: 'danger', high: 'warning', medium: 'warning', low: 'success' }
-  return map[level] || 'info'
+// [FIX level-text-unify 2026-10-02] 委托 utils/alarmLevel SSOT (原本地表
+//   high=warning 与 medium 同色不分档); 顺带补 effect 档 (严重=dark) 供场景面板对齐
+export function levelTagType(level: string): 'success' | 'warning' | 'danger' | 'info' {
+  return alarmLevelTagType(level)
+}
+
+export function levelTagEffect(level: string): 'light' | 'dark' {
+  return alarmLevelTagEffect(level)
 }
 
 export function statusLabel(status: string) {
@@ -190,7 +204,15 @@ export function formatTime(isoString: string | undefined) {
 
 // [FIX 2026-06-28] 人脸告警快照以 snapshot_base64 存在 metadata 中。
 //   此函数在 snapshotUrl 为空时回退到 metadata.snapshot_base64 构造 data URL。
+// [FEAT face-scene-pref 2026-10-02] 人脸类告警主图渲染源接设置中心开关:
+//   开 (默认) → metadata.scene_url 现场快照原图优先 (主展示图, scene 缺失回落原链);
+//   关 → 原行为 (行级 snapshot_url 人脸裁剪小图优先)。两路取证文件后端均独立落盘,
+//   此处只决定渲染源不影响证据完整性 — 告警中心/态势屏/场景面板快照列一处改全生效。
 export function getSnapshotUrl(row: any): string {
+  if (isFaceAlarmRow(row) && faceScenePreferred()) {
+    const scene = faceSceneUrlOf(row)
+    if (scene) return scene
+  }
   if (row.snapshotUrl) return row.snapshotUrl
   const b64 = row.metadata?.snapshot_base64
   if (!b64) return ''

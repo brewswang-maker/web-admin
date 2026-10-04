@@ -343,7 +343,10 @@
                       <div>
                         <span class="alarm-popup__detail-key">报警等级:</span>
                         <span class="alarm-popup__detail-val">
-                          <span class="alarm-popup__level-badge" :class="`alarm-popup__level-badge--${currentAlarm.level}`">{{ levelLabel }}</span>
+                          <!-- [FIX level-text-unify 2026-10-02] 自绘 badge → el-tag SSOT 四元组
+                               (type/effect/文案与告警中心/态势屏表格完全同形态; 原 CSS 类依赖原始
+                               level 值绑定位且缺 info 档, 数字/旧残留值落空时无背景色) -->
+                          <el-tag size="small" :type="alarmLevelTagType(currentAlarm.level)" :effect="alarmLevelTagEffect(currentAlarm.level)">{{ levelLabel }}</el-tag>
                         </span>
                       </div>
                       <div>
@@ -686,7 +689,8 @@ import { alarmShapeKey } from '@/composables/useAlarmShapes' // [FIX p1-shape-ca
 import defaultFacePhoto from '@/assets/photo.jpg'
 import EvidenceFrames from '@/components/EvidenceFrames.vue' // [POPUP-EV-MERGE 2026-09-07] 弹窗内已并入画廊, import 保留给未来复用 (无副作用)
 import { buildEvidenceSlots, hasEvidenceChain, evidenceCompleteness, isEvidencePostPending, evidenceFrameLag, fmtEvidenceLag } from '@/utils/evidenceFrames' // [EV-TRIPLE 2026-09-14] 取证帧语义/时间戳共享模块; [EV-STABLE3 2026-09-19] 三格固定槽位; [FIX ev-frame-lag 2026-09-20] P1-5 帧滞后判定/文案
-import { alarmLevelColor, alarmLevelRgb, alarmLevelText } from '@/utils/alarmLevel' // [FIX level-color-ssot 2026-09-16] 等级色板全站统一
+import { alarmLevelColor, alarmLevelRgb, alarmLevelText, alarmLevelTagType, alarmLevelTagEffect } from '@/utils/alarmLevel' // [FIX level-color-ssot 2026-09-16] 等级色板全站统一; [FIX level-text-unify 2026-10-02] 详情面板等级 tag 四元组同源
+import { faceScenePreferred } from '@/utils/faceEvidence' // [FEAT face-scene-pref 2026-10-02] 人脸取证图渲染源开关 (设置中心)
 import {
   popupVisible, currentAlarm, matchedRule, linkageLogs,
   currentPopupAutoCloseS,  // [POPUP-AUTOCLOSE 2026-09-03] 弹窗自动关闭秒数 (0=不启用)
@@ -817,7 +821,12 @@ const alarmImageList = computed<GalleryImage[]>(() => {
     }
     else if (primary) list = [primary]
   }
-  const mainUrls = scene ? [scene, ...list] : list
+  // [FEAT face-scene-pref 2026-10-02] 渲染源接设置中心开关: 开 (默认) = 场景原图置首
+  //   (主展示图, 原行为); 关 = 场景图移到序列末位 (仍可翻页查看, 双图取证不丢),
+  //   抓拍小图作主图。只调顺序不删图 — 两路取证文件始终可获取。
+  const mainUrls = !scene
+    ? list
+    : (faceScenePreferred() ? [scene, ...list] : [...list, scene])
   // [EV-TRIPLE 2026-09-14] 取证帧: 共享语义模块构建 (pre→mid→post 固定序 +
   //   算法语义标签 + evidence_ts 相对时间角标; 契约过滤宁缺毋假, 与
   //   详情抽屉 EvidenceFrames 同源 — 原硬编码「事前/事中/事后」就地废除)
@@ -3410,18 +3419,8 @@ void jumpToPlayback; void openImageTab
   background: var(--el-color-primary-light-3, #66b1ff);
 }
 
-/* 报警等级徽章 */
-.alarm-popup__level-badge {
-  display: inline-block;
-  padding: 0px 14px;
-  font-size: 13px;
-  color: #fff;
-  margin-left: 4px;
-}
-.alarm-popup__level-badge--critical { background: #B71C1C; } /* [FIX level-color-ssot 2026-09-16] 方案 A 深红 */
-.alarm-popup__level-badge--high     { background: #F56C6C; }
-.alarm-popup__level-badge--medium   { background: #E6A23C;  }
-.alarm-popup__level-badge--low      { background: #67C23A; }
+/* 报警等级徽章: [FIX level-text-unify 2026-10-02] 自绘 CSS 类已废兦 — 详情面板
+   改 el-tag (SSOT type/effect/文案), 与告警中心表格完全同形态, 双源漂移归一 */
 
 .alarm-popup__status {
   display: inline-block;

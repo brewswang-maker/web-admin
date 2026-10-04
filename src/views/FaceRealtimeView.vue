@@ -194,6 +194,20 @@
                   {{ new Date(row.timestamp).toLocaleString('zh-CN', { hour12: false }) }}
                 </template>
               </el-table-column>
+              <!-- [FEAT face-scene-pref 2026-10-02] 通行记录补取证图列: 渲染源随设置中心开关 -->
+              <el-table-column :label="$t('faceRealtime.passRecords.snapshot')" width="80">
+                <template #default="{ row }">
+                  <el-image
+                    v-if="passSnapshotUrl(row)"
+                    :src="passSnapshotUrl(row)"
+                    :preview-src-list="[passSnapshotUrl(row)]"
+                    fit="cover"
+                    style="width:48px;height:48px;border-radius:4px"
+                    preview-teleported
+                  />
+                  <span v-else class="text-muted">—</span>
+                </template>
+              </el-table-column>
               <el-table-column :label="$t('faceRealtime.passRecords.type')" prop="pass_type" width="120">
                 <template #default="{ row }">
                   <el-tag :type="passTypeTag(row.pass_type)" size="small">
@@ -351,6 +365,8 @@ import {
 import { useWebSocket } from '@/composables/useWebSocket'
 import { useI18n } from 'vue-i18n'
 import { faceApi, FacePassRecord, alarmApi } from '@/api'
+// [FEAT face-scene-pref 2026-10-02] 人脸取证图渲染源偏好 (设置中心开关, 默认快照原图)
+import { faceScenePreferred } from '@/utils/faceEvidence'
 
 const { t } = useI18n()
 
@@ -550,6 +566,15 @@ function normalizeSnapshotUrl(url: string): string {
   return window.location.origin + '/' + url
 }
 
+// [FEAT face-scene-pref 2026-10-02] 通行记录行主图解析 (开关感知):
+// scene_url = 现场快照原图 (全帧) / snapshot_url = 人脸抓拍小图; 两路取证独立落盘,
+// 此处仅决定渲染顺序 (开=原图优先, 关=小图优先), 缺失一路时用另一路兜底, 不丢证据。
+function passSnapshotUrl(r: any): string {
+  const scene = normalizeSnapshotUrl(String(r?.scene_url ?? r?.sceneUrl ?? ''))
+  const small = normalizeSnapshotUrl(String(r?.snapshot_url ?? r?.snapshotUrl ?? ''))
+  return faceScenePreferred() ? (scene || small) : (small || scene)
+}
+
 function buildLivenessBadge(isLive: boolean, score: number) {
   if (score <= 0) return null
   return isLive
@@ -587,7 +612,17 @@ async function handleAlarmEvent(raw: any) {
   //   及通行事件 face_pass_vip / face_pass_staff / face_pass_custom) [扩展分组 2026-08-25]
   if (!typeStr.startsWith('face')) return
 
-  const meta = raw.metadata || raw.meta || {}
+  // [FIX ws-meta-unpack 2026-10-03] metadata 形态兼容 (与 useAlarmPopup.unpackRawMetadata
+  //   同口径): WS 推送帧 metadata 存在 JSON 字符串 (双重编码) / 数组 (治理字段注入首
+  //   元素) 形态 — 原裸取 meta.scene_url 在非对象形态下恒 undefined → 设置开关开着也
+  //   回退「抓拍小图」渲染 (用户实测反馈「默认是原快照, 可现在还是人脸抓图」)。
+  //   字符串 parse / 数组取首元素 / 对象直用。
+  const rawMeta = raw.metadata ?? raw.meta
+  const meta: any = typeof rawMeta === 'string'
+    ? (() => { try { return JSON.parse(rawMeta) } catch { return {} } })()
+    : Array.isArray(rawMeta)
+      ? (rawMeta[0] && typeof rawMeta[0] === 'object' ? rawMeta[0] : {})
+      : (rawMeta && typeof rawMeta === 'object' ? rawMeta : {})
   const personId = String(meta.person_id ?? raw.person_id ?? raw.personId ?? '')
   const name = meta.name ?? raw.name ?? t('faceRealtime.unknownPerson')
   const group = classifyAlarmType(alarmType, meta.group_type ?? raw.group_type ?? '')
@@ -610,8 +645,13 @@ async function handleAlarmEvent(raw: any) {
 
   // 3. 构造 UI 事件
   // [v6.2 2026-06-21] snapshot 优先用 base64, 其次用 /api/v1/alarms 返回的 URL (转绝对路径)
-  const snapshotDataUrl = buildSnapshotUrl(snapshotBase64, snapshotFormat)
+  // [FEAT face-scene-pref 2026-10-02] 领导口径: 默认改用「现场快照原图」(metadata.scene_url,
+  //   全帧 640 宽) 作主展示图; 设置中心开关关闭时回退原「抓拍小图」链。两路取证文件
+  //   后端始终独立落盘, 此处仅影响默认渲染源。
+  const sceneUrl = normalizeSnapshotUrl(String(meta.scene_url ?? meta.sceneUrl ?? ''))
+  const legacySnapshotUrl = buildSnapshotUrl(snapshotBase64, snapshotFormat)
     || normalizeSnapshotUrl(raw.snapshot_url ?? raw.snapshotUrl ?? meta.snapshot_url ?? '')
+  const snapshotDataUrl = (faceScenePreferred() && sceneUrl) ? sceneUrl : (legacySnapshotUrl || sceneUrl)
   const evt: FaceRealtimeEvent = {
     uid: `evt-${Date.now()}-${++eventCounter}`,
     alarmId: raw.id ?? raw.alarm_id ?? '',
@@ -645,10 +685,22 @@ async function loadRecentFaceAlarms() {
   if (recentLoadAbort) recentLoadAbort.abort()
   recentLoadAbort = new AbortController()
   try {
-    const res = await alarmApi.getList({ count: 20, pageSize: 20, page: 1 } as any)
-    const payload = (res as any).data?.data ?? (res as any).data ?? res
-    const items: any[] = payload?.items ?? payload?.alarms ?? []
-    if (!Array.isArray(items) || items.length === 0) return
+    // [FIX face-history-pages 2026-10-03] 只拉第 1 页漏人脸事件: 告警流被高频
+    //   违停等告警占据时 face_* 全在第 2 页之后 → 实时页恒空态 (真机 10-03 实测
+    //   第 1 页 20 条全为 illegal_parking)。改拉前 3 页合并 (足覆盖半小时窗),
+    //   单页失败/拉不满即止。
+    const items: any[] = []
+    for (const p of [1, 2, 3]) {
+      try {
+        const res = await alarmApi.getList({ count: 50, pageSize: 50, page: p } as any)
+        const payload = (res as any).data?.data ?? (res as any).data ?? res
+        const pageItems: any[] = payload?.items ?? payload?.alarms ?? []
+        if (!Array.isArray(pageItems) || pageItems.length === 0) break
+        items.push(...pageItems)
+        if (pageItems.length < 50) break
+      } catch { break }
+    }
+    if (items.length === 0) return
     // 过滤 face_*, 同时按时间倒序
     const faceItems = items
       .filter((a) => String(a?.alarm_type || '').toLowerCase().startsWith('face_'))

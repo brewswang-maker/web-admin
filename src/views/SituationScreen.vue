@@ -455,7 +455,13 @@
                   :aria-label="t('situationScreen.viewDetail')"
                   @click="openAlarmDetail(alarm)"
                 >
-                  <span class="alarm-level"><b>{{ alarmLevelText(alarm.level) }}</b></span>
+                  <span class="alarm-level">
+                    <!-- [FIX level-text-unify 2026-10-02] 色块 b → 色点+el-tag (与告警中心表格
+                         同形态同四元组: type/effect 走 utils/alarmLevel SSOT; 文案 i18n 与
+                         ALARM_LEVEL_TEXT 同值 严重/高/中/低/提示) -->
+                    <span class="level-dot" :class="alarm.level"></span>
+                    <el-tag size="small" :type="alarmLevelTagType(alarm.level)" :effect="alarmLevelTagEffect(alarm.level)">{{ alarmLevelText(alarm.level) }}</el-tag>
+                  </span>
                   <span class="alarm-snapshot" @click.stop>
                     <el-image
                       v-if="getSnapshotUrl(alarm)"
@@ -878,6 +884,12 @@ import { useEventTypeZh } from '@/composables/useEventTypeZh'
 // [FIX ss-merged-parity 2026-09-20] statusLabel 并入: 状态列文案对齐告警中心
 //   (useAlarmTableHelpers = 列表展示口径 SSOT, 中心列表同表; 未处理/误报/…)
 import { alarmChLabel, isAlarmStateSyncFrame, mergedCountOf, statusLabel, carriedItemLabel } from '@/composables/useAlarmTableHelpers'
+// [FIX level-text-unify 2026-10-02] 实时告警列表等级列改「色点+el-tag」四元组 SSOT
+//   (type/effect 同源 utils/alarmLevel, 与告警中心表格完全同形态)
+import { alarmLevelTagType, alarmLevelTagEffect } from '@/utils/alarmLevel'
+// [FEAT face-scene-pref 2026-10-03] 同 AlarmsView: 态势屏内联 getSnapshotUrl 补接
+//   人脸取证图渲染源偏好 (原内联版漏改 → 态势屏人脸行恒显抓拍小图)
+import { faceScenePreferred, faceSceneUrlOf, isFaceAlarmRow } from '@/utils/faceEvidence'
 // [FIX ind-floormap-parity 2026-09-18] unpackAlarmMeta/alarmChannelIdOf 迁至共享
 //   (定位追踪页室内面板同口径复用, 防双实现漂移); findChannelByHash 不再直接使用
 import { loadAlarmNameDirectory, devNameOf, parentDevOfChannel, unpackAlarmMeta, alarmChannelIdOf } from '@/composables/useAlarmDeviceLabel'
@@ -3364,8 +3376,15 @@ function toAlarm(s: SituationAlarmStream): Alarm {
 }
 
 /** 兜底函数: 返回抓拍图 URL, 优先 snapshotUrl, 其次 metadata.snapshot_base64 dataURL
- *  与 AlarmsView.vue:995-1005 / AlarmPopup.vue:415-433 实现保持一致 */
+ *  与 AlarmsView.vue:995-1005 / AlarmPopup.vue:415-433 实现保持一致
+ *  [FEAT face-scene-pref 2026-10-03] 人脸类告警主图渲染源接设置中心开关 (对齐
+ *  useAlarmTableHelpers.getSnapshotUrl 同款): 开 (默认) → metadata.scene_url
+ *  现场快照原图优先, scene 缺失回落原链; 关 → 原行为。 */
 function getSnapshotUrl(alarm: Alarm): string {
+  if (isFaceAlarmRow(alarm) && faceScenePreferred()) {
+    const scene = faceSceneUrlOf(alarm)
+    if (scene) return scene
+  }
   if (alarm.snapshotUrl) return alarm.snapshotUrl
   const meta = alarm.metadata as { snapshot_base64?: string; snapshot_format?: string } | undefined
   const b64 = meta?.snapshot_base64
@@ -4291,30 +4310,24 @@ onUnmounted(() => {
   cursor: default;
 }
 
-.alarm-level b {
+/* [FIX level-text-unify 2026-10-02] 等级列自绘色块 b 废兦 — 改「色点+el-tag」
+   (SSOT 四元组, 与告警中心表格同形态); 色点仍按方案 A 档位色, 与 el-tag 主色一致 */
+.alarm-level {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
-  min-width: 30px;
-  height: 20px;
-  padding: 0 4px;
-  border-radius: 2px;
-  color: #EAF8FF;
-  background: #1676D2;
-  font-size: 13px;
-  font-weight: 500;
+  gap: 6px;
 }
-
-/* [FIX level-color-ssot 2026-09-16] 方案 A 全站统一 (utils/alarmLevel):
-   低=绿 中=黄 高=红 严重=深红 信息=灰; 原 low=蓝 #1676D2 / medium 暗黄
-   #B88D12 与 AlarmsView/AlarmPopup/LinkageRule 三套互不一致 */
-.alarm-row.critical .alarm-level b { background: #B71C1C; }
-.alarm-row.high .alarm-level b { background: #F56C6C; }
-.alarm-row.medium .alarm-level b { background: #E6A23C; }
-.alarm-row.low .alarm-level b { background: #67C23A; }
-/* [FIX level-ssot 2026-09-14] info 档徽章 (SSOT 5 档补全; 原缺档回落默认
-   蓝 #1676D2 与 low 同色难区分 — 信息级用低饱和灰) */
-.alarm-row.info .alarm-level b { background: #909399; }
+.alarm-level .level-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.alarm-row.critical .level-dot { background: #B71C1C; box-shadow: 0 0 6px rgba(183, 28, 28, 0.4); }
+.alarm-row.high .level-dot { background: #F56C6C; }
+.alarm-row.medium .level-dot { background: #E6A23C; }
+.alarm-row.low .level-dot { background: #67C23A; }
+.alarm-row.info .level-dot { background: #909399; }
 
 .alarm-snapshot {
   justify-content: center;

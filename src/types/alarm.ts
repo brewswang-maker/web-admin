@@ -683,7 +683,20 @@ export const ALARM_CATEGORY: Record<string, AlarmCategory> = {
 function normalizeSeverityScale(sev: unknown, level?: unknown): number {
   let n = Number(sev)
   if (!Number.isFinite(n)) n = Number(level)
-  if (!Number.isFinite(n)) n = 2
+  // [FIX level-idempotent 2026-10-03] 字符串档位幂等: 二次归一链 (告警中心行是已归一
+  //   对象, level='critical' 字符串、无 severity 字段 → 弹窗 showAlarmPopup 再
+  //   normalizeAlarmCore) 中 Number('critical')=NaN → 旧逻辑兜底 2 → mapSeverity(2)
+  //   ='low', 同一条告警列表显示「严重」弹窗变「低」(真机 10-03 违停告警实测, 用户
+  //   反馈「列表和弹窗级别不一样」根因)。档位词反查数字, 档位表与 utils/alarmLevel
+  //   normalizeAlarmLevel 同口径; 未识别词保持原兜底 2。
+  if (!Number.isFinite(n)) {
+    const s = String(level ?? '').trim().toLowerCase()
+    if (s === 'critical' || s === '紧急') n = 5
+    else if (s === 'high' || s === '高') n = 4
+    else if (s === 'medium' || s === 'warning' || s === '中') n = 3
+    else if (s === 'info' || s === '提示') n = 1
+    else n = 2
+  }
   if (n > 0 && n < 1) n = Math.max(2, Math.round(n * 5))
   return Math.max(1, Math.min(5, n))
 }

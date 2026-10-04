@@ -3,6 +3,7 @@
  * 告警/设备状态/Agent状态实时更新
  */
 import { ref, onUnmounted, reactive } from 'vue'
+import { getAuthToken } from '@/utils/auth'
 
 interface WSMessage {
   // [FIX 2026-08-22] 放宽为 string: 后端实际推送 'alarm.new'/'linkage_alarm'/
@@ -70,7 +71,15 @@ export function useWebSocket(path?: string) {
   function connect(wsPath: string) {
     if (disposed) return
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    const url = `${protocol}//${window.location.host}${wsPath}`
+    // [FIX ws-auth 2026-10-03] WS 握手必须带 token。
+    //   服务端 HttpServer::handleWebSocket 已接入 default-deny 鉴权闸门
+    //   (与 HTTP 面同一套 HttpAuthGate 口径), 无 token 的升级会被 401 拒掉。
+    //   浏览器 WebSocket API 不能自定义请求头, 故按既有实践 (useGlobalAlarm.ts)
+    //   走 query 参数; wsPath 本身可能已带 query, 故用 '&' 而非恒 '?'。
+    const tk = getAuthToken()
+    const sep = wsPath.includes('?') ? '&' : '?'
+    const auth = tk ? `${sep}token=${encodeURIComponent(tk)}` : ''
+    const url = `${protocol}//${window.location.host}${wsPath}${auth}`
 
     ws = new WebSocket(url)
 

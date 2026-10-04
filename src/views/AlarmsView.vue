@@ -1009,6 +1009,10 @@ import { securityAreaApi } from '@/api/securityAreas'
 import { recordingHttp, streamHttp } from '@/api/http'
 import { normalizeStreamUrl } from '@/utils/streamUrl'
 import { alarmLevelTagType, alarmLevelTagEffect } from '@/utils/alarmLevel' // [FIX level-color-ssot 2026-09-16] 等级色板全站统一
+// [FEAT face-scene-pref 2026-10-03] 人脸取证图渲染源偏好: 本视图内联 getSnapshotUrl
+//   补接 (上轮只改 useAlarmTableHelpers 版, 漏了本视图内联版 → 告警中心快照列
+//   恒显人脸抓拍小图, 用户 2026-10-03 复检反馈项)
+import { faceScenePreferred, faceSceneUrlOf, isFaceAlarmRow } from '@/utils/faceEvidence'
 import type { AlarmHandleForm, AlarmEvidence, AlarmEvent } from '@/types/alarm'
 import { normalizeAlarmCore, aiReviewVerdictLabel, aiReviewVerifierLabel, aiReviewReasonText, type AiReviewInfo } from '@/types/alarm'
 import { useAuthStore } from '@/stores/auth'
@@ -1043,12 +1047,15 @@ import { useRoute, useRouter } from 'vue-router'
 import type flvjs from 'flv.js'   // 仅类型空间 (编译期擦除, 无运行时依赖)
 
 // ── 严重等级中文映射 ──
+// [FIX level-text-unify 2026-10-02] 「高危/中危/低危/信息」→「高/中/低/提示」:
+//   与 utils/alarmLevel.ALARM_LEVEL_TEXT / AlarmPopup / 态势屏 / 场景面板同警同文
+//   (用户要求 level→颜色→tag type→文案 四元组全站对齐); tag type/effect 已走 SSOT。
 const SEVERITY_LABELS: Record<string, string> = {
   critical: '严重',
-  high: '高危',
-  medium: '中危',
-  low: '低危',
-  info: '信息',
+  high: '高',
+  medium: '中',
+  low: '低',
+  info: '提示',
 }
 
 // ── 筛选状态 ──
@@ -1804,7 +1811,15 @@ function onAlarmClipUpdated(e: Event) {
 
 // [FIX 2026-06-28] 人脸告警快照以 snapshot_base64 存在 metadata 中。
 //   此函数在 snapshotUrl 为空时回退到 metadata.snapshot_base64 构造 data URL。
+// [FEAT face-scene-pref 2026-10-03] 人脸类告警主图渲染源接设置中心开关 (对齐
+//   useAlarmTableHelpers.getSnapshotUrl 同款): 开 (默认) → metadata.scene_url
+//   现场快照原图优先, scene 缺失回落原链; 关 → 原行为 (抓拍小图优先)。
+//   两路取证文件后端均独立落盘, 此处只决定渲染源不影响证据完整性。
 function getSnapshotUrl(row: any): string {
+  if (isFaceAlarmRow(row) && faceScenePreferred()) {
+    const scene = faceSceneUrlOf(row)
+    if (scene) return scene
+  }
   if (row.snapshotUrl) return row.snapshotUrl
   const b64 = row.metadata?.snapshot_base64
   if (!b64) return ''
@@ -2387,9 +2402,15 @@ async function runAiReview(row: any) {
     aiReviewDlg.analysis = String(analysis || '')
     aiReviewDlg.backend = String(payload.backend ?? '')
     aiReviewDlg.visible = true
-    ElMessage.success('AI 复核完成')
+    // [FIX ai-msg-dur 2026-10-03] 成功/失败提示加长驻留 + 可手动关闭: VLM 分析
+    //   耗时数秒~数十秒, ElMessage 默认 3s 驻留下用户感知「一闪而过」(用户实测
+    //   反馈); 失败分支同理 — 后端原因 (如快照缺失) 必须可读, 杜绝静默无反馈观感。
+    ElMessage({ message: 'AI 复核完成', type: 'success', duration: 5000, showClose: true })
   } catch (e: any) {
-    ElMessage.error(e?.response?.data?.message || e?.message || 'AI 复核失败, 请稍后重试')
+    ElMessage({
+      message: e?.response?.data?.message || e?.message || 'AI 复核失败, 请稍后重试',
+      type: 'error', duration: 8000, showClose: true,
+    })
   } finally {
     delete aiAnalyzeLoading.value[row.id]
   }

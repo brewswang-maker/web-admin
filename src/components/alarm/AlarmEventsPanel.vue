@@ -43,7 +43,9 @@
         <template #default="{ row }">
           <div class="level-cell">
             <span class="level-dot" :class="row.severity"></span>
-            <el-tag :type="levelTagType(row.severity)" size="small" effect="light">
+            <!-- [FIX level-text-unify 2026-10-02] effect 硬编码 light → SSOT (严重=dark,
+               与告警中心表格同形态); tag type/文案已同源 -->
+            <el-tag :type="levelTagType(row.severity)" size="small" :effect="levelTagEffect(row.severity)">
               {{ severityLabel(row.severity) }}
             </el-tag>
           </div>
@@ -500,7 +502,7 @@ import { ArrowDown } from '@element-plus/icons-vue'
 import type { AlarmEvent } from '@/types/alarm'
 import { useEventTypeZh } from '@/composables/useEventTypeZh'
 import {
-  severityLabel, levelTagType, statusLabel, statusTagType,
+  severityLabel, levelTagType, levelTagEffect, statusLabel, statusTagType,
   reviewLabel, reviewTagType, reviewTooltip,
   slaRemainingClass, slaRemainingText,
   confidenceColor, confPct, formatTime,
@@ -682,10 +684,14 @@ onMounted(() => {
   border-radius: 50%;
   flex-shrink: 0;
 }
-.level-dot.critical { background: #DC2626; box-shadow: 0 0 6px rgba(220, 38, 38, 0.4); }
-.level-dot.high { background: #EA580C; }
-.level-dot.medium { background: #F59E0B; }
-.level-dot.low { background: #22C55E; }
+/* [FIX level-text-unify 2026-10-02] 色点改方案 A 全站统一 (utils/alarmLevel):
+   严重=深红 #B71C1C / 高=红 #F56C6C / 中=黄 #E6A23C / 低=绿 #67C23A
+   (原旧 Tailwind 系 #DC2626/#EA580C/#F59E0B/#22C55E 与告警中心色点不一致) */
+.level-dot.critical { background: #B71C1C; box-shadow: 0 0 6px rgba(183, 28, 28, 0.4); }
+.level-dot.high { background: #F56C6C; }
+.level-dot.medium { background: #E6A23C; }
+.level-dot.low { background: #67C23A; }
+.level-dot.info { background: #909399; }
 
 /* SLA 剩余时间列 — 三色分级 */
 .sla-remaining { font-variant-numeric: tabular-nums; font-weight: 500; }

@@ -31,13 +31,17 @@ export const ALARM_LEVEL_RGB: Record<AlarmLevelKey, string> = {
   info: '144, 147, 153',
 }
 
-/** 等级 → 中文默认文案 (i18n 页面可用各自 t() 覆盖, 不强制) */
+/** 等级 → 中文默认文案 (i18n 页面可用各自 t() 覆盖, 不强制)
+ *  [FIX level-text-unify 2026-10-02] info 档 '信息'→'提示': 与 i18n levelInfo /
+ *  AlarmCard / useAlarmLabels 既有「提示」口径统一 (2026-09-20 ss-merged-parity
+ *  「两屏同警异文」治理收尾)。全站 level→颜色→tag type→文案 四元组以本表为唯一基准,
+ *  用户要求: 严禁同一档位在不同页面出现不同色/不同 tag 形态/不同文案。 */
 export const ALARM_LEVEL_TEXT: Record<AlarmLevelKey, string> = {
   critical: '严重',
   high: '高',
   medium: '中',
   low: '低',
-  info: '信息',
+  info: '提示',
 }
 
 /**

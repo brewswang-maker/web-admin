@@ -525,6 +525,8 @@ import { useChannelStore } from '@/stores/channel'
 // [UI-6 2026-09-10] 通道目录树 (安保区域→设备→通道) — 与 ChannelView/LocationTrackView 同源工具
 import { securityAreaApi } from '@/api/securityAreas'
 import { buildAreaTree, areaTreeToElTreeData, expandAreaChannels } from '@/utils/areaTree'
+// [FIX ws-auth 2026-10-03] WS 握手鉴权需要 token (服务端 401 拒绝无 token 升级)
+import { getAuthToken } from '@/utils/auth'
 import type { PlayerFormat as StorePlayerFormat, ActiveSlotData } from '@/stores/channel'
 // [P3-CO3] E2E 延迟监控
 import { e2eLatencyStats } from '@/composables/useGlobalAlarm'
@@ -3264,7 +3266,12 @@ function cleanupTalk() {
 // 启动下行音频播放（设备→浏览器）
 function startTalkDownstream(callId: string) {
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-  talkDownWs = new WebSocket(`${protocol}//${window.location.host}/ws`)
+  // [FIX ws-auth 2026-10-03] 同 useWebSocket: WS 握手鉴权走 ?token= (浏览器
+  //   WebSocket API 不能设请求头)。缺 token 会被服务端 401 拒掉, 下行音频失效。
+  const tk = getAuthToken()
+  talkDownWs = new WebSocket(
+    `${protocol}//${window.location.host}/ws${tk ? `?token=${encodeURIComponent(tk)}` : ''}`
+  )
 
   talkDownWs.onopen = () => {
     talkDownWs!.send(JSON.stringify({ type: 'subscribe', channel: `talk_${callId}` }))

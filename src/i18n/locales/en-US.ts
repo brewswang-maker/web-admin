@@ -1368,6 +1368,7 @@ const enUS: MessageSchema = {
     passRecords: {
       title: 'Pass Records',
       time: 'Time',
+      snapshot: 'Evidence',   // [FEAT face-scene-pref 2026-10-02] pass-record evidence image column (source follows settings switch)
       type: 'Type',
       name: 'Name',
       personId: 'Person ID',

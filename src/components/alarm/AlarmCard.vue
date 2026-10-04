@@ -7,7 +7,11 @@
         <el-icon :size="28"><Picture /></el-icon>
         <span>无快照</span>
       </div>
-      <span class="alarm-card__level" :class="`lv-${levelTone}`">{{ levelLabel }}</span>
+      <!-- [FIX level-tag-ssot 2026-10-03] 自绘 lv-* 胶囊 → el-tag 四元组 (type/effect/
+           文案走 utils/alarmLevel SSOT): 与告警中心表格/详情弹窗同形态 — 此前卡片是
+           白字纯色胶囊、弹窗是 el-tag, 同一档位两种视觉 (用户反馈「列表与弹窗级别
+           不一样」的形态差异半边; 等级值不一致半边在 normalizeSeverityScale 幂等) -->
+      <el-tag class="alarm-card__level" size="small" :type="alarmLevelTagType(cardLevel)" :effect="alarmLevelTagEffect(cardLevel)">{{ alarmLevelText(cardLevel) }}</el-tag>
     </div>
 
     <!-- 下部信息区 -->
@@ -67,6 +71,12 @@ import { useEventTypeZh } from '@/composables/useEventTypeZh'
 import { carrySourceOf } from '@/composables/useAlarmTableHelpers'
 // [FIX dev-name-num 2026-09-11] 设备名称数字形态治理 (共享目录反查)
 import { resolveAlarmDeviceName } from '@/composables/useAlarmDeviceLabel'
+// [FIX level-tag-ssot 2026-10-03] 级别四元组 SSOT (与表格/弹窗同源)
+import { alarmLevelTagType, alarmLevelTagEffect, alarmLevelText } from '@/utils/alarmLevel'
+// [FEAT face-scene-pref 2026-10-03] 卡片快照渲染源接设置中心开关 (对齐
+//   useAlarmTableHelpers.getSnapshotUrl 同款: 人脸类默认 scene 现场快照优先,
+//   原裸绑 snapshotUrl 恒显人脸抓拍小图 — 用户 2026-10-03 复检反馈项)
+import { faceScenePreferred, faceSceneUrlOf, isFaceAlarmRow } from '@/utils/faceEvidence'
 
 const props = defineProps<{
   alarm: AlarmEvent
@@ -77,7 +87,15 @@ const emit = defineEmits<{ (e: 'click', a: AlarmEvent): void }>()
 
 const { zh } = useEventTypeZh()
 
-const snapUrl = computed(() => props.alarm.snapshotUrl || '')
+// [FEAT face-scene-pref 2026-10-03] 人脸类告警 scene 优先 (开关感知, scene 缺失回落原链)
+const snapUrl = computed(() => {
+  const a: any = props.alarm
+  if (isFaceAlarmRow(a) && faceScenePreferred()) {
+    const scene = faceSceneUrlOf(a)
+    if (scene) return scene
+  }
+  return a.snapshotUrl || ''
+})
 
 /** 事件类型中文 (canonical SSOT 优先, 未注册回原文 — 与各列表页同口径) */
 const typeZh = computed(() => {
@@ -97,18 +115,12 @@ const alarmEnded = computed(() => (props.alarm as any).eventEnded === true)
 const alarmOngoing = computed(() =>
   !alarmEnded.value && Number((props.alarm as any).eventStartMs ?? 0) > 0)
 
-// ── 级别 (severity/level 兜底链) ──
-const levelTone = computed(() => {
-  const lv = String((props.alarm as any).severity || props.alarm.level || '').toLowerCase()
-  if (lv.includes('crit')) return 'crit'
-  if (lv.includes('high')) return 'high'
-  if (lv.includes('med') || lv.includes('warn')) return 'med'
-  if (lv.includes('low')) return 'low'
-  return 'info'
-})
-const levelLabel = computed(() => ({
-  crit: '严重', high: '高', med: '中', low: '低', info: '提示',
-}[levelTone.value]))
+// ── 级别 (severity/level 兜底链; 展示四元组由 SSOT 驱动) ──
+// [FIX level-tag-ssot 2026-10-03] 原 levelTone/levelLabel 本地档位表废弃:
+//   数字 severity (5/4/3/2) 落 String 匹配不到 'crit' 等词 → 恒 info 灰 —
+//   SSOT normalizeAlarmLevel 原生兼容数字/字符串双形态, 直接透传
+const cardLevel = computed(() =>
+  (props.alarm as any).severity ?? props.alarm.level ?? '')
 
 // ── 处理状态 ──
 const STATUS_CN: Record<string, { label: string; tone: string }> = {
@@ -187,22 +199,14 @@ const timeText = computed(() => {
   color: #5a6b7d;
   font-size: 12px;
 }
+/* [FIX level-tag-ssot 2026-10-03] 自绘色板随 lv-* 类一并废弃 — el-tag type/effect
+   由 utils/alarmLevel SSOT 驱动 (严重=dark 深红实底, 其余 light); 此处仅保留
+   快照图左上角覆盖定位。light 浅底深字在暗色快照上仍可读, 形态与全站一致优先 */
 .alarm-card__level {
   position: absolute;
   top: 8px;
   left: 8px;
-  padding: 1px 8px;
-  border-radius: 10px;
-  font-size: 12px;
-  color: #fff;
-  background: #909399;
 }
-/* [FIX level-color-ssot 2026-09-16] 方案 A 全站统一 (utils/alarmLevel):
-   严重=深红 #B71C1C / 高=红 #F56C6C / 中=黄 #E6A23C (原中=蓝 #409eff) / 低=绿 */
-.alarm-card__level.lv-crit { background: #B71C1C; }
-.alarm-card__level.lv-high { background: #F56C6C; }
-.alarm-card__level.lv-med { background: #E6A23C; }
-.alarm-card__level.lv-low { background: #67c23a; }
 
 /* 信息区 */
 .alarm-card__body { padding: 10px 12px 12px; }

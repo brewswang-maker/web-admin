@@ -84,6 +84,9 @@ export interface FacePassRecord {
   liveness_score: number
   is_live: boolean
   description: string
+  // [FEAT face-scene-pref 2026-10-02] 双取证图 URL (独立落盘不二选一, 前端按设置中心开关选渲染源)
+  snapshot_url?: string   // 人脸抓拍小图 (旧记录/落盘失败为空)
+  scene_url?: string      // 现场快照原图 (旧记录/落盘失败为空)
 }
 
 export interface FaceDatabaseResponse<T> {
