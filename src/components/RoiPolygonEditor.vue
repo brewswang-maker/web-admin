@@ -140,8 +140,9 @@
     <div class="roi-canvas-wrap" ref="canvasWrapRef" data-drawing-no-hint>
       <canvas
         ref="canvasRef"
-        :width="canvasWidth"
-        :height="canvasHeight"
+        :width="Math.round(canvasWidth * dpr)"
+        :height="Math.round(canvasHeight * dpr)"
+        :style="{ width: canvasWidth + 'px', height: canvasHeight + 'px' }"
         :class="['roi-canvas', { 'roi-canvas--drawing': drawing }]"
         tabindex="0"
         @mousedown="onMouseDown"
@@ -215,6 +216,8 @@ const emit = defineEmits<{
 
 const canvasRef = ref<HTMLCanvasElement>()
 const canvasWrapRef = ref<HTMLDivElement>()
+// [FIX p2-dpr-canvas 2026-10-04] 缺陷 13-3: devicePixelRatio 放大内部分辨率，屏幕渲染与导出 PNG 一致
+const dpr = ref(Math.min(window.devicePixelRatio || 1, 2))
 const fileInputRef = ref<HTMLInputElement>()
 const drawing = ref(false)
 const dragging = ref(false)
@@ -643,8 +646,9 @@ function emitRois() {
  */
 function currentFit(): FitRect {
   const canvas = canvasRef.value
-  const cw = canvas?.width ?? props.canvasWidth
-  const ch = canvas?.height ?? props.canvasHeight
+  // [FIX p2-dpr-canvas 2026-10-04] 13-3: 使用逻辑尺寸而非物理 canvas.width
+  const cw = props.canvasWidth || (canvas ? canvas.width / dpr.value : 640)
+  const ch = props.canvasHeight || (canvas ? canvas.height / dpr.value : 360)
   const img = bgImage.value
   if (!img) return { x: 0, y: 0, w: cw, h: ch, scale: 1 }
   return computeFitRect(cw, ch, img.naturalWidth, img.naturalHeight)
@@ -657,15 +661,16 @@ function getCanvasPoint(e: MouseEvent) {
   const canvas = canvasRef.value
   if (!canvas) return null
   const rect = canvas.getBoundingClientRect()
-  const scaleX = canvas.width / rect.width
-  const scaleY = canvas.height / rect.height
-  const px = (e.clientX - rect.left) * scaleX
-  const py = (e.clientY - rect.top) * scaleY
+  // [FIX p2-dpr-canvas 2026-10-04] 13-3: 鼠标坐标转换到逻辑空间 (与 currentFit/renderCanvas 一致)
+  const px = (e.clientX - rect.left) * (canvas.width / rect.width) / dpr.value
+  const py = (e.clientY - rect.top) * (canvas.height / rect.height) / dpr.value
   const fit = currentFit()
+  const lw = props.canvasWidth || (canvas.width / dpr.value)
+  const lh = props.canvasHeight || (canvas.height / dpr.value)
   if (!isPixelInFit({ x: px, y: py }, fit)) return null
   return snapPoint(canvasToNormalized(
     { x: px, y: py },
-    canvas.width, canvas.height,
+    lw, lh,
     props.normalizeWidth, props.normalizeHeight,
     fit,
   ))
@@ -676,9 +681,10 @@ function getCanvasPixel(e: MouseEvent): { x: number; y: number } | null {
   const canvas = canvasRef.value
   if (!canvas) return null
   const rect = canvas.getBoundingClientRect()
+  // [FIX p2-dpr-canvas 2026-10-04] 13-3: 返回逻辑坐标 (与 drawing 坐标系一致)
   return {
-    x: (e.clientX - rect.left) * (canvas.width / rect.width),
-    y: (e.clientY - rect.top) * (canvas.height / rect.height),
+    x: (e.clientX - rect.left) * (canvas.width / rect.width) / dpr.value,
+    y: (e.clientY - rect.top) * (canvas.height / rect.height) / dpr.value,
   }
 }
 
@@ -914,28 +920,33 @@ function renderCanvas(previewPoint?: { x: number; y: number }) {
   const ctx = canvas.getContext('2d')
   if (!ctx) return
 
-  ctx.clearRect(0, 0, canvas.width, canvas.height)
+  // [FIX p2-dpr-canvas 2026-10-04] 13-3: 缩放 ctx 以逻辑像素绘制，绝对尺寸乘 dpr
+  ctx.setTransform(dpr.value, 0, 0, dpr.value, 0, 0)
+  const lw = canvas.width / dpr.value   // 逻辑宽
+  const lh = canvas.height / dpr.value  // 逻辑高
+
+  ctx.clearRect(0, 0, lw, lh)
 
   // 绘制背景图 (等比 contain letterbox, 缺陷 14-1)
   const fit = currentFit()
   if (bgImage.value) {
     ctx.fillStyle = '#000'
-    ctx.fillRect(0, 0, canvas.width, canvas.height)
+    ctx.fillRect(0, 0, lw, lh)
     ctx.drawImage(bgImage.value, fit.x, fit.y, fit.w, fit.h)
     ctx.fillStyle = 'rgba(0,0,0,0.25)'
     ctx.fillRect(fit.x, fit.y, fit.w, fit.h)
   } else {
     // 无背景图时显示网格
     ctx.fillStyle = '#1a1a1a'
-    ctx.fillRect(0, 0, canvas.width, canvas.height)
+    ctx.fillRect(0, 0, lw, lh)
     ctx.strokeStyle = '#333'
     ctx.lineWidth = 0.5
     const gridSize = 40
-    for (let x = 0; x < canvas.width; x += gridSize) {
-      ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height); ctx.stroke()
+    for (let x = 0; x < lw; x += gridSize) {
+      ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, lh); ctx.stroke()
     }
-    for (let y = 0; y < canvas.height; y += gridSize) {
-      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(canvas.width, y); ctx.stroke()
+    for (let y = 0; y < lh; y += gridSize) {
+      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(lw, y); ctx.stroke()
     }
   }
 
