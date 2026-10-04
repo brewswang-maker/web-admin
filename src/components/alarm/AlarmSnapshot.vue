@@ -93,6 +93,7 @@ import { ElMessage } from 'element-plus'
 import {
   drawDetsOnCtx, drawShapesOnCtx, downloadPngWithFallback,
   markTriggerDet, parseDetections, useAlarmShapes, type ParsedDet, type ShapeSource,
+  metaRoiFrameOf,
 } from '@/composables/useAlarmShapes'
 // [FIX p1-roi-basis-write 2026-10-02] 缺陷 13-5: ROI 像素顶点的归一除数 = 写入侧
 //   基准 (通道真实帧尺寸), 取共享通道目录 chFrameOf —— 与区域绘制页
@@ -135,6 +136,11 @@ const props = defineProps<{
    *  当时生效区域几何 (区域库后续增删不影响历史告警取证), 非空时最高
    *  优先级消费, 绕过规则链/区域库回退与共享缓存 */
   alarmShapes?: unknown[]
+  /** [FIX p1-13-5srv 2026-10-04] 13-5 服务端根治接线: metadata.roi_frame=[w,h]
+   *  插件冻结像素形态时同报的插件实际除数 —— 与 isInRegion 判定同尺。
+   *  非空时优先于 chFrameOf(channelId); 旧告警/其它插件无本字段时仍回退
+   *  chFrameOf 链 (13-5 契约不变, 向后兼容)。 */
+  alarmShapesFrame?: { w: number; h: number }
   /** [FIX p1-shape-cache-key 2026-10-02] 12-2: 形状归属身份 (联动规则 id,
    *  缺退告警 id)。useAlarmShapes 模块级 30s 缓存的第三维——不传则同一
    *  (通道,算法) 下两条规则的几何会互相污染; 传空串时 composable 宁可不缓存。 */
@@ -168,7 +174,10 @@ const shapeSource = ref<ShapeSource>('none')
 //   注: 检测框链 (normBBox / parseDetections) 仍用 imageSize —— 本缺陷之前的既有
 //   口径, 现网 detections 主流形态已归一 (≤阈值直通, 除数不参与), 不在本批
 //   授权面内改动, 已作为同源遗留登记。
-const shapeFrame = computed(() => chFrameOf(props.channelId))
+// [FIX p1-13-5srv 2026-10-04] 13-5 服务端根治接线: props.alarmShapesFrame (元
+//   数据 roi_frame) 优先 —— 插件已同尺归一且直接声明除数, 前端无需再猜
+//   chFrameOf(channelId)。无本字段时保留原 chFrameOf 链 (向后兼容)。
+const shapeFrame = computed(() => props.alarmShapesFrame ?? chFrameOf(props.channelId))
 function reloadShapes() {
   loadShapes(props.channelId, props.algoId, props.alarmShapes, props.alarmKey, shapeFrame.value)
     .then((src) => {

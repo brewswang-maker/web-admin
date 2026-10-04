@@ -77,6 +77,28 @@ function stripChSuffix(chId: string): string {
   return String(chId || '').replace(/_ch\d+$/, '')
 }
 
+/** [FIX p1-13-5srv 2026-10-04] 13-5 服务端根治接线 SSOT:
+ *  从告警 metadata 提取插件冻结像素形态时同报的 `roi_frame=[w,h]` 基准。
+ *  - 新告警 (intrusion_detector 同尺归一后上报): 顶点已在 [0,1]，本字段
+ *    仅作为可观测性/向未米新插件预留的精确基准声明。
+ *  - 旧告警 / 其它插件 无本字段 → 回退 chFrameOf(channelId) (13-5 契约不变)。
+ *  - 非数组/长度<2/w|h 非正 → undefined (同 13-1 对 尺寸未就绪的处理口径)。
+ *  不取证据帧尺寸 (imageSize/imgNat): 13-5 红线 (已被 S31 反向钉住)。 */
+export function metaRoiFrameOf(metadata: unknown): ShapeFrame | undefined {
+  if (!metadata || typeof metadata !== 'object') return undefined
+  const m = metadata as Record<string, unknown>
+  // 后端 metadata 有双层壳形态 (m[0] = 内层): 与 unpackAlarmMeta/AlarmPopup 同口径。
+  const src = ((m as any)[0] && typeof (m as any)[0] === 'object')
+    ? (m as any)[0] as Record<string, unknown>
+    : m
+  const rf = src.roi_frame
+  if (!Array.isArray(rf) || rf.length < 2) return undefined
+  const w = Number(rf[0]) || 0
+  const h = Number(rf[1]) || 0
+  if (w <= 0 || h <= 0) return undefined
+  return { w, h }
+}
+
 /** [FIX p1-roi-frame-basis 2026-10-02] 13-1 / [FIX p1-roi-basis-write 2026-10-02]
  *  13-5 纠正: 像素尺度 ROI 顶点的归一除数 = **写入侧基准** (通道真实帧尺寸)。
  *  w/h ≤0 视为未知, 由 roiSchema SSOT 内部回退 1920×1080 —— 与写入侧

@@ -98,6 +98,7 @@ import {
   CLASS_COLORS, SHAPE_STYLES, drawDetsOnCtx, drawShapesOnCtx, downloadPngWithFallback,
   markTriggerDet, parseDetections, useAlarmShapes, zhLabel, type ShapeSource,
   type OverlayShape, type OverlayShapeType, type ParsedDet,
+  metaRoiFrameOf,
 } from '@/composables/useAlarmShapes'
 // [FIX p1-alarm-identity 2026-10-02] 12-1: 算法 id 口径单一出处 (与弹窗/列表同源)
 import { resolveAlarmAlgoId } from '@/utils/alarmIdentity'
@@ -175,7 +176,11 @@ const effAlgoId = computed(() => props.algoId
 //   口径且现网 detections 主流已归一, 已作同源遗留登记。
 //   基准为 reactive computed → 目录就绪自动重算, 原「等 @load 拿尺寸」的 1.2s
 //   兑底定时器与 imgNat 入 watch 依赖一并撤除。
-const shapeFrame = computed(() => chFrameOf(props.channelId))
+// [FIX p1-13-5srv 2026-10-04] 13-5 服务端根治接线 (与弹窗侧 AlarmSnapshot
+//   同口径): metadata.roi_frame=[w,h] 非空时优先于 chFrameOf —— 插件已
+//   同尺归一并直接声明除数。无本字段时保留 chFrameOf 链 (向后兼容)。
+const metaRoiFrame = computed(() => metaRoiFrameOf(props.metadata))
+const shapeFrame = computed(() => metaRoiFrame.value ?? chFrameOf(props.channelId))
 function reloadShapes() {
   loadShapes(props.channelId, effAlgoId.value, (props.metadata as any)?.alarm_shapes,
     props.alarmKey, shapeFrame.value)
