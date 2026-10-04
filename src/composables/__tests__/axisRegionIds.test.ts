@@ -33,6 +33,7 @@ import {
   clampGapS,
   serializeAxisSequencePure,
   serializeAxisConditionalPure,
+  resolvePidToRegionId,
 } from '../axisRegionIds'
 
 const PID_A = 'roi_1758123456789_abc123'
@@ -110,5 +111,75 @@ describe('axisRegionIds 时序条件 region_id 域校验 (15-1)', () => {
     expect(r.bad).toEqual(['大门'])
     const ok = serializeAxisSequencePure('sequence', [{ region_id: ' 12 ', gap_s: 60 }], [])
     expect(JSON.parse(ok.json)).toEqual([{ region_id: '12', max_gap_ms: 60000 }])
+  })
+})
+
+// ── [FIX p1-15-1b-mapping 2026-10-04] 15-1(b) 前端保存侧 pid↔区域库主键 规一化 ──
+describe('resolvePidToRegionId + serialize* 接入 roiBindings (15-1b)', () => {
+  const BINDINGS = [
+    { roi_id: PID_A, region_id: 101 },
+    { roi_id: PID_B, region_id: 0 },            // 未绑定 (0 非法)
+    // ROI_UNBOUND 未列 → 模拟未绑定情形
+  ]
+  const ROI_UNBOUND = 'roi_9999_nobody'
+
+  it('⑨ resolvePidToRegionId: 命中绑表时 pid → String(region_id)', () => {
+    const r = resolvePidToRegionId(PID_A, BINDINGS)
+    expect(r.ok).toBe(true)
+    if (r.ok) { expect(r.value).toBe('101'); expect((r as any).passthrough).toBeUndefined() }
+  })
+
+  it('⑩ resolvePidToRegionId: 未命中/region_id=0/缺失 时 ok:false + reason=unbound_pid', () => {
+    const miss = resolvePidToRegionId(ROI_UNBOUND, BINDINGS)
+    expect(miss.ok).toBe(false)
+    if (!miss.ok) { expect(miss.reason).toBe('unbound_pid'); expect(miss.pid).toBe(ROI_UNBOUND) }
+    const zero = resolvePidToRegionId(PID_B, BINDINGS)
+    expect(zero.ok).toBe(false)   // region_id=0 不算已绑定
+  })
+
+  it('⑪ resolvePidToRegionId: 纯数字 / 空串 透传 (向后兼容)', () => {
+    const num = resolvePidToRegionId('12', BINDINGS)
+    expect(num.ok).toBe(true)
+    if (num.ok) { expect(num.value).toBe('12'); expect((num as any).passthrough).toBe(true) }
+    const empty = resolvePidToRegionId('', BINDINGS)
+    expect(empty.ok).toBe(true)
+    if (empty.ok) { expect(empty.value).toBe(''); expect((empty as any).passthrough).toBe(true) }
+  })
+
+  it('⑫ serializeAxisSequencePure: 传入 roiBindings 后落库 JSON 为数字 region_id (非 pid)', () => {
+    const r = serializeAxisSequencePure('sequence', [{ region_id: PID_A, gap_s: 60 }], CANDIDATES, BINDINGS)
+    expect(r.bad).toEqual([])
+    expect(JSON.parse(r.json)).toEqual([{ region_id: '101', max_gap_ms: 60000 }])
+  })
+
+  it('⑬ serializeAxisSequencePure: pid 未绑定 → bad_pids 非空 + json 空 + bad 点名 (拒保存)', () => {
+    const r = serializeAxisSequencePure('sequence', [{ region_id: ROI_UNBOUND, gap_s: 60 }], [ROI_UNBOUND], BINDINGS)
+    expect(r.json).toBe('')
+    expect(r.bad_pids).toEqual([ROI_UNBOUND])
+    expect(r.bad.length).toBe(1)
+    expect(r.bad[0]).toMatch(/未绑定区域库 ID/)
+  })
+
+  it('⑭ serializeAxisConditionalPure: target 已绑定 pid + prior 未绑定 pid → 拒保存 bad_pids 点名 prior', () => {
+    const r = serializeAxisConditionalPure('conditional', PID_A, ROI_UNBOUND, 300, [PID_A, ROI_UNBOUND], BINDINGS)
+    expect(r.json).toBe('')
+    expect(r.bad_pids).toEqual([ROI_UNBOUND])
+  })
+
+  it('⑮ serializeAxisConditionalPure: 两侧均命中 → json 中 target/prior 均为数字 region_id (非 pid)', () => {
+    const b2 = [...BINDINGS, { roi_id: ROI_UNBOUND, region_id: 202 }]
+    const r = serializeAxisConditionalPure('conditional', PID_A, ROI_UNBOUND, 300, [PID_A, ROI_UNBOUND], b2)
+    expect(r.bad).toEqual([])
+    const parsed = JSON.parse(r.json)
+    expect(parsed.target_region_id).toBe('101')
+    expect(parsed.prior_region_id).toBe('202')
+    expect(parsed.lookback_ms).toBe(300000)
+  })
+
+  it('⑯ roiBindings 为 undefined/null 时行为与旧形态一致 (向后兼容, pid 直接落库)', () => {
+    const r1 = serializeAxisSequencePure('sequence', [{ region_id: PID_A, gap_s: 60 }], CANDIDATES)
+    expect(JSON.parse(r1.json)).toEqual([{ region_id: PID_A, max_gap_ms: 60000 }])
+    const r2 = serializeAxisSequencePure('sequence', [{ region_id: PID_A, gap_s: 60 }], CANDIDATES, null)
+    expect(JSON.parse(r2.json)).toEqual([{ region_id: PID_A, max_gap_ms: 60000 }])
   })
 })

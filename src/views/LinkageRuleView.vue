@@ -2064,6 +2064,14 @@ const axisRegionOptions = computed(() => (form.conditions.region.config.roiPolyg
   .filter(r => !!r.roi_id)
   .map(r => ({ value: String(r.roi_id), label: r.roi_name || String(r.roi_id) })))
 const axisRegionCandidateIds = computed(() => axisRegionOptions.value.map(o => o.value))
+// [FIX p1-15-1b-mapping 2026-10-04] 15-1(b) 前端保存侧规一化锈点: 画板候选 pid → 区域库 int64 主键。
+//   RoiData.region_id 由 [ROI-ID-BIND 2026-09-29] 画板首次同步时后端响应回填,
+//   经快照 roi_shapes_json 持久化。未绑定项 (region_id 缺失/为 0) 不入绑表，
+//   由 serialize* 归入 bad_pids 拒保存 (避免旧行为将 pid 直接落库导致引擎严格直比时静默失效)。
+const axisRoiBindings = computed(() =>
+  (form.conditions.region.config.roiPolygon || [])
+    .filter(r => !!r.roi_id && typeof r.region_id === 'number' && r.region_id > 0)
+    .map(r => ({ roi_id: String(r.roi_id), region_id: r.region_id as number })))
 function addAxisStep() { axisSteps.value = [...axisSteps.value, { region_id: '', gap_s: 60 }] }
 function removeAxisStep(idx: number) {
   const arr = axisSteps.value.slice()
@@ -2076,14 +2084,14 @@ function removeAxisStep(idx: number) {
 //   返回形态由 string 改为 {json, bad} —— bad 非空时调用方必须拒绝保存 (旧实现会
 //   静默丢掉非法那一步, 规则带着残缺链落库)。
 function serializeAxisSequence(): AxisSerializeResult {
-  return serializeAxisSequencePure(axisMode.value, axisSteps.value, axisRegionCandidateIds.value)
+  return serializeAxisSequencePure(axisMode.value, axisSteps.value, axisRegionCandidateIds.value, axisRoiBindings.value)
 }
 // 时序条件 → {target_region_id, prior_region_id, lookback_ms}: 回看钳位
 //   [1s,24h] 默认 5min; 目标区域为空 = 不生效 (返回空串)。同 15-1 上提纯函数。
 function serializeAxisConditional(): AxisSerializeResult {
   return serializeAxisConditionalPure(
     axisMode.value, axisTargetRegion.value, axisPriorRegion.value, axisLookbackS.value,
-    axisRegionCandidateIds.value,
+    axisRegionCandidateIds.value, axisRoiBindings.value,
   )
 }
 function resetAxisState() {

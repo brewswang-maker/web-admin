@@ -38,6 +38,8 @@ export interface AxisSerializeResult {
   json: string;
   /** 非法值原文清单 (已 trim, 去重, 保序); 空数组 = 全部合法 */
   bad: string[];
+  /** [FIX p1-15-1b-mapping 2026-10-04] 未绑定区域库 ID 的 ROI pid 清单 (调用方拒保存点名) */
+  bad_pids?: string[];
 }
 
 /** 纯数字 = 区域库主键形态 (事件侧 metadata["region_id"] 的实际来源) */
@@ -75,6 +77,44 @@ export function clampGapS(raw: unknown, fallback = 60): number {
 }
 
 /**
+ * [FIX p1-15-1b-mapping 2026-10-04] 缺陷 15-1(b) 前端保存侧规一化。
+ * 画板候选值 `roi_<ts>_<rand>` 与事件侧 `metadata["region_id"]` (区域库 int64
+ * 主键) 同一字段位上存在二形 ID 域失配 —— 插件 `intrusion_detector.cpp:754` 把
+ * r.id (int64) 写入事件元数据, 而画板候选由 `RoiPolygonEditor.vue:543` 生成的
+ * roi_id 是字符串形态, 若直接落库, 引擎严格字符串直比 (LinkageEngine.cpp:2067-2078
+ * [R3-2 2026-09-10]) 永远不命中 → 规则静默失效。
+ *
+ * RoiData 由 [ROI-ID-BIND 2026-09-29] 已新增 `region_id?: number` 字段 (画板首次同步
+ * 后由后端响应回填, 经快照 `roi_shapes_json` / `roi_shapes_by_channel` 持久化),
+ * 本函数以该字段为锚点做规一化:
+ *   • 传入 `roi_` 前缀 pid 且命中绑表 → 返回对应 String(region_id) (数字形态落库)
+ *   • 传入 `roi_` 前缀 pid 但未绑定 (region_id 缺失) → ok:false + pid (调用方拒保存)
+ *   • 纯数字 / 空串 / 其他合法形态 → 原值透传 (ok:true + passthrough:true)
+ */
+export interface RoiBinding {
+  roi_id: string
+  region_id?: number
+}
+
+export function resolvePidToRegionId(
+  raw: unknown,
+  bindings: RoiBinding[] | undefined | null,
+): { ok: true; value: string } | { ok: false; reason: 'unbound_pid'; pid: string } | { ok: true; value: string; passthrough: true } {
+  const s = String(raw ?? '').trim()
+  if (!s) return { ok: true, value: '', passthrough: true }
+  if (NUMERIC_ID_RE.test(s)) return { ok: true, value: s, passthrough: true }
+  if (!CANVAS_PID_RE.test(s)) return { ok: true, value: s, passthrough: true }
+  // [FIX p1-15-1b-mapping] 向后兼容: 旧调用方未传 roiBindings (undefined/null) 时
+  //   保留旧形态 (pid 直接落库), 仅当明确传入数组时才启用 pid→region_id 规一化。
+  if (!Array.isArray(bindings)) return { ok: true, value: s, passthrough: true }
+  const hit = bindings.find((b) => b && b.roi_id === s)
+  if (hit && typeof hit.region_id === 'number' && hit.region_id > 0) {
+    return { ok: true, value: String(hit.region_id) }
+  }
+  return { ok: false, reason: 'unbound_pid', pid: s }
+}
+
+/**
  * 顺序穿越 → [{region_id, max_gap_ms}]。
  * 模式非 sequence = 空串 (切模式即清链); 全空步骤 = 空串 (回普通几何);
  * **存在非法值 → 整条返回空串 + bad 清单** (调用方拒绝保存, 不落残缺链)。
@@ -83,13 +123,25 @@ export function serializeAxisSequencePure(
   mode: string,
   steps: AxisStepInput[] | undefined | null,
   candidates: string[] = [],
+  roiBindings?: RoiBinding[] | null,
 ): AxisSerializeResult {
   if (mode !== 'sequence') return { json: '', bad: [] }
   const list = Array.isArray(steps) ? steps : []
   const bad = auditAxisRegionIds(list.map((s) => s?.region_id), candidates)
   if (bad.length) return { json: '', bad }
+  // [FIX p1-15-1b-mapping 2026-10-04] 逐步规一化: 画板 pid → 区域库 int64 主键; 未绑定者列入 bad_pids 拒保存
+  const resolved: string[] = []
+  const unbound: string[] = []
+  for (const s of list) {
+    const raw = String(s?.region_id ?? '').trim()
+    if (!raw) { resolved.push(''); continue }
+    const r = resolvePidToRegionId(raw, roiBindings)
+    if (!r.ok) { unbound.push(r.pid); resolved.push('') }
+    else resolved.push(r.value)
+  }
+  if (unbound.length) return { json: '', bad: unbound.map((p) => `${p} (ROI 未绑定区域库 ID)`), bad_pids: unbound }
   const arr = list
-    .map((s) => ({ region_id: String(s?.region_id ?? '').trim(), gap_s: clampGapS(s?.gap_s) }))
+    .map((s, i) => ({ region_id: resolved[i], gap_s: clampGapS(s?.gap_s) }))
     .filter((s) => s.region_id)
     .map((s) => ({ region_id: s.region_id, max_gap_ms: s.gap_s * 1000 }))
   return { json: arr.length > 0 ? JSON.stringify(arr) : '', bad: [] }
@@ -106,16 +158,21 @@ export function serializeAxisConditionalPure(
   priorRegion: unknown,
   lookbackS: unknown,
   candidates: string[] = [],
+  roiBindings?: RoiBinding[] | null,
 ): AxisSerializeResult {
   if (mode !== 'conditional') return { json: '', bad: [] }
   const bad = auditAxisRegionIds([targetRegion, priorRegion], candidates)
   if (bad.length) return { json: '', bad }
-  const t = String(targetRegion ?? '').trim()
+  // [FIX p1-15-1b-mapping 2026-10-04] target/prior 各自规一化; 任一未绑定 → 拒保存
+  const rt = resolvePidToRegionId(targetRegion, roiBindings)
+  if (!rt.ok) return { json: '', bad: [`${rt.pid} (ROI 未绑定区域库 ID)`], bad_pids: [rt.pid] }
+  const rp = resolvePidToRegionId(priorRegion, roiBindings)
+  if (!rp.ok) return { json: '', bad: [`${rp.pid} (ROI 未绑定区域库 ID)`], bad_pids: [rp.pid] }
+  const t = rt.value
   if (!t) return { json: '', bad: [] }
-  // 回看钳位 [1s,24h] 默认 5min (旧实现逐字保留)
   const lookMs = clampGapS(lookbackS, 300) * 1000
   return {
-    json: JSON.stringify({ target_region_id: t, prior_region_id: String(priorRegion ?? '').trim(), lookback_ms: lookMs }),
+    json: JSON.stringify({ target_region_id: t, prior_region_id: rp.value, lookback_ms: lookMs }),
     bad: [],
   }
 }
