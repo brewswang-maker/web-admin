@@ -159,6 +159,21 @@ function algoMatch(a?: string, b?: string): boolean {
 interface ShapeCacheEntry { list: OverlayShape[]; fullscreen: boolean; ts: number; source: ShapeSource }
 const shapeCache = new Map<string, ShapeCacheEntry>()
 const CACHE_TTL = 30_000
+// [FIX p2-shapecache-cap 2026-10-04] 缺陷 13-4: 缓存容量上限，防止长会话内存单调增长
+const CACHE_MAX = 256
+function evictShapeCache() {
+  if (shapeCache.size <= CACHE_MAX) return
+  const now = Date.now()
+  for (const [k, v] of shapeCache) {
+    if (now - v.ts > CACHE_TTL) shapeCache.delete(k)
+  }
+  // 若 TTL 清理后仍超限，删除最早插入的条目 (Map 迭代序 = 插入序)
+  while (shapeCache.size > CACHE_MAX) {
+    const first = shapeCache.keys().next().value
+    if (first !== undefined) shapeCache.delete(first)
+    else break
+  }
+}
 // [FIX p1-shape-cache-key 2026-10-02] 降级可见化去噪: 同一缓存键的拉取失败只敲
 //   一次 console.warn (告警列表轮询 + 多实例组件会把同一条错刷成满屏)。
 const degradedWarned = new Set<string>()
@@ -500,6 +515,7 @@ export function useAlarmShapes() {
         shapeCache.set(key, {
           list: filtered, fullscreen: fullscreenGuard.value, ts: Date.now(), source,
         })
+        evictShapeCache()  // [FIX p2-shapecache-cap 2026-10-04]
       }
       degradedWarned.delete(key)
       shapes.value = filtered
