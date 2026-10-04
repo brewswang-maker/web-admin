@@ -149,4 +149,36 @@ describe('useAlarmShapes 形状按规则私有取 (10-5)', () => {
     expect(await load(CH, ALGO)).toBe('rule')
     expect(shapes.value.map((s) => s.name)).toEqual(['显式绑定区2'])
   })
+
+  // ── [FIX p1-wildcard-noalgo 2026-10-04] 10-5 残留收口: 纯通配候补仅在带 algoId 时放行 ──
+  it('⑦ algoId 为空 + 仅纯通配规则 → 不回退通配几何 (判据 7: 无算法归属不串画)', async () => {
+    // 只有无任何通道/算法/位置绑定的通配规则; 告警无 algoId、无 alarmKey。
+    // 坏实现: 去掉 wildcard 分支的 `algoId &&` 守卫 → algoHit 因 !algoId 恒真 →
+    //   拿到「无主通配区」→ 本条红 (即被收口的残留路径)。
+    mockRules([rule({ id: 'RwildNoAlgo', name: '无主通配区' })])
+    const { shapes, load } = useAlarmShapes()
+    // ① 链不回退 → 落 ② 区域库 (armRegionEmpty 已置空) → 'none', 零形状
+    expect(await load(CH, undefined, undefined, 'alarm-7001')).toBe('none')
+    expect(shapes.value).toHaveLength(0)
+  })
+
+  it('⑧ algoId 为空 + 显式绑定规则 → 仍取通道候补 (收窄不误伤 chShapes, 判据 8)', async () => {
+    // 通道候补分支 (line 342 `!algoId && chHit`) 独立于通配收窄, 必须保留 ——
+    //   「algoId 空时通道是唯一线索」的原语义只对**已绑通道**的规则成立。
+    mockRules([
+      rule({ id: 'Rwild9', name: '无主通配区9' }),
+      rule({ id: 'Rbind9', ch: CH, name: '显式绑定区9' }),
+    ])
+    const { shapes, load } = useAlarmShapes()
+    expect(await load(CH, undefined)).toBe('rule')
+    expect(shapes.value.map((s) => s.name)).toEqual(['显式绑定区9'])
+  })
+
+  it('⑨ 带 algoId + 仅纯通配规则 → 仍取通配 (算法归属线索保留回退, 判据 9)', async () => {
+    // 反向保护: 收窄只针对 algoId 为空; 告警带 algoId 时通配规则 event_types 匹配仍作候补。
+    mockRules([rule({ id: 'Rwild10', name: '通配区10' })])
+    const { shapes, load } = useAlarmShapes()
+    expect(await load(CH, ALGO)).toBe('rule')
+    expect(shapes.value.map((s) => s.name)).toEqual(['通配区10'])
+  })
 })

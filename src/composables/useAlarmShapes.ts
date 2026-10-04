@@ -340,7 +340,16 @@ async function loadFromRules(
       //   通配候补同样过算法关。仅 algoId 空时保留通道候补 (告警无算法信息)。
       if (chHit && algoHit) return list
       if (!algoId && chHit && !chShapes) chShapes = list
-      if (isWildcard && !wildcardShapes && algoHit) wildcardShapes = list
+      // [FIX p1-wildcard-noalgo 2026-10-04] 10-5 残留收口: 纯通配规则 (无通道/位置绑定,
+      //   srcChs+bound==0, locId 空) 的几何作最后候补, 仅在告警**带 algoId** 且与该规则
+      //   event_types 匹配 (算法归属线索) 时才允许 —— 通配规则本身没有任何通道信息,
+      //   「通道是唯一线索」对它不成立 (那是上面 chShapes 分支的语义)。algoId 为空时
+      //   既无算法归属、又无通道/规则归属 → 不再把一个完全无绑定规则的几何串到该告警上
+      //   (原口径 algoId 空 → algoHit 恒真 → 通配候补放行 = 缺陷 10-5 登记的残留)。
+      //   退化后交 ② 区域库 (同样 !algoId 不画) / 'none', 与「后端告警由哪条规则产生
+      //   就画哪条 ROI」的 10-5 主口径一致。显式绑定规则 (chHit) 与 alarmKey 精确指认
+      //   通配规则自身 (strictRuleMode) 两条正路均不受本收窄影响 (见 ruleprivate 判据⑤)。
+      if (isWildcard && algoId && !wildcardShapes && algoHit) wildcardShapes = list
     } catch { /* 非法 JSON 跳过该规则 */ }
   }
   return chShapes ?? wildcardShapes ?? []
