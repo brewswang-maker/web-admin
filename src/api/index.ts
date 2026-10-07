@@ -119,23 +119,6 @@ export type {
   Model3DCacheHeaders,
 } from '@/types/scene3d-model'
 
-// ── 兼容层 ──
-import { alarmApi } from './alarm'
-import type { AlarmQuery, AlarmHandleForm } from '@/types/alarm'
-
-/** @deprecated 使用 alarmApi.getList 代替 */
-export async function getAlarms(params?: Record<string, any>) {
-  const res = await alarmApi.getList(params as AlarmQuery)
-  const data = (res.data as any).data ?? res.data
-  return data
-}
-
-/** @deprecated 使用 alarmApi.handle 代替 */
-export async function handleAlarm(id: string, action: string) {
-  const form: AlarmHandleForm = { status: action as any, note: '' }
-  return alarmApi.handle(id, form)
-}
-
 // ── 新增模块 ──
 export { default as agentApi } from './agent'
 export { default as algorithmsApi } from './algorithms'

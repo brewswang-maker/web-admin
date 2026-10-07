@@ -11,8 +11,8 @@
  */
 
 import { describe, it, expect, vi, beforeAll, beforeEach } from 'vitest'
-import { provide, computed } from 'vue'
-import { mount, type VueWrapper } from '@vue/test-utils'
+import { provide } from 'vue'
+import { mount } from '@vue/test-utils'
 import RoiPolygonEditor from '@/components/RoiPolygonEditor.vue'
 import { RoiType, type RoiData } from '@/composables/useRoiCanvas'
 

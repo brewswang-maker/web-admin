@@ -484,7 +484,7 @@ describe('ThreeDRenderer 模块', () => {
     })
 
     afterEach(() => {
-      try { builder.dispose() } catch (_) { /* ignore */ }
+      try { builder.dispose() } catch { /* ignore */ }
     })
 
     it('构造函数正确初始化 loader 和 config', () => {

@@ -264,6 +264,8 @@
 
 <script setup lang="ts">
 import { ref, reactive, computed, watch, onMounted, nextTick, onUnmounted } from 'vue'
+// [FIX roi-snapshot-401 2026-10-07] 裸 fetch 统一走 authedFetch 补 Bearer (旧代码误用 localStorage['token'], 全仓从未写入→恒空→流式对话 401)
+import { authedFetch } from '@/utils/authedFetch'
 import { useRouter } from 'vue-router'
 import { aiHttp } from '@/api/http'
 import { createSubscription, type CompilePreviewResult } from '@/api/agentSubscriptions'
@@ -633,9 +635,9 @@ async function sendMessage() {
       const dateStr = now.toLocaleDateString('zh-CN') + ' ' + now.toLocaleTimeString('zh-CN', {hour:'2-digit',minute:'2-digit'})
 
       const [chRes, devRes, alarmRes] = await Promise.allSettled([
-        fetch('/api/v1/channels').then(r => r.json()),
-        fetch('/api/v1/devices').then(r => r.json()),
-        fetch('/api/v1/alarms/history?limit=20').then(r => r.json()),
+        authedFetch('/api/v1/channels').then(r => r.json()),
+        authedFetch('/api/v1/devices').then(r => r.json()),
+        authedFetch('/api/v1/alarms/history?limit=20').then(r => r.json()),
       ])
 
       const channels = chRes.status === 'fulfilled' ? (chRes.value.data?.channels || chRes.value.data || []) : []
@@ -698,9 +700,9 @@ async function sendMessage() {
     }
     if (images.length) body.images = images
 
-    const response = await fetch(endpoint, {
+    const response = await authedFetch(endpoint, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${localStorage.getItem('token') || ''}` },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
       signal: abortCtrl.signal,
     })

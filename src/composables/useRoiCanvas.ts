@@ -476,14 +476,6 @@ export function drawRoi(
   normW = FALLBACK_WIDTH,
   normH = FALLBACK_HEIGHT,
 ): void {
-  // 归一化坐标转canvas像素
-  const canvasPoints = roi.polygon.flatMap((v, i) => {
-    if (i % 2 === 0) {
-      return [(v / normW) * canvasW, (roi.polygon[i + 1] / normH) * canvasH]
-    }
-    return []
-  }).filter((_, i) => i % 2 === 0) // 重新构建
-
   // 简化：直接转换
   const pts: number[] = []
   for (let i = 0; i < roi.polygon.length - 1; i += 2) {

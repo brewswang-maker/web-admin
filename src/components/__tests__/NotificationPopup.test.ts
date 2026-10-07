@@ -14,7 +14,6 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 
 // ── 简化 NotificationPopup 组件测试 ────────────────────────
@@ -43,12 +42,6 @@ vi.mock('element-plus', () => ({
   ElIcon: { template: '<span><slot /></span>' },
   Close: { template: '<span>✕</span>' },
 }))
-
-// ── 测试辅助 ──────────────────────────────────────────────
-function createWrapper(props = {}) {
-  // 由于组件依赖 Element Plus 完整导入，我们测试核心逻辑函数
-  return null // placeholder
-}
 
 // ── 测试核心逻辑 ──────────────────────────────────────────
 describe('components/NotificationPopup', () => {
@@ -98,13 +91,6 @@ describe('components/NotificationPopup', () => {
   // Tab 过滤逻辑
   // ========================================================================
   describe('Tab过滤逻辑', () => {
-    const tabs = [
-      { key: 'all', label: '全部', count: 4 },
-      { key: 'alarm', label: '告警', count: 1 },
-      { key: 'system', label: '系统', count: 1 },
-      { key: 'device', label: '设备', count: 1 },
-      { key: 'ai', label: 'AI', count: 1 },
-    ]
 
     it('全部Tab显示所有通知', () => {
       const filtered = mockStore.notifications // activeTab === 'all'

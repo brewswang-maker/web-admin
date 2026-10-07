@@ -103,8 +103,11 @@ import type { AlarmEvent, AlarmLevel } from '@/types/alarm'
 import { normalizeAlarmCore } from '@/types/alarm'
 // [FIX dev-name-num 2026-09-11] nl 拼接数字形态治理 (共享目录反查)
 import { resolveAlarmDeviceName } from '@/composables/useAlarmDeviceLabel'
+import { formatLocalDateTime as formatTime } from '@/utils/datetime'
+import { formatAlarmLevelCode as levelText } from '@/utils/alarmLevel'
 import type { EventTypeMetadataItem } from '@/api/eventTypes'
 import { useRealtimeAlarmEvents } from '@/composables/useRealtimeAlarmEvents'
+import { formatShortDateTime as shortTime } from '@/utils/datetime'
 // [FIX realtime-push 2026-09-06] 场景页实时刷新: WS 告警到达去抖静默重拉 (无 loading 遮罩闪烁)
 useRealtimeAlarmEvents(() => load(true))
 
@@ -238,24 +241,6 @@ function levelClass(level: AlarmLevel): string {
     default: return 'lv-info'
   }
 }
-function levelText(level: AlarmLevel): string {
-  return level.toUpperCase()
-}
-function formatTime(ts?: string): string {
-  if (!ts) return '-'
-  const d = new Date(ts)
-  if (isNaN(d.getTime())) return ts
-  const pad = (n: number) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
-}
-function shortTime(ts?: string): string {
-  if (!ts) return '-'
-  const d = new Date(ts)
-  if (isNaN(d.getTime())) return ts
-  const pad = (n: number) => String(n).padStart(2, '0')
-  return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
-}
-
 onMounted(async () => {
   try {
     const resp = await eventTypesApi.metadata()

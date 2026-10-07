@@ -137,11 +137,13 @@ import { useRouter } from 'vue-router'
 import { alarmApi } from '@/api/alarm'
 // [FIX channel-monitor-point 2026-09-17] 对标海康术语: 通道列显示值友好名化 (目录反查, 失败回退技术 ID)
 import { alarmChLabel } from '@/composables/useAlarmTableHelpers'
+import { formatLocalDateTime as formatTime } from '@/utils/datetime'
 import { retrievalApi, extractTowerUnavailable, type ImageSearchItem } from '@/api/retrieval'
 import eventTypesApi from '@/api/eventTypes'
 import type { EventTypeMetadataItem } from '@/api/eventTypes'
 import type { AlarmEvent, AlarmLevel } from '@/types/alarm'
 import { useRealtimeAlarmEvents } from '@/composables/useRealtimeAlarmEvents'
+import { formatAlarmLevelCode as levelText } from '@/utils/alarmLevel'
 // [FIX realtime-push 2026-09-06] 场景页实时刷新: WS 告警到达去抖重拉 (零新增连接)
 useRealtimeAlarmEvents(() => loadEvents())
 
@@ -241,18 +243,6 @@ function levelClass(level: AlarmLevel): string {
     default: return 'lv-info'
   }
 }
-function levelText(level: AlarmLevel): string {
-  return level.toUpperCase()
-}
-function formatTime(ts?: string | number): string {
-  if (!ts) return '-'
-  const d = new Date(ts)
-  // [FIX tsc 2026-09-07] isNaN 分支返回入参需归一 string (原返回 string|number → TS2322)
-  if (isNaN(d.getTime())) return String(ts)
-  const pad = (n: number) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
-}
-
 // ── [安检对标优化 2026-08-30] 人包追溯 (对标海康人包合一) ──
 //   有快照 → fetch 快照转 base64 → 以图搜图 (同通道 ±10min 窗口);
 //   无快照 (已清理) → 跳智能检索页预填以文搜图关键字。

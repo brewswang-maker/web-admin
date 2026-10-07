@@ -17,6 +17,8 @@
  */
 
 import { ref, onUnmounted } from 'vue'
+// [FIX roi-snapshot-401 2026-10-07] 裸 fetch 统一走 authedFetch 补 Bearer (不碰 Content-Type, FormData 边界仍由浏览器生成)
+import { authedFetch } from '@/utils/authedFetch'
 
 export type VoiceEngine = 'webspeech' | 'edge' | 'none'
 
@@ -252,10 +254,10 @@ export function useVoiceInput(options: UseVoiceInputOptions = {}) {
       // [FEAT voice-input 2026-09-28] 正式端点 /api/v1/voice/asr 由 box-sdk
       //   语音服务提供 (multipart audio → { code:0, data:{ text } })。
       //   PoC 阶段原生 fetch + multipart, 规避 axios 拦截器对 FormData 的
-      //   Content-Type 二次包装; 正式版迁移 api/http.ts。
+      //   Content-Type 二次包装; authedFetch 仅补 Bearer 不碰 Content-Type。正式版迁移 api/http.ts。
       const fd = new FormData()
       fd.append('audio', blob, 'speech.webm')
-      const r = await fetch('/api/v1/voice/asr', { method: 'POST', body: fd })
+      const r = await authedFetch('/api/v1/voice/asr', { method: 'POST', body: fd })
       const j = await r.json()
       const text: string = j?.data?.text ?? ''
       if (j?.code === 0 && text) {

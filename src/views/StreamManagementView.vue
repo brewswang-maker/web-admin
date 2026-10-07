@@ -198,6 +198,7 @@ import { ElMessage } from 'element-plus'
 import { http, streamHttp } from '@/api/http'
 import type { ApiResponse } from '@/types/common'
 import { getInferenceDemandStatus, type DemandStatusResponse } from '@/api/inference'
+import { formatTime } from '@/composables/useAlarmTableHelpers'
 import type flvjs from 'flv.js'   // 仅类型空间 (编译期擦除, 无运行时依赖)
 // ── [PERF 2026-09-14 R8] hls.js/flv.js 按需加载 (原静态 import 使 391KB gzip 的
 //   vendor-players 成为本页 chunk 静态依赖 → 路由懒加载 + Suspense 语义下页面 mount
@@ -636,11 +637,6 @@ function formatBitrate(bps: number): string {
   if (bps >= 1_000_000) return (bps / 1_000_000).toFixed(1) + ' Mbps'
   if (bps >= 1_000) return (bps / 1_000).toFixed(1) + ' Kbps'
   return bps + ' bps'
-}
-
-function formatTime(ts: string): string {
-  if (!ts) return '-'
-  try { return new Date(ts).toLocaleString('zh-CN') } catch { return ts }
 }
 
 onMounted(() => {

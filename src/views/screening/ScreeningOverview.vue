@@ -293,6 +293,8 @@ import { alarmApi } from '@/api/alarm'
 import { deviceApi } from '@/api/device'
 // [FIX channel-monitor-point 2026-09-17] 对标海康术语: 通道列显示值友好名化 (目录反查, 失败回退技术 ID)
 import { alarmChLabel } from '@/composables/useAlarmTableHelpers'
+import { formatLocalDateTime as formatTime, formatShortDateTime as shortTime } from '@/utils/datetime'
+import { formatAlarmLevelCode as levelText } from '@/utils/alarmLevel'
 import eventTypesApi from '@/api/eventTypes'
 import { screeningApi } from '@/api/screening'
 import type { EventTypeMetadataItem } from '@/api/eventTypes'
@@ -654,24 +656,6 @@ function levelClass(level: AlarmLevel): string {
     default: return 'lv-info'
   }
 }
-function levelText(level: AlarmLevel): string {
-  return level.toUpperCase()
-}
-function formatTime(ts?: string): string {
-  if (!ts) return '-'
-  const d = new Date(ts)
-  if (isNaN(d.getTime())) return ts
-  const pad = (n: number) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
-}
-function shortTime(ts?: string): string {
-  if (!ts) return '-'
-  const d = new Date(ts)
-  if (isNaN(d.getTime())) return ts
-  const pad = (n: number) => String(n).padStart(2, '0')
-  return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
-}
-
 // ── 初始化 ──
 
 async function loadSceneTypes() {

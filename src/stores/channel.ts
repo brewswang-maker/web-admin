@@ -90,16 +90,6 @@ export const useChannelStore = defineStore('channel', () => {
     return p
   }
 
-  /** @deprecated 已拆分为 checkSkipStart + markStartCalled（向后兼容保留） */
-  function shouldSkipStart(channelId: string): boolean {
-    const last = lastStartApiAt.value.get(channelId) || 0
-    const inDebounce = Date.now() - last < GLOBAL_START_DEBOUNCE_MS
-    if (!inDebounce) {
-      lastStartApiAt.value.set(channelId, Date.now())
-    }
-    return inDebounce
-  }
-
   /** 注册一个活跃通道（LiveView assignChannel 成功后调用） */
   function registerSlot(idx: number, data: ActiveSlotData) {
     slots.value.set(idx, { ...data })
@@ -192,7 +182,6 @@ export const useChannelStore = defineStore('channel', () => {
     hasOtherViewers,
     snapshot,
     setFloatingChannel,
-    shouldSkipStart,
     markStartCalled,
     clearStartDebounce,
     checkSkipStart,

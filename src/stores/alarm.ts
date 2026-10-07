@@ -6,9 +6,9 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { alarmApi } from '@/api/alarm'
-import type { AlarmEvent, AlarmStats, AlarmQuery, AlarmHandleForm, AlarmType } from '@/types/alarm'
+import type { AlarmEvent, AlarmStats, AlarmQuery, AlarmHandleForm } from '@/types/alarm'
 import { normalizeAlarmCore } from '@/types/alarm'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage } from 'element-plus'
 // [FIX ws-frame-classify 2026-09-18 三方对齐] 状态同步帧判定 (归一化对象版) —
 //   弹窗/列表/首页/store 四处共用单一实现 (useAlarmTableHelpers), 防口径漂移
 import { isAlarmStateSyncNormalized } from '@/composables/useAlarmTableHelpers'
@@ -91,7 +91,7 @@ export const useAlarmStore = defineStore('alarm', () => {
           unhandledCount.value = unhandled
         }
       }
-    } catch (e: any) {
+    } catch (e) {
       console.error('[AlarmStore] fetchAlarms failed:', e)
     } finally {
       loading.value = false
@@ -181,7 +181,7 @@ export const useAlarmStore = defineStore('alarm', () => {
       void fetchAlarms()
       void fetchUnhandledCount()
       return true
-    } catch (e: any) {
+    } catch {
       ElMessage.error('处理告警失败')
       return false
     }

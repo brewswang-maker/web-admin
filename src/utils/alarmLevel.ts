@@ -11,6 +11,8 @@
  *   LinkageRuleView — 新增等级用色一律引此处, 禁止再散落硬编码。
  */
 
+import type { AlarmLevel } from '@/types/alarm'
+
 export type AlarmLevelKey = 'critical' | 'high' | 'medium' | 'low' | 'info'
 
 /** 等级 → 主色 */
@@ -115,4 +117,9 @@ export function alarmLevelTagType(level: unknown): 'success' | 'warning' | 'dang
 /** el-tag effect: 严重档 dark (深红视觉, 对齐色板「严重=深红」), 其余 light */
 export function alarmLevelTagEffect(level: unknown): 'light' | 'dark' {
   return normalizeAlarmLevel(level) === 'critical' ? 'dark' : 'light'
+}
+
+// [REFACTOR alarm-level 2026-10-05] 场景页原 uppercase 包装并入等级代码展示 SSOT。
+export function formatAlarmLevelCode(level: AlarmLevel): string {
+  return level.toUpperCase()
 }

@@ -210,7 +210,7 @@ import { ref, computed, watch, onBeforeUnmount } from 'vue'
 import { ElMessage } from 'element-plus'
 import { UploadFilled, InfoFilled } from '@element-plus/icons-vue'
 import { testApi } from '@/api/test'
-import { getAuthToken } from '@/utils/auth'
+import { authedFetch } from '@/utils/authedFetch'
 import algorithmsApi from '@/api/algorithms'
 import type { AlgorithmInfo } from '@/api/algorithms'
 import type { InferImageResult, TestTriggerResult, EventCoverageItem, MatchedRule } from '@/api/test'
@@ -290,11 +290,8 @@ async function loadAlgorithms(force = false) {
       console.log('[EventTestDrawer] algorithmsApi.listAll() raw keys:', Object.keys(raw || {}), 'data keys:', raw?.data ? Object.keys(raw.data) : 'N/A', 'list length:', Array.isArray(list) ? list.length : 'NOT_ARRAY')
     } catch (e1) {
       console.warn('[EventTestDrawer] algorithmsApi.listAll() failed, trying fetch fallback:', e1)
-      // 方案2: fetch fallback — token 存在 Cookie 中 (shieldai_token)
-      const token = getAuthToken() || ''
-      const resp = await fetch('/api/v1/algorithms/all', {
-        headers: token ? { 'Authorization': `Bearer ${token}` } : {},
-      })
+      // 方案2: fetch fallback — 走 authedFetch 统一补 Bearer (token 存 Cookie shieldai_token)
+      const resp = await authedFetch('/api/v1/algorithms/all')
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
       const json = await resp.json()
       list = json?.data?.algorithms ?? json?.data?.items ?? json?.algorithms ?? []

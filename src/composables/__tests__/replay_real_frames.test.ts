@@ -36,16 +36,13 @@ describe('真实帧序列重演 (90s 418帧)', () => {
       if (!byCh.has(f.ch)) byCh.set(f.ch, [])
       byCh.get(f.ch)!.push(f)
     }
-    let totalStaleMsOld = 0, totalRenderUpdates = 0, renderSamples = 0
+    let totalRenderUpdates = 0, renderSamples = 0
     for (const [ch, frames] of byCh) {
       frames.sort((a, b) => a.recv_ms - b.recv_ms)
       const gaps = frames.slice(1).map((f, i) => f.recv_ms - frames[i].recv_ms)
       gaps.sort((a, b) => a - b)
       const medGap = gaps[Math.floor(gaps.length / 2)]
       const maxGap = gaps[gaps.length - 1]
-      // 原直绘: 相邻帧之间框位置完全不动 → 滞后=帧距
-      totalStaleMsOld += medGap * (frames.length - 1)
-
       // tracker 重演: 模拟 rAF 16ms 步进 render
       const t = new DisplayTracker()
       const start = frames[0].recv_ms, end = frames[frames.length - 1].recv_ms

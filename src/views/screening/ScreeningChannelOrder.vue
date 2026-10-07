@@ -80,6 +80,8 @@ import { Refresh } from '@element-plus/icons-vue'
 import { alarmApi } from '@/api/alarm'
 // [FIX channel-monitor-point 2026-09-17] 对标海康术语: 通道列显示值友好名化 (安检通道秩序等 lane 语义文案保留); 列显示值友好名化
 import { alarmChLabel } from '@/composables/useAlarmTableHelpers'
+import { formatLocalDateTime as formatTime } from '@/utils/datetime'
+import { formatAlarmLevelCode as levelText } from '@/utils/alarmLevel'
 import eventTypesApi from '@/api/eventTypes'
 import type { EventTypeMetadataItem } from '@/api/eventTypes'
 import type { AlarmEvent, AlarmLevel } from '@/types/alarm'
@@ -171,17 +173,6 @@ function levelClass(level: AlarmLevel): string {
     default: return 'lv-info'
   }
 }
-function levelText(level: AlarmLevel): string {
-  return level.toUpperCase()
-}
-function formatTime(ts?: string): string {
-  if (!ts) return '-'
-  const d = new Date(ts)
-  if (isNaN(d.getTime())) return ts
-  const pad = (n: number) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
-}
-
 onMounted(async () => {
   await loadSceneTypes()
   await loadEvents()

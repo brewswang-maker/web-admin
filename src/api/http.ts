@@ -12,7 +12,6 @@
 
 import axios, {
   type AxiosInstance,
-  type AxiosRequestConfig,
   type AxiosResponse,
   type AxiosError,
   type InternalAxiosRequestConfig,
@@ -173,94 +172,6 @@ function unwrapPageData<T = unknown>(data: any): T {
   return data as T
 }
 
-/** 已知的时间字段 (unix_ms number) → ISO 字符串 */
-const TIMESTAMP_KEY_PATTERNS = [
-  /^timestamp$/i,
-  /At$/,
-  /_at$/,
-  /Time$/,
-  /_time$/,
-  /timestamp_ms$/i,
-]
-
-function isTimestampKey(k: string): boolean {
-  return TIMESTAMP_KEY_PATTERNS.some((p) => p.test(k))
-}
-
-function normalizeTimestamps(obj: any): any {
-  if (obj == null) return obj
-  if (obj instanceof Date) return obj
-  if (Array.isArray(obj)) return obj.map(normalizeTimestamps)
-  if (typeof obj !== 'object') return obj
-  const result: any = {}
-  for (const [k, v] of Object.entries(obj)) {
-    if (isTimestampKey(k) && typeof v === 'number' && v > 0) {
-      // unix_ms (>= 10^12) 或 unix_s (>= 10^9) 自动识别
-      const ms = v > 1e12 ? v : v * 1000
-      result[k] = new Date(ms).toISOString()
-    } else {
-      result[k] = normalizeTimestamps(v)
-    }
-  }
-  return result
-}
-
-/** camelCase → snake_case (仅对纯 JSON body 生效) */
-function camelToSnakeKey(k: string): string {
-  // 已含下划线的全小写 key 不动
-  if (/^[a-z0-9_]+$/.test(k)) return k
-  return k.replace(/[A-Z]/g, (m) => '_' + m.toLowerCase()).replace(/^_/, '')
-}
-
-function camelToSnake(obj: any): any {
-  if (obj == null) return obj
-  if (obj instanceof Date || obj instanceof File || obj instanceof FormData || obj instanceof Blob) return obj
-  if (Array.isArray(obj)) return obj.map(camelToSnake)
-  if (typeof obj !== 'object') return obj
-  const result: any = {}
-  for (const [k, v] of Object.entries(obj)) {
-    result[camelToSnakeKey(k)] = camelToSnake(v)
-  }
-  return result
-}
-
-// [P0-2 修复 2026-06-23] snake_case → camelCase 逆转换
-//   请求拦截器执行了 camelToSnake，后端存储的是 snake_case。
-//   如果响应拦截器不做逆转换，前端加载后 fromNode 变成 undefined、hasROI 变成 false。
-//   必须 bidirectional symmetric: 请求 camel→snake，响应 snake→camel。
-
-/** 跳过这些 key 不做 snake→camel 转换 (全大写缩写、已知 snake_case 常量等) */
-const SNAKE_TO_CAMEL_SKIP_KEYS = new Set([
-  'id', 'url', 'uri', 'fps', 'tpu', 'cpu', 'gpu', 'rtsp', 'rtmp', 'http', 'https',
-  'tcp', 'udp', 'sns', 'sms', 'api', 'sdk', 'cli', 'dns', 'cdn', 'mac', 'ip',
-  'osd', 'roi', 'json', 'xml', 'csv', 'sql', 'uuid', 'ml', 'ai', 'ocr', 'lpr',
-  'reid', 'ppe', 'yolo', 'onvif', 'sip', 'mqtt', 'ws', 'wss',
-  'created_at', 'updated_at', 'deleted_at', // 这些由 normalizeTimestamps 处理
-])
-
-/** snake_case key → camelCase key */
-function snakeToCamelKey(k: string): string {
-  // 不含下划线 → 已经是 camelCase 或单词，跳过
-  if (!k.includes('_')) return k
-  // 在跳过名单中 → 保持原样
-  if (SNAKE_TO_CAMEL_SKIP_KEYS.has(k)) return k
-  // snake_case → camelCase: from_node → fromNode
-  return k.replace(/_([a-z0-9])/g, (_, c) => c.toUpperCase())
-}
-
-/** 递归 snake_case → camelCase */
-function snakeToCamel(obj: any): any {
-  if (obj == null) return obj
-  if (obj instanceof Date || obj instanceof File || obj instanceof FormData || obj instanceof Blob) return obj
-  if (Array.isArray(obj)) return obj.map(snakeToCamel)
-  if (typeof obj !== 'object') return obj
-  const result: any = {}
-  for (const [k, v] of Object.entries(obj)) {
-    result[snakeToCamelKey(k)] = snakeToCamel(v)
-  }
-  return result
-}
-
 // ─────────────────────────────────────────────────────────
 // 3. 超时分级策略
 // ─────────────────────────────────────────────────────────
@@ -349,17 +260,6 @@ function createHttpClient(basePath = '', retryOverride?: Partial<RetryConfig>): 
       //   与响应拦截器的 snakeToCamel 配对移除。项目中的 API 模块（face.ts 等）
       //   已经使用 snake_case 字段名，全局转换会导致双重转换问题。
       //   需要做 snake_case 转换的模块应自行处理。
-      // if (
-      //   config.data &&
-      //   typeof config.data === 'object' &&
-      //   !(config.data instanceof FormData) &&
-      //   !(config.data instanceof Blob) &&
-      //   !(config.data instanceof ArrayBuffer) &&
-      //   !(config.data instanceof URLSearchParams)
-      // ) {
-      //   config.data = camelToSnake(config.data)
-      // }
-
       return config
     },
     (error) => Promise.reject(error)
@@ -407,17 +307,6 @@ function createHttpClient(basePath = '', retryOverride?: Partial<RetryConfig>): 
       //   全局 snakeToCamel 会把 person_id → personId、alarm_type → alarmType，
       //   导致前端代码访问 row.person_id / raw.alarm_type 时得到 undefined。
       //   需要做 camelCase 转换的模块应自行处理，不应在全局拦截器中强制执行。
-      // if (data && typeof data === 'object' && 'data' in data && data.data) {
-      //   data.data = snakeToCamel(data.data)
-      // }
-
-      // [Fix 2026-06-23] 移除全局 normalizeTimestamps 自动转换
-      //   原因：FaceRecord.created_at 类型为 number(unix秒)，全局转换会把它变成 ISO 字符串，
-      //   导致 formatDate 函数处理类型不一致。各模块应自行处理时间戳格式。
-      // if (data && typeof data === 'object' && 'data' in data && data.data) {
-      //   data.data = normalizeTimestamps(data.data)
-      // }
-
       return response
     },
     async (error: AxiosError) => {

@@ -16,7 +16,6 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import axios from 'axios'
 
 // ── Mock 依赖 ──────────────────────────────────────────────
 vi.mock('@/utils/auth', () => ({
@@ -180,7 +179,7 @@ describe('api/http', () => {
 
     it('非零业务码时返回reject', async () => {
       vi.resetModules()
-      const { http, ApiErrorCode } = await import('@/api/http')
+      const { http } = await import('@/api/http')
 
       const resHandler = http.interceptors.response.handlers?.[0]
       const response = {

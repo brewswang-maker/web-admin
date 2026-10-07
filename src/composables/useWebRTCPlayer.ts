@@ -207,7 +207,7 @@ export function useWebRTCPlayer() {
             stats.value.rtt_ms = Math.round((entry.currentRoundTripTime || 0) * 1000)
           }
         })
-      } catch (e) {
+      } catch {
         // Stats collection is non-critical
       }
     }, 1000)

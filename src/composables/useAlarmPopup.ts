@@ -32,7 +32,7 @@ import { ElMessage } from 'element-plus'
 import { useAlarmStore } from '@/stores/alarm'
 import { linkageApi, ACTION_TYPE_MAP } from '@/api/linkage'
 import { alarmApi } from '@/api/alarm'
-import type { LinkageRule, LinkageAction } from '@/api/linkage'
+import type { LinkageRule } from '@/api/linkage'
 import type { AlarmEvent, AlarmAppendLog } from '@/types/alarm'
 import { normalizeAlarmCore, ALARM_CATEGORY } from '@/types/alarm'
 // [SCENE-ISOLATION 2026-09-29] 弹窗触发门槛场景校验 (纵深层; 主链在 useGlobalAlarm)
@@ -41,20 +41,6 @@ import { useUserStore } from '@/stores/user'
 // [FIX 2026-09-05 弹窗不显示回归] 通道 hash 契约: 与后端 LinkageEngine.cpp/
 //   AlgoConfigView.loadRuleCounts 同源 (FNV-1a int32), GB 双流 _ch0 双形态参命中
 import { safeChannelHash } from '@/utils/channelHash'
-
-// ── 联动动作 → Tab/按钮 映射 ──
-const WEB_SHOW_LIVE = ACTION_TYPE_MAP.WEB_SHOW_LIVE         // 210
-const WEB_SHOW_PLAYBACK = ACTION_TYPE_MAP.WEB_SHOW_PLAYBACK // 211
-const WEB_SHOW_IMAGE = ACTION_TYPE_MAP.WEB_SHOW_IMAGE       // 212
-const WEB_PLAY_TONE = ACTION_TYPE_MAP.WEB_PLAY_TONE         // 213
-const WEB_TTS_BROADCAST = ACTION_TYPE_MAP.WEB_TTS_BROADCAST // 214
-const WEB_CAPTURE_IMAGE = ACTION_TYPE_MAP.WEB_CAPTURE_IMAGE // 215
-const WEB_RECORD_EVENT = ACTION_TYPE_MAP.WEB_RECORD_EVENT   // 217
-const WEB_POPUP = ACTION_TYPE_MAP.WEB_POPUP                 // 200
-const CLIENT_VOICE_TALK = ACTION_TYPE_MAP.CLIENT_VOICE_TALK         // 103
-const CLIENT_PTZ_CONTROL = ACTION_TYPE_MAP.CLIENT_PTZ_CONTROL       // 116
-const CLIENT_ALARM_OUTPUT = ACTION_TYPE_MAP.CLIENT_ALARM_OUTPUT     // 115
-const CLIENT_TTS_BROADCAST = ACTION_TYPE_MAP.CLIENT_TTS_BROADCAST   // 105
 
 // ── 单例状态（模块级） ──
 

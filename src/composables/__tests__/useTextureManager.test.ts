@@ -401,7 +401,6 @@ describe('composables/useTextureManager', () => {
 
       // 获取第一次调用的返回实例（主方向光）
       const DirLight = THREE.DirectionalLight as any
-      const lastInstance = DirLight.mock.results[DirLight.mock.results.length - 1]?.value
 
       // castShadow=true 时源码设置 shadow.mapSize.set(2048, 2048)
       // 验证至少有一个 DirectionalLight 实例的 shadow.mapSize.set 被调用

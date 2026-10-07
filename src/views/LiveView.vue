@@ -2748,8 +2748,9 @@ async function fetchStreamUrls(ch: Channel): Promise<{urls: Partial<Record<Playe
     //    [Fix 2026-06-23] 使用全局防抖，同通道 5s 内不重复发 SIP INVITE
     let startData: any = null
     let codec = ''
-    const skipStart = channelStore.shouldSkipStart(ch.id)
+    const skipStart = channelStore.checkSkipStart(ch.id)
     if (!skipStart) {
+      channelStore.markStartCalled(ch.id)
       try {
         const { data: startResp } = await streamHttp.post(`/${ch.id}/start`)
         startData = startResp?.data || startResp

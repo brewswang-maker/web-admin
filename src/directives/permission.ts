@@ -36,7 +36,7 @@ const vPermission: Directive = {
     
     if (value !== oldValue) {
       const userStore = useUserStore()
-      const [action, permission] = (value as string).split(':')
+      const [, permission] = (value as string).split(':')
       
       if (userStore.hasPermission(permission)) {
         el.removeAttribute('disabled')

@@ -184,6 +184,8 @@
 import { ref, computed, watch, onMounted, nextTick } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Refresh, Search, WarningFilled, Location, Monitor, VideoCamera } from '@element-plus/icons-vue'
+// [FIX roi-snapshot-401 2026-10-07] 裸 fetch 统一走 authedFetch 补 Bearer (见 utils)
+import { authedFetch } from '@/utils/authedFetch'
 import { channelApi } from '@/api/channel'
 import { getInferenceChannels } from '@/api/inference'
 import type { ScheduledChannel } from '@/api/inference'
@@ -681,7 +683,9 @@ function onChannelSelect(row: ChannelItem | null) {
 // ZLM 偶发 0 字节 JPEG, preload 校验失败重试一次。
 const roiBackgroundUrl = ref('')
 async function fetchSnapshotUrl(channelId: string): Promise<string> {
-  const res = await fetch(`/api/v1/channels/${channelId}/snapshot`, { credentials: 'include' })
+  // [FIX roi-snapshot-401 2026-10-07] 走 authedFetch 统一补 Bearer: 裸 fetch 绕过
+  //   axios 拦截器不带 token → HttpAuthGate 401 → 前端判快照缺失。与 LinkageRuleView 同链路。
+  const res = await authedFetch(`/api/v1/channels/${channelId}/snapshot`)
   if (!res.ok) return ''
   const j = await res.json().catch(() => null)
   const url = j?.data?.url || j?.url || ''

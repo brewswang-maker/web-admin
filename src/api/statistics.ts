@@ -4,7 +4,7 @@
  */
 
 import { statsHttp } from './http'
-import type { ApiResponse, SecurityScore, AgentStatus } from '@/types/common'
+import type { ApiResponse } from '@/types/common'
 import type { AlarmTrendItem } from '@/types/alarm'
 
 /** 安全评分响应 */

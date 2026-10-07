@@ -2,7 +2,6 @@
  * Models API — 算法模型管理
  */
 import { http } from './http'
-import type { ApiResponse } from '@/types/common'
 
 export interface ModelInfo {
   id: string

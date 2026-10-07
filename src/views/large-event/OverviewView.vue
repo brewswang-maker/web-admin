@@ -107,7 +107,7 @@
         <el-table-column prop="design_capacity" label="设计容量" width="90" />
         <el-table-column label="分级阈值 (黄/橙/红)" min-width="180">
           <template #default="{ row }">
-            <span v-for="(lv, i) in row.levels" :key="lv.name" class="level-chip" :class="lv.name">
+            <span v-for="lv in row.levels" :key="lv.name" class="level-chip" :class="lv.name">
               {{ (lv.capacity_ratio * 100).toFixed(0) }}%
             </span>
           </template>

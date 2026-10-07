@@ -7,8 +7,8 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { deviceApi } from '@/api/device'
 import { http } from '@/api/http'
-import type { DeviceItem, DeviceStats, DeviceQuery, DeviceForm, DiscoveredDevice, DeviceConfig, DeviceDetail, DeviceMetrics, DeviceSyncRecord } from '@/types/device'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import type { DeviceItem, DeviceStats, DeviceQuery, DeviceForm, DiscoveredDevice, DeviceMetrics, DeviceSyncRecord } from '@/types/device'
+import { ElMessage } from 'element-plus'
 import { normalizeDeviceMetrics } from '@/utils/deviceMetrics'
 
 export const useDeviceStore = defineStore('device', () => {
@@ -67,7 +67,7 @@ export const useDeviceStore = defineStore('device', () => {
       const res = await deviceApi.getDetail(id)
       currentDevice.value = (res.data as any).data ?? res.data
       return currentDevice.value
-    } catch (e: any) {
+    } catch {
       ElMessage.error('加载设备详情失败')
       return null
     } finally {

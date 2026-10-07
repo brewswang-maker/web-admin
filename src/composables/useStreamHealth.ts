@@ -4,6 +4,8 @@
  */
 
 import { reactive, onUnmounted } from 'vue'
+// [FIX roi-snapshot-401 2026-10-07] 裸 fetch 统一走 authedFetch 补 Bearer (HttpAuthGate 非白名单需 token)
+import { authedFetch } from '@/utils/authedFetch'
 import type flvjs from 'flv.js'   // 仅类型空间 (编译期擦除, 无运行时依赖)
 // [PERF 2026-09-14 R8] 原静态 import flv.js/hls.js 使本 composable 的使用方 (LiveView)
 //   引入 vendor-players (391KB gzip) 静态依赖 — 页面 mount/数据请求被其下载阻塞。
@@ -74,7 +76,7 @@ type StallCallback = (slotIdx: number, stallCount: number) => void
 // 重连耗尽回调类型：上层收到后可决定停止监测
 type ReconnectExhaustedCallback = (slotIdx: number) => void
 
-export function useStreamHealth(onStall?: StallCallback, onReconnectExhausted?: ReconnectExhaustedCallback) {
+export function useStreamHealth(onStall?: StallCallback, _onReconnectExhausted?: ReconnectExhaustedCallback) {
   const healthStates = reactive<HealthStates>({})
   const contexts = new Map<number, MonitorContext>()
   // 连续 error 确认后是否已通知过上层（防止重复触发）
@@ -196,7 +198,6 @@ export function useStreamHealth(onStall?: StallCallback, onReconnectExhausted?: 
       ctx.intervalId = setInterval(() => pollFlvStats(slotIdx, ctx), 1000)
     } else if (isHls) {
       // HLS: 依赖 video 元素事件检测播放状态
-      const hlsPlayer = player as import('hls.js').default
       const video = videoEl
 
       if (video) {
@@ -643,7 +644,7 @@ export function useStreamHealth(onStall?: StallCallback, onReconnectExhausted?: 
   ): Promise<void> {
     if (!channelId || latencyMs <= 0) return
     try {
-      await fetch('/api/v1/metrics/first-frame', {
+      await authedFetch('/api/v1/metrics/first-frame', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

@@ -11,7 +11,7 @@ import type { Directive, DirectiveBinding } from 'vue'
  * 用法: <input v-focus />
  */
 const vFocus: Directive = {
-  mounted(el: HTMLElement, binding: DirectiveBinding) {
+  mounted(el: HTMLElement, _binding: DirectiveBinding) {
     // 如果是 input 元素，直接聚焦
     if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') {
       el.focus()

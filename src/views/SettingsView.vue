@@ -721,6 +721,8 @@
 
 <script setup lang="ts">
 import { reactive, ref, onMounted, computed } from 'vue'
+// [FIX roi-snapshot-401 2026-10-07] 裸 fetch 统一走 authedFetch 补 Bearer
+import { authedFetch } from '@/utils/authedFetch'
 import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { settingsApi, type BasicSettings, type CloudSettings, type AlarmPolicySettings, type SystemInfo, type RecordingSettings } from '@/api/settings'
@@ -1047,7 +1049,7 @@ const hybridConfig = reactive({
 async function refreshLlmStatus() {
   llmStatusLoading.value = true
   try {
-    const resp = await fetch('/api/v1/llm/status')
+    const resp = await authedFetch('/api/v1/llm/status')
     const data = await resp.json()
     llmStatus.backend = data.backend || ''
     llmStatus.ready = data.ready || false
@@ -1104,7 +1106,7 @@ async function switchLlmBackend() {
       body = { backend: llmConfig.mode, backends }
     }
 
-    const resp = await fetch('/api/v1/llm/switch', {
+    const resp = await authedFetch('/api/v1/llm/switch', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
@@ -1130,7 +1132,7 @@ async function testLlm() {
   llmTesting.value = true
   llmTestResult.value = ''
   try {
-    const resp = await fetch('/api/v1/llm/chat/json', {
+    const resp = await authedFetch('/api/v1/llm/chat/json', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ prompt: '你好，请用一句话介绍你自己', max_tokens: 64 }),

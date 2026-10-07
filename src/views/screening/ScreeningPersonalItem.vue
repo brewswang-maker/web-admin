@@ -215,6 +215,7 @@ import type { PersonalItemStatus, PersonalItemConfig, PersonalItemTier } from '@
 import eventTypesApi from '@/api/eventTypes'
 import type { EventTypeMetadataItem } from '@/api/eventTypes'
 import type { AlarmEvent, AlarmLevel } from '@/types/alarm'
+import { formatAlarmLevelCode as levelText } from '@/utils/alarmLevel'
 
 // ── 三态 SSOT 定义 (personal_item_detector.h L18-21) ──
 // severity 为告警级别刻度 (NOTIFICATION 30 / ALARM 70 / ALARM 90),
@@ -515,10 +516,6 @@ function levelClass(level: AlarmLevel): string {
     default: return 'lv-info'
   }
 }
-function levelText(level: AlarmLevel): string {
-  return level.toUpperCase()
-}
-
 onMounted(async () => {
   await Promise.all([loadSceneTypes(), loadStatus(), loadEvents()])
 })

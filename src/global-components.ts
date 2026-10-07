@@ -5,7 +5,7 @@
  */
 import type { App } from 'vue'
 
-export function setupGlobalComponents(app: App) {
+export function setupGlobalComponents(_app: App) {
   // 全局组件通过 unplugin-vue-components 自动按需注册
   // Element Plus 图标通过 vite.config.ts 的 IconsResolver 自动导入
   // 此函数保留作为未来手动注册全局组件的入口

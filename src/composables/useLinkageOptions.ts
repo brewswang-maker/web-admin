@@ -16,7 +16,6 @@ import { channelApi } from '@/api/channel'
 import { deviceApi } from '@/api/device'
 import { testApi } from '@/api/test'
 import type { AlgorithmInfo } from '@/api/algorithms'
-import type { ChannelItem } from '@/types/device'
 import { alarmLevelColor } from '@/utils/alarmLevel' // [FIX level-color-ssot 2026-09-16] 等级色板全站统一
 
 /** 事件类型选项 */
@@ -371,10 +370,6 @@ export function useLinkageOptions() {
   }
 
   // v7.6: 按 ui_group 分组 (比 category 更细粒度: face/perimeter/behavior/fire/safety/...)
-  // 同时按 eventCategory 排序: ALARM → NOTIFICATION → BUSINESS → STATE → PERCEPTION
-  const CATEGORY_ORDER: Record<string, number> = {
-    ALARM: 0, NOTIFICATION: 1, BUSINESS: 2, STATE: 3, PERCEPTION: 4
-  }
   const eventTypeGrouped = computed(() => {
     const groups: Record<string, EventTypeOption[]> = {}
     const ranks: Record<string, number> = {}

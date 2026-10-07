@@ -60,7 +60,7 @@
 
       <!-- 六段时间折线 (sparkline) -->
       <div v-if="currentFrame" class="stages">
-        <div class="stage-row" v-for="(stage, idx) in stages" :key="stage.key">
+        <div class="stage-row" v-for="stage in stages" :key="stage.key">
           <span class="stage-name">{{ stage.name }}</span>
           <div class="stage-bar">
             <div class="stage-bar-fill" :style="{ width: stage.pct + '%', background: stage.color }" />

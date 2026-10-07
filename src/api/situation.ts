@@ -4,8 +4,7 @@
  */
 
 import { situationHttp } from './http'
-import type { ApiResponse, SystemHealth, AgentStatus } from '@/types/common'
-import type { AlarmEvent } from '@/types/alarm'
+import type { ApiResponse, SystemHealth } from '@/types/common'
 import type { DeviceStats } from '@/types/device'
 
 /** 态势总览数据 */

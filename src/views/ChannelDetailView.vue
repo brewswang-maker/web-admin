@@ -305,6 +305,8 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
+// [FIX roi-snapshot-401 2026-10-07] 裸 fetch 统一走 authedFetch 补 Bearer
+import { authedFetch } from '@/utils/authedFetch'
 import { useRoute, useRouter } from 'vue-router'
 import { channelApi } from '@/api/channel'
 import { http } from '@/api/http'
@@ -368,7 +370,7 @@ function goBack() {
 
 async function loadModelList() {
   try {
-    const res = await fetch('/api/v1/models') as any
+    const res = await authedFetch('/api/v1/models') as any
     const data = await res.json()
     modelList.value = data?.data?.models ?? []
   } catch { /* silent */ }

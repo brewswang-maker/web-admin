@@ -45,21 +45,6 @@ export interface Device3DNode {
   routeTarget?: string
 }
 
-/**
- * @deprecated 使用 Device3DNode 替代，保留向后兼容
- * 旧版 Props 中的 Device3D 接口，Scene3D.vue 同时兼容两种类型
- */
-export interface Device3DLegacy {
-  id: string
-  name: string
-  x: number; y: number; z: number
-  status: 'online' | 'offline' | 'alarm' | 'maintenance'
-  location: string
-  alarmType?: string
-  fov?: number
-  rotation?: number
-}
-
 /** 3D场景中的建筑节点 */
 export interface Building3DNode {
   /** 建筑唯一标识 */

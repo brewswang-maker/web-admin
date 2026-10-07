@@ -1775,6 +1775,8 @@ import { friendlyChannelLabelOf, channelFallbackLabel, narrowSnapshotChannels, f
 // [FIX area-cascade-label 2026-09-11] 目录反查 (fallback 四段降级中段; 首调懒加载目录)
 import { devNameOf, chNameOf } from '@/composables/useAlarmDeviceLabel'
 import { deviceApi } from '@/api/device'   // [AREA-CASCADE 2026-09-11] 级联树设备名解析
+// [FIX roi-snapshot-401 2026-10-07] 裸 fetch 统一走 authedFetch 补 Bearer (见 utils)
+import { authedFetch } from '@/utils/authedFetch'
 // [FIX 2026-09-04 老规则通道反解] 编辑存量规则时哈希反解需要
 // [R6 P1-3 2026-09-12] safeChannelHash 迁至 utils/channelHash (原 useAlgoRuleSync 随算法页降视图删除)
 import { safeChannelHash } from '@/utils/channelHash'
@@ -2957,7 +2959,9 @@ function roiHintForEvent(t: string): { key: string; label: string; level: string
   return { key: t, label, level: hit.level, text: hit.text }
 }
 async function fetchSnapshotUrl(channelId: string): Promise<string> {
-  const res = await fetch(`/api/v1/channels/${channelId}/snapshot`, { credentials: 'include' })
+  // [FIX roi-snapshot-401 2026-10-07] 走 authedFetch 统一补 Bearer: 裸 fetch 绕过
+  //   axios 拦截器不带 token → box-sdk HttpAuthGate 401 → 曾致 ROI 底图「暂无可用快照」。
+  const res = await authedFetch(`/api/v1/channels/${channelId}/snapshot`)
   if (!res.ok) return ''
   const j = await res.json().catch(() => null)
   const url = j?.data?.url || j?.url || ''
@@ -3040,8 +3044,10 @@ async function loadTripwireOptions() {
       if (v) chValues.add(v)
     }
     const chList = [...chValues]
+    // [FIX roi-snapshot-401 2026-10-07] 走 authedFetch 统一补 Bearer, 否则受保护的
+    //   /api/v1/algos/tripwires 返回 401 → 绊线选项下拉恒空。
     const results = await Promise.allSettled(chList.map(ch =>
-      fetch(`/api/v1/algos/tripwires?channel_id_str=${encodeURIComponent(ch)}&include_disabled=true`, { credentials: 'include' })
+      authedFetch(`/api/v1/algos/tripwires?channel_id_str=${encodeURIComponent(ch)}&include_disabled=true`)
         .then(r => (r.ok ? r.json() : null)).catch(() => null)))
     const list = results.flatMap((x: any) =>
       x?.status === 'fulfilled' && x?.value ? (x.value?.tripwires ?? x.value?.data?.tripwires ?? []) : [])

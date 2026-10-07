@@ -12,8 +12,8 @@
  *   - 自定义 errorMessage prop
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { mount, type VueWrapper } from '@vue/test-utils'
+import { describe, it, expect, beforeEach } from 'vitest'
+import { mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import { createRouter, createMemoryHistory } from 'vue-router'
 import ErrorBoundary from '@/components/ErrorBoundary.vue'

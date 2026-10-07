@@ -356,6 +356,8 @@
  *  3. WS 收流时按 alarm_type.startsWith('face_') 过滤,防非人脸告警噪音
  */
 import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
+// [FIX roi-snapshot-401 2026-10-07] 裸 fetch 统一走 authedFetch 补 Bearer
+import { authedFetch } from '@/utils/authedFetch'
 import { ElMessage } from 'element-plus'
 import {
   Delete, Loading, User, Bell, VideoCamera, Clock, Aim, Histogram, Star,
@@ -587,7 +589,7 @@ async function resolveChannelName(channelId: number | string): Promise<string> {
   if (channelNameCache.has(channelId)) return channelNameCache.get(channelId)!
   // 尝试从通道名后端拉,失败回退 ID
   try {
-    const res = await fetch(`/api/v1/channels/${channelId}`, { credentials: 'include' })
+    const res = await authedFetch(`/api/v1/channels/${channelId}`)
     if (res.ok) {
       const json = await res.json()
       const name = json?.data?.name || json?.data?.channel_name

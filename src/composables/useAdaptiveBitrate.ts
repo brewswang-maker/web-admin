@@ -15,7 +15,7 @@
  * 防抖：切换间隔最少 5 秒
  */
 
-import { ref, reactive, onUnmounted } from 'vue'
+import { reactive, onUnmounted } from 'vue'
 import { streamHttp } from '@/api/http'
 import type { StreamHealthState } from './useStreamHealth'
 

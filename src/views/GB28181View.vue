@@ -278,6 +278,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search, VideoPlay, VideoPause, Check, Refresh } from '@element-plus/icons-vue'
 import { http } from '@/api/http'
 import type { ApiResponse } from '@/types/common'
+import { formatTime } from '@/composables/useAlarmTableHelpers'
 
 // ===== 类型定义 =====
 interface DiscoveredDevice {
@@ -559,15 +560,6 @@ async function removeDevice(row: RegisteredDevice) {
 }
 
 // ===== 工具函数 =====
-function formatTime(ts: string): string {
-  if (!ts) return '-'
-  try {
-    return new Date(ts).toLocaleString('zh-CN')
-  } catch {
-    return ts
-  }
-}
-
 onMounted(() => {
   fetchConfig()
   fetchDevices()

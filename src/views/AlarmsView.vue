@@ -1023,7 +1023,7 @@ import RecognitionProcessDebugPanel from '@/views/RecognitionProcessDebugPanel.v
 // [P0-9/6/10 2026-09-04] canonical zh SSOT + 规范处警对话框
 import { useEventTypeZh } from '@/composables/useEventTypeZh'
 // [FIX dev-name-num 2026-09-11] 设备名称数字形态治理 (共享目录反查)
-import { alarmDevLabel, alarmChLabel, mergedCountOf, isAlarmStateSyncFrame, carrySourceOf, carriedItemLabel } from '@/composables/useAlarmTableHelpers'  // [chan-col 2026-09-11] 展示口径 SSOT 单一源 (替代内联同款); [FIX-P1-2] mergedCountOf; [FIX ws-frame-classify 2026-09-18] 帧分类判定共用; [FIX carry-display 2026-09-21] 携带类细分名
+import { alarmDevLabel, alarmChLabel, formatTime, mergedCountOf, isAlarmStateSyncFrame, carrySourceOf, carriedItemLabel } from '@/composables/useAlarmTableHelpers'  // [chan-col 2026-09-11] 展示口径 SSOT 单一源 (替代内联同款); [FIX-P1-2] mergedCountOf; [FIX ws-frame-classify 2026-09-18] 帧分类判定共用; [FIX carry-display 2026-09-21] 携带类细分名
 import DisposeDialog from '@/components/alarm/DisposeDialog.vue'
 // [P3 2026-09-10] 右侧设备树筛选面板 (安保区域→子区域→设备 多选)
 import AlarmDeviceTreePanel from '@/components/alarm/AlarmDeviceTreePanel.vue'
@@ -2185,21 +2185,6 @@ function confPct(row: any): number {
 // [chan-col 2026-09-11] 原内联 alarmDevLabel/alarmChLabel (与 useAlarmTableHelpers 逐字同款)
 //   删除, 改消费 SSOT 共享实现 — 设备/通道列口径单一定义, 七页零分叉。
 //   通道列占位口径: 反查不中回落「通道{channelId}」(任务书口径, 不再 '-')。
-
-const _timeCache = new Map<string, string>()
-function formatTime(isoString: string | undefined) {
-  if (!isoString) return '-'
-  let v = _timeCache.get(isoString)
-  if (v !== undefined) return v
-  try {
-    v = new Date(isoString).toLocaleString('zh-CN')
-  } catch {
-    v = isoString
-  }
-  _timeCache.set(isoString, v)
-  if (_timeCache.size > 2000) { const first = _timeCache.keys().next().value as string; if (first) _timeCache.delete(first) }
-  return v
-}
 
 // ── 操作函数 ──
 function handleFilterChange() {

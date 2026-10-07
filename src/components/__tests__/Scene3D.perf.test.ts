@@ -45,15 +45,6 @@ const { threeMock } = vi.hoisted(() => {
     }
   }
 
-  function createMockLabelRenderer() {
-    const el = document.createElement('div')
-    return {
-      setSize: vi.fn(),
-      render: vi.fn(),
-      domElement: el,
-    }
-  }
-
   function createMockObject3D() {
     return {
       position: { x: 0, y: 0, z: 0, set: vi.fn(), copy: vi.fn() },
@@ -221,7 +212,7 @@ describe('Scene3D 性能监控', () => {
 
   beforeEach(() => {
     vi.stubGlobal('cancelAnimationFrame', vi.fn())
-    vi.stubGlobal('requestAnimationFrame', vi.fn((cb: FrameRequestCallback) => {
+    vi.stubGlobal('requestAnimationFrame', vi.fn(() => {
       return 1
     }))
   })

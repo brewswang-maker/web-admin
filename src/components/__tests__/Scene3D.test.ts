@@ -45,15 +45,6 @@ const { threeMock, rendererInstances } = vi.hoisted(() => {
     return r
   }
 
-  function createMockLabelRenderer() {
-    const el = document.createElement('div')
-    return {
-      setSize: vi.fn(),
-      render: vi.fn(),
-      domElement: el,
-    }
-  }
-
   /** [FIX P2-2 2026-09-12] 几何体 mock: 链式变换 API (rotateZ/translate/scale 返回自身) */
   function createMockGeometry() {
     const g: any = {

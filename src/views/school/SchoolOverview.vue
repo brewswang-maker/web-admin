@@ -200,6 +200,7 @@ import { schoolApi, type CampusDashboard } from '@/api/school'
 import type { AlarmEvent, AlarmLevel } from '@/types/alarm'
 import { normalizeAlarmCore } from '@/types/alarm'
 import { useRealtimeAlarmEvents } from '@/composables/useRealtimeAlarmEvents'
+import { formatShortDateTime as shortTime } from '@/utils/datetime'
 // [FIX realtime-push 2026-09-06] 场景页实时刷新: WS 告警到达去抖静默重拉 (无 loading 遮罩闪烁)
 useRealtimeAlarmEvents(() => loadAll(true))
 
@@ -516,14 +517,6 @@ function levelClass(level: AlarmLevel): string {
     default: return 'lv-info'
   }
 }
-function shortTime(ts?: string): string {
-  if (!ts) return '-'
-  const d = new Date(ts)
-  if (isNaN(d.getTime())) return ts
-  const pad = (n: number) => String(n).padStart(2, '0')
-  return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
-}
-
 onMounted(async () => {
   await loadAll()
   refreshTimer = setInterval(() => loadAll(true), 30000)
