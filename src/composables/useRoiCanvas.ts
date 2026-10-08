@@ -220,7 +220,11 @@ export interface RoiData {
   roi_id: string
   roi_name: string
   roi_type: RoiType
-  polygon: number[]         // 归一化坐标 [x1,y1,x2,y2,...]
+  /** [FIX roi-echo-offset 2026-10-08] 正名: 本字段是「画板像素域」而非归一化坐标
+   *  (14-1 起 = 通道真实帧尺寸下的像素, 1080p 满幅 ≈ 0..1920); 库内归一 [0,1]
+   *  只在 roiPointsSerde 序列化边界存在。旧注释「归一化坐标」是本次回显跳位
+   *  误判的源头之一, 改之。所属基准见 norm_base。 */
+  polygon: number[]         // 画板像素域 [x1,y1,x2,y2,...]
   is_active: boolean
   direction?: RoiDirection
   // [ROI-ID-BIND 2026-09-29] 画板形状 ↔ 算法库记录持久绑定 (用户决策: 事件/算法
@@ -232,6 +236,14 @@ export interface RoiData {
   //   建线时回填 (响应携带镜像 id), 随快照落库。镜像更新/在用集判定按 ID 直连,
   //   铲除旧「按主行名反查镜像」在同库同名堆积时的归属混淆。
   mirror_tripwire_id?: number
+  /** [FIX roi-echo-offset 2026-10-08] polygon 像素域所属归一基准 (帧宽高)。
+   *  画板像素 = 图像内占比 × 该基准, 故基准变化 (快照探针晚于回显落地 / 主备码流
+   *  切换导致真实帧尺寸改变) 时已存像素必须按新基准等比重映射, 否则同一份数据会
+   *  被重新解释 —— 实锚: 回显反归一用探针前的回退基准、渲染时探针已落地, 图形相对
+   *  底图整体跳位 (偶发, 取决于两者先后)。
+   *  纯前端态字段: 随 roiClone / 撤销栈的 JSON 往返一起传递, 不参与 REST 序列化
+   *  (roi_shapes_json / roi_shapes_by_channel 落库恒为归一 [0,1])。 */
+  norm_base?: { w: number; h: number }
 }
 
 /** 在 Canvas 上绘制绊线 (线段)
@@ -468,6 +480,10 @@ export function drawRectangle(
 }
 
 /** 根据 RoiType 自动选择绘制函数 */
+// [FIX roi-loiter-offset 2026-10-08] 注意本函数把 roi.polygon 当作**像素域**解释
+//   (÷normW 仅适配画板像素)。当前零调用点 (drawRoi 无引用), 但区域库已改存
+//   归一值 —— 将来若要拿区域库数据直接画, 请走 RoiViewer.vue 的 normCoord
+//   值域探测路径, 不要复用本函数 (两个坐标域混用就是本次症状二的根因类)。
 export function drawRoi(
   ctx: CanvasRenderingContext2D,
   roi: RoiData,

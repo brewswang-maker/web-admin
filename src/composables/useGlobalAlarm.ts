@@ -386,10 +386,12 @@ async function reportVerdictDiff(alarm: AlarmEvent): Promise<void> {
 
 // ── [SSOT R3 2026-09-12] 弹窗三结果上报 (P0-6 前端接入, §6.1 popup 环节) ──
 //   POST /stats/alarm-funnel/report {counter:'popup', result} → 后端 AlarmFunnelCounters.popup
-//   shown            = 权威路径弹窗 (verdict.matched && !verdict.debounced)
+//   shown            = 权威路径弹窗 (verdict 存在且未被防抖; [FIX roi-loiter-offset
+//                      2026-10-08] 起含 matched=false —— 弹窗已与规则解耦)
 //   debounced        = 防抖吞掉 (后端 verdict.debounced 或兜底链窗口内复发)
 //   offline_fallback = verdict 缺失时走兜底链且本地规则匹配后弹窗 (降级态, 回退期观测)
-//   verdict !matched 整链静默不上报 (弹窗环节无动作, 与三态均不符; 后端 verdict 计数已覆盖)。
+//   [FIX roi-loiter-offset 2026-10-08] 原「verdict !matched 整链静默不上报」失效 ——
+//     未命中同样弹窗, 归入 shown 计数 (弹窗环节确实有动作)。
 //   fire-and-forget: 打点失败静默, 不阻塞/不影响弹窗主链。
 function reportPopupResult(result: 'shown' | 'debounced' | 'offline_fallback'): void {
   http.post('/stats/alarm-funnel/report', { counter: 'popup', result })
@@ -536,29 +538,49 @@ async function handleAlarm(alarm: any) {
       } catch { /* pinia 未就绪等极端情况忽略 */ }
     }
 
-    // 3. [SSOT R2 2026-09-12] 弹窗判定三态降级链 (P0-2):
-    //    a) verdict 存在 (新后端, verdict_push_enabled=true): 以 matchAndVerdict
-    //       单判定源为准 — matched&&!debounced → 弹窗(自动关闭秒取 verdict);
-    //       matched&&debounced → 不弹窗仅 TTS (后端防抖窗口内复发);
-    //       !matched → 整链静默 (不弹窗不 TTS, 与兜底链同语义)。
-    //    b) verdict 缺失 (旧后端 / verdict_push_enabled=false 回退态): 回落本地
-    //       兜底链 (findMatchingRule + 本地防抖), 保持现状零回归。
-    //    红线不变: 告警已全部落库/列表可见 (上方步骤), 判定只影响弹窗/TTS。
+    // 3. [SSOT R2 2026-09-12] 弹窗判定降级链 (P0-2) —— [FIX roi-loiter-offset
+    //    2026-10-08 症状一] 门槛口径变更 (用户改判, 覆盖 09-01「未命中规则整链
+    //    静默」与 09-18「default_policy=suppress 即弹窗唯一开关」):
+    //    **弹窗与事件规则解耦 —— 凡已入库/已推送的告警都必须弹窗 + TTS**。
+    //    a) verdict 存在 (新后端): 只用它取弹窗参数 (auto_close_s) 与后端防抖态;
+    //       matched&&!debounced → 弹窗 (自关秒取规则);
+    //       matched&&debounced → 后端防抖窗内复发, 本轮不重复弹 (仍 TTS);
+    //       !matched → **照旧弹窗** (参数缺省 0 = 永不自动关闭)。
+    //    b) verdict 缺失 (旧后端回退态): 本地防抖 + findMatchingRule 取参数,
+    //       匹配与否都弹。
+    //    不变的红线: 告警全部落库/列表可见; 防抖与同 id 双帧去重仍生效 (防刷屏)。
     const debounceKey = `${normalized.channelId || ''}:${normalized.type || ''}`
     const now = Date.now()
     const verdict = normalized.linkageVerdict
     if (verdict) {
       // 3a-0. 双写期对比打点 (fire-and-forget): 本地兜底匹配并行比对 matched 语义
       void reportVerdictDiff(normalized)
-      if (!verdict.matched) {
-        console.log('[useGlobalAlarm] popup suppressed by backend verdict (unmatched), type:',
-          normalized.type, 'ch:', normalized.channelId)
-        return
-      }
-      // matched 两态都更新本地防抖图 (与后端防抖图共识: 回退时兜底链窗口对齐)
-      lastPopupTime.set(debounceKey, now)
+      // [FIX roi-loiter-offset 2026-10-08 症状一] 原 `if (!verdict.matched) return`
+      //   整链静默分支删除 —— 为什么这不是「修个 bug」而是口径冲突 (取证):
+      //     · 徘徊告警有两条产生链。插件链 (loitering_detector::analyzeBehavior) 经
+      //       AlarmDispatcher → LinkageEngine, 有 verdict; 而调度器**内置 dwell 链**
+      //       (InferenceScheduler::mapDetectionsToAlarms) 直连 reportAlarm、绕过引擎,
+      //       它产的记录恒 matched=false / actions=[] (设备实锚: 10:44、10:45 两条
+      //       loitering 记录 rules_version=124 但 actions 为空; 同时段 285/300 条
+      //       告警出自该链, 日志锚 LOITERING detected)。
+      //     · 于是旧口径下「告警列表有记录、弹窗不出现」是**必然结果**, 用户无法
+      //       从 UI 区分「规则没配好」与「盒子根本没报」。
+      //   新口径: matched 只决定弹窗参数, 不再是总开关。仍保留的门槛与规则无关:
+      //   后端 verdict.debounced (防抖窗内复发) + 同 alarm_id 双帧去重账本 +
+      //   本地通道×类型防抖图 (与后端防抖图共识, 回退时窗口对齐)。
+      const lastPopupAt = lastPopupTime.get(debounceKey) || 0
+      // [FIX roi-loiter-offset 2026-10-08 症状一] 防刷屏补位: 未命中规则的告警拿不到
+      //   后端防抖语义 (verdict.debounced 只在命中规则的冷却链上算), 所以沿用
+      //   本地通道×类型窗口 popupDebounceMs (与 3b 同参) 限速。命中路径逐字不变
+      //   (仍是进分支就刷新本地图); 未命中只在**真正弹出**时才刷新 (否则持续流
+      //   下窗口永不递减 → 只弹一次)。
+      if (verdict.matched) lastPopupTime.set(debounceKey, now)
       if (verdict.debounced) {
         console.log('[useGlobalAlarm] popup debounced by backend verdict, key:', debounceKey)
+        reportPopupResult('debounced')
+      } else if (!verdict.matched && now - lastPopupAt < popupDebounceMs) {
+        console.log('[useGlobalAlarm] popup debounced (unmatched, local window), key:',
+          debounceKey, 'elapsed:', Math.round((now - lastPopupAt) / 1000) + 's')
         reportPopupResult('debounced')
       } else if (wasPopupRecentlyPopped(normalized.id, now)) {
         // [SSOT R11] 双帧去重: linkage_alarm (先到, 兜底链) 已弹同 id 告警 → 跳过防双弹
@@ -569,7 +591,15 @@ async function handleAlarm(alarm: any) {
         // [FIX dispose-edit-guard 2026-09-14] 仅"实际呈现"才记账 (编辑保护挂起 → 不记账:
         //   同 id 后续帧/用户提交后的新帧仍可补弹; 原实现无条件记账 → 挂起帧被 24h
         //   TTL 吞掉。同 id 合并分支幂等, 双帧竞态不双弹, 语义不变)
-        const shown = await showAlarmPopup(normalized, { autoCloseSeconds: Number(verdict.auto_close_s) || 0, origin: 'auto' })
+        // [FIX roi-loiter-offset 2026-10-08 症状一] 未命中路径: 本次确实进入弹出
+        //   分支才刷新本地防抖图 (与上方 unmatched 判据成对)
+        if (!verdict.matched) lastPopupTime.set(debounceKey, now)
+        // [FIX roi-loiter-offset 2026-10-08] 未命中规则时无规则参数可用,
+        //   自关秒数取 0 (永不自动关闭, 与详情入口一致)
+        const shown = await showAlarmPopup(
+          normalized,
+          { autoCloseSeconds: verdict.matched ? (Number(verdict.auto_close_s) || 0) : 0, origin: 'auto' },
+        )
         if (shown) {
           markPopupPopped(normalized.id, now)
           reportPopupResult('shown')
@@ -578,7 +608,9 @@ async function handleAlarm(alarm: any) {
         }
       }
     } else {
-      // 3b. 兜底链 (与重构前逐字一致, 勿改): 本地防抖 → findMatchingRule → 弹窗/静默
+      // 3b. 兜底链: 本地防抖 → findMatchingRule 取参数 → 弹窗
+      //   [FIX roi-loiter-offset 2026-10-08 症状一] 同步解耦: 未命中本地规则也弹
+      //   (与 3a 同口径, 原「匹配才弹、否则 return」的静默分支删除)。
       const lastTime = lastPopupTime.get(debounceKey) || 0
       if (now - lastTime < popupDebounceMs) {
         console.log('[useGlobalAlarm] popup debounced, key:', debounceKey,
@@ -589,36 +621,35 @@ async function handleAlarm(alarm: any) {
         //   详情入口不受此控制 (openAlarmDetailById 不传 options, 默认永不自关)
         //   [FIX 2026-09-04] 单次调用: 原实现在条件与分支内各 await 一次 (双查询浪费, 若未来加副作用会双触发)
         const matchedRule = await findMatchingRule(normalized)
-        if (matchedRule) {
-          lastPopupTime.set(debounceKey, now)
-          if (wasPopupRecentlyPopped(normalized.id, now)) {
-            // [SSOT R11] 双帧去重 (反向顺序补位: alarm.new Show 先弹 → linkage_alarm 后到)
-            console.log('[useGlobalAlarm] popup skipped (duplicate frame, same alarm_id), id:', normalized.id)
-            reportPopupResult('debounced')
-          } else {
-            // [SOUND-ORIGIN 2026-09-11] WS 推送自动弹窗 → origin:'auto' 播放报警音
-            //   (手动入口默认 manual 静音, 见 useAlarmPopup.showAlarmPopup)
-            // [FIX dispose-edit-guard 2026-09-14] 同上: 呈现才记账 (挂起 → 不记账, 待补弹)
-            const shown = await showAlarmPopup(normalized, { autoCloseSeconds: Number(matchedRule.popup_auto_close_s) || 0, origin: 'auto' })
-            if (shown) {
-              markPopupPopped(normalized.id, now)
-              reportPopupResult('offline_fallback')
-            } else {
-              reportPopupResult('debounced')
-            }
-          }
+        // [FIX roi-loiter-offset 2026-10-08 症状一] matchedRule 从「弹窗闸门」降为
+        //   「参数来源」: 为 null 也弹 (与 3a 同口径)。原 else 分支的
+        //   「popup suppressed (no matching linkage rule) + return」整段删除 ——
+        //   旧语义下未命中规则的记录永远只能列表里看着, 不会提醒用户。
+        lastPopupTime.set(debounceKey, now)
+        if (wasPopupRecentlyPopped(normalized.id, now)) {
+          // [SSOT R11] 双帧去重 (反向顺序补位: alarm.new Show 先弹 → linkage_alarm 后到)
+          console.log('[useGlobalAlarm] popup skipped (duplicate frame, same alarm_id), id:', normalized.id)
+          reportPopupResult('debounced')
         } else {
-          console.log('[useGlobalAlarm] popup suppressed (no matching linkage rule), type:',
-            normalized.type, 'ch:', normalized.channelId)
-          // [规则驱动告警 2026-09-01] TTS 与弹窗同门槛: 未命中规则的告警整链静默
-          //   (不弹窗不播报) — 用户决策「这些都依赖事件规则」
-          return
+          // [SOUND-ORIGIN 2026-09-11] WS 推送自动弹窗 → origin:'auto' 播放报警音
+          //   (手动入口默认 manual 静音, 见 useAlarmPopup.showAlarmPopup)
+          // [FIX dispose-edit-guard 2026-09-14] 同上: 呈现才记账 (挂起 → 不记账, 待补弹)
+          const shown = await showAlarmPopup(normalized, { autoCloseSeconds: Number(matchedRule?.popup_auto_close_s) || 0, origin: 'auto' })
+          if (shown) {
+            markPopupPopped(normalized.id, now)
+            // 打点口径: 本地规则命中 = offline_fallback (旧后端降级态可比对);
+            //   未命中也弹了 = shown (弹窗环节确实呈现)
+            reportPopupResult(matchedRule ? 'offline_fallback' : 'shown')
+          } else {
+            reportPopupResult('debounced')
+          }
         }
       }
     }
 
-    // 4. TTS 语音播报 — [规则驱动告警 2026-09-01] 已随弹窗门槛规则化: 走到这里
-    //    必然命中已创建联动规则 (防抖命中的重复告警仍播报, 与弹窗防抖解耦);
+    // 4. TTS 语音播报 — [FIX roi-loiter-offset 2026-10-08 症状一] 与弹窗同步解耦:
+    //    走到这里不再要求命中规则 (09-01「随弹窗门槛规则化」的前提已失效);
+    //    防抖命中的重复告警仍播报 (与弹窗防抖解耦)。
     //    仍不依赖规则是否配置 tts_broadcast 动作 (联动动作的播报经 WS 下方
     //    action==='tts_broadcast' 分支下发, 与本地面板播报并存)
     speakAlarm(normalized)

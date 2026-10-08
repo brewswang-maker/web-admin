@@ -2603,6 +2603,38 @@ const roiNormHeight = computed(() => {
   const key = roiBaseOf(activeRoiChannel.value || roiBgChannelOf.value)
   return roiFrameByChannel.value[key]?.h || FALLBACK_HEIGHT
 })
+/** 画板当前归一基准 (像素域唯一事实源: 渲染除它, 新落点乘它) */
+const roiBoardBase = computed(() => ({ w: roiNormWidth.value, h: roiNormHeight.value }))
+// [FIX roi-echo-offset 2026-10-08] 像素域基准对齐 (回显跳位根治)。
+//   背景: 画板渲染位置 = polygon 像素 / 画板基准 (再映射到底图矩形), 而「画板基准」
+//   与「回显反归一所用基准」是两条异步链 —— roiFrameByChannel 由快照探针落地 (未落地
+//   时回退 FALLBACK 1920×1080), 底图与探针又各有先后。只要一次基准变化发生在「反归一
+//   之后、渲染期间」, 同一份像素就会被按新基准重新解释 → 图形相对底图跳位 (偶发,
+//   与码流/探针时序相关; 曾观测到形状整体放大并顶出画布)。
+//   不变量: 像素 = 图像占比 × 基准 —— 基准变则像素同比重映射, 显示占比恒等,
+//   图形始终钉在用户当初落点的位置; 序列化侧按形状自带基准除 → 落库归一值不受影响。
+function roiAlignBase(list: RoiData[] | undefined, to: { w: number; h: number }): void {
+  if (!Array.isArray(list) || !(to.w > 0) || !(to.h > 0)) return
+  for (const r of list) {
+    const poly = r?.polygon
+    if (!Array.isArray(poly) || poly.length === 0) continue
+    const from = r.norm_base
+    // 无记录 = 刚由画板产生 (落点/克隆), 其像素本就在 to 域内 → 只登记不重映射
+    if (!from || !(from.w > 0) || !(from.h > 0)) { r.norm_base = { w: to.w, h: to.h }; continue }
+    if (from.w === to.w && from.h === to.h) continue
+    const sx = to.w / from.w
+    const sy = to.h / from.h
+    for (let i = 0; i + 1 < poly.length; i += 2) {
+      poly[i] *= sx
+      poly[i + 1] *= sy
+    }
+    r.norm_base = { w: to.w, h: to.h }
+  }
+}
+/** 形状序列化除数: 优先形状自带基准 (与画板产生该像素时同源), 缺失才回退调用方
+ *  推导语义 (14-1 同源口径)。归一是无量纲比值, 按自带基准除即与真实帧尺寸无关。 */
+const roiSaveBase = (r: RoiData, fallback: { w: number; h: number }) =>
+  r?.norm_base && r.norm_base.w > 0 && r.norm_base.h > 0 ? r.norm_base : fallback
 const roiClone = <T,>(v: T): T => JSON.parse(JSON.stringify(v))
 /** 通道基准码 → 页签展示 (label + 设备 detail; 候选=绑定/快照/动态三池 —
  *  ROI 画板页签与尾随通道区页签共用, 避免两处展示口径漂移) */
@@ -3469,10 +3501,33 @@ watch(boundChannelDraft, (ids) => {
 // [FIX tdz 2026-09-12] 画板 roiPolygon 变更 → 标记当前激活通道 (自 form 前投至此, TDZ 修复);
 //   程序性赋值经 roiSuppressTouch 抑制
 watch(() => form.conditions.region.config.roiPolygon, () => {
+  // [FIX roi-echo-offset 2026-10-08] 新产生/克隆进来的形状即时登记像素域基准:
+  //   画板落点、逐通道包克隆、撤销恢复等路径产出的形状不带 norm_base, 不在本次
+  //   flush 登记, 下一次基准变化会把它当成「已在目标域」而漏掉重映射。
+  roiAlignBase(form.conditions.region.config.roiPolygon, roiBoardBase.value)
   if (roiSuppressTouch) return
   if (!activeRoiChannel.value) return  // 未进入逐通道交互 → 保持通用模式 (存量行为零变更)
   roiMarkTouched()
 }, { deep: true })
+
+// [FIX roi-echo-offset 2026-10-08] 基准变化 → 像素域同比重映射 (显示占比恒等)。
+//   两个触发源: ① 快照探针落地/换码流使 frameOfChannel(k) 变化 (逐通道包按各自
+//   通道基准对齐, 与当前页签无关); ② 切页签使画板基准变化 (工作副本与通用基线按
+//   画板基准对齐)。不对齐的后果就是用户报告的「保存后重开, 图形相对底图跳位」。
+watch(() => [roiNormWidth.value, roiNormHeight.value, roiFrameByChannel.value], () => {
+  const board = { w: roiNormWidth.value, h: roiNormHeight.value }
+  // [FIX roi-echo-offset 2026-10-08] 保留外层抑制窗口: 回显期 (openEdit 4427→4732)
+  //   若本 watch 落地, 无条件清 false 会提前解除抑制 → 后续程序性赋值被误标 touched。
+  const prevSuppress = roiSuppressTouch
+  roiSuppressTouch = true
+  roiAlignBase(form.conditions.region.config.roiPolygon, board)
+  roiAlignBase(roiGeneralBaseline.value, board)
+  for (const k of Object.keys(roiByChannel.value || {})) {
+    const f = frameOfChannel(k)
+    roiAlignBase(roiByChannel.value[k]?.list, f.w > 0 && f.h > 0 ? f : board)
+  }
+  nextTick(() => { if (!prevSuppress) roiSuppressTouch = false })
+})
 
 // [FIX ghost-chan 2026-09-12] 物理位置选设备节点 → 已绑通道跟随收窄 (幽灵通道治本):
 //   boundChannelOptions 只治「下拉选项」层, 历史草稿 (区域维度/级联勾选并集保存的
@@ -4450,6 +4505,9 @@ function resetEditorState(rule: LinkageRule | null) {
           //   1.5 倍 → 「打开就错位, 保存即写错」。未知分辨率时取 SSOT
           //   FALLBACK_* (与保存侧 normalizePoint 回退一致)。
           polygon: denormalizePoints(s.points, roiNormWidth.value, roiNormHeight.value),
+          // [FIX roi-echo-offset 2026-10-08] 登记本次反归一所用基准: 探针晚于回显
+          //   落地时基准会变, 对齐器据此等比重映射而非重新解释像素。
+          norm_base: { w: roiNormWidth.value, h: roiNormHeight.value },
           is_active: s.active !== false,
           direction: (s.direction || undefined) as RoiData['direction'],
           // [ROI-ID-BIND 2026-09-29] 恢复算法库持久绑定 (0 = 存量形状待认领)
@@ -4476,6 +4534,12 @@ function resetEditorState(rule: LinkageRule | null) {
               const e = (m as any)[k]
               if (!e || typeof e !== 'object') continue
               const arr = (Array.isArray(e.shapes) ? e.shapes : []) as Array<{ shape: string; name?: string; active?: boolean; direction?: string; pid?: string; points: number[]; region_id?: number; tripwire_id?: number; mirror_tripwire_id?: number }>
+              // [FIX roi-echo-offset 2026-10-08] 基准只依赖通道 k, 上提出循环 (原内联
+              //   IIFE 逐形状重算), 以便同值登记到 norm_base。
+              const echoFrame = frameOfChannel(k)
+              const echoKnown = echoFrame.w > 0 && echoFrame.h > 0
+              const ew = echoKnown ? echoFrame.w : roiNormWidth.value
+              const eh = echoKnown ? echoFrame.h : roiNormHeight.value
               const list = arr.filter(s => s && Array.isArray(s.points)).map((s, i) => ({
                 // [ROI-IDS 2026-09-17 P2] pid 稳定性: 同通用模式回显保留原值
                 roi_id: s.pid || `roi_ch_${Date.now()}_${i}`,
@@ -4485,13 +4549,9 @@ function resetEditorState(rule: LinkageRule | null) {
                 //   真实帧尺寸, 与保存侧 buildChannelEntries 的 frameOfChannel(k)
                 //   严格对偶 → 回显→保存原样往返; 该通道未知 → 画板当前基准
                 //   (roiNormWidth/Height, 内部已回退 SSOT FALLBACK_*)。
-                polygon: (() => {
-                  const f = frameOfChannel(k)
-                  const known = f.w > 0 && f.h > 0
-                  const ew = known ? f.w : roiNormWidth.value
-                  const eh = known ? f.h : roiNormHeight.value
-                  return denormalizePoints(s.points, ew, eh)
-                })(),
+                polygon: denormalizePoints(s.points, ew, eh),
+                // [FIX roi-echo-offset 2026-10-08] 像素域所属基准 (与上行同源)
+                norm_base: { w: ew, h: eh },
                 is_active: s.active !== false,
                 direction: (s.direction || undefined) as RoiData['direction'],
                 // [ROI-ID-BIND 2026-09-29] 恢复算法库持久绑定 (0 = 存量形状待认领)
@@ -4899,6 +4959,41 @@ async function handleSave(): Promise<boolean> {
           list: k === activeRoiChannel.value ? rc.config.roiPolygon : (roiByChannel.value[k]?.list || []),
         }))
       : [{ ch: roiBaseOf(rc.config.channelId), list: rc.config.roiPolygon }]
+    // [FIX roi-loiter-offset 2026-10-08] buildNormPoints / genericRoiFrame 上提到本处
+    //   (原定义在下方区域镜像之后, `const` 有 TDZ, 镜像链拿不到) —— 画板像素→归一
+    //   只允许一套除数: 规则 roi_shapes 序列化、roi_polygon 兼容字段、绊线镜像
+    //   (normPt1920)、**算法区域库镜像** 四处必须字面同源, 否则同一个多边形在
+    //   四处按不同基准解释 (区域库写原始像素 = 本次症状二根因之一)。
+    // [FIX roi-norm-base 2026-10-01] 缺陷 14-1: 除数不再写死 /1920 /1080 ——
+    //   旧写法把「写入侧画布基准」当成「通道真实帧尺寸」, 而 4:3 通道
+    //   (1280×960) / continuous 子码流 (640×360) 上画满幅会被归一成
+    //   (0.667, 0.889) / (0.333, 0.333), 引擎侧区域判定整体偏左上。
+    //   现改走 roiSchema.ts SSOT normalizePoint, 基准 = 该形状所属通道的
+    //   快照真实帧尺寸 (frameW/frameH ≤0 时由 SSOT 内部回退 FALLBACK_*)。
+    // [FIX p1-roi-roundtrip 2026-10-02] 缺陷 14-2: 实现体上提至 roiPointsSerde.buildNormPoints
+    //   (精度 4 位 → 6 位, 且与回显侧 denormalizePoints 成互逆对, 20 次往返幂等);
+    //   本页保留同名别名, 三处调用点 (逐通道 / 通用 / roi_polygon 兼容字段) 口径不变。
+    const buildNormPoints = (poly: number[], frameW = 0, frameH = 0): number[] =>
+      serdeBuildNormPoints(poly, frameW, frameH)
+    // [FIX roi-norm-base 2026-10-01] 通用形态 (非逐通道) 的基准: 优先当前
+    //   画板页签通道 —— 画板 normalizeWidth/Height (roiNormWidth/Height) 也用
+    //   它, 两者同源才能保证「回显后不编辑直接保存」像素坐标原样往返; 其次取
+    //   第一个已加载快照的绑定通道尺寸; 全未知 → 0/0 (SSOT 回退基准)。
+    //   注: 通用形态是跳通道共享的单一形状, 仅当绑定通道分辨率一致时语义无
+    //   歧义 (逐通道形态 roi_shapes_by_channel 无此限制)。
+    const genericRoiFrame = (): { w: number; h: number } => {
+      // [FIX roi-echo-offset 2026-10-08] 取值键与画板基准字面同源
+      //   (roiNormWidth/Height = activeRoiChannel || roiBgChannelOf): 旧写法在
+      //   未进入逐通道页签 (activeRoiChannel 为空) 时去扫绑定集首个已知通道,
+      //   可能拿到与底图通道不同的帧尺寸 → 写入除数 ≠ 画板乘数。
+      const active = frameOfChannel(String(activeRoiChannel.value || roiBgChannelOf.value || ''))
+      if (active.w > 0 && active.h > 0) return active
+      for (const id of (rc.config.boundChannelIds || [])) {
+        const f = frameOfChannel(String(id))
+        if (f.w > 0 && f.h > 0) return f
+      }
+      return { w: 0, h: 0 }
+    }
     // [FIX id-binding 2026-09-30] 上次快照绊线 ID 集收集 (diff 清理候选域, ID 对 ID):
     //   lastEditSource.spatial_cond 的 roi_shapes_json + roi_shapes_by_channel 两处
     //   形状快照持久携带 tripwire_id / mirror_tripwire_id (ROI-ID-BIND 回填), 即
@@ -5196,10 +5291,24 @@ async function handleSave(): Promise<boolean> {
           const exRes = await regionApi.listRegions({ channel_id: 0, channel_id_str: areaChStr })
           const existing: any[] = ((exRes as any)?.data?.data?.regions ?? (exRes as any)?.data?.regions ?? [])
           let synced = 0
+          // [FIX roi-loiter-offset 2026-10-08] 区域库镜像改写**归一值** (与规则
+          //   roi_shapes 同除数同基准), 不再直传画板像素。为什么:
+          //   RegionStore.h B0 语义矩阵声明「坐标基准一律归一化 [0,1]」, 插件
+          //   normalizeRegionPolygon / InferenceScheduler::getAlarmRoiPolys /
+          //   LinkageEngine 都按值域探测解释 —— 写像素时它们只能猜除数, 猜错
+          //   就是「画了 ROI 反而不报警 / 弹窗叠框与判定框错位」(设备实锚:
+          //   像素顶点 1557 被按推理帧 640 归一成 2.43 → 区域整体出画)。
+          //   基准取法与 buildChannelEntries(逐通道) / buildRoiShapesJson(通用)
+          //   字面同源: roiSaveBase(形状自带基准, 缺省回退通道帧尺寸)。
+          const areaBase = roiStrictMode.value
+            ? frameOfChannel(String(unit.ch || ''))
+            : genericRoiFrame()
           for (const area of drawnAreas) {
             const raw = area.polygon || []
+            const base = roiSaveBase(area, areaBase)
+            const norm = buildNormPoints(raw, base.w, base.h)
             const polygon: [number, number][] = []
-            for (let i = 0; i + 1 < raw.length; i += 2) polygon.push([raw[i], raw[i + 1]])
+            for (let i = 0; i + 1 < norm.length; i += 2) polygon.push([norm[i], norm[i + 1]])
             if (polygon.length < 3) continue
             const regionType = area.roi_type === 'exclusion_zone' ? 'exclusion_zone' : 'detection_zone'
             // [ROI-ID-BIND 2026-09-29] 画板形状 ↔ 区域库按持久 ID 绑定 (用户决策:
@@ -5220,8 +5329,17 @@ async function handleSave(): Promise<boolean> {
               const claimed = existing.find(e => e.name === area.roi_name && e.algo_id === areaAlgoId)
               if (claimed) { area.region_id = Number(claimed.id); hit = claimed }
             }
-            const sameGeom = !!hit && Array.isArray(hit.polygon) && hit.polygon.length === polygon.length &&
-              hit.polygon.every((p: any, i2: number) =>
+            // [FIX roi-loiter-offset 2026-10-08] 同域比较: 存量库行可能是像素形态
+            //   (本次修复前写入), 按同一基准归一后再比 —— 否则「几何没变」永远
+            //   判假, 每次保存都重写整行且旧像素行永不收敛 (normalizePoint 对
+            //   已归一值直通, 对新写入的归一行是恒等操作)。
+            const dbRaw: any[] = Array.isArray(hit?.polygon) ? (hit.polygon as any[]) : []
+            const dbPoly: [number, number][] = dbRaw.map((p: any) => {
+              const n = buildNormPoints([Number(p[0]), Number(p[1])], base.w, base.h)
+              return [n[0], n[1]] as [number, number]
+            })
+            const sameGeom = !!hit && dbPoly.length === polygon.length &&
+              dbPoly.every((p: [number, number], i2: number) =>
                 Math.abs(Number(p[0]) - polygon[i2][0]) < 0.001 && Math.abs(Number(p[1]) - polygon[i2][1]) < 0.001)
             if (sameGeom && hit.region_type === regionType) continue
             const created = await regionApi.createRegion({
@@ -5284,32 +5402,10 @@ async function handleSave(): Promise<boolean> {
     //   ① 多 ROI flatMap 拼接 → 引擎 pointInPolygon 视为单个乱序大参边形(全错);
     //     现 roi_polygon 仅取第一个激活区域类形状 (兼容字段), 多形状判定走 roi_shapes_json;
     //   ② 坐标 [0,1920] 像素系直存 → 引擎 [ROI-UNIT-MISMATCH] pass-through (恒不拦截)。
-    // [FIX roi-norm-base 2026-10-01] 缺陷 14-1: 除数不再写死 /1920 /1080 ——
-    //   旧写法把「写入侧画布基准」当成「通道真实帧尺寸」, 而 4:3 通道
-    //   (1280×960) / continuous 子码流 (640×360) 上画满幅会被归一成
-    //   (0.667, 0.889) / (0.333, 0.333), 引擎侧区域判定整体偏左上。
-    //   现改走 roiSchema.ts SSOT normalizePoint, 基准 = 该形状所属通道的
-    //   快照真实帧尺寸 (frameW/frameH ≤0 时由 SSOT 内部回退 FALLBACK_*)。
-    // [FIX p1-roi-roundtrip 2026-10-02] 缺陷 14-2: 实现体上提至 roiPointsSerde.buildNormPoints
-    //   (精度 4 位 → 6 位, 且与回显侧 denormalizePoints 成互逆对, 20 次往返幂等);
-    //   本页保留同名别名, 三处调用点 (逐通道 / 通用 / roi_polygon 兼容字段) 口径不变。
-    const buildNormPoints = (poly: number[], frameW = 0, frameH = 0): number[] =>
-      serdeBuildNormPoints(poly, frameW, frameH)
-    // [FIX roi-norm-base 2026-10-01] 通用形态 (非逐通道) 的基准: 优先当前
-    //   画板页签通道 —— 画板 normalizeWidth/Height (roiNormWidth/Height) 也用
-    //   它, 两者同源才能保证「回显后不编辑直接保存」像素坐标原样往返; 其次取
-    //   第一个已加载快照的绑定通道尺寸; 全未知 → 0/0 (SSOT 回退基准)。
-    //   注: 通用形态是跳通道共享的单一形状, 仅当绑定通道分辨率一致时语义无
-    //   歧义 (逐通道形态 roi_shapes_by_channel 无此限制)。
-    const genericRoiFrame = (): { w: number; h: number } => {
-      const active = frameOfChannel(String(activeRoiChannel.value || ''))
-      if (active.w > 0 && active.h > 0) return active
-      for (const id of (rc.config.boundChannelIds || [])) {
-        const f = frameOfChannel(String(id))
-        if (f.w > 0 && f.h > 0) return f
-      }
-      return { w: 0, h: 0 }
-    }
+    // [FIX roi-loiter-offset 2026-10-08] buildNormPoints / genericRoiFrame 定义已上提
+    //   至 roiSyncUnits 之后 (区域镜像/绊线镜像也要用), 本段原声明删除 —— 四处
+    //   序列化链路 (roi_shapes_json / roi_shapes_by_channel / roi_polygon 兼容字段 /
+    //   算法区域库镜像) 共用同一对助手 = 同一套除数。
     // [ROI-GAP 2026-09-06] v2 形态: {combine:'union'|'intersection', shapes:[...]} —
     //   引擎 matchRoiShapes v2 解析 (组合语义可配, exclusion_zone 恒拦截);
     //   老数组 v1 形态仍被引擎/useAlarmShapes 兼容读取 (默认并集), 存量规则
@@ -5332,7 +5428,7 @@ async function handleSave(): Promise<boolean> {
         region_id: r.region_id ?? 0, tripwire_id: r.tripwire_id ?? 0,
         mirror_tripwire_id: r.mirror_tripwire_id ?? 0,
         // [FIX roi-norm-base 2026-10-01] 缺陷 14-1: 按绑定通道真实帧尺寸归一。
-        direction: r.direction || '', points: buildNormPoints(r.polygon, gf.w, gf.h),
+        direction: r.direction || '', points: buildNormPoints(r.polygon, roiSaveBase(r, gf).w, roiSaveBase(r, gf).h),
       })),
     })
     }
@@ -5366,7 +5462,7 @@ async function handleSave(): Promise<boolean> {
             // [FIX roi-norm-base 2026-10-01] 缺陷 14-1: 逐通道基准 = 该通道快照
             //   真实帧尺寸 (未知 → SSOT 回退)。不同分辨率通道各自归一, 不共用一套。
             direction: r.direction || '',
-            points: buildNormPoints(r.polygon, frameOfChannel(k).w, frameOfChannel(k).h),
+            points: buildNormPoints(r.polygon, roiSaveBase(r, frameOfChannel(k)).w, roiSaveBase(r, frameOfChannel(k)).h),
           })),
           tripwire_refs: isTripwireRule.value
             ? (roiByChannel.value[k]?.tripwireRefs || []).map(x => ({
@@ -5446,7 +5542,7 @@ async function handleSave(): Promise<boolean> {
       // [FIX roi-norm-base 2026-10-01] 缺陷 14-1: 同通用形态基准 (首个已加载
       //   快照的绑定通道尺寸; 未知 → SSOT FALLBACK_*)
       roi_polygon: firstActiveArea
-        ? buildNormPoints(firstActiveArea.polygon, genericRoiFrame().w, genericRoiFrame().h)
+        ? buildNormPoints(firstActiveArea.polygon, roiSaveBase(firstActiveArea, genericRoiFrame()).w, roiSaveBase(firstActiveArea, genericRoiFrame()).h)
         : [] as number[],
       // [FIX 2026-09-02] 画板全量形状快照 (多形状并集判定 + 编辑回显 SSOT)
       // [FIX tw-route 2026-09-12] 非绊线消费事件剔除绊线残留形状 (快照自净:
