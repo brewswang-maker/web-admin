@@ -176,13 +176,31 @@
 
       <!-- [UI-6] 左侧: 通道目录树 + PTZ (CSS order:-1 靠左渲染) -->
       <el-col :span="6" class="live-side-column">
-        <el-card class="channel-card" v-loading="channelsLoading">
+        <!-- [UI-COLLAPSE 2026-10-08] 通道目录卡支持收起/展开 (复用 PTZ 卡同款范式, 状态持久化 localStorage) -->
+        <el-card class="channel-card" :class="{ 'is-collapsed': channelTreeCollapsed }" v-loading="channelsLoading">
           <template #header>
             <div class="tree-head">
               <span>监控点目录</span> <!-- [FIX channel-monitor-point 2026-09-17] 海康术语: 通道→监控点 -->
-              <el-input v-model="chSearch" size="small" style="width:120px" placeholder="搜索..." clearable />
+              <span v-if="channelTreeCollapsed" class="tree-head-subtitle">— 已选 {{ treeCheckedChannelIds.size }}</span>
+              <div class="tree-head-actions">
+                <el-input v-model="chSearch" size="small" style="width:120px" placeholder="搜索..." clearable />
+                <el-tooltip :content="channelTreeCollapsed ? '展开目录' : '收起目录'" placement="top">
+                  <el-button
+                    link
+                    size="small"
+                    class="tree-collapse-btn"
+                    :aria-label="channelTreeCollapsed ? '展开目录' : '收起目录'"
+                    @click="toggleChannelTreePanel"
+                  >
+                    <el-icon class="tree-collapse-icon" :class="{ 'is-collapsed': channelTreeCollapsed }">
+                      <ArrowDown />
+                    </el-icon>
+                  </el-button>
+                </el-tooltip>
+              </div>
             </div>
           </template>
+          <div class="channel-tree-wrapper">
           <!-- [UI-6 2026-09-10] 勾选操作行: 多选上墙 (区域勾选含下级设备全通道) -->
           <div class="tree-toolbar">
             <span class="tree-count">已选 {{ treeCheckedChannelIds.size }}</span>
@@ -228,6 +246,7 @@
             <span>监控点加载失败, 请检查设备连接</span>
             <el-button size="small" type="primary" link @click="loadData">重试</el-button>
           </div>
+          </div><!-- /channel-tree-wrapper -->
         </el-card>
 
         <!-- PTZ面板 [P0-OPT] 支持收起/展开，状态持久化到 localStorage -->
@@ -1685,6 +1704,13 @@ const visibleSlots = computed(() => gridSlots.slice(0, layout.value))
 // [P0-OPT] PTZ 面板收起/展开状态 (持久化到 localStorage, 避免每次进入页面都重新展开)
 const PTZ_PANEL_COLLAPSE_KEY = 'smartgateway.liveview.ptzCollapsed.v1'
 const ptzPanelCollapsed = ref<boolean>(localStorage.getItem(PTZ_PANEL_COLLAPSE_KEY) === '1')
+// [UI-COLLAPSE 2026-10-08] 监控点目录卡收起状态 (与 PTZ 卡同款持久化范式)
+const CHANNEL_TREE_COLLAPSE_KEY = 'smartgateway.liveview.channelTreeCollapsed.v1'
+const channelTreeCollapsed = ref<boolean>(localStorage.getItem(CHANNEL_TREE_COLLAPSE_KEY) === '1')
+function toggleChannelTreePanel() {
+  channelTreeCollapsed.value = !channelTreeCollapsed.value
+  localStorage.setItem(CHANNEL_TREE_COLLAPSE_KEY, channelTreeCollapsed.value ? '1' : '0')
+}
 
 function togglePtzPanel() {
   ptzPanelCollapsed.value = !ptzPanelCollapsed.value
@@ -3829,6 +3855,37 @@ onUnmounted(() => {
   opacity: 0;
 }
 .ptz-card.is-collapsed :deep(.el-card__body) {
+  padding-top: 0 !important;
+  padding-bottom: 0 !important;
+}
+/* [UI-COLLAPSE 2026-10-08] 监控点目录卡收起/展开: 与 PTZ 卡同款 max-height 过渡, 避免布局闪烁 */
+.tree-head-actions { display: flex; align-items: center; gap: 4px; }
+.tree-head-subtitle { font-size: 12px; color: var(--el-text-color-secondary); margin-left: 6px; }
+.tree-collapse-btn {
+  flex: 0 0 auto;
+  padding: 4px 6px;
+  opacity: 0.75;
+  transition: opacity 0.2s ease;
+}
+.tree-collapse-btn:hover { opacity: 1; }
+.tree-collapse-icon {
+  transition: transform 0.3s ease;
+  font-size: 14px;
+}
+.tree-collapse-icon.is-collapsed {
+  transform: rotate(-90deg);
+}
+.channel-tree-wrapper {
+  overflow: hidden;
+  transition: max-height 0.3s ease, opacity 0.25s ease;
+  max-height: 1200px;
+  opacity: 1;
+}
+.channel-card.is-collapsed .channel-tree-wrapper {
+  max-height: 0;
+  opacity: 0;
+}
+.channel-card.is-collapsed :deep(.el-card__body) {
   padding-top: 0 !important;
   padding-bottom: 0 !important;
 }

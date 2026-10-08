@@ -4,8 +4,17 @@
     <aside v-if="!hasDeviceId" class="area-aside">
       <div class="area-aside__head">
         <span class="area-aside__title">安保区域</span>
-        <el-button v-if="selectedAreaId" link size="small" type="primary" @click="clearAreaFilter">清除</el-button>
+        <span class="area-aside__head-actions">
+          <el-button v-if="selectedAreaId" link size="small" type="primary" @click="clearAreaFilter">清除</el-button>
+          <!-- [UI-COLLAPSE 2026-10-08] 区域树整段收起 (与 LiveView PTZ/目录卡同款范式) -->
+          <el-tooltip :content="areaTreeCollapsed ? '展开' : '收起'" placement="top">
+            <el-button link size="small" class="aside-collapse-btn" :aria-label="areaTreeCollapsed ? '展开安保区域' : '收起安保区域'" @click="toggleAreaTreePanel">
+              <el-icon class="aside-collapse-icon" :class="{ 'is-collapsed': areaTreeCollapsed }"><ArrowDown /></el-icon>
+            </el-button>
+          </el-tooltip>
+        </span>
       </div>
+      <div v-show="!areaTreeCollapsed">
       <el-tree
         ref="areaTreeRef"
         :data="areaTreeData"
@@ -21,14 +30,24 @@
       <div v-if="selectedAreaId" class="area-aside__chips">
         <el-tag closable size="small" @close="clearAreaFilter">{{ selectedAreaName }}</el-tag>
       </div>
+      </div>
 
       <!-- [UI-2 2026-09-10] 通道目录树: 区域→设备→通道 三级主体视图 (checkbox 多选,
            勾选集合并集过滤右侧通道表; 上方 P1.5 区域树筛选作为外部筛选器保留) -->
       <div class="area-aside__divider" />
       <div class="area-aside__head">
         <span class="area-aside__title">监控点目录</span> <!-- [FIX channel-monitor-point 2026-09-17] 海康术语: 通道→监控点 -->
-        <el-button v-if="treeCheckedChannelIds.size" link size="small" type="primary" @click="clearChannelTreeFilter">清除</el-button>
+        <span class="area-aside__head-actions">
+          <el-button v-if="treeCheckedChannelIds.size" link size="small" type="primary" @click="clearChannelTreeFilter">清除</el-button>
+          <!-- [UI-COLLAPSE 2026-10-08] 目录树整段收起 -->
+          <el-tooltip :content="channelTreePanelCollapsed ? '展开' : '收起'" placement="top">
+            <el-button link size="small" class="aside-collapse-btn" :aria-label="channelTreePanelCollapsed ? '展开监控点目录' : '收起监控点目录'" @click="toggleChannelTreePanel">
+              <el-icon class="aside-collapse-icon" :class="{ 'is-collapsed': channelTreePanelCollapsed }"><ArrowDown /></el-icon>
+            </el-button>
+          </el-tooltip>
+        </span>
       </div>
+      <div v-show="!channelTreePanelCollapsed">
       <el-input
         v-model="channelTreeFilterText"
         placeholder="筛选设备/监控点..."
@@ -50,6 +69,7 @@
         empty-text="暂无区域/设备/监控点"
         @check="onChannelTreeCheck"
       />
+      </div>
     </aside>
 
     <div class="channel-main">
@@ -558,6 +578,20 @@ const filterProtocol = ref('')
 // ---- 视图模式 ----
 const viewMode = ref<'card' | 'table'>('card')
 
+// ---- [UI-COLLAPSE 2026-10-08] 左栏两棵目录树整段收起 (状态持久化 localStorage, 同 LiveView PTZ 卡范式) ----
+const AREA_TREE_COLLAPSE_KEY = 'smartgateway.channelview.areaTreeCollapsed.v1'
+const CHANNEL_TREE_COLLAPSE_KEY = 'smartgateway.channelview.channelTreeCollapsed.v1'
+const areaTreeCollapsed = ref<boolean>(localStorage.getItem(AREA_TREE_COLLAPSE_KEY) === '1')
+const channelTreePanelCollapsed = ref<boolean>(localStorage.getItem(CHANNEL_TREE_COLLAPSE_KEY) === '1')
+function toggleAreaTreePanel() {
+  areaTreeCollapsed.value = !areaTreeCollapsed.value
+  localStorage.setItem(AREA_TREE_COLLAPSE_KEY, areaTreeCollapsed.value ? '1' : '0')
+}
+function toggleChannelTreePanel() {
+  channelTreePanelCollapsed.value = !channelTreePanelCollapsed.value
+  localStorage.setItem(CHANNEL_TREE_COLLAPSE_KEY, channelTreePanelCollapsed.value ? '1' : '0')
+}
+
 // ---- [P1.5 2026-09-10] 安保区域树筛选 ----
 // 数据源 security_areas (resolved_channel_ids ∪ channel_ids); 点选节点 = 子树全量区域并集。
 // 与设备下拉筛选口径独立可叠加: 树按通道归属收窄, 设备下拉按所属设备收窄。
@@ -989,6 +1023,12 @@ watch(() => route.params.id, () => loadChannels())
   border-bottom: 1px solid var(--el-border-color-lighter);
 }
 .area-aside__title { font-weight: 600; font-size: 14px; }
+/* [UI-COLLAPSE 2026-10-08] 头部操作区: 清除 + 收起/展开按钮 */
+.area-aside__head-actions { display: flex; align-items: center; gap: 2px; }
+.aside-collapse-btn { padding: 4px 6px; opacity: 0.75; transition: opacity 0.2s ease; }
+.aside-collapse-btn:hover { opacity: 1; }
+.aside-collapse-icon { transition: transform 0.3s ease; font-size: 14px; }
+.aside-collapse-icon.is-collapsed { transform: rotate(-90deg); }
 .area-aside__chips { margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--el-border-color-lighter); }
 .area-aside :deep(.el-tree-node__content) { height: 30px; }
 .area-aside__divider { margin: 10px 0; border-top: 1px solid var(--el-border-color-lighter); }
