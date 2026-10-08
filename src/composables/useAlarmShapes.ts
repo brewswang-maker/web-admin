@@ -28,7 +28,7 @@ import { ElMessage } from 'element-plus'
 import { linkageApi } from '@/api/linkage'
 import { regionApi } from '@/api/region'
 import { safeChannelHash } from '@/utils/channelHash'
-import { normalizePoint, clamp01 } from './roiSchema'  // [P2-1] ROI 坐标刻度 SSOT 镜像
+import { normalizePoint, clamp01, isPixelScale } from './roiSchema'  // [P2-1] ROI 坐标刻度 SSOT 镜像
 
 /** 叠加形状类型 (RoiType 全集; 渲染层五类区分色) */
 export type OverlayShapeType =
@@ -609,7 +609,12 @@ export function parseDetections(
     }
     if (typeof x1 !== 'number' || typeof y1 !== 'number' || typeof x2 !== 'number' || typeof y2 !== 'number') continue
     if (![x1, y1, x2, y2].every(Number.isFinite)) continue
-    if (x1 > 1.5 || y1 > 1.5 || x2 > 1.5 || y2 > 1.5) {
+    // [FIX roi-ssot-converge 2026-10-08] 判域改走 roiSchema.isPixelScale (四角整体
+    //   判域, 与后端 normalizeDetectionBox 同口径) —— 原先本地写死 1.5 是 SSOT
+    //   阈值的第四份副本, 阈值一旦调这里不会跟着变。
+    //   保留「imgNat 未知则不画」的展示侧守卫 (不按回退基准硬归一,
+    //   等 naturalWidth 就绪后重算) → 故不直接调 normalizeDetectionBox。
+    if ([x1, y1, x2, y2].some(isPixelScale)) {
       if (!imgNat.w || !imgNat.h) continue
       x1 /= imgNat.w; y1 /= imgNat.h; x2 /= imgNat.w; y2 /= imgNat.h
     }

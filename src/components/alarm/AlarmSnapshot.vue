@@ -99,6 +99,8 @@ import {
 //   基准 (通道真实帧尺寸), 取共享通道目录 chFrameOf —— 与区域绘制页
 //   LinkageRuleView.frameOfChannel 同一族基准, 不得用证据帧尺寸。
 import { chFrameOf } from '@/composables/useAlarmDeviceLabel'
+// [FIX roi-ssot-converge 2026-10-08] 判像素阈值不再本地写 1.5, 取 roiSchema.ts SSOT 镜像
+import { isPixelScale } from '@/composables/roiSchema'
 import { getAlarmSnapshotOverlay, setAlarmSnapshotOverlay } from '@/utils/localStorage'
 
 /** [FEAT 2026-09-02] 全屏预览开关 (el-image-viewer v-if 挂载) */
@@ -212,7 +214,9 @@ const normBBox = computed<number[] | null>(() => {
   //   (1~1.5 视为归一坐标轻微越界, clamp 到 1); 归一后 clamp [0,1];
   //   退化框 (w/h≤0.2%) 返回 null 不画 — 事件级告警无定位语义 (坐标置零)。
   if (![x1, y1, x2, y2].every(Number.isFinite)) return null
-  if (b.some((v) => v > 1.5)) {
+  // [FIX roi-ssot-converge 2026-10-08] 判域改走 isPixelScale (与后端
+  //   normalizeDetectionBox / parseDetections 同口径), 不再本地复刻 1.5。
+  if (b.some(isPixelScale)) {
     const { w, h } = imageSize.value
     if (!w || !h) return null
     x1 /= w; y1 /= h; x2 /= w; y2 /= h

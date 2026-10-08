@@ -29,6 +29,13 @@ import {
   isPixelScale,
   clamp01,
   normalizePoint,
+  normalizeRegionPoint,
+  normalizeDetectionPoint,
+  normalizeDetectionBox,
+  normalizeRegionRect,
+  normalizeFlatRegionPolygon,
+  exceedsPolygonVertexCap,
+  MAX_POLYGON_VERTICES,
 } from '@/composables/roiSchema'
 
 describe('roiSchema 归一契约 (缺陷 14-1 前端 SSOT 镜像)', () => {
@@ -138,6 +145,75 @@ describe('roiSchema 归一契约 (缺陷 14-1 前端 SSOT 镜像)', () => {
       expect(PIXEL_HEURISTIC_THRESHOLD).toBe(1.5)
       expect(FALLBACK_WIDTH).toBe(1920)
       expect(FALLBACK_HEIGHT).toBe(1080)
+    })
+  })
+
+  // [FIX roi-ssot-converge 2026-10-08] R/D 两个坐标域分治的前端行为锁 ——
+  //   后端本轮新增 normalizeRegion* / normalizeDetection* 入口并在 36 个插件
+  //   收敛了本地复刻; 镜像侧若无用例, 有人把 R 域除数改成喂帧尺寸 (或反之)
+  //   不会有任何信号 —— 正是 loitering 「绘制时位置 / 保存后位置」偏移一族
+  //   缺陷的根因形态。
+  describe('R/D 两域分治 (roi-ssot-converge 2026-10-08 镜像锁)', () => {
+    it('R 域: 区域顶点除数恒为写入侧画布基准, 不受喂帧尺寸影响', () => {
+      // 像素域满幅顶点在 R 域只按 1920×1080 归一 —— 区域是画布上画出来的,
+      // 与本次推理用了多大帧无关 (后端 normalizeRegionPoint 同口径)
+      expect(normalizeRegionPoint(1920, 1080)).toEqual([1, 1])
+      expect(normalizeRegionPoint(640, 360)).toEqual([640 / 1920, 360 / 1080])
+    })
+
+    it('R 域: 已归一顶点直通 (幂等可重入)', () => {
+      const once = normalizeRegionPoint(0.4, 0.75)
+      expect(once).toEqual([0.4, 0.75])
+      expect(normalizeRegionPoint(once[0], once[1])).toEqual(once)
+    })
+
+    it('D 域: 检测框除数 = 喂帧真实尺寸 (640×360 喂帧的像素框归一后占满画幅)', () => {
+      const box = normalizeDetectionBox(0, 0, 640, 360, 640, 360)
+      expect(box[2]).toBeCloseTo(1, 10)
+      expect(box[3]).toBeCloseTo(1, 10)
+      // 反例防御: 若误用画布基准归一, 满幅 640×360 只到 (0.333, 0.333)
+      const wrong = normalizeDetectionBox(0, 0, 640, 360, 0, 0)
+      expect(wrong[2]).toBeCloseTo(640 / FALLBACK_WIDTH, 10)
+    })
+
+    it('D 域: 整体判域 —— 贴左边框的像素框 (x1=0, 其余角上千) 四角同除', () => {
+      // x1=0 本身不超阈值, 逐角判会让该角保持像素 0 而其余角被除 →
+      // 同一个框内两种量纲 (高度/底边中点计算全错), 后端注释明写的理由
+      const box = normalizeDetectionBox(0, 120, 180, 900, 1920, 1080)
+      expect(box).toEqual([0, 120 / 1080, 180 / 1920, 900 / 1080])
+    })
+
+    it('D 域: 四角全部归一时直通, 不重复缩放', () => {
+      expect(normalizeDetectionBox(0.1, 0.2, 0.3, 0.4, 1920, 1080))
+        .toEqual([0.1, 0.2, 0.3, 0.4])
+    })
+
+    it('D 域: 检测点与检测框同基准 (喂帧已知时不按画布回退)', () => {
+      expect(normalizeDetectionPoint(320, 180, 640, 360)).toEqual([0.5, 0.5])
+      expect(normalizeDetectionPoint(960, 540)).toEqual([960 / FALLBACK_WIDTH, 540 / FALLBACK_HEIGHT])
+    })
+
+    it('R 域矩形与 R 域顶点同域 (normalizeRegionRect ≡ 逐顶点 normalizeRegionPoint)', () => {
+      const rect = normalizeRegionRect(0, 0, 1920, 1080)
+      expect(rect).toEqual([0, 0, 1, 1])
+      const oneByOne = [
+        normalizeRegionPoint(0, 0),
+        normalizeRegionPoint(1920, 1080),
+      ]
+      expect([rect[0], rect[1]]).toEqual(oneByOne[0])
+      expect([rect[2], rect[3]]).toEqual(oneByOne[1])
+    })
+
+    it('R 域: 扁平多边形逐顶点归一, 奇数长度不丢尾元素', () => {
+      expect(normalizeFlatRegionPolygon([0, 0, 960, 540, 1920, 1080]))
+        .toEqual([0, 0, 0.5, 0.5, 1, 1])
+      expect(normalizeFlatRegionPolygon([100, 200, 300]).length).toBe(3)
+    })
+
+    it('顶点上限 = 后端 kMaxPolygonVertices, 且边界含等号 (512 合法 / 513 超限)', () => {
+      expect(MAX_POLYGON_VERTICES).toBe(512)
+      expect(exceedsPolygonVertexCap(512)).toBe(false)
+      expect(exceedsPolygonVertexCap(513)).toBe(true)
     })
   })
 })
