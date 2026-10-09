@@ -3041,8 +3041,17 @@ async function loadChannelSnapshot(channelId: string) {
     // [FIX roi-norm-base 2026-10-01] 缺陷 14-1: 快照自然尺寸 = 该通道归一基准,
     //   按基准码入表 (逐通道 buildNormPoints 按通道取, 画板 normalizeWidth 同源)。
     const baseKey = roiBaseOf(String(channelId))
+    // [FIX roi-draft-jitter 2026-10-09] 同尺寸不重写 (收敛触发面):
+    //   旧实现无条件整体替换 roiFrameByChannel 引用 → L3517 watch 必触发,
+    //   同尺寸刷快照时也会进入 remap 链 (committed 占比恒等, 但 nextTick
+    //   + 抑制窗开合与子组件重渲染仍会拖开异步窗口)。先做值比较, 同尺寸
+    //   直接 return; 真实尺寸变化 (FALLBACK 1920×1080 → 探针回真/换码流)
+    //   依旧写入 — 不会遮住成因 1 的修复 (RoiPolygonEditor 草稿 remap)。
     if (baseKey && probe.w > 0 && probe.h > 0) {
-      roiFrameByChannel.value = { ...roiFrameByChannel.value, [baseKey]: { w: probe.w, h: probe.h } }
+      const prev = roiFrameByChannel.value[baseKey]
+      if (!prev || prev.w !== probe.w || prev.h !== probe.h) {
+        roiFrameByChannel.value = { ...roiFrameByChannel.value, [baseKey]: { w: probe.w, h: probe.h } }
+      }
     }
   } catch {
     if (seq !== roiBgLoadSeq) return
@@ -6811,19 +6820,29 @@ watch(mainTab, (tab) => {
 }
 .roi-ch-hint { display: none; }
 .roi-ch-toolbar .pw-mig-hint { flex: 1 1 100%; margin: 0; }
-.roi-canvas-panel { flex: 1; min-width: 0; padding: 10px; }
+.roi-canvas-panel { flex: 1; min-width: 0; padding: 10px; position: relative; }
 .roi-workspace__hint { display: none; }
 /* [FIX roi-bg 2026-09-18] 底图空态提示条 (loading 蓝/missing 橙, 跟随主题色变量;
    ROI 画板与尾随画布共用同一状态源, 两面板各自渲染一份) */
+/* [FIX roi-draft-jitter 2026-10-09] 提示条绝对定位悬浮: 旧实现在 flex 流内 v-if 开闭
+   → loading 消失瞬间画板上下推弹几像素。改为 absolute 叠到面板顶部内边距上,
+   不占布局高度, 提示开合对画板位置零影响 (保留视觉可见与主题色)。 */
 .roi-bg-tip {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  right: 10px;
+  z-index: 2;
   display: flex;
   align-items: center;
   gap: 6px;
-  margin: 0 0 8px;
+  margin: 0;
   padding: 6px 10px;
   border-radius: 4px;
   font-size: 12px;
   line-height: 1.5;
+  pointer-events: none;  /* 提示条不拦截画板交互 */
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
 }
 .roi-bg-tip--loading {
   color: var(--el-color-primary);

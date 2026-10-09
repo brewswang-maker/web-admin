@@ -425,6 +425,35 @@ watch(() => props.modelValue, (val) => {
   renderCanvas()
 }, { immediate: true })
 
+// [FIX roi-draft-jitter 2026-10-09] 草稿点随基准重映射 (显示层抖动根治)。
+//   背景: committed shapes 由父级 roiAlignBase 做像素域同比 remap (占比恒等, 不跳);
+//   但 points / rectAnchor 是本组件私有 ref, 存 props.normalizeWidth 域整数坐标,
+//   父级 remap 触不到 → 绘制中异步事件 (快照探针 loadChannelSnapshot→preloadSnapshot
+//   onload 替换 roiFrameByChannel 引用, 触发 L3517 基准 watch) 令 props.normalizeWidth
+//   在 FALLBACK 1920×1080 与真实帧尺寸之间变化 → normalizedToCanvas 用新分母重解释
+//   旧域草稿坐标 → 画板上正在绘制的草稿整体瞬间位移 (即用户报告的「绘制中底图/形状
+//   抖一下」)。修法: 记录上一次 norm 域, 变化时按 old→new 比例缩放已有草稿点,
+//   保持归一化占比恒等 —— 与父级 roiAlignBase 同款口径, 组件自洽, 调用方零改动。
+//   抑制窗 (roiSuppressTouch) 只管 touched 标记, 与本重映射无关, 不参与本 watch。
+{
+  let lastNormW = props.normalizeWidth
+  let lastNormH = props.normalizeHeight
+  watch(() => [props.normalizeWidth, props.normalizeHeight] as const, ([nw, nh]) => {
+    const oldW = lastNormW, oldH = lastNormH
+    lastNormW = nw; lastNormH = nh
+    if (!(oldW > 0) || !(oldH > 0) || !(nw > 0) || !(nh > 0)) return
+    if (oldW === nw && oldH === nh) return
+    const sx = nw / oldW, sy = nh / oldH
+    // 草稿点缩放 (points 为空数组时循环天然零步, 无需分支)
+    for (const p of points.value) { p.x = p.x * sx; p.y = p.y * sy }
+    if (rectAnchor.value) {
+      rectAnchor.value = { x: rectAnchor.value.x * sx, y: rectAnchor.value.y * sy }
+    }
+    // 触发一次画布重绘, 让缩放后的草稿点立即按新 norm 落位 (避免等到下一次点击才生效)
+    if (points.value.length || rectAnchor.value) renderCanvas()
+  })
+}
+
 // 加载背景图
 watch(() => props.backgroundImageUrl, async (url) => {
   if (!url) { bgImage.value = null; renderCanvas(); return }

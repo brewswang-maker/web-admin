@@ -70,11 +70,23 @@ const tip = computed(() => {
 })
 
 watch(() => props.imageUrl, (url) => {
-  bgImg.value = null
-  if (!url) { draw(); return }
+  // [FIX roi-draft-jitter 2026-10-09] 平滑替换: 不在新 url 到达时先清 bgImg
+  //   (旧实现先清 → 加载期暗屏 → onload 突亮 = 用户报告的「隐一下遮蔽感」闪变)。
+  //   仅当 url 为空时才真清底图 (无底图语义)；新图 onload 后才覆盖旧图，onload
+  //   归属检查防止旧响应覆盖新响应。与 RoiPolygonEditor L429-439 同口径。
+  if (!url) { bgImg.value = null; draw(); return }
   const img = new Image()
   img.crossOrigin = 'anonymous'
-  img.onload = () => { bgImg.value = img; draw() }  // 加载完成重绘, 背景垫底
+  const targetUrl = url
+  img.onload = () => {
+    // 归属检查: props 中途又变了 => 丢弃旧 onload, 避免旧图覆盖新图
+    if (props.imageUrl !== targetUrl) return
+    bgImg.value = img; draw()
+  }
+  img.onerror = () => {
+    if (props.imageUrl !== targetUrl) return
+    bgImg.value = null; draw()
+  }
   img.src = url
 }, { immediate: true })
 watch(() => [props.imageWidth, props.imageHeight], draw)

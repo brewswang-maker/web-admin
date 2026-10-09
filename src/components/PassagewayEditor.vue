@@ -180,11 +180,23 @@ const sensHint = computed(() => {
 })
 
 watch(() => props.imageUrl, (url) => {
-  bgImg.value = null
-  if (!url) { draw(); return }
+  // [FIX roi-draft-jitter 2026-10-09] 平滑替换 (同 TripwireEditor):
+  //   不在新 url 到达时先清 bgImg —— 父侧 switchPwChannel 已先置 roiBackgroundUrl='' (防
+  //   remount 瞬间读旧 url 残影, 见历史 pitfall 记录), 本组件 watch 会收到 '' → 真清底图,
+  //   无残影风险。同通道刷快照时父侧不会置空, 新 url 到达则保留旧图直到 onload 覆盖,
+  //   消除「暗屏→突亮」闪变。onload 归属检查防旧响应覆盖新响应。
+  if (!url) { bgImg.value = null; draw(); return }
   const img = new Image()
   img.crossOrigin = 'anonymous'
-  img.onload = () => { bgImg.value = img; draw() }  // 加载完成重绘, 背景垫底
+  const targetUrl = url
+  img.onload = () => {
+    if (props.imageUrl !== targetUrl) return
+    bgImg.value = img; draw()
+  }
+  img.onerror = () => {
+    if (props.imageUrl !== targetUrl) return
+    bgImg.value = null; draw()
+  }
   img.src = url
 }, { immediate: true })
 watch([directionIn, suppressMode, sensitivity, detectMode, bboxMode,
